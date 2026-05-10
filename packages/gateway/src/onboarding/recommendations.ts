@@ -345,6 +345,21 @@ function sanitizeAiRecommendations(input: OnboardingRecommendation[]): Onboardin
   return recommendations;
 }
 
+function recommendationMatchesExcludedService(
+  recommendation: OnboardingRecommendation,
+  excludedServiceIds: string[],
+): boolean {
+  const serviceId = recommendation.serviceId ? ruleForUserService(recommendation.serviceId).id : undefined;
+  const recommendationId = slugify(recommendation.id);
+  return excludedServiceIds.some((excludedId) =>
+    serviceId === excludedId ||
+    recommendationId === excludedId ||
+    recommendationId.startsWith(`${excludedId}-`) ||
+    recommendationId.endsWith(`-${excludedId}`) ||
+    recommendationId.includes(`-${excludedId}-`)
+  );
+}
+
 function buildRuleRecommendations(
   signals: DetectedServiceSignal[],
   connectedServices: string[],
@@ -503,6 +518,7 @@ export function buildPersonalizedOnboardingPlan(input: {
   );
   const recommendations: OnboardingRecommendation[] = [];
   for (const recommendation of sanitizeAiRecommendations(input.aiRecommendations)) {
+    if (recommendationMatchesExcludedService(recommendation, excluded)) continue;
     pushRecommendation(recommendations, recommendation);
   }
   for (const recommendation of deterministic) {

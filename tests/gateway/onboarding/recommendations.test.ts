@@ -100,6 +100,47 @@ describe("personalized onboarding recommendations", () => {
     }));
     expect(plan.codingAgents.map((agent) => agent.id)).toEqual(["openclaw"]);
   });
+
+  it("filters AI recommendations that point back to excluded services", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [todoistEmail],
+      calendarEvents: [],
+      connectedServices: ["gmail"],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: ["todoist"],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [
+        {
+          id: "todoist-ai-routine",
+          category: "routine",
+          title: "Review Todoist tasks",
+          description: "Use Todoist task emails for a daily task review.",
+          serviceId: "todoist",
+          priority: "medium",
+        },
+        {
+          id: "linear-ai-routine",
+          category: "routine",
+          title: "Review Linear issues",
+          description: "Use Linear issue updates for a daily planning pass.",
+          serviceId: "linear",
+          priority: "medium",
+        },
+      ],
+    });
+
+    expect(plan.detectedServices.some((service) => service.id === "todoist")).toBe(false);
+    expect(plan.recommendations.some((recommendation) =>
+      recommendation.id.includes("todoist") || recommendation.serviceId === "todoist",
+    )).toBe(false);
+    expect(plan.recommendations).toContainEqual(expect.objectContaining({
+      id: "linear-ai-routine",
+      serviceId: "linear",
+    }));
+  });
 });
 
 describe("POST /api/integrations/onboarding/recommendations", () => {
