@@ -11,6 +11,9 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
+echo "[matrix-os-dev] Building kernel package..."
+pnpm --filter '@matrix-os/kernel' run build
+
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
@@ -161,6 +164,20 @@ fi
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
+
+# Next dev writes this generated type reference in the shell root. In CI and
+# some host bind mounts, /app/shell itself is not writable after we drop from
+# root to the non-root Matrix user, so create it before the privilege drop.
+if [ ! -f /app/shell/next-env.d.ts ]; then
+  cat > /app/shell/next-env.d.ts <<'EOF'
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+EOF
+fi
+chmod a+rw /app/shell/next-env.d.ts 2>/dev/null || true
 
 # QMD: index user home for semantic search (best-effort)
 if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
