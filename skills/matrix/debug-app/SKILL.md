@@ -6,7 +6,7 @@ author: Matrix OS
 license: MIT
 platforms: [linux, macos]
 metadata:
-  hermes:
+  agent:
     tags: [Matrix OS, debugging, apps, Vite, console]
     related_skills: [matrix-app-builder, matrix-integrations]
 ---

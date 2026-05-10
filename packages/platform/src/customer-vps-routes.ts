@@ -10,12 +10,15 @@ import {
   DeployRequestSchema,
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
+import { vpsInfo, vpsHealthy } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
 
 export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;
+  probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
 }
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
@@ -134,6 +137,41 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json(await deps.service.deploy(parsed.data.version), 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/deploy');
+    }
+  });
+
+  app.get('/fleet', async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    try {
+      const statuses = await deps.service.listAllMachines();
+      const probed = await Promise.allSettled(
+        statuses.map(async (s): Promise<FleetMachineView> => {
+          if (s.status !== 'running' || !s.publicIPv4 || !deps.probeMachineHealth) {
+            return { ...s, healthy: false };
+          }
+          const healthy = await deps.probeMachineHealth(s).catch((err: unknown) => {
+            logCustomerVpsError(`fleet probe failed for ${s.handle}`, err);
+            return false;
+          });
+          return { ...s, healthy };
+        }),
+      );
+      const machines = probed
+        .filter((r): r is PromiseFulfilledResult<FleetMachineView> => r.status === "fulfilled")
+        .map(r => r.value);
+
+      vpsInfo.reset();
+      vpsHealthy.reset();
+      for (const m of machines) {
+        vpsInfo.set({ handle: m.handle, version: m.imageVersion ?? "unknown", status: m.status }, 1);
+        vpsHealthy.set({ handle: m.handle }, m.healthy ? 1 : 0);
+      }
+
+      const FLEET_LIMIT = 500;
+      return c.json({ fleet: buildFleetSummary(machines), machines, truncated: machines.length >= FLEET_LIMIT });
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/fleet');
     }
   });
 

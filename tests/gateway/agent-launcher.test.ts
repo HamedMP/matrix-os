@@ -55,11 +55,57 @@ describe("agent-launcher", () => {
         "workspace-write",
         "--writable-root",
         "/tmp/matrixos-codex",
+        "--",
         "fix tests; rm -rf /",
       ],
       cwd: "/home/matrixos/home/projects/repo/worktrees/wt_123",
       env: {},
     });
+  });
+
+  it("inserts end-of-options before prompt to prevent flag injection", () => {
+    const agents = ["claude", "codex", "opencode", "pi"] as const;
+    for (const agent of agents) {
+      const launch = buildAgentLaunch({
+        agent,
+        cwd: "/home/matrixos/home/projects/repo",
+        prompt: "--dangerously-bypass-sandbox",
+        sandbox: agent === "codex" ? { enabled: true, writableRoots: ["/tmp/sandbox"] } : undefined,
+      });
+      const dashDashIndex = launch.args.indexOf("--");
+      const promptIndex = launch.args.indexOf("--dangerously-bypass-sandbox");
+      expect(dashDashIndex).toBeGreaterThanOrEqual(0);
+      expect(promptIndex).toBeGreaterThan(dashDashIndex);
+    }
+  });
+
+  it("omits end-of-options when prompt is empty or missing", () => {
+    const launch = buildAgentLaunch({
+      agent: "claude",
+      cwd: "/home/matrixos/home/projects/repo",
+    });
+    expect(launch.args).not.toContain("--");
+
+    const launchEmpty = buildAgentLaunch({
+      agent: "claude",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "",
+    });
+    expect(launchEmpty.args).not.toContain("--");
+  });
+
+  it("places end-of-options after sandbox flags for codex", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "--help",
+      sandbox: { enabled: true, writableRoots: ["/tmp/sandbox"] },
+    });
+    const dashDashIndex = launch.args.indexOf("--");
+    const sandboxIndex = launch.args.indexOf("--sandbox");
+    const writableRootIndex = launch.args.indexOf("--writable-root");
+    expect(sandboxIndex).toBeLessThan(dashDashIndex);
+    expect(writableRootIndex).toBeLessThan(dashDashIndex);
   });
 
   it("requires Codex sandbox metadata unless explicitly overridden", () => {
@@ -74,7 +120,7 @@ describe("agent-launcher", () => {
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
-    }).args).toEqual(["--dangerously-bypass-sandbox", "work"]);
+    }).args).toEqual(["--dangerously-bypass-sandbox", "--", "work"]);
   });
 
   it("validates supported agent IDs", () => {

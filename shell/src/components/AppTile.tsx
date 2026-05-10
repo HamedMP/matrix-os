@@ -1,6 +1,4 @@
 "use client";
-
-import { useState, useRef } from "react";
 import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "lucide-react";
 import {
   ContextMenu,
@@ -22,15 +20,8 @@ interface AppTileProps {
   onRemoveFromCanvas?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl: _iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
-  const [imgFailed, setImgFailed] = useState(false);
-  const prevIconUrl = useRef(iconUrl);
-  if (iconUrl !== prevIconUrl.current) {
-    prevIconUrl.current = iconUrl;
-    if (imgFailed) setImgFailed(false);
-  }
-  const showIcon = iconUrl && !imgFailed;
 
   const tile = (
     <button
@@ -42,18 +33,12 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         <div
           data-app-icon
           className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all ${
-            showIcon
-              ? `overflow-hidden ${isOpen ? "ring-2 ring-primary/40 shadow-primary/20 shadow-md" : "group-hover:shadow-md"}`
-              : isOpen
-                ? "bg-primary/10 border border-primary/40 text-primary shadow-primary/20 shadow-md"
-                : "bg-card border border-border/60 text-foreground group-hover:shadow-md"
+            isOpen
+              ? "bg-primary/10 border border-primary/40 text-primary shadow-primary/20 shadow-md"
+              : "bg-card border border-border/60 text-foreground group-hover:shadow-md"
           }`}
         >
-          {showIcon ? (
-            <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgFailed(true)} />
-          ) : (
-            initial
-          )}
+          {initial}
         </div>
         {onTogglePin && (
           <span

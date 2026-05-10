@@ -1,9 +1,30 @@
+import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { normalizeBrowserProfileName } from "./security.js";
+
 export interface BrowserSession {
   id: string;
   browser: BrowserLike;
   page: PageLike;
+  profile?: string;
+  profilePath?: string;
   createdAt: number;
   lastActivity: number;
+}
+
+type BrowserRoutePattern = string | RegExp | ((url: URL) => boolean);
+
+export interface BrowserRequestRouteLike {
+  request(): { url(): string };
+  continue(): Promise<void>;
+  abort(errorCode?: string): Promise<void>;
+}
+
+export interface BrowserWebSocketRouteLike {
+  url(): string;
+  connectToServer(): unknown;
+  close(options?: { code?: number; reason?: string }): Promise<void> | void;
 }
 
 export interface PageLike {
@@ -26,60 +47,121 @@ export interface PageLike {
   mouse: { wheel(opts: { deltaX: number; deltaY: number }): Promise<void> };
   accessibility: { snapshot(): Promise<unknown> };
   on(event: string, handler: (...args: unknown[]) => void): void;
-  context(): { pages(): PageLike[]; newPage(): Promise<PageLike>; close(): Promise<void> };
+  route?(
+    url: BrowserRoutePattern,
+    handler: (route: BrowserRequestRouteLike) => Promise<void> | void,
+  ): Promise<void>;
+  routeWebSocket?(
+    url: BrowserRoutePattern,
+    handler: (route: BrowserWebSocketRouteLike) => Promise<void> | void,
+  ): Promise<void>;
+  context(): BrowserContextLike;
+}
+
+export interface BrowserContextLike {
+  pages(): PageLike[];
+  newPage(): Promise<PageLike>;
+  close(): Promise<void>;
+  route?(
+    url: BrowserRoutePattern,
+    handler: (route: BrowserRequestRouteLike) => Promise<void> | void,
+  ): Promise<void>;
+  routeWebSocket?(
+    url: BrowserRoutePattern,
+    handler: (route: BrowserWebSocketRouteLike) => Promise<void> | void,
+  ): Promise<void>;
 }
 
 export interface BrowserLike {
   newPage(): Promise<PageLike>;
   close(): Promise<void>;
-  contexts(): Array<{ pages(): PageLike[] }>;
+  contexts(): Array<BrowserContextLike>;
 }
 
-type Launcher = (opts?: { headless?: boolean }) => Promise<BrowserLike>;
+type Launcher = (opts?: { headless?: boolean; userDataDir?: string }) => Promise<BrowserLike>;
 
 export interface SessionManagerOptions {
   launcher: Launcher;
   headless?: boolean;
   idleTimeoutMs?: number;
   timeout?: number;
+  profileRoot?: string;
+  defaultProfile?: string;
 }
 
 export class SessionManager {
   private session: BrowserSession | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private launching: { profile: string; promise: Promise<BrowserSession> } | undefined;
   private launcher: Launcher;
   private headless: boolean;
   private idleTimeoutMs: number;
   private timeout: number;
+  private profileRoot: string | undefined;
+  private defaultProfile: string;
   private consoleMessages: Array<{ type: string; text: string }> = [];
+  private consolePages = new WeakSet<PageLike>();
 
   constructor(opts: SessionManagerOptions) {
     this.launcher = opts.launcher;
     this.headless = opts.headless ?? true;
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60 * 1000;
     this.timeout = opts.timeout ?? 30000;
+    this.profileRoot = opts.profileRoot ? resolve(opts.profileRoot) : undefined;
+    this.defaultProfile = normalizeBrowserProfileName(opts.defaultProfile, "default");
   }
 
-  async launch(): Promise<BrowserSession> {
-    if (this.session) return this.session;
+  async launch(opts: { profile?: string } = {}): Promise<BrowserSession> {
+    const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
+    if (this.launching) {
+      if (this.launching.profile === profile) return this.launching.promise;
+      try {
+        await this.launching.promise;
+      } catch (error: unknown) {
+        console.warn(
+          "[mcp-browser] Previous browser launch failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      return this.launch({ profile });
+    }
+    if (this.session?.profile === profile) return this.session;
 
-    const browser = await this.launcher({ headless: this.headless });
-    const page = await browser.newPage();
-    page.setDefaultTimeout(this.timeout);
-
-    this.consoleMessages = [];
-    page.on("console", (msg: unknown) => {
-      const m = msg as { type(): string; text(): string };
-      this.consoleMessages.push({ type: m.type(), text: m.text() });
-      if (this.consoleMessages.length > 100) {
-        this.consoleMessages.shift();
+    const promise = this.openSession(profile).finally(() => {
+      if (this.launching?.promise === promise) {
+        this.launching = undefined;
       }
     });
+    this.launching = { profile, promise };
+
+    return promise;
+  }
+
+  private async openSession(profile: string): Promise<BrowserSession> {
+    if (this.session) {
+      await this.close();
+    }
+
+    const profilePath = this.profileRoot ? join(this.profileRoot, profile) : undefined;
+    if (profilePath) {
+      await mkdir(profilePath, { recursive: true, mode: 0o700 });
+    }
+
+    const browser = await this.launcher({
+      headless: this.headless,
+      ...(profilePath ? { userDataDir: profilePath } : {}),
+    });
+    const page = this.getInitialPage(browser) ?? await browser.newPage();
+
+    this.consoleMessages = [];
+    this.preparePage(page);
 
     const session: BrowserSession = {
-      id: `session_${Date.now()}`,
+      id: `session_${randomUUID()}`,
       browser,
       page,
+      profile,
+      ...(profilePath ? { profilePath } : {}),
       createdAt: Date.now(),
       lastActivity: Date.now(),
     };
@@ -89,12 +171,41 @@ export class SessionManager {
     return session;
   }
 
+  private preparePage(page: PageLike): void {
+    page.setDefaultTimeout(this.timeout);
+    if (this.consolePages.has(page)) return;
+
+    page.on("console", (msg: unknown) => {
+      const m = msg as { type(): string; text(): string };
+      this.consoleMessages.push({ type: m.type(), text: m.text() });
+      if (this.consoleMessages.length > 100) {
+        this.consoleMessages.shift();
+      }
+    });
+    this.consolePages.add(page);
+  }
+
+  private getInitialPage(browser: BrowserLike): PageLike | undefined {
+    for (const context of browser.contexts()) {
+      const page = context.pages()[0];
+      if (page) return page;
+    }
+    return undefined;
+  }
+
   getActive(): BrowserSession | undefined {
     return this.session;
   }
 
   getPage(): PageLike | undefined {
     return this.session?.page;
+  }
+
+  setActivePage(page: PageLike): void {
+    if (!this.session) return;
+    this.preparePage(page);
+    this.session.page = page;
+    this.touch();
   }
 
   getConsoleMessages(): Array<{ type: string; text: string }> {

@@ -61,7 +61,7 @@ import {
 describe("R2 client", () => {
   let client: R2Client;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     createdClientConfigs.length = 0;
     client = await createR2Client({

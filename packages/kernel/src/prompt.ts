@@ -134,6 +134,23 @@ Filter syntax: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"
 IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/data which is the old KV path).`,
   );
 
+  const configPath = join(homePath, "system", "config.json");
+  if (existsSync(configPath)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      if (config.browser?.enabled) {
+        sections.push("\n## Browser Automation\n");
+        sections.push(
+          "You have access to `mcp__matrix-os-browser__browser` for interactive web browsing. " +
+          "Use `navigate` and `snapshot` to inspect pages, `click`/`type`/`select` for forms, and `screenshot` for visual verification. " +
+          "Use the `profile` parameter for persistent login state; profiles live under ~/data/browser-profiles/.",
+        );
+      }
+    } catch (err: unknown) {
+      warnPromptFallback("Could not parse browser config", err);
+    }
+  }
+
   // State summary
   const statePath = join(homePath, "system", "state.md");
   sections.push("\n## Current State\n");

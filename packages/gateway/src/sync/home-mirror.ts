@@ -51,6 +51,9 @@ const DEFAULT_IGNORE_PATTERNS = [
   /^\.DS_Store$/,
   /\.env(\..+)?$/,
 ];
+const DEFAULT_IGNORE_PATH_PREFIXES = [
+  "data/browser-profiles",
+];
 const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
 const RemoteChangeFileSchema = z.object({
   path: z.string().min(1).max(1024),
@@ -107,6 +110,14 @@ function isIgnored(relPath: string, extraDirs?: Set<string>): boolean {
   // Treat the home root itself ("") as NOT ignored -- otherwise chokidar
   // refuses to descend into it. Only ignore actual entries.
   if (!relPath || relPath === ".") return false;
+  const normalizedPath = relPath.split(sep).join("/");
+  if (
+    DEFAULT_IGNORE_PATH_PREFIXES.some((prefix) =>
+      normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)
+    )
+  ) {
+    return true;
+  }
   const segments = relPath.split(sep);
   for (const seg of segments) {
     if (DEFAULT_IGNORE_DIRS.has(seg)) return true;

@@ -6,7 +6,7 @@ author: Matrix OS
 license: MIT
 platforms: [linux, macos]
 metadata:
-  hermes:
+  agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
     related_skills: [matrix-design-system, matrix-integrations, matrix-debug-app]
 ---

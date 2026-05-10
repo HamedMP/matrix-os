@@ -290,7 +290,7 @@ icon: N
       listAppsEnhanced = mod.listApps;
     });
 
-    it("lists directory-based apps with matrix.json", () => {
+    it("lists directory-based apps with matrix.json", async () => {
       const appDir = join(homePath, "apps", "dashboard");
       mkdirSync(appDir, { recursive: true });
       writeFileSync(join(appDir, "index.html"), "<html></html>");
@@ -298,18 +298,21 @@ icon: N
         join(appDir, "matrix.json"),
         JSON.stringify({
           name: "Dashboard",
+          slug: "dashboard",
           description: "System dashboard",
           category: "utility",
           runtime: "static",
+          version: "1.0.0",
+          runtimeVersion: "1.0.0",
           icon: "chart",
         }),
       );
 
-      const apps = listAppsEnhanced(homePath);
+      const apps = await listAppsEnhanced(homePath);
       expect(apps.some((a) => a.name === "Dashboard")).toBe(true);
     });
 
-    it("lists both single-file and directory apps", () => {
+    it("lists both single-file and directory apps", async () => {
       writeFileSync(join(homePath, "apps", "notes.html"), "<html></html>");
       writeFileSync(
         join(homePath, "apps", "notes.matrix.md"),
@@ -321,10 +324,17 @@ icon: N
       writeFileSync(join(dir, "index.html"), "<html></html>");
       writeFileSync(
         join(dir, "matrix.json"),
-        JSON.stringify({ name: "Dashboard", category: "utility" }),
+        JSON.stringify({
+          name: "Dashboard",
+          slug: "dashboard",
+          category: "utility",
+          runtime: "static",
+          version: "1.0.0",
+          runtimeVersion: "1.0.0",
+        }),
       );
 
-      const apps = listAppsEnhanced(homePath);
+      const apps = await listAppsEnhanced(homePath);
       expect(apps.length).toBeGreaterThanOrEqual(2);
       expect(apps.some((a) => a.name === "Notes")).toBe(true);
       expect(apps.some((a) => a.name === "Dashboard")).toBe(true);

@@ -50,48 +50,22 @@ interface SystemUpdateStatus {
     gitCommit?: string;
     buildTime?: string;
     bundleSha256?: string;
+    severity?: string;
+    changelog?: string;
+    updateType?: string;
   } | null;
   updateAvailable?: boolean;
   checkedAt?: string;
   error?: string;
 }
 
-function parseSemver(value: string): [number, number, number] | null {
-  const match = value.match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-export function normalizeMatrixReleaseTag(tagName: string): string | null {
-  if (tagName.startsWith("cli-")) return null;
-  const parsed = parseSemver(tagName);
-  return parsed ? parsed.join(".") : null;
-}
-
-export function isNewer(latest: string, current: string): boolean {
-  const a = parseSemver(latest);
-  const b = parseSemver(current);
-  if (!a || !b) return false;
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    if (av > bv) return true;
-    if (av < bv) return false;
-  }
-  return false;
-}
-
-export function resolveSystemUpdateState(input: {
-  installedVersion?: string;
-  latestVersion?: string | null;
-  updateAvailable?: boolean;
-}) {
-  return {
-    currentVersion: input.installedVersion ?? "unknown",
-    latestVersion: input.latestVersion ?? null,
-    updateAvailable: Boolean(input.updateAvailable && input.latestVersion),
-  };
-}
+import {
+  normalizeMatrixReleaseTag,
+  isNewer,
+  severityBadgeStyle,
+  resolveSystemUpdateState,
+} from "./system-update-state";
+export { normalizeMatrixReleaseTag, isNewer, severityBadgeStyle, resolveSystemUpdateState };
 
 export function SystemSection() {
   const [info, setInfo] = useState<SystemInfo>({});
@@ -152,6 +126,9 @@ export function SystemSection() {
     installedVersion: info.release?.version ?? info.version,
     latestVersion: updateStatus?.latest?.version ?? null,
     updateAvailable: updateStatus?.updateAvailable,
+    severity: updateStatus?.latest?.severity,
+    changelog: updateStatus?.latest?.changelog,
+    updateType: updateStatus?.latest?.updateType,
   });
   const currentVersion = resolvedUpdate.currentVersion;
   const latestVersion = resolvedUpdate.latestVersion;
@@ -229,8 +206,8 @@ export function SystemSection() {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-xs">{latestVersion}</span>
                 {updateAvailable && (
-                  <Badge variant="outline" className="bg-blue-500/10 text-blue-600 text-xs">
-                    Update available
+                  <Badge variant="outline" className={`text-xs ${severityBadgeStyle(resolvedUpdate.severity)}`}>
+                    {resolvedUpdate.severity === "security" ? "Security update" : "Update available"}
                   </Badge>
                 )}
               </div>
@@ -239,6 +216,14 @@ export function SystemSection() {
           {updateStatus?.error && (
             <p className="text-xs text-muted-foreground">{updateStatus.error}</p>
           )}
+          {resolvedUpdate.changelog && updateAvailable && (
+            <p className="text-xs text-muted-foreground whitespace-pre-line">{resolvedUpdate.changelog}</p>
+          )}
+          {resolvedUpdate.autoApplying && (
+            <p className="text-xs text-red-600 font-medium pt-1">
+              This is a security update scheduled for automatic installation. Use the button below if it hasn't taken effect.
+            </p>
+          )}
           {updateAvailable && (
             <div className="pt-1 space-y-2">
               <button
@@ -246,7 +231,7 @@ export function SystemSection() {
                 disabled={upgrading}
                 className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
-                {upgrading ? "Upgrading... reloading in 15s" : "Upgrade Now"}
+                {upgrading ? "Upgrading... reloading in 15s" : resolvedUpdate.autoApplying ? "Retry Update" : "Upgrade Now"}
               </button>
               {upgradeError && (
                 <p className="text-xs text-red-500">{upgradeError}</p>
