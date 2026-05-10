@@ -51,6 +51,7 @@ www/next-env.d.ts
 
 # Next.js auto-generated
 **/next-env.d.ts
+!shell/next-env.d.ts
 
 # AI tool configs (various agents/IDEs)
 .adal/

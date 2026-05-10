@@ -118,6 +118,16 @@ describe("cloud workspace runtime gates", () => {
     expect(dockerTestWorkflow).toContain("MATRIX_DEFAULT_APP_BUILD_MODE: skip");
   });
 
+  it("preseeds shell Next generated types before dropping privileges", () => {
+    const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
+    const nextEnv = readFileSync(join(root, "shell/next-env.d.ts"), "utf-8");
+
+    expect(nextEnv).toContain('/// <reference types="next" />');
+    expect(nextEnv).toContain('/// <reference types="next/image-types/global" />');
+    expect(devEntrypoint).toContain("ensure_shell_next_env");
+    expect(devEntrypoint).toContain('chown matrixos:matrixos "$next_env"');
+  });
+
   it("extends health output without leaking filesystem paths or secrets", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf-8");
 

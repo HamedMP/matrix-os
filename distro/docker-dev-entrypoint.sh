@@ -58,6 +58,20 @@ sync_bundled_directory_skills() {
   done
 }
 
+ensure_shell_next_env() {
+  next_env="/app/shell/next-env.d.ts"
+  if [ ! -f "$next_env" ]; then
+    cat > "$next_env" <<'NEXT_ENV_EOF'
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+NEXT_ENV_EOF
+  fi
+  chown matrixos:matrixos "$next_env" 2>/dev/null || true
+}
+
 # First-boot only: seed agents/system/apps from the template so the skills-to-
 # Claude/Codex adapter below has files to read. On subsequent boots the kernel's
 # smartSyncTemplate (packages/kernel/src/boot.ts) takes over -- it respects user
@@ -166,6 +180,7 @@ fi
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
+ensure_shell_next_env
 
 # QMD: index user home for semantic search (best-effort)
 if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
