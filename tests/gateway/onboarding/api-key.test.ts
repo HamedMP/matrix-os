@@ -24,15 +24,16 @@ describe("API key validation and storage", () => {
   };
 
   beforeEach(() => {
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.CLAUDE_CODE_AUTH;
-    process.env.NODE_ENV = "test";
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("CLAUDE_CODE_AUTH", "");
+    vi.stubEnv("NODE_ENV", "test");
     homePath = resolve(mkdtempSync(join(tmpdir(), "api-key-test-")));
     mkdirSync(join(homePath, "system"), { recursive: true });
   });
 
   afterEach(() => {
     rmSync(homePath, { recursive: true, force: true });
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) {

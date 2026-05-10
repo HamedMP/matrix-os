@@ -20,7 +20,7 @@ export default defineConfig({
     // PGlite-backed suites and app runtime builds can overcommit local/CI
     // workers and trip the 20s hook timeout when every test file starts at
     // once. Keep the default test command at a stable concurrency.
-    maxWorkers: 4,
+    maxWorkers: 2,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {

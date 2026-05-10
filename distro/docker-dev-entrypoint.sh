@@ -11,6 +11,9 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
+echo "[matrix-os-dev] Building kernel package..."
+pnpm --filter @matrix-os/kernel build
+
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
@@ -58,7 +61,7 @@ sync_bundled_directory_skills() {
 }
 
 ensure_shell_next_env() {
-  next_env="/app/shell/next-env.d.ts"
+  local next_env="/app/shell/next-env.d.ts"
   if [ ! -f "$next_env" ]; then
     cat > "$next_env" <<'NEXT_ENV_EOF'
 /// <reference types="next" />
@@ -68,7 +71,9 @@ ensure_shell_next_env() {
 // see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
 NEXT_ENV_EOF
   fi
-  chown matrixos:matrixos "$next_env" 2>/dev/null || true
+  if [ "${MATRIX_DOCKER_CHOWN_SOURCE:-}" = "true" ]; then
+    chown matrixos:matrixos "$next_env" 2>/dev/null || true
+  fi
 }
 
 build_kernel_package_if_needed() {

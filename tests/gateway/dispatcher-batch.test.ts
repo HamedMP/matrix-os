@@ -18,15 +18,6 @@ function resultEvent(id: string): KernelEvent {
   return { type: "result", data: { sessionId: id, cost: 0, turns: 1 } };
 }
 
-async function waitForCondition(predicate: () => boolean, timeoutMs = 250): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  expect(predicate()).toBe(true);
-}
-
 describe("T404: Dispatcher batch mode", () => {
   let homePath: string;
 
@@ -98,7 +89,7 @@ describe("T404: Dispatcher batch mode", () => {
     ]);
     const serialPromise = dispatcher.dispatch("after-batch", undefined, () => {});
 
-    await waitForCondition(() => order.length === 1);
+    await vi.waitFor(() => expect(order).toEqual(["batch-start-batch-a"]));
     expect(order).toEqual(["batch-start-batch-a"]);
 
     releaseBatch!();
@@ -125,13 +116,13 @@ describe("T404: Dispatcher batch mode", () => {
 
     const serialPromise = dispatcher.dispatch("serial-first", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(releaseSerial).not.toBeNull());
 
     const batchPromise = dispatcher.dispatchBatch([
       { taskId: "t1", message: "app-1", onEvent: () => {} },
     ]);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(order).toEqual(["serial-start"]));
     expect(order).toEqual(["serial-start"]);
 
     releaseSerial!();

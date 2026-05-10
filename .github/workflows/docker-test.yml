@@ -74,6 +74,7 @@ jobs:
               build: null
               environment:
                 MATRIX_DEFAULT_APP_BUILD_MODE: skip
+                MATRIX_DOCKER_CHOWN_SOURCE: "true"
           EOF
 
       - name: Create external volumes

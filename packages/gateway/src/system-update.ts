@@ -160,10 +160,12 @@ export async function startSystemUpdate(options: {
     await access(updateCommand, constants.X_OK);
   } catch (err: unknown) {
     const code = err && typeof err === "object" && "code" in err ? String(err.code) : "";
-    if (code !== "ENOENT" && code !== "EACCES") {
+    if (!(err instanceof Error)) {
+      console.warn("[system-update] Update command access check failed with non-error value");
+    } else if (code !== "ENOENT" && code !== "EACCES") {
       console.warn(
         "[system-update] Failed to inspect update command:",
-        err instanceof Error ? err.message : String(err),
+        err.message,
       );
     }
     return { ok: false, status: "not_configured" };
