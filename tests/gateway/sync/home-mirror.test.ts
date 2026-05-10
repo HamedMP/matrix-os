@@ -1000,10 +1000,19 @@ describe("createHomeMirror", () => {
 
       await writeFile(join(tmpRoot, "notes.txt"), "hello");
       await waitFor(() => r2.store.has("matrixos-sync/alice/files/notes.txt"));
+      await waitFor(() =>
+        logger.info.mock.calls.some(([message]) =>
+          String(message).startsWith("pushed notes.txt"),
+        ),
+      );
 
       const deleteSpy = vi.spyOn(r2, "deleteObject").mockRejectedValueOnce(new Error("r2 unavailable"));
       await unlink(join(tmpRoot, "notes.txt"));
-      await waitFor(() => deleteSpy.mock.calls.length > 0);
+      await waitFor(() =>
+        logger.error.mock.calls.some(([message]) =>
+          String(message).startsWith("delete blob failed for notes.txt:"),
+        ),
+      );
 
       expect(deleteSpy).toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledWith(
