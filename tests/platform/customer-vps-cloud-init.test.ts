@@ -125,6 +125,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('server_name code.matrix-os.com');
     expect(cloudInit).toContain('proxy_pass http://127.0.0.1:8787');
     expect(cloudInit).toContain('proxy_set_header X-Matrix-Code-Proxy-Token $http_x_matrix_code_proxy_token');
+    expect(cloudInit).toContain('if ($http_x_forwarded_host = "code.matrix-os.com")');
+    expect(cloudInit).toContain('error_page 418 = @matrix_code_proxy');
   });
 
   it('copies customer VPS cloud-init assets into the runtime image', () => {
@@ -148,9 +150,14 @@ describe('platform/customer-vps-cloud-init', () => {
     const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
     const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
 
-    expect(buildScript).toContain('@openai/codex@0.118.0');
+    expect(buildScript).toContain('@anthropic-ai/claude-code@latest');
+    expect(buildScript).toContain('@openai/codex@latest');
     expect(buildScript).toContain('opencode-ai@1.14.25');
     expect(buildScript).toContain('@mariozechner/pi-coding-agent@0.70.2');
+    expect(buildScript).toContain('https://astral.sh/uv/install.sh');
+    expect(buildScript).toContain('UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin"');
+    expect(buildScript).toContain('scripts/install-hermes-matrix-skills.sh');
+    expect(buildScript).toContain('cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"');
     expect(buildScript).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(buildScript).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(buildScript).toContain('runtime/code-server');
@@ -158,8 +165,10 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
-    expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server; do');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
+    expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
     expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
@@ -170,7 +179,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
     expect(cloudInit).toContain('sudo');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
@@ -272,7 +281,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('permissions: "0750"');
-    expect(cloudInit).toContain('docker.io postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('docker.io git postgresql-client nginx openssl sudo unzip');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');

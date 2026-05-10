@@ -11,9 +11,10 @@ describe("cloud workspace runtime gates", () => {
     for (const tool of ["zellij", "tmux", "gh", "openssh-client", "bubblewrap", "git", "sudo", "code-server"]) {
       expect(dockerfile).toContain(tool);
     }
-    for (const agentCli of ["@anthropic-ai/claude-code", "@openai/codex", "opencode-ai", "@mariozechner/pi-coding-agent"]) {
+    for (const agentCli of ["@anthropic-ai/claude-code@latest", "@openai/codex@latest", "opencode-ai", "@mariozechner/pi-coding-agent"]) {
       expect(dockerfile).toContain(agentCli);
     }
+    expect(dockerfile).toContain("hermes-agent/main/scripts/install.sh");
   });
 
   it("lets the non-root Matrix user run sudo-based project installers", () => {

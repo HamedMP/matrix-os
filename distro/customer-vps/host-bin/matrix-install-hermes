@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-/home/matrix}"
+HERMES_INSTALLER_URL="${HERMES_INSTALLER_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
+HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}"
+HERMES_INSTALLER_PATH="${HERMES_INSTALLER_PATH:-/tmp/hermes-agent-install.sh}"
+MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+MATRIX_GATEWAY_URL="${MATRIX_GATEWAY_URL:-http://localhost:4000}"
+
+log() {
+  printf 'matrix-install-hermes: %s\n' "$*"
+}
+
+if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
+  echo "matrix-install-hermes: runtime user not found: $MATRIX_RUNTIME_USER" >&2
+  exit 1
+fi
+
+install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0755 \
+  "$MATRIX_RUNTIME_HOME/.local" \
+  "$MATRIX_RUNTIME_HOME/.local/bin" \
+  "$MATRIX_RUNTIME_HOME/.cache" \
+  "$MATRIX_RUNTIME_HOME/.config" \
+  "$HERMES_HOME"
+
+curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+  --connect-timeout 10 --max-time 180 \
+  "$HERMES_INSTALLER_URL" -o "$HERMES_INSTALLER_PATH"
+chmod 0755 "$HERMES_INSTALLER_PATH"
+
+log "installing Hermes Agent for $MATRIX_RUNTIME_USER"
+sudo -H -u "$MATRIX_RUNTIME_USER" env \
+  HOME="$MATRIX_RUNTIME_HOME" \
+  HERMES_HOME="$HERMES_HOME" \
+  PATH="/opt/matrix/runtime/node/bin:$MATRIX_RUNTIME_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+  bash "$HERMES_INSTALLER_PATH" --skip-setup
+
+for cli in uv uvx hermes; do
+  if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/$cli" ]; then
+    ln -sf "$MATRIX_RUNTIME_HOME/.local/bin/$cli" "/usr/local/bin/$cli"
+  fi
+done
+
+if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scripts/install-hermes-matrix-skills.sh" ]; then
+  log "installing bundled Matrix Hermes skills"
+  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+    HOME="$MATRIX_RUNTIME_HOME" \
+    HERMES_HOME="$HERMES_HOME" \
+    HERMES_BIN="$MATRIX_RUNTIME_HOME/.local/bin/hermes" \
+    PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash -lc "cd '$MATRIX_APP_DIR' && ./scripts/install-hermes-matrix-skills.sh '$MATRIX_APP_DIR'"
+
+  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+    HOME="$MATRIX_RUNTIME_HOME" \
+    HERMES_HOME="$HERMES_HOME" \
+    PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+    "$MATRIX_RUNTIME_HOME/.local/bin/hermes" config set skills.config.matrix.gateway_url "$MATRIX_GATEWAY_URL" || true
+fi
+
+log "Hermes and uv are installed"
