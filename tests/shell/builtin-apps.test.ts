@@ -7,8 +7,8 @@ import {
 } from "../../shell/src/lib/builtin-apps";
 
 describe("built-in app helpers", () => {
-  it("pins the core workspace launchers by default", () => {
-    expect(DEFAULT_PINNED_APPS).toEqual(["__workspace__", "__terminal__", "__file-browser__", "__chat__"]);
+  it("does not pin launchers by default", () => {
+    expect(DEFAULT_PINNED_APPS).toEqual([]);
   });
 
   it("normalizes stale Workspace app paths to the shell built-in", () => {

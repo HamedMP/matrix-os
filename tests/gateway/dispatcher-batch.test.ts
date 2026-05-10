@@ -18,6 +18,16 @@ function resultEvent(id: string): KernelEvent {
   return { type: "result", data: { sessionId: id, cost: 0, turns: 1 } };
 }
 
+async function waitFor(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!condition()) {
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error("Timed out waiting for dispatcher state");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 describe("T404: Dispatcher batch mode", () => {
   let homePath: string;
 
@@ -89,7 +99,7 @@ describe("T404: Dispatcher batch mode", () => {
     ]);
     const serialPromise = dispatcher.dispatch("after-batch", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => order.length === 1);
     expect(order).toEqual(["batch-start-batch-a"]);
 
     releaseBatch!();
@@ -122,7 +132,7 @@ describe("T404: Dispatcher batch mode", () => {
       { taskId: "t1", message: "app-1", onEvent: () => {} },
     ]);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => order.length === 1);
     expect(order).toEqual(["serial-start"]);
 
     releaseSerial!();

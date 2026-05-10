@@ -19,6 +19,9 @@ describe("API key validation and storage", () => {
   let homePath: string;
 
   beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("CLAUDE_CODE_AUTH", "");
+    vi.stubEnv("NODE_ENV", "test");
     homePath = resolve(mkdtempSync(join(tmpdir(), "api-key-test-")));
     mkdirSync(join(homePath, "system"), { recursive: true });
   });

@@ -158,7 +158,9 @@ export class BuildOrchestrator {
 
     return new Promise<BuildResult>((resolve) => {
       const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      let timeoutFired = false;
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
 
@@ -170,8 +172,24 @@ export class BuildOrchestrator {
         cwd,
         env,
         stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
         signal: ac.signal,
       });
+
+      timer = setTimeout(() => {
+        timeoutFired = true;
+        ac.abort();
+        if (process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGTERM");
+          } catch (err: unknown) {
+            const code = err instanceof Error && "code" in err ? String((err as NodeJS.ErrnoException).code) : "";
+            if (code !== "ESRCH") {
+              console.warn("[build-orchestrator] failed to terminate timed-out build process group:", err);
+            }
+          }
+        }
+      }, timeoutMs);
 
       // Ring-buffer output to cap memory. A verbose pnpm install / vite build
       // can emit hundreds of MB of logs; accumulating all of it would OOM the
@@ -191,39 +209,55 @@ export class BuildOrchestrator {
       child.stdout?.on("data", appendChunk);
       child.stderr?.on("data", appendChunk);
 
-      child.on("error", (err) => {
+      const finish = (result: BuildResult) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        const isAbort = ac.signal.aborted;
+        const output = Buffer.concat(chunks).toString("utf8");
+        writeFile(logPath, output.slice(0, MAX_LOG_SIZE))
+          .catch((writeErr) => {
+            console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
+          })
+          .finally(() => {
+            resolve(result);
+          });
+      };
+
+      child.on("error", (err) => {
+        if (timeoutFired || ac.signal.aborted) {
+          return;
+        }
         const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
-        // Log writes are best-effort — the build has already failed and we
-        // surface that result below. Warn if the log write itself errors.
-        writeFile(logPath, Buffer.concat(chunks).toString("utf8").slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
-          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
-        });
-        resolve({
+        finish({
           ok: false,
           error: new BuildError(
-            isAbort ? "timeout" : "install_failed",
+            "install_failed",
             stage,
             null,
-            isAbort ? `Build timed out after ${timeoutMs}ms` : stderrTail,
+            stderrTail || err.message,
           ),
         });
       });
 
       child.on("close", (code) => {
-        clearTimeout(timer);
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
 
-        // Write log (truncated to MAX_LOG_SIZE). Best-effort: a missing log
-        // is recoverable; we still resolve the build result below.
-        writeFile(logPath, output.slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
-          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
-        });
+        if (timeoutFired || ac.signal.aborted) {
+          finish({
+            ok: false,
+            error: new BuildError(
+              "timeout",
+              stage,
+              null,
+              `Build timed out after ${timeoutMs}ms`,
+            ),
+          });
+          return;
+        }
 
         if (code !== 0) {
-          resolve({
+          finish({
             ok: false,
             error: new BuildError(
               stage === "install" ? "install_failed" : "build_failed",
@@ -235,7 +269,7 @@ export class BuildOrchestrator {
           return;
         }
 
-        resolve({ ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } });
+        finish({ ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } });
       });
     });
   }
