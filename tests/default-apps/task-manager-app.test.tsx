@@ -73,4 +73,32 @@ describe("Task Manager app persistence", () => {
     const savedBoard = JSON.parse(body.value) as Board;
     expect(savedBoard.cards[0].title).toBe("Final edit");
   });
+
+  it("flushes a pending detail edit when the app unmounts", async () => {
+    let board = createBoard("Matrix OS");
+    board = addCard(board, {
+      columnId: "backlog",
+      projectId: board.projects[0].id,
+      title: "Initial title",
+    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return jsonResponse({ ok: true });
+      return jsonResponse(boardValue(board));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unmount } = render(<App />);
+    fireEvent.click(await screen.findByText("Initial title"));
+    fetchMock.mockClear();
+    vi.useFakeTimers();
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Unmounted edit" } });
+    unmount();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, requestInit] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(requestInit?.body)) as { value: string };
+    const savedBoard = JSON.parse(body.value) as Board;
+    expect(savedBoard.cards[0].title).toBe("Unmounted edit");
+  });
 });

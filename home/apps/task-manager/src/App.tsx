@@ -239,6 +239,7 @@ function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const detailSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingDetailBoardRef = useRef<Board | null>(null);
   const saveAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -251,13 +252,6 @@ function App() {
         console.warn("[task-manager] load failed:", err instanceof Error ? err.message : String(err));
         setError("Board could not be loaded.");
       });
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
-      saveAbortRef.current?.abort();
-    };
   }, []);
 
   useEffect(() => {
@@ -296,6 +290,7 @@ function App() {
     if (detailSaveTimerRef.current) {
       clearTimeout(detailSaveTimerRef.current);
       detailSaveTimerRef.current = null;
+      pendingDetailBoardRef.current = null;
     }
     setBoard(nextBoard);
     setError(null);
@@ -305,12 +300,31 @@ function App() {
   const queueBoardSave = useCallback((nextBoard: Board) => {
     setBoard(nextBoard);
     setError(null);
+    pendingDetailBoardRef.current = nextBoard;
     if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
     detailSaveTimerRef.current = setTimeout(() => {
       detailSaveTimerRef.current = null;
-      persistBoard(nextBoard);
+      const pendingBoard = pendingDetailBoardRef.current ?? nextBoard;
+      pendingDetailBoardRef.current = null;
+      persistBoard(pendingBoard);
     }, 400);
   }, [persistBoard]);
+
+  useEffect(() => {
+    return () => {
+      const pendingBoard = pendingDetailBoardRef.current;
+      if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
+      detailSaveTimerRef.current = null;
+      pendingDetailBoardRef.current = null;
+      saveAbortRef.current?.abort();
+      saveAbortRef.current = null;
+      if (!pendingBoard) return;
+      writeBoard(pendingBoard).catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        console.warn("[task-manager] save failed:", err instanceof Error ? err.message : String(err));
+      });
+    };
+  }, []);
 
   const summary = useMemo(() => board ? summarizeBoard(board) : null, [board]);
   const selectedCard = board?.cards.find((card) => card.id === selectedCardId) ?? null;
