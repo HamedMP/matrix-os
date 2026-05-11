@@ -20,6 +20,7 @@ export interface PostHogLogger {
 export interface CreatePostHogErrorTrackerOptions {
   env?: EnvSource;
   service: string;
+  flushTimeoutMs?: number;
   clientFactory?: (config: PostHogConfig) => PostHogCaptureClient;
   logger?: PostHogLogger;
 }
@@ -77,6 +78,7 @@ const TOKEN_ENV_KEYS = [
 const HOST_ENV_KEYS = ["POSTHOG_HOST", "NEXT_PUBLIC_POSTHOG_HOST"];
 const DEFAULT_CLIENT_ERROR_MESSAGE = "Internal Server Error";
 const MAX_PROPERTY_LENGTH = 512;
+const DEFAULT_POSTHOG_FLUSH_TIMEOUT_MS = 5_000;
 
 export function getPostHogConfig(env: EnvSource = process.env): PostHogConfig | null {
   const token = firstEnv(env, TOKEN_ENV_KEYS);
@@ -90,6 +92,7 @@ export function createPostHogErrorTracker(
 ): PostHogErrorTracker {
   const logger = options.logger ?? console;
   const config = getPostHogConfig(options.env);
+  const flushTimeoutMs = normalizeTimeoutMs(options.flushTimeoutMs);
   let client: PostHogCaptureClient | null = null;
 
   function getClient(): PostHogCaptureClient | null {
@@ -122,7 +125,7 @@ export function createPostHogErrorTracker(
           ...captureOptions.properties,
         }),
       );
-      await posthog.flush();
+      await withTimeout(posthog.flush(), flushTimeoutMs);
       return true;
     } catch (err: unknown) {
       logger.warn(`[posthog] Failed to capture exception for ${options.service}: ${errorKind(err)}`);
@@ -146,7 +149,7 @@ export function createPostHogErrorTracker(
       const posthog = getClient();
       if (!posthog) return;
       try {
-        await posthog.flush();
+        await withTimeout(posthog.flush(), flushTimeoutMs);
       } catch (err: unknown) {
         logger.warn(`[posthog] Failed to flush events for ${options.service}: ${errorKind(err)}`);
       }
@@ -155,7 +158,7 @@ export function createPostHogErrorTracker(
       const posthog = getClient();
       if (!posthog) return;
       try {
-        await posthog.shutdown();
+        await withTimeout(posthog.shutdown(), flushTimeoutMs);
       } catch (err: unknown) {
         logger.warn(`[posthog] Failed to shut down client for ${options.service}: ${errorKind(err)}`);
       }
@@ -312,6 +315,32 @@ function safeUrl(value: string | undefined): URL | undefined {
       return undefined;
     }
     throw err;
+  }
+}
+
+function normalizeTimeoutMs(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_POSTHOG_FLUSH_TIMEOUT_MS;
+}
+
+function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new PostHogTimeoutError(timeoutMs));
+    }, timeoutMs);
+  });
+
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+class PostHogTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`PostHog operation timed out after ${timeoutMs}ms`);
+    this.name = "TimeoutError";
   }
 }
 

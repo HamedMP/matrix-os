@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { getPostHogClientConfig } from "../../packages/observability/src/client.ts";
@@ -81,6 +82,36 @@ describe("PostHog error tracking", () => {
     expect(flush).toHaveBeenCalledOnce();
   });
 
+  it("does not wait indefinitely when a PostHog flush hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const captureException = vi.fn();
+      const flush = vi.fn(() => new Promise<void>(() => undefined));
+      const logger = { warn: vi.fn() };
+      const tracker = createPostHogErrorTracker({
+        env: { POSTHOG_TOKEN: "phc_test" },
+        service: "matrix-gateway",
+        flushTimeoutMs: 25,
+        logger,
+        clientFactory: () => ({
+          captureException,
+          flush,
+          shutdown: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+
+      const result = tracker.captureException(new Error("boom"));
+      await vi.advanceTimersByTimeAsync(25);
+
+      await expect(result).resolves.toBe(false);
+      expect(captureException).toHaveBeenCalledOnce();
+      expect(flush).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("TimeoutError"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("extracts a PostHog distinct id from the browser cookie", () => {
     const encoded = encodeURIComponent(JSON.stringify({ distinct_id: "distinct-1" }));
 
@@ -127,5 +158,37 @@ describe("PostHog error tracking", () => {
       route_type: "render",
     });
     expect(flush).toHaveBeenCalledOnce();
+  });
+
+  it("uses explicit public env references in Next client PostHog entrypoints", async () => {
+    const clientEntrypoints = [
+      "shell/instrumentation-client.ts",
+      "shell/src/lib/posthog-client.ts",
+      "www/instrumentation-client.ts",
+      "www/src/lib/posthog-client.ts",
+    ];
+
+    for (const file of clientEntrypoints) {
+      const source = await readFile(file, "utf8");
+      expect(source, file).not.toContain("getPostHogClientConfig(process.env)");
+      expect(source, file).not.toContain("...process.env");
+      expect(source, file).toContain("process.env.NEXT_PUBLIC_POSTHOG_KEY");
+    }
+  });
+
+  it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
+    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, wwwServer] = await Promise.all([
+      readFile("packages/gateway/src/social.ts", "utf8"),
+      readFile("packages/gateway/src/server.ts", "utf8"),
+      readFile("packages/platform/src/social-api.ts", "utf8"),
+      readFile("packages/platform/src/main.ts", "utf8"),
+      readFile("www/src/lib/posthog-server.ts", "utf8"),
+    ]);
+
+    expect(gatewaySocial).toContain("shutdownPostHog");
+    expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
+    expect(platformSocialApi).toContain("shutdownPostHog");
+    expect(platformMain).toContain("await app.shutdownPostHog()");
+    expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
 });

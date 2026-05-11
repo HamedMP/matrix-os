@@ -897,6 +897,17 @@ export function checkHomeMirrorS3Env(
   return missing;
 }
 
+export type PlatformApp = Hono<{
+  Variables: {
+    platformUserId: string;
+    platformHandle: string;
+    internalContainerHandle: string;
+    internalContainerClerkUserId: string;
+  };
+}> & {
+  shutdownPostHog(): Promise<void>;
+};
+
 export function createApp(deps: {
   db: PlatformDB;
   docker?: Dockerode;
@@ -919,10 +930,11 @@ export function createApp(deps: {
       internalContainerHandle: string;
       internalContainerClerkUserId: string;
     };
-  }>();
-  installPostHogHonoErrorTracking(app, {
+  }>() as PlatformApp;
+  const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: 'matrix-platform',
   });
+  const posthogShutdowns: Array<() => Promise<void>> = [() => posthogErrorTracker.shutdown()];
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -1833,7 +1845,9 @@ export function createApp(deps: {
 
   // --- Social Feed API (public) ---
 
-  app.route('/api/social', createSocialFeedApi(db));
+  const socialFeedApi = createSocialFeedApi(db);
+  posthogShutdowns.push(() => socialFeedApi.shutdownPostHog());
+  app.route('/api/social', socialFeedApi);
 
   // --- Social API (legacy: container-level profiles/messaging) ---
 
@@ -1968,6 +1982,12 @@ export function createApp(deps: {
       return c.json({ error: 'Container unreachable' }, 502);
     }
   });
+
+  app.shutdownPostHog = async () => {
+    for (let i = posthogShutdowns.length - 1; i >= 0; i -= 1) {
+      await posthogShutdowns[i]();
+    }
+  };
 
   return app;
 }
@@ -2284,6 +2304,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
         ]);
+        await app.shutdownPostHog();
         await db.destroy();
       })()
         .catch((destroyErr: unknown) => {

@@ -34,6 +34,7 @@ export function getPostHogClient() {
 }
 
 export async function shutdownPostHog() {
+  await postHogServerErrorReporter.shutdown();
   if (posthogClient) {
     await posthogClient.shutdown();
     posthogClient = null;

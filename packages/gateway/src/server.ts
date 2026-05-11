@@ -128,7 +128,7 @@ import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { sanitizePeerId } from "./sync/peer-id.js";
 import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
-import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
+import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import { CanvasRepository } from "./canvas/repository.js";
 import { CanvasService } from "./canvas/service.js";
@@ -3473,9 +3473,10 @@ export async function createGateway(config: GatewayConfig) {
     const identity = loadHandle(homePath);
     return identity.handle || "@me";
   };
+  let socialRoutes: SocialRoutes | undefined;
   if (appDb && queryEngine) {
     await bootstrapSocialSchema(appDb);
-    const socialRoutes = createSocialRoutes(appDb, queryEngine, getCurrentUser);
+    socialRoutes = createSocialRoutes(appDb, queryEngine, getCurrentUser);
     app.route("/api/social", socialRoutes);
   } else {
     app.all("/api/social/*", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
@@ -3635,6 +3636,7 @@ export async function createGateway(config: GatewayConfig) {
       });
       syncR2?.destroy();
       await canvasRepository?.destroy();
+      await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();
       await posthogErrorTracker.shutdown();
       server.close();

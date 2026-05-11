@@ -3,6 +3,10 @@ import { createPostHogErrorTracker } from "@matrix-os/observability";
 import type { AppDb } from "./app-db.js";
 import type { FilterValue, QueryEngine } from "./app-db-query.js";
 
+export type SocialRoutes = Hono & {
+  shutdownPostHog(): Promise<void>;
+};
+
 // --- Types ---
 
 export interface SocialPost {
@@ -505,11 +509,13 @@ export function createSocialRoutes(
   db: AppDb,
   engine: QueryEngine,
   getCurrentUser: () => string,
-): Hono {
-  const api = new Hono();
+): SocialRoutes {
+  const api = new Hono() as SocialRoutes;
   const posthogErrorTracker = createPostHogErrorTracker({
     service: "matrix-gateway-social",
   });
+
+  api.shutdownPostHog = () => posthogErrorTracker.shutdown();
 
   api.onError(async (err, c) => {
     await posthogErrorTracker.captureHonoException(err, c);

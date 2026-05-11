@@ -25,11 +25,17 @@ import {
 const VALID_POST_TYPES = ['text', 'image', 'link', 'app_share', 'activity'];
 const SOCIAL_BODY_LIMIT = 4096;
 
-export function createSocialFeedApi(db: PlatformDB): Hono {
-  const api = new Hono();
+export type SocialFeedApi = Hono & {
+  shutdownPostHog(): Promise<void>;
+};
+
+export function createSocialFeedApi(db: PlatformDB): SocialFeedApi {
+  const api = new Hono() as SocialFeedApi;
   const posthogErrorTracker = createPostHogErrorTracker({
     service: 'matrix-platform-social',
   });
+
+  api.shutdownPostHog = () => posthogErrorTracker.shutdown();
 
   api.onError(async (err, c) => {
     await posthogErrorTracker.captureHonoException(err, c);
