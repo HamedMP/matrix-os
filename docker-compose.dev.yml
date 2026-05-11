@@ -79,6 +79,7 @@ services:
       - ./packages:/app/packages
       - ./shell:/app/shell
       - ./home:/app/home
+      - ./skills:/app/skills
       - ./tests:/app/tests
       - ./specs:/app/specs
       - ./docs:/app/docs
@@ -289,6 +290,8 @@ services:
       - ./packages:/app/packages
       - ./shell:/app/shell
       - ./home:/app/home
+      - ./skills:/app/skills
+      - ./scripts:/app/scripts
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
@@ -329,6 +332,8 @@ services:
       - ./packages:/app/packages
       - ./shell:/app/shell
       - ./home:/app/home
+      - ./skills:/app/skills
+      - ./scripts:/app/scripts
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
