@@ -1427,8 +1427,8 @@ export function createApp(deps: {
       try {
         const res = await fetch(`https://${machine.publicIPv4}:443/health`, {
           headers: { authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(8_000),
           dispatcher: customerVpsProxyDispatcher,
+          signal: AbortSignal.timeout(8_000),
         } as RequestInit & { dispatcher: Agent });
         return res.ok;
       } catch (err: unknown) {

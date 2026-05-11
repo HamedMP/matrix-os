@@ -36,6 +36,8 @@ export interface ProcessManagerOptions {
   portPool: PortPool;
   maxProcesses?: number;
   reaperIntervalMs?: number;
+  maxRestartAttempts?: number;
+  restartBackoffMs?: number[];
 }
 
 const MAX_RESTART_ATTEMPTS = 3;
@@ -48,13 +50,18 @@ export class ProcessManager {
   private readonly homeDir: string;
   private readonly portPool: PortPool;
   private readonly maxProcesses: number;
+  private readonly maxRestartAttempts: number;
+  private readonly restartBackoffMs: number[];
   private readonly reaperInterval: ReturnType<typeof setInterval> | null;
+  private readonly restartTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private shuttingDown = false;
 
   constructor(opts: ProcessManagerOptions) {
     this.homeDir = opts.homeDir;
     this.portPool = opts.portPool;
     this.maxProcesses = opts.maxProcesses ?? 10;
+    this.maxRestartAttempts = opts.maxRestartAttempts ?? MAX_RESTART_ATTEMPTS;
+    this.restartBackoffMs = opts.restartBackoffMs ?? BACKOFF_SCHEDULE;
 
     const reaperMs = opts.reaperIntervalMs ?? 30_000;
     if (reaperMs > 0) {
@@ -136,6 +143,10 @@ export class ProcessManager {
     if (this.reaperInterval) {
       clearInterval(this.reaperInterval);
     }
+    for (const timer of this.restartTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.restartTimers.clear();
 
     const stopPromises: Promise<void>[] = [];
     for (const record of this.processes.values()) {
@@ -416,7 +427,7 @@ export class ProcessManager {
         stderrTail: stderrTail.slice(-2048),
       };
 
-      if (record.restartCount < MAX_RESTART_ATTEMPTS) {
+      if (record.restartCount < this.maxRestartAttempts) {
         this.scheduleRestart(record);
       } else {
         record.state = "failed";
@@ -429,11 +440,13 @@ export class ProcessManager {
   }
 
   private scheduleRestart(record: ProcessRecord): void {
-    const delay = BACKOFF_SCHEDULE[Math.min(record.restartCount, BACKOFF_SCHEDULE.length - 1)];
+    const delay = this.restartBackoffMs[Math.min(record.restartCount, this.restartBackoffMs.length - 1)]
+      ?? BACKOFF_SCHEDULE[BACKOFF_SCHEDULE.length - 1];
     record.state = "restarting";
     record.restartCount++;
 
-    setTimeout(async () => {
+    const timer = setTimeout(async () => {
+      this.restartTimers.delete(record.slug);
       if (this.shuttingDown) return;
       // Check if record was removed from the map (eviction or shutdown)
       if (!this.processes.has(record.slug)) return;
@@ -461,7 +474,7 @@ export class ProcessManager {
 
         await this.doSpawn(record, result.manifest);
       } catch (err: unknown) {
-        if (record.restartCount >= MAX_RESTART_ATTEMPTS) {
+        if (record.restartCount >= this.maxRestartAttempts) {
           record.state = "failed";
           if (record.port !== null) {
             this.portPool.release(record.port);
@@ -477,6 +490,10 @@ export class ProcessManager {
         }
       }
     }, delay);
+    if (timer.unref) {
+      timer.unref();
+    }
+    this.restartTimers.set(record.slug, timer);
   }
 
   private async stopProcess(record: ProcessRecord): Promise<void> {

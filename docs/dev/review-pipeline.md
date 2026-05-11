@@ -17,9 +17,9 @@ PR opens
   |
   +-- CI Gate 2: unit tests + e2e            --> catches correctness regressions
   |
-  +-- AI Review: three-pass structured review --> catches trust-boundary + atomicity issues
+  +-- Structured Review (manual/agent-led)    --> catches trust-boundary + atomicity issues
   |
-  +-- AI Security Review: focused security    --> catches auth/traversal/container issues
+  +-- Security Review (manual/agent-led)      --> catches auth/traversal/container issues
   |
   +-- Human Review (if needed)                --> architecture, design, product decisions
 ```
@@ -31,10 +31,10 @@ PR opens
 | **typecheck** | Missing imports, type mismatches, missing fields | Missing `stat` import, `R2ClientConfig` wrong fields, presign `size` field. *Note: runs as warning (`continue-on-error`) until baseline type errors are fixed.* |
 | **pattern scan** | CLAUDE.md mechanical violations | Bare catch blocks, fetch without signal, writeFileSync, unbounded Maps |
 | **unit tests** | Correctness regressions | Deleted files resurrected, schema inconsistencies |
-| **AI review pass 1** | Remaining mechanical issues the scanner can't catch | Non-atomic file writes, bodyLimit gaps, shutdown cleanup |
-| **AI review pass 2** | Trust-boundary violations | Path traversal, unvalidated headers, error leaking, share authz gaps |
-| **AI review pass 3** | Atomicity and failure modes | Advisory lock bugs, DB/R2 split-brain, partial failure orphans |
-| **AI security review** | Auth boundaries, container isolation | Internal routes without auth, secret forwarding, timing leaks |
+| **structured review pass 1** | Remaining mechanical issues the scanner can't catch | Non-atomic file writes, bodyLimit gaps, shutdown cleanup |
+| **structured review pass 2** | Trust-boundary violations | Path traversal, unvalidated headers, error leaking, share authz gaps |
+| **structured review pass 3** | Atomicity and failure modes | Advisory lock bugs, DB/R2 split-brain, partial failure orphans |
+| **security review** | Auth boundaries, container isolation | Internal routes without auth, secret forwarding, timing leaks |
 
 ## Running Locally
 
@@ -224,7 +224,5 @@ If you are an AI agent (Claude, Copilot, etc.) writing or reviewing code for Mat
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
 | `ci.yml` | push/PR to main | typecheck → pattern scan → unit tests → e2e |
-| `claude-code-review.yml` | PR opened/sync | Three-pass AI review (code quality) |
-| `security-review.yml` | PR touching packages/gateway,kernel,platform | Four-pass AI security review |
 | `screenshots.yml` | PR touching shell/** | Playwright visual regression |
 | `docker-test.yml` | push/PR to main | Docker scenario tests |

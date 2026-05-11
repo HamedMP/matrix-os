@@ -31,7 +31,7 @@ describe("MenuBar focus display", () => {
     resetStore();
   });
 
-  it("shows Matrix OS when no app owns focus", () => {
+  it("shows Matrix OS button and hides focused-app button when no app owns focus", () => {
     useWindowManager.getState().openWindow("Whiteboard", "apps/whiteboard", 80);
     useWindowManager.getState().clearFocus();
 
@@ -43,6 +43,7 @@ describe("MenuBar focus display", () => {
 
     expect(screen.getByRole("button", { name: "Matrix OS" })).toBeTruthy();
     expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Whiteboard" })).toBeNull();
   });
 
   it("shows the active app name when a window owns focus", () => {
@@ -56,5 +57,6 @@ describe("MenuBar focus display", () => {
 
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
     expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Matrix OS" })).toBeNull();
   });
 });
