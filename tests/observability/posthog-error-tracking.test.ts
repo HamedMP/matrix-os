@@ -294,6 +294,7 @@ describe("PostHog error tracking", () => {
     for (const file of socialRouteFiles) {
       const source = await readFile(file, "utf8");
       expect(source, file).not.toContain("await posthogErrorTracker.captureHonoException");
+      expect(source, file).toContain("err instanceof HTTPException && err.status < 500");
       expect(source, file).toContain("void posthogErrorTracker.captureHonoException(err, c).catch");
     }
   });

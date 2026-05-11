@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { createPostHogErrorTracker } from "@matrix-os/observability";
 import type { AppDb } from "./app-db.js";
 import type { FilterValue, QueryEngine } from "./app-db-query.js";
@@ -518,10 +519,12 @@ export function createSocialRoutes(
   api.shutdownPostHog = () => posthogErrorTracker.shutdown();
 
   api.onError(async (err, c) => {
-    void posthogErrorTracker.captureHonoException(err, c).catch((captureErr: unknown) => {
-      const kind = captureErr instanceof Error ? captureErr.name : typeof captureErr;
-      console.warn(`[posthog] Failed to queue Hono exception for matrix-gateway-social: ${kind}`);
-    });
+    if (!(err instanceof HTTPException && err.status < 500)) {
+      void posthogErrorTracker.captureHonoException(err, c).catch((captureErr: unknown) => {
+        const kind = captureErr instanceof Error ? captureErr.name : typeof captureErr;
+        console.warn(`[posthog] Failed to queue Hono exception for matrix-gateway-social: ${kind}`);
+      });
+    }
     if (err.message.includes("JSON")) return c.json({ error: "Invalid JSON body" }, 400);
     return c.json({ error: "Internal error" }, 500);
   });
