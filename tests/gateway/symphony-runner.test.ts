@@ -73,7 +73,7 @@ describe("Symphony runner", () => {
       activeStates: ["Todo", "In Progress", "Merging", "Rework"],
     });
     expect(status.config.port).toBe(4066);
-    expect(status.config.workflowPath).toBe(join(homedir(), "code", "symphony", "WORKFLOW.md"));
+    expect(status.config.workflowPath).toBe(join(homePath, "system", "symphony", "WORKFLOW.md"));
   });
 
   it("fails instead of replacing an invalid persisted config with defaults", async () => {

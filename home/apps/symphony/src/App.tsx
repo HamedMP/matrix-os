@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bot,
   CheckCircle2,
@@ -523,6 +523,8 @@ function shellQuote(value: string): string {
 
 function App() {
   const [config, setConfig] = useState<SymphonyConfig>(DEFAULT_CONFIG);
+  const configRef = useRef(DEFAULT_CONFIG);
+  const configSaveSequenceRef = useRef(0);
   const [requiredLabelsInput, setRequiredLabelsInput] = useState(DEFAULT_CONFIG.requiredLabels.join(", "));
   const [activeStatesInput, setActiveStatesInput] = useState(DEFAULT_CONFIG.activeStates.join(", "));
   const [focusedListField, setFocusedListField] = useState<"requiredLabels" | "activeStates" | null>(null);
@@ -561,16 +563,30 @@ function App() {
     if (focusedListField !== "activeStates") setActiveStatesInput(config.activeStates.join(", "));
   }, [config.activeStates, focusedListField]);
 
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
   const saveConfig = useCallback(async (next: SymphonyConfig) => {
+    const previous = configRef.current;
+    const saveId = configSaveSequenceRef.current + 1;
+    configSaveSequenceRef.current = saveId;
+    configRef.current = next;
+    setConfig(next);
     setError(null);
     try {
       const runtimeConfig = await saveRuntimeConfig(next);
       await writeConfig(next);
-      setConfig(next);
-      setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
+      if (configSaveSequenceRef.current === saveId) {
+        setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
+      }
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony settings could not be saved.");
+      if (configSaveSequenceRef.current === saveId) {
+        configRef.current = previous;
+        setConfig(previous);
+        setError("Symphony settings could not be saved.");
+      }
     }
   }, []);
 

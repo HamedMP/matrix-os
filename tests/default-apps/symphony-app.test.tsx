@@ -63,6 +63,7 @@ describe("Symphony app", () => {
   let runtimeRunning = false;
   let runtimePort = 4066;
   let startRuntimeFailureCode: string | null = null;
+  let runtimeConfigSavePromise: Promise<Response> | null = null;
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
@@ -81,6 +82,7 @@ describe("Symphony app", () => {
     runtimeRunning = false;
     runtimePort = 4066;
     startRuntimeFailureCode = null;
+    runtimeConfigSavePromise = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -118,6 +120,7 @@ describe("Symphony app", () => {
         });
       }
       if (url === "/api/symphony/config" && init?.method === "POST") {
+        if (runtimeConfigSavePromise) return await runtimeConfigSavePromise;
         if (runtimeConfigShouldFail) return json({ error: "failed" }, { status: 500 });
         const requestedConfig = typeof init.body === "string"
           ? JSON.parse(init.body) as Partial<{
@@ -306,6 +309,48 @@ describe("Symphony app", () => {
       projectId: "",
       projectSlug: "",
     }));
+  });
+
+  it("keeps Team and Project selections visible while config saves are in flight", async () => {
+    storedConfig = JSON.stringify({
+      teamId: "team_mat",
+      teamKey: "MAT",
+      projectId: "project_mat",
+      projectSlug: "matrix-os",
+    });
+    linearProjects = [
+      { id: "project_mat", name: "Matrix OS", slugId: "matrix-os", teams: { nodes: [{ id: "team_mat", key: "MAT", name: "Matrix" }] } },
+      { id: "project_ops", name: "Ops", slugId: "ops", teams: { nodes: [{ id: "team_ops", key: "OPS", name: "Ops" }] } },
+    ];
+    let resolveRuntimeConfig: (response: Response) => void = () => {};
+    runtimeConfigSavePromise = new Promise<Response>((resolve) => {
+      resolveRuntimeConfig = resolve;
+    });
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("project_mat"));
+    fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team_ops" } });
+
+    expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_ops");
+    expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("");
+
+    resolveRuntimeConfig(json({
+      version: 1,
+      serviceRoot: "/home/matrixos/code/symphony/elixir",
+      binPath: "./bin/symphony",
+      workflowPath: "/app/WORKFLOW.md",
+      port: runtimePort,
+      tracker: {
+        kind: "linear",
+        teamKey: "OPS",
+        requiredLabels: ["symphony"],
+        activeStates: runtimeActiveStates,
+      },
+    }));
+    await waitFor(() => expect(JSON.parse(storedConfig ?? "{}")).toEqual(expect.objectContaining({
+      teamId: "team_ops",
+      projectId: "",
+    })));
   });
 
   it("preserves comma-separated list edits while typing", async () => {

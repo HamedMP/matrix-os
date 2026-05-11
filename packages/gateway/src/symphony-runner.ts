@@ -160,7 +160,7 @@ class SymphonyRunner {
       stored = JSON.parse(await readFile(this.configPath, "utf8")) as unknown;
     } catch (err: unknown) {
       if (err instanceof Error && "code" in err && err.code === "ENOENT") {
-        return SymphonyConfigSchema.parse({});
+        return this.defaultConfig();
       }
       console.error("[symphony] Failed to load config:", err);
       throw new SymphonyConfigLoadError();
@@ -399,13 +399,19 @@ class SymphonyRunner {
     try {
       return await this.status();
     } catch (err: unknown) {
-      if (err instanceof SymphonyConfigLoadError) return this.statusFor(SymphonyConfigSchema.parse({}));
+      if (err instanceof SymphonyConfigLoadError) return this.statusFor(this.defaultConfig());
       throw err;
     }
   }
 
+  private defaultConfig(): SymphonyConfig {
+    return SymphonyConfigSchema.parse({
+      workflowPath: join(this.homePath, "system", "symphony", "WORKFLOW.md"),
+    });
+  }
+
   private mergeConfig(update: SymphonyConfigUpdate, base?: SymphonyConfig): SymphonyConfig {
-    const current = base ?? SymphonyConfigSchema.parse({});
+    const current = base ?? this.defaultConfig();
     return SymphonyConfigSchema.parse({
       ...current,
       ...update,
