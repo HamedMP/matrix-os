@@ -8,7 +8,7 @@ export function register() {
   // PostHog is initialized lazily when an error is captured.
 }
 
-export const onRequestError = async (
+export const onRequestError = (
   err: unknown,
   request: {
     headers?: Headers | Record<string, string | string[] | undefined>;
@@ -19,5 +19,10 @@ export const onRequestError = async (
   context: { routeType?: string; routePath?: string; routerKind?: string },
 ) => {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  await reporter.captureException(err, { request, context });
+  void reporter.captureException(err, { request, context }).catch((error: unknown) => {
+    console.warn(
+      "[posthog] Failed to capture shell server exception:",
+      error instanceof Error ? error.name : typeof error,
+    );
+  });
 };

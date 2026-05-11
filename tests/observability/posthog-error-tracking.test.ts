@@ -267,6 +267,39 @@ describe("PostHog error tracking", () => {
     }
   });
 
+  it("queues Next server PostHog reporting off the request-error hook path", async () => {
+    const serverEntrypoints = [
+      "shell/instrumentation.ts",
+      "www/instrumentation.ts",
+    ];
+
+    for (const file of serverEntrypoints) {
+      const source = await readFile(file, "utf8");
+      expect(source, file).not.toContain("await reporter.captureException");
+      expect(source, file).not.toContain("await postHogServerErrorReporter.captureException");
+      expect(source, file).toContain("void ");
+      expect(source, file).toContain(".captureException(err, { request, context }).catch");
+      expect(source, file).toContain("console.warn");
+    }
+  });
+
+  it("preserves the public PostHog project-token alias in shell build paths", async () => {
+    const shellBuildConfigFiles = [
+      "Dockerfile",
+      "scripts/build-user-image.sh",
+      "scripts/build-host-bundle.sh",
+      "docker-compose.yml",
+      "distro/docker-compose.local.yml",
+      "distro/docker-compose.multi.yml",
+      "distro/docker-compose.platform.yml",
+    ];
+
+    for (const file of shellBuildConfigFiles) {
+      const source = await readFile(file, "utf8");
+      expect(source, file).toContain("NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN");
+    }
+  });
+
   it("publishes observability through built export conditions", async () => {
     const packageJson = JSON.parse(await readFile("packages/observability/package.json", "utf8")) as {
       exports: Record<string, { types: string; import: string; default: string }>;
