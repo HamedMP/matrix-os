@@ -382,6 +382,9 @@ function normalizeTimeoutMs(value: number | undefined): number {
 }
 
 function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  // The PostHog SDK does not expose an AbortSignal for flush/shutdown calls.
+  // This bounds only the await; request error handlers must call capture paths
+  // fire-and-forget so SDK work cannot block user-visible responses.
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {

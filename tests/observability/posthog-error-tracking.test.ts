@@ -418,6 +418,18 @@ describe("PostHog error tracking", () => {
     expect(wwwSource).toContain("await shutdownPostHog()");
   });
 
+  it("documents PostHog SDK timeout and warm-process shutdown behavior", async () => {
+    const [observabilitySource, wwwServer] = await Promise.all([
+      readFile("packages/observability/src/index.ts", "utf8"),
+      readFile("www/src/lib/posthog-server.ts", "utf8"),
+    ]);
+
+    expect(observabilitySource).toContain("PostHog SDK does not expose an AbortSignal");
+    expect(observabilitySource).toContain("bounds only the await");
+    expect(wwwServer).toContain("shutdownPostHog is also used as an action-level flush");
+    expect(wwwServer).toContain("allow later warm-process calls to recreate clients");
+  });
+
   it("does not pass PostHog secrets to external Conduit containers", async () => {
     const composeFiles = [
       "docker-compose.dev.yml",

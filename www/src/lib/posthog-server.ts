@@ -34,6 +34,8 @@ export function getPostHogClient() {
 }
 
 export async function shutdownPostHog() {
+  // shutdownPostHog is also used as an action-level flush by dashboard and
+  // Inngest flows, so allow later warm-process calls to recreate clients.
   await postHogServerErrorReporter.shutdown();
   if (posthogClient) {
     await posthogClient.shutdown();
