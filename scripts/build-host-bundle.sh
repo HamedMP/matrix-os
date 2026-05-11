@@ -29,7 +29,14 @@ pnpm --filter '@matrix-os/gateway' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
-pnpm --filter './shell' build
+if [ "${HOST_BUNDLE_SKIP_SHELL_BUILD:-false}" = "true" ]; then
+  test -d "$ROOT_DIR/shell/.next" || {
+    echo "HOST_BUNDLE_SKIP_SHELL_BUILD=true but shell/.next is missing" >&2
+    exit 1
+  }
+else
+  pnpm --filter './shell' build
+fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
 
