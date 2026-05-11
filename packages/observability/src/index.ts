@@ -175,7 +175,12 @@ export function installPostHogHonoErrorTracking(
   const tracker = createPostHogErrorTracker(options);
   const logger = options.logger ?? console;
   app.onError(async (err, c) => {
-    if (err instanceof HTTPException && err.status < 500) {
+    if (err instanceof HTTPException) {
+      if (err.status >= 500) {
+        void tracker.captureHonoException(err, c).catch((captureErr: unknown) => {
+          logger.warn(`[posthog] Failed to queue Hono exception for ${options.service}: ${errorKind(captureErr)}`);
+        });
+      }
       return err.getResponse();
     }
     void tracker.captureHonoException(err, c).catch((captureErr: unknown) => {

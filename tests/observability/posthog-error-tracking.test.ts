@@ -109,6 +109,33 @@ describe("PostHog error tracking", () => {
     expect(flush).not.toHaveBeenCalled();
   });
 
+  it("captures 5xx Hono HTTPExceptions while preserving their response", async () => {
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const app = new Hono();
+
+    installPostHogHonoErrorTracking(app, {
+      env: { POSTHOG_TOKEN: "phc_test" },
+      service: "matrix-gateway",
+      clientFactory: () => ({
+        captureException,
+        flush,
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    app.get("/unavailable", () => {
+      throw new HTTPException(503, { message: "Service temporarily unavailable" });
+    });
+
+    const res = await app.request("http://localhost/unavailable");
+
+    expect(res.status).toBe(503);
+    await expect(res.text()).resolves.toBe("Service temporarily unavailable");
+    expect(captureException).toHaveBeenCalledOnce();
+    expect(flush).toHaveBeenCalledOnce();
+  });
+
   it("returns Hono 500 responses without waiting for telemetry flush", async () => {
     vi.useFakeTimers();
     try {
