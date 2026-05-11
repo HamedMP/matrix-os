@@ -194,7 +194,7 @@ clean_staging() {
   local count=0
   for d in "$STAGING_DIR"/failed-* "$STAGING_DIR"/bundle-*; do
     [ -e "$d" ] || continue
-    rm -rf "$d"; count=$((count + 1))
+    sudo rm -rf "$d"; count=$((count + 1))
   done
   if [ "$count" -gt 0 ]; then
     log "Cleaned $count stale staging artifacts"
