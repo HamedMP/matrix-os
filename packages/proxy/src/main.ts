@@ -297,7 +297,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   isShuttingDown = true;
   console.log(`[proxy] Received ${signal}, shutting down`);
   server.close();
-  const forceExit = setTimeout(() => process.exit(1), 5_000);
+  const forceExit = setTimeout(() => process.exit(1), 6_000);
   try {
     await posthogErrorTracker.shutdown();
   } catch (err: unknown) {

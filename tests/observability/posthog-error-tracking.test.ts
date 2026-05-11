@@ -468,6 +468,13 @@ describe("PostHog error tracking", () => {
     }
   });
 
+  it("forwards both server PostHog token aliases to provisioned containers", async () => {
+    const platformMain = await readFile("packages/platform/src/main.ts", "utf8");
+
+    expect(platformMain).toContain("'POSTHOG_TOKEN'");
+    expect(platformMain).toContain("'POSTHOG_PROJECT_TOKEN'");
+  });
+
   it("bakes public PostHog env into full-image compose shell builds", async () => {
     const composeShellServices = [
       { file: "distro/docker-compose.local.yml", services: ["alice", "bob"] },
@@ -555,9 +562,11 @@ describe("PostHog error tracking", () => {
     expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
     expect(platformSocialApi).toContain("shutdownPostHog");
     expect(platformMain).toContain("await app.shutdownPostHog()");
+    expect(platformMain).toContain("await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()))");
+    expect(platformMain).not.toContain("for (let i = posthogShutdowns.length - 1");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
     const proxyCloseIndex = proxyMain.indexOf("server.close();");
-    const proxyForcedExitIndex = proxyMain.indexOf("const forceExit = setTimeout(() => process.exit(1), 5_000)");
+    const proxyForcedExitIndex = proxyMain.indexOf("const forceExit = setTimeout(() => process.exit(1), 6_000)");
     const proxyTelemetryDrainIndex = proxyMain.indexOf("await posthogErrorTracker.shutdown()");
     expect(proxyCloseIndex).toBeGreaterThanOrEqual(0);
     expect(proxyCloseIndex).toBeLessThan(proxyTelemetryDrainIndex);

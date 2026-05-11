@@ -1984,9 +1984,7 @@ export function createApp(deps: {
   });
 
   app.shutdownPostHog = async () => {
-    for (let i = posthogShutdowns.length - 1; i >= 0; i -= 1) {
-      await posthogShutdowns[i]();
-    }
+    await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()));
   };
 
   return app;
@@ -2012,6 +2010,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   for (const key of [
     'MATRIX_HOME_MIRROR',
     'POSTHOG_TOKEN',
+    'POSTHOG_PROJECT_TOKEN',
     'POSTHOG_HOST',
     'NEXT_PUBLIC_POSTHOG_KEY',
     'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN',
