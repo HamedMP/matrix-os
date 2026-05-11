@@ -43,6 +43,17 @@ describe('customer VPS host bundle', () => {
     expect(updater).toContain('Usage: matrix-update [apply|rollback]');
   });
 
+  it('sync agent replaces the app tree with root permissions', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('sudo rm -rf "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
+    expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
+    expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
+  });
+
   it('gateway launcher performs the customer VPS registration callback', () => {
     const root = process.cwd();
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');

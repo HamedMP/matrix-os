@@ -774,6 +774,11 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-verified")).toBeNull();
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 
@@ -817,6 +822,10 @@ describe("platform proxy routing", () => {
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
     expect(headers.get("x-platform-verified")).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 

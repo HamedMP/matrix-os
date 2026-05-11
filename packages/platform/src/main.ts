@@ -348,6 +348,22 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Expires', '0');
 }
 
+function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
+  headers.set('cache-control', 'private, no-store');
+  headers.set('cdn-cache-control', 'no-store');
+  headers.set('cloudflare-cdn-cache-control', 'no-store');
+  const vary = headers.get('vary');
+  const varyParts = new Set(
+    (vary ?? '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
+  varyParts.add('Cookie');
+  varyParts.add('Accept-Encoding');
+  headers.set('vary', Array.from(varyParts).join(', '));
+}
+
 function isCodeDomainStaticAssetPath(path: string): boolean {
   return (
     path === '/favicon.ico' ||
@@ -1262,6 +1278,9 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        if (identity.source === 'static-route' && isAppDomainStaticAssetPath(path)) {
+          applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
+        }
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
@@ -1389,6 +1408,9 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        if (identity.source === 'static-route' && isAppDomainStaticAssetPath(path)) {
+          applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
+        }
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
