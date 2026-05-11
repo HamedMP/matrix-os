@@ -195,7 +195,10 @@ clean_staging() {
     [ -e "$d" ] || continue
     rm -rf "$d"; count=$((count + 1))
   done
-  [ "$count" -gt 0 ] && log "Cleaned $count stale staging artifacts"
+  if [ "$count" -gt 0 ]; then
+    log "Cleaned $count stale staging artifacts"
+  fi
+  return 0
 }
 
 # ── Main loop ────────────────────────────────────────────────────────
@@ -206,12 +209,12 @@ clean_staging
 while true; do
   # React to trigger files and signals
   if [ -f "$UPDATE_TRIGGER" ]; then
-    rm -f "$UPDATE_TRIGGER"
+    sudo rm -f "$UPDATE_TRIGGER"
     rm -f "$AUTO_APPLY_FAILED_MARKER"
     apply_update || log "Update failed — will retry on next trigger"
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
-    rm -f "$ROLLBACK_TRIGGER"
+    sudo rm -f "$ROLLBACK_TRIGGER"
     do_rollback || log "Rollback failed"
   fi
   if [ "$update_requested" = true ]; then

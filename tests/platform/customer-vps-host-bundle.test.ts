@@ -52,6 +52,9 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
     expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
+    expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
+    expect(syncAgent).toContain('return 0');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {
