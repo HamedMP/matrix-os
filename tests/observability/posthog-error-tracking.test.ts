@@ -285,12 +285,17 @@ describe("PostHog error tracking", () => {
     }
   });
 
-  it("exposes a shutdown hook for the shell Next server reporter", async () => {
-    const source = await readFile("shell/instrumentation.ts", "utf8");
+  it("exposes shutdown hooks for Next server reporters", async () => {
+    const [shellSource, wwwSource] = await Promise.all([
+      readFile("shell/instrumentation.ts", "utf8"),
+      readFile("www/instrumentation.ts", "utf8"),
+    ]);
 
-    expect(source).toContain("export const shellPostHogReporter");
-    expect(source).toContain("export async function unregister()");
-    expect(source).toContain("await shellPostHogReporter.shutdown()");
+    expect(shellSource).toContain("export const shellPostHogReporter");
+    expect(shellSource).toContain("export async function unregister()");
+    expect(shellSource).toContain("await shellPostHogReporter.shutdown()");
+    expect(wwwSource).toContain("export async function unregister()");
+    expect(wwwSource).toContain("await shutdownPostHog()");
   });
 
   it("does not pass PostHog secrets to external Conduit containers", async () => {
@@ -313,6 +318,10 @@ describe("PostHog error tracking", () => {
       "scripts/build-user-image.sh",
       "scripts/build-host-bundle.sh",
       "docker-compose.yml",
+      "docker-compose.branch.yml",
+      "docker-compose.dev-vps.yml",
+      "docker-compose.dev.yml",
+      "docker-compose.staging.yml",
       "distro/docker-compose.local.yml",
       "distro/docker-compose.multi.yml",
       "distro/docker-compose.platform.yml",
@@ -321,6 +330,9 @@ describe("PostHog error tracking", () => {
     for (const file of shellBuildConfigFiles) {
       const source = await readFile(file, "utf8");
       expect(source, file).toContain("NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN");
+      expect(countOccurrences(source, "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN"), file).toBe(
+        countOccurrences(source, "NEXT_PUBLIC_POSTHOG_KEY"),
+      );
     }
   });
 
@@ -418,4 +430,8 @@ function readYamlServiceBlock(source: string, serviceName: string): string {
     block.push(line);
   }
   return block.join("\n");
+}
+
+function countOccurrences(source: string, needle: string): number {
+  return source.split(needle).length - 1;
 }

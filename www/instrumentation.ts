@@ -1,7 +1,11 @@
-import { postHogServerErrorReporter } from "./src/lib/posthog-server";
+import { postHogServerErrorReporter, shutdownPostHog } from "./src/lib/posthog-server";
 
 export function register() {
   // PostHog is initialized lazily when an error is captured.
+}
+
+export async function unregister() {
+  await shutdownPostHog();
 }
 
 export const onRequestError = (
