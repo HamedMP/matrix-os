@@ -165,8 +165,15 @@ rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
 if [ "${MATRIX_DOCKER_CHOWN_SOURCE:-}" = "true" ]; then
-  touch /app/shell/next-env.d.ts
-  chown matrixos:matrixos /app/shell/next-env.d.ts
+  # Next dev rewrites next-env.d.ts during startup. The source tree is bind
+  # mounted from the host, so make this one generated type file writable before
+  # dropping to the non-root matrixos user.
+  if [ -e /app/shell/next-env.d.ts ]; then
+    chmod ug+rw /app/shell/next-env.d.ts 2>/dev/null || true
+  else
+    install -m 0664 /dev/null /app/shell/next-env.d.ts 2>/dev/null || true
+  fi
+  chown matrixos:matrixos /app/shell/next-env.d.ts 2>/dev/null || true
 fi
 
 # QMD: index user home for semantic search (best-effort)
@@ -184,6 +191,8 @@ cp /app/distro/p10k.zsh "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
+mkdir -p /app/packages/kernel/dist
+chown -R matrixos:matrixos /app/packages/kernel/dist 2>/dev/null || true
 chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
@@ -198,6 +207,12 @@ exec su-exec matrixos bash -c '
   export SHELL=/bin/zsh
   export PATH="/app/node_modules/.bin:$PATH"
   cd /app
+
+  echo "[matrix-os-dev] Building kernel package..."
+  pnpm --filter "@matrix-os/kernel" build || {
+    echo "[matrix-os-dev] Kernel build failed"
+    exit 1
+  }
 
   # QMD: register collections + start MCP server (best-effort, background)
   if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then

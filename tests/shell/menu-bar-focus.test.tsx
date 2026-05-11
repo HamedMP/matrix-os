@@ -42,6 +42,7 @@ describe("MenuBar focus display", () => {
     );
 
     expect(screen.getByRole("button", { name: "Matrix OS" })).toBeTruthy();
+    expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
     expect(screen.queryByRole("button", { name: "Whiteboard" })).toBeNull();
   });
 
@@ -55,6 +56,7 @@ describe("MenuBar focus display", () => {
     );
 
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
+    expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
     expect(screen.queryByRole("button", { name: "Matrix OS" })).toBeNull();
   });
 });
