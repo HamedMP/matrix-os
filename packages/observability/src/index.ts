@@ -198,13 +198,15 @@ export function createPostHogServerExceptionReporter(
     captureException(error, input = {}) {
       const request = input.request;
       const context = input.context;
+      const requestPath = getRequestPathInfo(request);
       return tracker.captureException(error, {
         distinctId: input.distinctId ?? extractPostHogDistinctId(readHeader(request?.headers, "cookie")),
         properties: {
           service: options.service,
           runtime: "nextjs",
           method: sanitizeMaybeString(request?.method),
-          path: getRequestPath(request),
+          path: requestPath.path,
+          query_present: requestPath.queryPresent,
           route_type: sanitizeMaybeString(context?.routeType),
           route_path: sanitizeMaybeString(context?.routePath),
           router_kind: sanitizeMaybeString(context?.routerKind),
@@ -260,11 +262,26 @@ function getHonoDistinctId(c: Context): string | undefined {
   );
 }
 
-function getRequestPath(request: NextRequestLike | undefined): string | undefined {
-  if (!request) return undefined;
-  if (request.path) return sanitizeMaybeString(request.path);
-  const url = safeUrl(request.url);
-  return url?.pathname;
+function getRequestPathInfo(request: NextRequestLike | undefined): { path?: string; queryPresent: boolean } {
+  const rawPath = request?.path ?? request?.url;
+  if (!rawPath) return { queryPresent: false };
+  const url = safeRequestUrl(rawPath);
+  if (url) {
+    return {
+      path: sanitizeMaybeString(url.pathname),
+      queryPresent: Boolean(url.search),
+    };
+  }
+  const queryIndex = rawPath.indexOf("?");
+  const hashIndex = rawPath.indexOf("#");
+  const endIndex = Math.min(
+    queryIndex === -1 ? rawPath.length : queryIndex,
+    hashIndex === -1 ? rawPath.length : hashIndex,
+  );
+  return {
+    path: sanitizeMaybeString(rawPath.slice(0, endIndex)),
+    queryPresent: queryIndex !== -1,
+  };
 }
 
 function readHeader(
@@ -315,6 +332,18 @@ function safeUrl(value: string | undefined): URL | undefined {
   if (!value) return undefined;
   try {
     return new URL(value);
+  } catch (err: unknown) {
+    if (err instanceof TypeError) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+function safeRequestUrl(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value, "http://matrix-os.local");
   } catch (err: unknown) {
     if (err instanceof TypeError) {
       return undefined;

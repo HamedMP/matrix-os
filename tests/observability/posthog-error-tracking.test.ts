@@ -234,7 +234,7 @@ describe("PostHog error tracking", () => {
         request: {
           headers: { cookie },
           method: "GET",
-          path: "/dashboard",
+          path: "/dashboard?token=secret",
         },
         context: { routeType: "render" },
       }),
@@ -245,8 +245,10 @@ describe("PostHog error tracking", () => {
       runtime: "nextjs",
       method: "GET",
       path: "/dashboard",
+      query_present: true,
       route_type: "render",
     });
+    expect(JSON.stringify(captureException.mock.calls[0]?.[2])).not.toContain("secret");
     expect(flush).toHaveBeenCalledOnce();
   });
 
