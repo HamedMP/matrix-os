@@ -21,6 +21,13 @@ describe("requestHasBody", () => {
     expect(requestHasBody(contextWithHeaders({ "content-length": "0" }, body))).toBe(false);
   });
 
+  it("does not treat malformed content length as body-present by itself", () => {
+    expect(requestHasBody(contextWithHeaders({
+      "content-length": "abc",
+      "content-type": "application/json",
+    }, null))).toBe(false);
+  });
+
   it("treats transfer-encoded requests as body-bearing", () => {
     expect(requestHasBody(contextWithHeaders({ "transfer-encoding": "chunked" }, null))).toBe(true);
   });

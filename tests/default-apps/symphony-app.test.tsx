@@ -48,6 +48,7 @@ function json(body: unknown, init?: ResponseInit): Response {
 
 describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
+  let appConfigWriteShouldFail = false;
   let storedConfig: string | null = null;
   let availableLabels: Array<{ id: string; name: string }> = [];
   let availableLabelPages: Record<string, { nodes: Array<{ id: string; name: string }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
@@ -68,6 +69,7 @@ describe("Symphony app", () => {
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
+    appConfigWriteShouldFail = false;
     storedConfig = null;
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
     availableLabelPages = null;
@@ -91,6 +93,7 @@ describe("Symphony app", () => {
         return json({ value: storedConfig });
       }
       if (url === "/api/bridge/data" && init?.method === "POST") {
+        if (appConfigWriteShouldFail) return json({ error: "failed" }, { status: 500 });
         const body = typeof init.body === "string"
           ? JSON.parse(init.body) as { action?: string; value?: string }
           : {};
@@ -239,6 +242,31 @@ describe("Symphony app", () => {
     expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat");
     expect(global.fetch).not.toHaveBeenCalledWith("/api/bridge/data", expect.objectContaining({ method: "POST" }));
     expect(warnSpy).toHaveBeenCalledWith("[symphony] config save failed:", "runtime_config_failed");
+  });
+
+  it("rolls back text-field config edits when the app config write fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    storedConfig = JSON.stringify({
+      githubRepo: "HamedMP/matrix-os",
+      cloneUrl: "git@github.com:HamedMP/matrix-os.git",
+    });
+    render(<App />);
+
+    const repoInput = await screen.findByLabelText("GitHub repo") as HTMLInputElement;
+    await waitFor(() => expect(repoInput.value).toBe("HamedMP/matrix-os"));
+    appConfigWriteShouldFail = true;
+
+    await act(async () => {
+      fireEvent.change(repoInput, { target: { value: "HamedMP/other-repo" } });
+      fireEvent.blur(repoInput);
+    });
+
+    await waitFor(() => expect(screen.getByText("Symphony settings could not be saved.")).toBeTruthy());
+    expect(repoInput.value).toBe("HamedMP/matrix-os");
+    expect(JSON.parse(storedConfig ?? "{}")).toEqual(expect.objectContaining({
+      githubRepo: "HamedMP/matrix-os",
+    }));
+    expect(warnSpy).toHaveBeenCalledWith("[symphony] config save failed:", "config_write_failed");
   });
 
   it("does not restore a saved Linear project from another team", async () => {

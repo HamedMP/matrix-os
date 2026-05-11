@@ -525,6 +525,7 @@ function App() {
   const [config, setConfig] = useState<SymphonyConfig>(DEFAULT_CONFIG);
   const configRef = useRef(DEFAULT_CONFIG);
   const configSaveSequenceRef = useRef(0);
+  const pendingPersistBaseRef = useRef<SymphonyConfig | null>(null);
   const [requiredLabelsInput, setRequiredLabelsInput] = useState(DEFAULT_CONFIG.requiredLabels.join(", "));
   const [activeStatesInput, setActiveStatesInput] = useState(DEFAULT_CONFIG.activeStates.join(", "));
   const [focusedListField, setFocusedListField] = useState<"requiredLabels" | "activeStates" | null>(null);
@@ -579,6 +580,7 @@ function App() {
       const runtimeConfig = await saveRuntimeConfig(next);
       await writeConfig(next);
       if (configSaveSequenceRef.current === saveId) {
+        pendingPersistBaseRef.current = null;
         setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
       }
     } catch (err: unknown) {
@@ -592,19 +594,36 @@ function App() {
   }, []);
 
   const updateConfig = useCallback((patch: Partial<SymphonyConfig>) => {
-    setConfig((current) => ({ ...current, ...patch }));
+    setConfig((current) => {
+      pendingPersistBaseRef.current ??= current;
+      const next = { ...current, ...patch };
+      configRef.current = next;
+      return next;
+    });
   }, []);
 
   const persistConfig = useCallback(async () => {
+    const previous = pendingPersistBaseRef.current ?? configRef.current;
+    const next = configRef.current;
+    const saveId = configSaveSequenceRef.current + 1;
+    configSaveSequenceRef.current = saveId;
     try {
-      const runtimeConfig = await saveRuntimeConfig(config);
-      await writeConfig(config);
-      setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
+      const runtimeConfig = await saveRuntimeConfig(next);
+      await writeConfig(next);
+      if (configSaveSequenceRef.current === saveId) {
+        pendingPersistBaseRef.current = null;
+        setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
+      }
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony settings could not be saved.");
+      if (configSaveSequenceRef.current === saveId) {
+        pendingPersistBaseRef.current = null;
+        configRef.current = previous;
+        setConfig(previous);
+        setError("Symphony settings could not be saved.");
+      }
     }
-  }, [config]);
+  }, []);
 
   const refreshConnections = useCallback(async () => {
     const next = await fetchConnections();
@@ -654,9 +673,11 @@ function App() {
   useEffect(() => {
     Promise.all([readConfig(), fetchConnections(), fetchRuntimeStatus()])
       .then(([storedConfig, storedConnections, storedRuntimeStatus]) => {
+        const nextConfig = mergeRuntimeConfig(storedConfig, storedRuntimeStatus);
+        configRef.current = nextConfig;
         setRuntimeStatus(storedRuntimeStatus);
         setRuntimeConfigLoaded(Boolean(storedRuntimeStatus));
-        setConfig(mergeRuntimeConfig(storedConfig, storedRuntimeStatus));
+        setConfig(nextConfig);
         setConnections(storedConnections);
       })
       .catch((err: unknown) => {
