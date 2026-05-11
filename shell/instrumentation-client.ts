@@ -12,6 +12,8 @@ const config = getPostHogClientConfig({
 
 if (config) {
   posthog.init(config.token, {
+    // Shell has no local PostHog /ingest proxy, so an unset api_host lets
+    // posthog-js use its default endpoint.
     api_host: config.apiHost ?? config.uiHost,
     ui_host: config.uiHost,
     defaults: "2026-01-30",

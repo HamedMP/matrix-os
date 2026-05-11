@@ -267,6 +267,9 @@ describe("PostHog error tracking", () => {
       expect(source, file).not.toContain("as never");
       expect(source, file).toContain("process.env.NEXT_PUBLIC_POSTHOG_KEY");
     }
+
+    const shellClient = await readFile("shell/instrumentation-client.ts", "utf8");
+    expect(shellClient).toContain("Shell has no local PostHog /ingest proxy");
   });
 
   it("queues Next server PostHog reporting off the request-error hook path", async () => {
@@ -400,6 +403,7 @@ describe("PostHog error tracking", () => {
     expect(platformSocialApi).toContain("shutdownPostHog");
     expect(platformMain).toContain("await app.shutdownPostHog()");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
+    expect(proxyMain).toContain("setTimeout(() => process.exit(0), 5_000).unref()");
     expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
 

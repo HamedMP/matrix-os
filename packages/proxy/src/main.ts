@@ -302,6 +302,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
     console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
   } finally {
     server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5_000).unref();
   }
 }
 
