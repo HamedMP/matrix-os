@@ -84,6 +84,17 @@ describe("Symphony runner", () => {
     await expect(runner.status()).rejects.toThrow("Symphony configuration could not be loaded");
   });
 
+  it("does not throw from idle stop when persisted config is invalid", async () => {
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system", "symphony.json"), "{invalid-json");
+    const runner = createSymphonyRunner({ homePath, env: {} });
+
+    const status = await runner.stop();
+
+    expect(status.running).toBe(false);
+    expect(status.config.port).toBe(4066);
+  });
+
   it("refuses to start without a local Linear API key", async () => {
     const spawnProcess = vi.fn();
     const runner = createSymphonyRunner({ homePath, env: {}, spawnProcess });

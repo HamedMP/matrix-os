@@ -362,7 +362,7 @@ class SymphonyRunner {
       }
     }
     const child = this.process;
-    if (!child) return this.status();
+    if (!child) return this.statusForStop();
 
     await new Promise<void>((resolveStop) => {
       let settled = false;
@@ -392,7 +392,16 @@ class SymphonyRunner {
     }
     this.lastExitAt ??= new Date().toISOString();
     if (typeof child.exitCode === "number") this.lastExitCode ??= child.exitCode;
-    return this.status();
+    return this.statusForStop();
+  }
+
+  private async statusForStop(): Promise<SymphonyStatus> {
+    try {
+      return await this.status();
+    } catch (err: unknown) {
+      if (err instanceof SymphonyConfigLoadError) return this.statusFor(SymphonyConfigSchema.parse({}));
+      throw err;
+    }
   }
 
   private mergeConfig(update: SymphonyConfigUpdate, base?: SymphonyConfig): SymphonyConfig {
