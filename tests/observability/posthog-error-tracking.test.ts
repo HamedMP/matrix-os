@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { getPostHogClientConfig } from "../../packages/observability/src/client.ts";
+import {
+  getPostHogClientConfig,
+  resolvePostHogClientApiHost,
+} from "../../packages/observability/src/client.ts";
 import {
   createPostHogErrorTracker,
   createPostHogServerExceptionReporter,
@@ -24,6 +27,38 @@ describe("PostHog error tracking", () => {
       uiHost: "https://eu.i.posthog.com",
     });
     expect(getPostHogClientConfig({})).toBeNull();
+  });
+
+  it("lets shell ignore relative PostHog API hosts that it cannot proxy", async () => {
+    const relativeConfig = getPostHogClientConfig({
+      NEXT_PUBLIC_POSTHOG_KEY: "phc_test",
+      NEXT_PUBLIC_POSTHOG_API_HOST: "/ingest",
+      NEXT_PUBLIC_POSTHOG_HOST: "https://eu.i.posthog.com",
+    });
+    const relativeConfigWithoutUiHost = getPostHogClientConfig({
+      NEXT_PUBLIC_POSTHOG_KEY: "phc_test",
+      NEXT_PUBLIC_POSTHOG_API_HOST: "/ingest",
+    });
+    const absoluteConfig = getPostHogClientConfig({
+      NEXT_PUBLIC_POSTHOG_KEY: "phc_test",
+      NEXT_PUBLIC_POSTHOG_API_HOST: "https://eu.i.posthog.com",
+    });
+
+    expect(relativeConfig).not.toBeNull();
+    expect(relativeConfigWithoutUiHost).not.toBeNull();
+    expect(absoluteConfig).not.toBeNull();
+    expect(resolvePostHogClientApiHost(relativeConfig!)).toBe("/ingest");
+    expect(resolvePostHogClientApiHost(relativeConfig!, { allowRelativeApiHost: false })).toBe(
+      "https://eu.i.posthog.com",
+    );
+    expect(resolvePostHogClientApiHost(relativeConfigWithoutUiHost!, { allowRelativeApiHost: false })).toBeUndefined();
+    expect(resolvePostHogClientApiHost(absoluteConfig!, { allowRelativeApiHost: false })).toBe(
+      "https://eu.i.posthog.com",
+    );
+
+    const shellClient = await readFile("shell/instrumentation-client.ts", "utf8");
+    expect(shellClient).toContain("resolvePostHogClientApiHost");
+    expect(shellClient).toContain("allowRelativeApiHost: false");
   });
 
   it("stays disabled when no PostHog token is configured", async () => {

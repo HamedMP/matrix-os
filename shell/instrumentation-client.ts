@@ -1,5 +1,8 @@
 import posthog from "posthog-js";
-import { getPostHogClientConfig } from "@matrix-os/observability/client";
+import {
+  getPostHogClientConfig,
+  resolvePostHogClientApiHost,
+} from "@matrix-os/observability/client";
 
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
@@ -14,7 +17,7 @@ if (config) {
   posthog.init(config.token, {
     // Shell has no local PostHog /ingest proxy, so an unset api_host lets
     // posthog-js use its default endpoint.
-    api_host: config.apiHost ?? config.uiHost,
+    api_host: resolvePostHogClientApiHost(config, { allowRelativeApiHost: false }),
     ui_host: config.uiHost,
     defaults: "2026-01-30",
     capture_exceptions: true,

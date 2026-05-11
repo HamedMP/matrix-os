@@ -1,5 +1,8 @@
 import posthog from "posthog-js";
-import { getPostHogClientConfig } from "@matrix-os/observability/client";
+import {
+  getPostHogClientConfig,
+  resolvePostHogClientApiHost,
+} from "@matrix-os/observability/client";
 
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
@@ -12,7 +15,7 @@ const config = getPostHogClientConfig({
 
 if (config) {
   posthog.init(config.token, {
-    api_host: config.apiHost ?? config.uiHost,
+    api_host: resolvePostHogClientApiHost(config),
     ui_host: config.uiHost,
     defaults: "2026-01-30",
     capture_exceptions: true,
