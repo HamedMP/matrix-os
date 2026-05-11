@@ -29,10 +29,11 @@ describe("T1440-T1445: AI skills for app building", () => {
         expect(content).toContain(`name: ${skill.name}`);
       });
 
-      it("has Hermes metadata", () => {
+      it("has agent metadata", () => {
         const content = readFileSync(skillPath(skill.dir), "utf-8");
         expect(content).toContain("metadata:");
-        expect(content).toContain("hermes:");
+        expect(content).toContain("agent:");
+        expect(content).toContain("tags:");
       });
 
       it("has version metadata", () => {
@@ -68,7 +69,7 @@ describe("T1440-T1445: AI skills for app building", () => {
       expect(content).toContain("theme");
     });
 
-    it("links companion skills through Hermes metadata", () => {
+    it("links companion skills through agent metadata", () => {
       const content = readFileSync(skillPath("app-builder"), "utf-8");
       expect(content).toContain("related_skills:");
       expect(content).toContain("matrix-design-system");
