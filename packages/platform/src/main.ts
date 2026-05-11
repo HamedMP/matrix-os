@@ -942,9 +942,24 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid request' }, 400);
     }
 
+    const r2Key = `system-bundles/${imageVersion}/${file}`;
+
+    if (file.endsWith('.tar.gz') && deps.customerVpsObjectStore.getPresignedGetUrl) {
+      try {
+        const url = await deps.customerVpsObjectStore.getPresignedGetUrl(r2Key, 3600);
+        return c.redirect(url, 302);
+      } catch (err: unknown) {
+        if (isObjectNotFoundError(err)) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        logPlatformRouteError('/system-bundles/:imageVersion/:file', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
+    }
+
     try {
       const object = await deps.customerVpsObjectStore.getObject(
-        `system-bundles/${imageVersion}/${file}`,
+        r2Key,
         { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
       );
       if (!object.body) {

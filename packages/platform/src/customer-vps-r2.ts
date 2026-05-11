@@ -36,6 +36,7 @@ export interface CustomerVpsObjectStore {
     key: string,
     options?: { signal?: AbortSignal },
   ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+  getPresignedGetUrl?(key: string, expiresIn?: number): Promise<string>;
 }
 
 export function buildVpsMeta(machine: UserMachineRecord, nowIso: string): VpsMeta {
