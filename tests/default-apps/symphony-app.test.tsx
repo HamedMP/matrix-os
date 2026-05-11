@@ -661,4 +661,37 @@ describe("Symphony app", () => {
       ]);
     });
   });
+
+  it("creates workflow states for the selected team when old team states are loaded", async () => {
+    workflowStates = [
+      { id: "state_mat_todo", name: "Todo", type: "unstarted", color: "#6b7280", team: { id: "team_mat" } },
+      { id: "state_mat_progress", name: "In Progress", type: "started", color: "#2563eb", team: { id: "team_mat" } },
+      { id: "state_mat_merging", name: "Merging", type: "started", color: "#0f783c", team: { id: "team_mat" } },
+      { id: "state_mat_rework", name: "Rework", type: "started", color: "#db6e1f", team: { id: "team_mat" } },
+    ];
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    const createStatesButton = await screen.findByRole("button", { name: /Create states/ }) as HTMLButtonElement;
+    await waitFor(() => expect(createStatesButton.disabled).toBe(true));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team_ops" } });
+    });
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_ops"));
+    await waitFor(() => expect(createStatesButton.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(createStatesButton);
+    });
+
+    await waitFor(() => {
+      const createdStates = integrationCalls.filter((call) => call.action === "create_workflow_state").map((call) => call.params);
+      expect(createdStates).toEqual([
+        { teamId: "team_ops", name: "Todo", color: "#6b7280", type: "unstarted" },
+        { teamId: "team_ops", name: "In Progress", color: "#2563eb", type: "started" },
+        { teamId: "team_ops", name: "Merging", color: "#0f783c", type: "started" },
+        { teamId: "team_ops", name: "Rework", color: "#db6e1f", type: "started" },
+      ]);
+    });
+  });
 });

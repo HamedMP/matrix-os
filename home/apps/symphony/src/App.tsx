@@ -428,6 +428,11 @@ function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
   return required.every((label) => issueLabels.has(label));
 }
 
+function workflowStateBelongsToTeam(state: WorkflowState, teamId: string): boolean {
+  if (!teamId) return true;
+  return state.team?.id === teamId;
+}
+
 function boardIncompleteMessage(collected: number, pages: number): string {
   return `${BOARD_INCOMPLETE_ERROR_PREFIX} only ${collected} of ${ISSUE_TARGET_COUNT} target issues found after scanning ${pages} pages. Consider reducing the number of required labels.`;
 }
@@ -518,7 +523,10 @@ function App() {
   const activeStateTemplates = useMemo(() => templatesForActiveStates(config.activeStates), [config.activeStates]);
   const boardStates = useMemo(() => activeStateTemplates.map((state) => state.name), [activeStateTemplates]);
   const missingSymphonyStates = activeStateTemplates.filter(
-    (required) => !states.some((state) => state.name.toLowerCase() === required.name.toLowerCase()),
+    (required) => !states.some((state) => (
+      workflowStateBelongsToTeam(state, config.teamId) &&
+      state.name.toLowerCase() === required.name.toLowerCase()
+    )),
   );
 
   useEffect(() => {
@@ -669,9 +677,10 @@ function App() {
       if (config.requiredLabels.length > 0 && labelIds.length < config.requiredLabels.length) {
         throw new Error(REQUIRED_LABELS_MISSING_MESSAGE);
       }
-      const selectedWorkflowState = states.find(
-        (state) => state.name.toLowerCase() === selectedState.toLowerCase() && state.team?.id === config.teamId,
-      );
+      const selectedWorkflowState = states.find((state) => (
+        workflowStateBelongsToTeam(state, config.teamId) &&
+        state.name.toLowerCase() === selectedState.toLowerCase()
+      ));
       await callService("linear", "create_issue", {
         teamId: config.teamId,
         projectId: config.projectId || undefined,
