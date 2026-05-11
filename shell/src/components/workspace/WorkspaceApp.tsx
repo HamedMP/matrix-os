@@ -46,6 +46,7 @@ interface WorkspaceWorktree {
   id?: string;
   currentBranch?: string;
   dirtyState?: string;
+  pr?: number;
 }
 
 interface WorkspacePreview {
@@ -336,6 +337,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
 
     setStartingAgent(true);
     try {
+      const selectedWorktree = worktrees.find((worktree) => worktree.id === worktreeId);
       const data = await fetchJson<{ session?: WorkspaceSession }>("/api/sessions", {
         method: "POST",
         body: JSON.stringify({
@@ -343,6 +345,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
           agent: selectedAgent,
           projectSlug: activeSlug,
           worktreeId,
+          ...(typeof selectedWorktree?.pr === "number" ? { pr: selectedWorktree.pr } : {}),
           prompt,
           runtimePreference: "zellij",
         }),
@@ -360,7 +363,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     } finally {
       setStartingAgent(false);
     }
-  }, [activeSlug, agentPrompt, loadProjectDetail, selectedAgent, selectedWorktreeId]);
+  }, [activeSlug, agentPrompt, loadProjectDetail, selectedAgent, selectedWorktreeId, worktrees]);
 
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);

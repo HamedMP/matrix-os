@@ -7,7 +7,7 @@ import { WorkspaceApp } from "../../shell/src/components/workspace/WorkspaceApp.
 
 describe("WorkspaceApp", () => {
   beforeEach(() => {
-    let createdWorktree: { id: string; currentBranch: string; dirtyState: string } | undefined;
+    let createdWorktree: { id: string; currentBranch: string; dirtyState: string; pr?: number } | undefined;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/workspace/projects")) {
@@ -37,7 +37,7 @@ describe("WorkspaceApp", () => {
         })) });
       }
       if (url.includes("/api/projects/repo/worktrees") && init?.method === "POST") {
-        createdWorktree = { id: "wt_new123", currentBranch: "feature/mat-5", dirtyState: "clean" };
+        createdWorktree = { id: "wt_new123", currentBranch: "feature/mat-5", dirtyState: "clean", pr: 88 };
         return json({ worktree: createdWorktree });
       }
       if (url.includes("/api/projects/repo/worktrees")) {
@@ -236,6 +236,7 @@ describe("WorkspaceApp", () => {
           agent: "codex",
           projectSlug: "repo",
           worktreeId: "wt_new123",
+          pr: 88,
           prompt: "Implement MAT-5",
           runtimePreference: "zellij",
         }),
