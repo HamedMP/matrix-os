@@ -82,7 +82,7 @@ export async function fetchHostBundleChannelManifest(options: {
   fetchImpl?: typeof fetch;
 }): Promise<HostBundleRelease> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = new URL(`/system-bundles/channels/${options.channel}.json`, options.platformUrl);
+  const url = new URL(`/system-bundles/${options.channel}/manifest.json`, options.platformUrl);
   const res = await fetchImpl(url.toString(), {
     signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
   });

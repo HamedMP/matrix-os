@@ -60,7 +60,7 @@ describe("system update checks", () => {
     expect(result.updateAvailable).toBe(true);
     expect(result.latest?.version).toBe("v2026.05.06-2");
     expect(fetchImpl).toHaveBeenCalledWith(
-      "https://app.matrix-os.com/system-bundles/channels/stable.json",
+      "https://app.matrix-os.com/system-bundles/stable/manifest.json",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
