@@ -67,6 +67,21 @@ describe("AppDb connection", () => {
     expect(colNames).toContain("updated_at");
   });
 
+  it("ignores built-in columns declared by app manifests", async () => {
+    await db.createAppSchema("test-app");
+    await db.createTable("test-app", "items", {
+      id: "uuid",
+      title: "text",
+      created_at: "timestamptz",
+      updated_at: "timestamptz",
+    });
+
+    const cols = await db.raw(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema = 'test-app' AND table_name = 'items' ORDER BY ordinal_position",
+    );
+    expect(cols.rows.map((r) => r.column_name)).toEqual(["id", "title", "created_at", "updated_at"]);
+  });
+
   it("creates indexes on specified columns", async () => {
     await db.createAppSchema("test-app");
     await db.createTable("test-app", "items", { title: "text", done: "boolean" }, ["title"]);

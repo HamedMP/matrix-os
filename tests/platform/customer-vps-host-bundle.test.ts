@@ -32,6 +32,17 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-update');
   });
 
+  it('host bundle manifest keeps the sync-agent compatibility fields', () => {
+    const root = process.cwd();
+    const releaseScript = readFileSync(join(root, 'scripts/host-bundle-release.mjs'), 'utf8');
+
+    expect(releaseScript).toContain('sha256: checksum');
+    expect(releaseScript).toContain('size: bundleStat.size');
+    expect(releaseScript).toContain('severity');
+    expect(releaseScript).toContain('updateType');
+    expect(releaseScript).toContain('bundleSha256: checksum');
+  });
+
   it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
@@ -52,6 +63,12 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
     expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
+    expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
+    expect(syncAgent).toContain('return 0');
+    expect(syncAgent).toContain('for _ in $(seq 1 18); do');
+    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
+    expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

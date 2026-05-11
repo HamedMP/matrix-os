@@ -4,6 +4,7 @@ export interface SafeEnvOptions {
   slug: string;
   port: number;
   homeDir: string;
+  databaseUrl?: string;
 }
 
 const SYSTEM_PATHS = [
@@ -32,9 +33,9 @@ function buildMinimalPath(): string {
 const MINIMAL_PATH = buildMinimalPath();
 
 export function safeEnv(opts: SafeEnvOptions): Record<string, string> {
-  const { slug, port, homeDir } = opts;
+  const { slug, port, homeDir, databaseUrl } = opts;
 
-  return {
+  const env: Record<string, string> = {
     PORT: String(port),
     NODE_ENV: "production",
     HOME: join(homeDir, "apps", slug),
@@ -43,6 +44,12 @@ export function safeEnv(opts: SafeEnvOptions): Record<string, string> {
     MATRIX_APP_DATA_DIR: join(homeDir, "data", slug),
     MATRIX_GATEWAY_URL: "http://127.0.0.1:4000",
   };
+
+  if (databaseUrl) {
+    env.DATABASE_URL = databaseUrl;
+  }
+
+  return env;
 }
 
 export interface SafeBuildEnvOptions {

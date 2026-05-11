@@ -16,6 +16,9 @@ export interface HostBundleRelease {
   gitCommit?: string;
   gitRef?: string;
   buildTime?: string;
+  published?: string;
+  sha256?: string;
+  size?: number;
   bundleSha256?: string;
   installedAt?: string;
   severity?: UpdateSeverity;

@@ -13,6 +13,41 @@ export interface Watcher {
   close(): Promise<void>;
 }
 
+export interface WatcherIgnoredGlobsOptions {
+  watchProjects?: boolean;
+}
+
+const ALWAYS_IGNORED_GLOBS = [
+  "**/node_modules/**",
+  "**/.git/**",
+  "**/.next/**",
+  "**/.turbo/**",
+  "**/.cache/**",
+  "**/.trash/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/system/matrix.db*",
+  "**/.claude/**",
+  "**/.codex/**",
+  "**/.hermes/**",
+  "**/.local/**",
+  "**/.npm/**",
+];
+
+const DEFAULT_PROJECT_IGNORED_GLOBS = [
+  "**/projects/**",
+  "**/matrix-os/**",
+];
+
+export function createWatcherIgnoredGlobs(
+  options: WatcherIgnoredGlobsOptions = {},
+): string[] {
+  return [
+    ...ALWAYS_IGNORED_GLOBS,
+    ...(options.watchProjects ? [] : DEFAULT_PROJECT_IGNORED_GLOBS),
+  ];
+}
+
 export function createWatcher(homePath: string): Watcher {
   const listeners: Array<(event: FileChangeEvent) => void> = [];
 
@@ -26,17 +61,9 @@ export function createWatcher(homePath: string): Watcher {
     usePolling: true,
     interval: 2000,
     binaryInterval: 5000,
-    ignored: [
-      "**/node_modules/**",
-      "**/.git/**",
-      "**/.next/**",
-      "**/.turbo/**",
-      "**/.cache/**",
-      "**/.trash/**",
-      "**/dist/**",
-      "**/build/**",
-      "**/system/matrix.db*",
-    ],
+    ignored: createWatcherIgnoredGlobs({
+      watchProjects: process.env.MATRIX_WATCH_PROJECTS === "true",
+    }),
   });
 
   const emit = (event: FileEvent, path: string) => {

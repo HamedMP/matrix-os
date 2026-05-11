@@ -234,6 +234,10 @@ export class ProcessManager {
       this.processes.delete(slug);
       throw new SpawnError("spawn_failed", `App "${slug}" has no serve configuration`);
     }
+    if (manifest.database === "postgres" && !process.env.DATABASE_URL) {
+      this.processes.delete(slug);
+      throw new SpawnError("spawn_failed", `App "${slug}" requires Postgres but DATABASE_URL is not configured`);
+    }
 
     const port = this.portPool.allocate();
     record.port = port;
@@ -249,7 +253,8 @@ export class ProcessManager {
       throw new SpawnError("spawn_failed", `Cannot resolve app directory for "${slug}"`);
     }
     const appDir = resolved.entry.appDir;
-    const env = safeEnv({ slug, port: port!, homeDir: this.homeDir });
+    const databaseUrl = manifest.database === "postgres" ? process.env.DATABASE_URL : undefined;
+    const env = safeEnv({ slug, port: port!, homeDir: this.homeDir, databaseUrl });
 
     const startCmd = manifest.serve!.start;
     const memoryMb = manifest.resources?.memoryMb ?? 256;

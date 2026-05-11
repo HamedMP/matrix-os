@@ -34,7 +34,14 @@ export NEXT_PUBLIC_POSTHOG_KEY="${NEXT_PUBLIC_POSTHOG_KEY:-}"
 export NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN="${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}"
 export NEXT_PUBLIC_POSTHOG_HOST="${NEXT_PUBLIC_POSTHOG_HOST:-}"
 export NEXT_PUBLIC_POSTHOG_API_HOST="${NEXT_PUBLIC_POSTHOG_API_HOST:-}"
-pnpm --filter './shell' build
+if [ "${HOST_BUNDLE_SKIP_SHELL_BUILD:-false}" = "true" ]; then
+  test -d "$ROOT_DIR/shell/.next" || {
+    echo "HOST_BUNDLE_SKIP_SHELL_BUILD=true but shell/.next is missing" >&2
+    exit 1
+  }
+else
+  pnpm --filter './shell' build
+fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
 

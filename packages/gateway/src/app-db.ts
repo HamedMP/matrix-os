@@ -35,6 +35,8 @@ const TYPE_MAP: Record<string, string> = {
   uuid: "uuid",
 };
 
+const BUILTIN_COLUMNS = new Set(["id", "created_at", "updated_at"]);
+
 function pgType(t: string): string {
   return TYPE_MAP[t.toLowerCase()] ?? "text";
 }
@@ -113,18 +115,20 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
       if (!isSafeName(table)) throw new Error(`Invalid table name: ${table}`);
 
       const colDefs = Object.entries(columns)
+        .filter(([name]) => !BUILTIN_COLUMNS.has(name))
         .map(([name, type]) => {
           if (!isSafeName(name)) throw new Error(`Invalid column name: ${name}`);
           return `"${name}" ${pgType(type)}`;
         })
         .join(", ");
+      const extraColumnsSql = colDefs ? `${colDefs},` : "";
 
       const fullTable = `"${schema}"."${table}"`;
       await sql
         .raw(
           `CREATE TABLE IF NOT EXISTS ${fullTable} (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            ${colDefs},
+            ${extraColumnsSql}
             created_at timestamptz DEFAULT now(),
             updated_at timestamptz DEFAULT now()
           )`,
