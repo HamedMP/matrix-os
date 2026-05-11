@@ -57,6 +57,7 @@ describe("Symphony app", () => {
   let workflowStates: Array<{ id: string; name: string; type?: string; color?: string; team?: { id: string; key?: string; name?: string } }> = [];
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
+  let listedIssuesByProjectId: Record<string, unknown[]> = {};
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let integrationCalls: Array<{ action?: string; params?: Record<string, unknown> }> = [];
   let runtimeActiveStates: string[] = [];
@@ -78,6 +79,7 @@ describe("Symphony app", () => {
     workflowStates = [];
     createdIssues = [];
     listedIssues = [];
+    listedIssuesByProjectId = {};
     listedIssuePages = null;
     integrationCalls = [];
     runtimeActiveStates = ["Todo", "In Progress", "Merging", "Rework"];
@@ -208,7 +210,9 @@ describe("Symphony app", () => {
         }
         if (body.action === "list_issues") {
           const after = body.params?.after ?? "";
-          const page = listedIssuePages?.[after] ?? { nodes: listedIssues, pageInfo: { hasNextPage: false, endCursor: null } };
+          const projectId = typeof body.params?.projectId === "string" ? body.params.projectId : "";
+          const projectIssues = listedIssuesByProjectId[projectId] ?? listedIssues;
+          const page = listedIssuePages?.[after] ?? { nodes: projectIssues, pageInfo: { hasNextPage: false, endCursor: null } };
           return json({ data: { issues: page } });
         }
         if (body.action === "graphql") {
@@ -382,6 +386,49 @@ describe("Symphony app", () => {
       teamId: "team_ops",
       projectId: "",
     })));
+  });
+
+  it("refreshes the Linear board after Project selection changes", async () => {
+    storedConfig = JSON.stringify({
+      teamId: "team_mat",
+      teamKey: "MAT",
+      projectId: "project_mat",
+      projectSlug: "matrix-os",
+    });
+    linearProjects = [
+      { id: "project_mat", name: "Matrix OS", slugId: "matrix-os", teams: { nodes: [{ id: "team_mat", key: "MAT", name: "Matrix" }] } },
+      { id: "project_other", name: "Other", slugId: "other", teams: { nodes: [{ id: "team_mat", key: "MAT", name: "Matrix" }] } },
+    ];
+    listedIssuesByProjectId = {
+      project_mat: [{
+        id: "issue_matrix",
+        identifier: "MAT-1",
+        title: "Matrix project issue",
+        url: "https://linear.app/matrix-os/issue/MAT-1",
+        state: { id: "state_todo", name: "Todo" },
+        labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
+      }],
+      project_other: [{
+        id: "issue_other",
+        identifier: "MAT-2",
+        title: "Other project issue",
+        url: "https://linear.app/matrix-os/issue/MAT-2",
+        state: { id: "state_todo", name: "Todo" },
+        labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
+      }],
+    };
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Matrix project issue")).toBeTruthy());
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Project"), { target: { value: "project_other" } });
+    });
+
+    await waitFor(() => expect(screen.getByText("Other project issue")).toBeTruthy());
+    expect(screen.queryByText("Matrix project issue")).toBeNull();
+    expect(integrationCalls.filter((call) => call.action === "list_issues").at(-1)?.params).toMatchObject({
+      projectId: "project_other",
+    });
   });
 
   it("preserves comma-separated list edits while typing", async () => {

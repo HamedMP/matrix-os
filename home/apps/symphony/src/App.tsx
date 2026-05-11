@@ -569,7 +569,7 @@ function App() {
     configRef.current = config;
   }, [config]);
 
-  const saveConfig = useCallback(async (next: SymphonyConfig) => {
+  const saveConfig = useCallback(async (next: SymphonyConfig): Promise<boolean> => {
     const previous = configRef.current;
     const saveId = configSaveSequenceRef.current + 1;
     configSaveSequenceRef.current = saveId;
@@ -583,6 +583,7 @@ function App() {
         pendingPersistBaseRef.current = null;
         setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
       }
+      return true;
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
       if (configSaveSequenceRef.current === saveId) {
@@ -590,6 +591,7 @@ function App() {
         setConfig(previous);
         setError("Symphony settings could not be saved.");
       }
+      return false;
     }
   }, []);
 
@@ -940,7 +942,13 @@ function App() {
                 </Select>
               </Field>
               <Field label="Project">
-                <Select value={config.projectId} onChange={(event) => saveConfig({ ...config, projectId: event.target.value, projectSlug: visibleProjects.find((project) => project.id === event.target.value)?.slugId ?? "" })}>
+                <Select value={config.projectId} onChange={(event) => {
+                  const project = visibleProjects.find((candidate) => candidate.id === event.target.value);
+                  const nextConfig = { ...config, projectId: event.target.value, projectSlug: project?.slugId ?? "" };
+                  void (async () => {
+                    if (await saveConfig(nextConfig)) await refreshLinear(nextConfig);
+                  })();
+                }}>
                   <option value="">No project filter</option>
                   {visibleProjects.map((project) => <option key={project.id} value={project.id}>{project.slugId ?? project.name}</option>)}
                 </Select>
