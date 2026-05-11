@@ -29,7 +29,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Verify `dist/index.html` exists.
 - Use Matrix theme variables and iframe-safe sizing.
 - For UI, use the `matrix-design-system` skill: shadcn-style primitives, lucide-react icons, stable control dimensions, and no marketing landing pages.
-- Store structured app data through Matrix/Postgres bridge APIs, not SQLite or ad hoc local databases.
+- Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 
 ## Standard Structure

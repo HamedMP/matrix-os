@@ -65,6 +65,7 @@ const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
+const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -309,6 +310,25 @@ function buildAppRouteCookie(handle: string, path: string): string | null {
   ].join('; ');
 }
 
+function readShellRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!isAppDomainStaticAssetPath(path)) {
+    return null;
+  }
+  const handle = readCookie(cookieHeader, SHELL_ROUTE_COOKIE);
+  return handle && HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function buildShellRouteCookie(handle: string): string {
+  return [
+    `${SHELL_ROUTE_COOKIE}=${encodeURIComponent(handle)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=600',
+  ].join('; ');
+}
+
 function buildCodeSessionCookie(token: string): string {
   return [
     `${CODE_SESSION_COOKIE}=${encodeURIComponent(token)}`,
@@ -333,6 +353,17 @@ function isCodeDomainStaticAssetPath(path: string): boolean {
     path === '/favicon.ico' ||
     path.startsWith('/_static/') ||
     /^\/stable-[^/]+\/static\//.test(path)
+  );
+}
+
+function isAppDomainStaticAssetPath(path: string): boolean {
+  return (
+    path === '/favicon.ico' ||
+    path === '/icon.png' ||
+    path === '/manifest.json' ||
+    path === '/og.png' ||
+    path.startsWith('/_next/static/') ||
+    path.startsWith('/_next/image')
   );
 }
 
@@ -420,7 +451,7 @@ export function checkUnsafeDefaultSecrets(
 interface AppDomainIdentity {
   handle: string;
   userId: string;
-  source?: 'auth' | 'mobile-session';
+  source?: 'auth' | 'mobile-session' | 'static-route';
 }
 
 interface ResolvedContainerEndpoint {
@@ -1115,11 +1146,25 @@ export function createApp(deps: {
         };
       }
     }
+    if (!identity && isAppDomain && isAppDomainStaticAssetPath(path)) {
+      const shellRouteHandle = readShellRouteCookie(path, cookieHeader);
+      if (shellRouteHandle) {
+        identity = {
+          handle: shellRouteHandle,
+          userId: '',
+          source: 'static-route',
+        };
+      }
+    }
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
+      if (isAppDomain && isAppDomainStaticAssetPath(path)) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
@@ -1196,9 +1241,13 @@ export function createApp(deps: {
       }
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
-        if (identity.source !== 'mobile-session') {
-          headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
-          headers.set('x-platform-user-id', identity.userId);
+        const platformUserId =
+          identity.source === 'static-route' ? runningMachine.clerkUserId : identity.userId;
+        if (platformUserId) {
+          headers.set('x-platform-user-id', platformUserId);
+          if (identity.source !== 'mobile-session' && identity.source !== 'static-route') {
+            headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, platformUserId, platformSecret));
+          }
         }
       }
 
@@ -1216,6 +1265,9 @@ export function createApp(deps: {
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
+        }
+        if (isAppDomain && identity.source !== 'static-route') {
+          responseHeaders.append('set-cookie', buildShellRouteCookie(runningMachine.handle));
         }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({
@@ -1305,9 +1357,13 @@ export function createApp(deps: {
     }
     if (platformSecret && isAppDomain) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
-      if (identity.source !== 'mobile-session') {
-        headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
-        headers.set('x-platform-user-id', identity.userId);
+      const platformUserId =
+        identity.source === 'static-route' ? record.clerkUserId : identity.userId;
+      if (platformUserId) {
+        headers.set('x-platform-user-id', platformUserId);
+        if (identity.source !== 'mobile-session' && identity.source !== 'static-route') {
+          headers.set('x-platform-verified', buildPlatformUserProof(record.handle, platformUserId, platformSecret));
+        }
       }
     }
 
@@ -1336,6 +1392,9 @@ export function createApp(deps: {
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
+        }
+        if (isAppDomain && identity.source !== 'static-route') {
+          responseHeaders.append('set-cookie', buildShellRouteCookie(record.handle));
         }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({

@@ -1,19 +1,11 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse, type NextRequest } from "next/server";
+import { isGatewayProxyPath, isPublicShellPath } from "./lib/proxy-routes";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
 const platformUpgradeToken = process.env.UPGRADE_TOKEN;
-
-const isPublicRoute = createRouteMatcher([
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/health",
-  "/manifest.json",
-  "/og.png",
-  "/favicon.ico",
-]);
 
 // Direct path check instead of Clerk's createRouteMatcher -- in Next 16's
 // proxy.ts runtime, createRouteMatcher has been observed to return false for
@@ -21,17 +13,7 @@ const isPublicRoute = createRouteMatcher([
 // /apps/*)
 // to fall through to the 404 page instead of being rewritten to the gateway.
 function isGatewayProxy(request: NextRequest): boolean {
-  const p = request.nextUrl.pathname;
-  return (
-    p.startsWith("/gateway/") ||
-    p.startsWith("/api/") ||
-    p.startsWith("/icons/") ||
-    p.startsWith("/files/") ||
-    p.startsWith("/modules/") ||
-    p.startsWith("/apps/") ||
-    p === "/ws" ||
-    p.startsWith("/ws/")
-  );
+  return isGatewayProxyPath(request.nextUrl.pathname);
 }
 
 function getPublicOrigin(request: NextRequest) {
@@ -86,7 +68,7 @@ function platformVerifiedResponse(request: NextRequest): NextResponse | null {
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
   // Layer 1: Clerk authentication (skip public routes)
-  if (!isPublicRoute(request)) {
+  if (!isPublicShellPath(request.nextUrl.pathname)) {
     const { userId } = await auth();
     if (!userId) {
       const publicOrigin = getPublicOrigin(request);
@@ -101,7 +83,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   }
 
   // Layer 2: Owner verification -- fail closed when configured (skip public routes)
-  if (expectedClerkUserId && !isPublicRoute(request)) {
+  if (expectedClerkUserId && !isPublicShellPath(request.nextUrl.pathname)) {
     const { userId } = await auth();
     if (userId !== expectedClerkUserId) {
       return new NextResponse("Forbidden: you do not own this instance", {
@@ -133,6 +115,9 @@ export function proxy(
   const platformResponse = platformVerifiedResponse(request);
   if (platformResponse) {
     return platformResponse;
+  }
+  if (isPublicShellPath(request.nextUrl.pathname)) {
+    return NextResponse.next();
   }
   // All requests — including gateway-proxy paths — flow through Clerk so the
   // admin bearer token is never injected onto an unauthenticated request. The

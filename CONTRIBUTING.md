@@ -45,7 +45,7 @@ Set `ANTHROPIC_API_KEY` in your environment for kernel AI features.
 |---|---|
 | `packages/kernel/` | AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills) |
 | `packages/gateway/` | Hono HTTP/WebSocket gateway, channel adapters, cron, heartbeat |
-| `packages/platform/` | Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode) |
+| `packages/platform/` | Multi-tenant orchestrator (Hono :9000, Kysely/Postgres, dockerode) |
 | `packages/proxy/` | Shared API proxy (Hono :8080, usage tracking) |
 | `shell/` | Next.js 16 frontend (desktop shell) |
 | `www/` | matrix-os.com (Next.js on Vercel, Clerk auth) |

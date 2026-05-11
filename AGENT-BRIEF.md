@@ -21,7 +21,7 @@ Completed: kernel, gateway, shell, self-healing, self-evolution, concurrent disp
 - **AI**: Claude Agent SDK V1 `query()` with `resume` + Opus 4.6
 - **Frontend**: Next.js 16, React 19
 - **Backend**: Hono (HTTP/WebSocket gateway)
-- **Database**: SQLite via Drizzle ORM (better-sqlite3, WAL mode)
+- **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Testing**: Vitest (TDD, 99-100% coverage target, `@vitest/coverage-v8`)
 - **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm
@@ -50,7 +50,7 @@ bin/                 # CLI entry points
 - `prompt.ts` -- System prompt builder. Token budget: 7K max. `buildSystemPrompt()` assembles all sections.
 - `spawn.ts` -- Kernel spawning (Agent SDK `query()` with `resume`).
 - `hooks.ts` -- PreToolUse/PostToolUse hooks (protected files, git snapshots).
-- `db.ts` -- SQLite schema (Drizzle ORM). Tasks table, messages table.
+- `db.ts` -- durable state schema. Tasks table, messages table.
 - `skills.ts` -- Skill loader. Reads `~/agents/skills/*.md`, parses frontmatter.
 - `soul.ts` -- SOUL/identity/user/bootstrap loaders.
 - `identity.ts` -- Handle system (`@user:matrix-os.com`).

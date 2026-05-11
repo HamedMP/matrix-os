@@ -226,7 +226,7 @@ function Architecture() {
                 title: "File System (~/)",
                 items: [
                   "Apps in ~/apps/ (HTML, codebases)",
-                  "Data in ~/data/ (SQLite, JSON)",
+                  "Data in owner Postgres plus files",
                   "Agents in ~/agents/ (markdown definitions)",
                   "Config in ~/system/ (JSON files)",
                   "Git-versioned, peer-to-peer sync",
@@ -296,7 +296,7 @@ function Principles() {
     {
       num: "V",
       title: "Simplicity Over Sophistication",
-      desc: "Single-process async before worker threads. File-based IPC before message queues. SQLite before Postgres. HTML apps before full-stack frameworks. Escalate only when the simpler approach fails.",
+      desc: "Single-process async before worker threads. File-based IPC before message queues. Owner-local Postgres before external data services. HTML apps before full-stack frameworks. Escalate only when the simpler approach fails.",
     },
     {
       num: "VI",
@@ -585,7 +585,7 @@ function TechStack() {
     { category: "AI", items: "Claude Agent SDK V1 query() + resume, Opus 4.6, 1M context" },
     { category: "Frontend", items: "Next.js 16, React 19, Turbopack, React Compiler" },
     { category: "Backend", items: "Hono (HTTP, WebSocket, channel adapters)" },
-    { category: "Database", items: "SQLite / Drizzle ORM (kernel), Postgres / Kysely (social)" },
+    { category: "Database", items: "Postgres / Kysely for platform, kernel, social, and app data" },
     { category: "Validation", items: "Zod 4 (schemas, tool params, API contracts)" },
     { category: "Testing", items: "Vitest, @vitest/coverage-v8, TDD workflow" },
     { category: "Protocol", items: "Matrix (federation, E2E encryption, identity)" },

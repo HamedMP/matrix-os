@@ -127,7 +127,7 @@ The kernel (main agent) receives requests, routes them, spawns sub-agents (proce
 
   \item \textbf{Self-Healing and Self-Expanding.} The OS detects failures and patches itself. It creates new capabilities by writing new agent files and skills. Git snapshots ensure nothing is permanently lost.
 
-  \item \textbf{Simplicity Over Sophistication.} Single-process async before worker threads. File-based IPC before message queues. SQLite before Postgres. Escalate complexity only when the simpler approach fails.
+  \item \textbf{Simplicity Over Sophistication.} Single-process async before worker threads. File-based IPC before message queues. Owner-local Postgres before external data services. Escalate complexity only when the simpler approach fails.
 
   \item \textbf{Test-Driven Development.} Every component is tested before implementation. 993 tests across 85 test files. The OS trusts itself because it verifies itself.
 \end{enumerate}
@@ -297,7 +297,7 @@ Drawing on Jerome Bruner's theory of instruction~\cite{bruner1966instruction}, M
 
 \subsection{Technology Stack}
 
-TypeScript 5.5+ with strict mode and ES modules. Node.js 24+ runtime. Claude Agent SDK V1 with \texttt{query()} and \texttt{resume} for kernel operation. Next.js~16 with React~19 for the shell. Hono for the HTTP/WebSocket gateway. SQLite via Drizzle ORM for structured data. Zod~4 for runtime validation. Vitest for testing. pnpm for dependency management.
+TypeScript 5.5+ with strict mode and ES modules. Node.js 24+ runtime. Claude Agent SDK V1 with \texttt{query()} and \texttt{resume} for kernel operation. Next.js~16 with React~19 for the shell. Hono for the HTTP/WebSocket gateway. PostgreSQL via Kysely for structured data. Zod~4 for runtime validation. Vitest for testing. pnpm for dependency management.
 
 \subsection{Development Process}
 
