@@ -53,6 +53,41 @@ describe("AppManifestSchema", () => {
     expect(result.serve?.healthCheck).toBe("/api/health");
   });
 
+  it("preserves explicit Postgres database declarations", () => {
+    const input = {
+      name: "CRM",
+      slug: "crm",
+      version: "1.0.0",
+      runtime: "node",
+      runtimeVersion: "^1.0.0",
+      database: "postgres",
+      build: { command: "pnpm build", output: ".next" },
+      serve: {
+        start: "pnpm start",
+        healthCheck: "/api/health",
+      },
+    };
+    const result = AppManifestSchema.parse(input);
+    expect(result.database).toBe("postgres");
+  });
+
+  it("rejects unknown database declarations", () => {
+    const input = {
+      name: "CRM",
+      slug: "crm",
+      version: "1.0.0",
+      runtime: "node",
+      runtimeVersion: "^1.0.0",
+      database: "sqlite",
+      build: { command: "pnpm build", output: ".next" },
+      serve: {
+        start: "pnpm start",
+        healthCheck: "/api/health",
+      },
+    };
+    expect(() => AppManifestSchema.parse(input)).toThrow();
+  });
+
   it("rejects authored distributionStatus field", () => {
     const input = {
       name: "Evil",

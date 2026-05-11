@@ -58,6 +58,17 @@ describe("safeEnv", () => {
     expect(env.DATABASE_URL).toBeUndefined();
   });
 
+  it("includes an explicit app database URL without inheriting process env", () => {
+    process.env.DATABASE_URL = "postgres://secret@db/prod";
+    const env = safeEnv({
+      slug: "notes",
+      port: 40000,
+      homeDir: "/tmp/home",
+      databaseUrl: "postgres://matrix@127.0.0.1/matrix",
+    });
+    expect(env.DATABASE_URL).toBe("postgres://matrix@127.0.0.1/matrix");
+  });
+
   it("strips ANTHROPIC_API_KEY", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-another";
     const env = safeEnv({ slug: "notes", port: 40000, homeDir: "/tmp/home" });

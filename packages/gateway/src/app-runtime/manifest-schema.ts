@@ -5,6 +5,7 @@ export const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SEMVER_RANGE = /^[\^~]?\d+\.\d+\.\d+$|^\d+\.\d+\.\d+$/;
 
 const RuntimeEnum = z.enum(["static", "vite", "node"]);
+const DatabaseEnum = z.enum(["postgres"]);
 
 const BuildSchema = z.object({
   install: z.string().default("pnpm install --frozen-lockfile"),
@@ -37,6 +38,7 @@ const BaseManifestSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+/),
   runtime: RuntimeEnum,
   runtimeVersion: z.string().regex(SEMVER_RANGE, "runtimeVersion must be semver range"),
+  database: DatabaseEnum.optional(),
   scope: z.enum(["personal", "shared"]).default("personal"),
   build: BuildSchema.optional(),
   serve: ServeSchema.optional(),
