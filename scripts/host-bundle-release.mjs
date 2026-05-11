@@ -35,6 +35,13 @@ function releaseMetadata() {
   };
 }
 
+function releasePolicy() {
+  const severity = process.env.HOST_BUNDLE_SEVERITY || "normal";
+  const updateType = process.env.HOST_BUNDLE_UPDATE_TYPE || (severity === "security" ? "auto" : "manual");
+  const changelog = process.env.HOST_BUNDLE_CHANGELOG || "";
+  return { severity, updateType, changelog };
+}
+
 async function sha256(path) {
   const hash = createHash("sha256");
   await new Promise((resolve, reject) => {
@@ -59,6 +66,7 @@ async function writeRelease() {
 
 async function writeManifest() {
   const release = JSON.parse(await readFile(join(distDir, "release.json"), "utf8"));
+  const policy = releasePolicy();
   const bundlePath = join(distDir, bundleName);
   const checksum = await sha256(bundlePath);
   const bundleStat = await stat(bundlePath);
@@ -66,6 +74,10 @@ async function writeManifest() {
   await writeFile(join(distDir, `${bundleName}.sha256`), checksumText);
   const manifest = {
     ...release,
+    ...policy,
+    published: release.buildTime,
+    sha256: checksum,
+    size: bundleStat.size,
     bundleSha256: checksum,
     files: {
       bundle: {

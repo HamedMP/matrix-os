@@ -32,6 +32,17 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-update');
   });
 
+  it('host bundle manifest keeps the sync-agent compatibility fields', () => {
+    const root = process.cwd();
+    const releaseScript = readFileSync(join(root, 'scripts/host-bundle-release.mjs'), 'utf8');
+
+    expect(releaseScript).toContain('sha256: checksum');
+    expect(releaseScript).toContain('size: bundleStat.size');
+    expect(releaseScript).toContain('severity');
+    expect(releaseScript).toContain('updateType');
+    expect(releaseScript).toContain('bundleSha256: checksum');
+  });
+
   it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
