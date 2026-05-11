@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { getPostHogClientConfig } from "../../packages/observability/src/client.ts";
 import {
   createPostHogErrorTracker,
@@ -80,6 +81,67 @@ describe("PostHog error tracking", () => {
     });
     expect(JSON.stringify(captureException.mock.calls[0]?.[2])).not.toContain("secret");
     expect(flush).toHaveBeenCalledOnce();
+  });
+
+  it("does not capture expected 4xx Hono HTTPExceptions", async () => {
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const app = new Hono();
+
+    installPostHogHonoErrorTracking(app, {
+      env: { POSTHOG_TOKEN: "phc_test" },
+      service: "matrix-gateway",
+      clientFactory: () => ({
+        captureException,
+        flush,
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    app.get("/missing", () => {
+      throw new HTTPException(404, { message: "missing" });
+    });
+
+    const res = await app.request("http://localhost/missing");
+
+    expect(res.status).toBe(404);
+    expect(captureException).not.toHaveBeenCalled();
+    expect(flush).not.toHaveBeenCalled();
+  });
+
+  it("returns Hono 500 responses without waiting for telemetry flush", async () => {
+    vi.useFakeTimers();
+    try {
+      const captureException = vi.fn();
+      const flush = vi.fn(() => new Promise<void>(() => undefined));
+      const app = new Hono();
+
+      installPostHogHonoErrorTracking(app, {
+        env: { POSTHOG_TOKEN: "phc_test" },
+        service: "matrix-gateway",
+        flushTimeoutMs: 5,
+        clientFactory: () => ({
+          captureException,
+          flush,
+          shutdown: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+
+      app.get("/boom", () => {
+        throw new Error("boom");
+      });
+
+      const res = await app.request("http://localhost/boom");
+
+      expect(res.status).toBe(500);
+      await expect(res.json()).resolves.toEqual({ error: "Internal Server Error" });
+      expect(captureException).toHaveBeenCalledOnce();
+      expect(flush).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not wait indefinitely when a PostHog flush hangs", async () => {
