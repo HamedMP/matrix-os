@@ -339,6 +339,30 @@ describe("PostHog error tracking", () => {
     }
   });
 
+  it("bakes public PostHog env into full-image compose shell builds", async () => {
+    const composeShellServices = [
+      { file: "distro/docker-compose.local.yml", services: ["alice", "bob"] },
+      { file: "distro/docker-compose.multi.yml", services: ["matrixos"] },
+    ];
+    const publicEnvKeys = [
+      "NEXT_PUBLIC_POSTHOG_KEY",
+      "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN",
+      "NEXT_PUBLIC_POSTHOG_HOST",
+      "NEXT_PUBLIC_POSTHOG_API_HOST",
+    ];
+
+    for (const { file, services } of composeShellServices) {
+      const source = await readFile(file, "utf8");
+      for (const service of services) {
+        const block = readYamlServiceBlock(source, service);
+        expect(block, `${file}:${service}`).toContain("args:");
+        for (const key of publicEnvKeys) {
+          expect(block, `${file}:${service}`).toContain(`${key}: \${${key}:-}`);
+        }
+      }
+    }
+  });
+
   it("publishes observability through built export conditions", async () => {
     const packageJson = JSON.parse(await readFile("packages/observability/package.json", "utf8")) as {
       exports: Record<string, { types: string; import: string; default: string }>;
