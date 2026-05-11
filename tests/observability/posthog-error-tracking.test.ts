@@ -367,9 +367,10 @@ describe("PostHog error tracking", () => {
     await expect(readFile("scripts/build-host-bundle.sh", "utf8")).resolves.toContain(
       "pnpm --filter '@matrix-os/observability' build",
     );
-    await expect(readFile("distro/docker-dev-entrypoint.sh", "utf8")).resolves.toContain(
-      "pnpm --filter @matrix-os/observability build",
-    );
+    const devEntrypoint = await readFile("distro/docker-dev-entrypoint.sh", "utf8");
+    expect(devEntrypoint).toContain("pnpm --filter @matrix-os/observability build");
+    expect(devEntrypoint).toContain("mkdir -p /app/packages/observability/dist");
+    expect(devEntrypoint).toContain("chown -R matrixos:matrixos /app/packages/observability/dist");
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {

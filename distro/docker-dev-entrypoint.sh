@@ -142,8 +142,8 @@ cp /app/distro/p10k.zsh "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
-mkdir -p /app/packages/kernel/dist
-chown -R matrixos:matrixos /app/packages/kernel/dist 2>/dev/null || true
+mkdir -p /app/packages/observability/dist /app/packages/kernel/dist
+chown -R matrixos:matrixos /app/packages/observability/dist /app/packages/kernel/dist 2>/dev/null || true
 chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
