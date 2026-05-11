@@ -24,6 +24,7 @@ interface BuildOrchestratorOptions {
 }
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
+const BUILD_LOG_WRITE_TIMEOUT_MS = 5_000;
 
 export class BuildOrchestrator {
   private readonly concurrency: number;
@@ -159,6 +160,7 @@ export class BuildOrchestrator {
     return new Promise<BuildResult>((resolve) => {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), timeoutMs);
+      let settled = false;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
 
@@ -191,42 +193,36 @@ export class BuildOrchestrator {
       child.stdout?.on("data", appendChunk);
       child.stderr?.on("data", appendChunk);
 
-      let settled = false;
-      let processError: Error | undefined;
-      const finish = (result: BuildResult) => {
+      const writeBuildLog = async (output: string): Promise<void> => {
+        try {
+          await writeFile(logPath, output.slice(0, MAX_LOG_SIZE), {
+            signal: AbortSignal.timeout(BUILD_LOG_WRITE_TIMEOUT_MS),
+          });
+        } catch (writeErr: unknown) {
+          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
+        }
+      };
+
+      const finish = (result: BuildResult, output: string): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        const output = Buffer.concat(chunks).toString("utf8");
-        // Log writes are best-effort — the build has already failed and we
-        // surface that result below. Warn if the log write itself errors.
-        writeFile(logPath, output.slice(0, MAX_LOG_SIZE))
-          .catch((writeErr: unknown) => {
-            console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
-          })
-          .finally(() => resolve(result));
+        void writeBuildLog(output).finally(() => resolve(result));
       };
 
-      child.on("error", (err) => {
-        processError = err instanceof Error ? err : new Error(String(err));
-        if (ac.signal.aborted) {
-          finish({
-            ok: false,
-            error: new BuildError(
-              "timeout",
-              stage,
-              null,
-              `Build timed out after ${timeoutMs}ms`,
-            ),
-          });
-          return;
-        }
-
-        const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
+      child.on("error", () => {
+        const isAbort = ac.signal.aborted;
+        const output = Buffer.concat(chunks).toString("utf8");
+        const stderrTail = output.slice(-2048);
         finish({
           ok: false,
-          error: new BuildError("install_failed", stage, null, stderrTail),
-        });
+          error: new BuildError(
+            isAbort ? "timeout" : "install_failed",
+            stage,
+            null,
+            isAbort ? `Build timed out after ${timeoutMs}ms` : stderrTail,
+          ),
+        }, output);
       });
 
       child.on("close", (code) => {
@@ -242,15 +238,7 @@ export class BuildOrchestrator {
               null,
               `Build timed out after ${timeoutMs}ms`,
             ),
-          });
-          return;
-        }
-
-        if (processError) {
-          finish({
-            ok: false,
-            error: new BuildError("install_failed", stage, null, stderrTail || processError.message),
-          });
+          }, output);
           return;
         }
 
@@ -263,11 +251,14 @@ export class BuildOrchestrator {
               code,
               stderrTail,
             ),
-          });
+          }, output);
           return;
         }
 
-        finish({ ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } });
+        finish(
+          { ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } },
+          output,
+        );
       });
     });
   }

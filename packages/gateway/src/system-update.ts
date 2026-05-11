@@ -159,8 +159,15 @@ export async function startSystemUpdate(options: {
   try {
     await access(updateCommand, constants.X_OK);
   } catch (err: unknown) {
-    if (!(err instanceof Error)) {
-      console.warn("[system-update] Update command access check failed with non-error value");
+    if (
+      !(err instanceof Error) ||
+      !("code" in err) ||
+      !["ENOENT", "EACCES", "EPERM"].includes(String((err as NodeJS.ErrnoException).code))
+    ) {
+      console.warn(
+        "[system-update] update command access check failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
     return { ok: false, status: "not_configured" };
   }

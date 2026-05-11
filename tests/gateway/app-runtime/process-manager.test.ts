@@ -21,6 +21,8 @@ describe("ProcessManager", () => {
   let pm: InstanceType<typeof ProcessManager>;
   let portPool: InstanceType<typeof PortPool>;
   let tmpHome: string;
+  let nextPortBase = 41000;
+  let portBase: number;
 
   beforeEach(async () => {
     tmpHome = await mkdtemp(join(tmpdir(), "matrix-os-pm-"));
@@ -40,7 +42,9 @@ describe("ProcessManager", () => {
     await mkdir(join(tmpHome, "data", "hello-next"), { recursive: true });
     await mkdir(join(tmpHome, "data", "crash-on-request"), { recursive: true });
 
-    portPool = new PortPoolCtor({ min: 41000, max: 41050 });
+    portBase = nextPortBase;
+    nextPortBase += 100;
+    portPool = new PortPoolCtor({ min: portBase, max: portBase + 50 });
     pm = new ProcessManagerCtor({
       homeDir: tmpHome,
       portPool,
@@ -60,7 +64,7 @@ describe("ProcessManager", () => {
       expect(record.state).toBe("running");
       expect(record.pid).toBeTypeOf("number");
       expect(record.port).toBeTypeOf("number");
-      expect(record.port).toBeGreaterThanOrEqual(41000);
+      expect(record.port).toBeGreaterThanOrEqual(portBase);
     }, 15_000);
 
     it("health check verifies the endpoint returns 200", async () => {
@@ -445,8 +449,9 @@ describe("ProcessManager", () => {
         // Connection may be reset on crash
       }
 
-      // Wait for crash detection + restart attempt
-      await new Promise((r) => setTimeout(r, 4000));
+      await vi.waitFor(() => {
+        expect(pm.inspect("crash-on-request")?.restartCount ?? 0).toBeGreaterThanOrEqual(1);
+      }, { timeout: 12_000, interval: 100 });
       const state = pm.inspect("crash-on-request")?.state;
       // Should be in some recovery state or already restarted
       expect(["crashed", "restarting", "running", "starting", "healthy"]).toContain(state);
@@ -465,15 +470,24 @@ describe("ProcessManager", () => {
         // may fail due to crash
       }
 
-      // Wait for first restart (1s backoff + health check time)
-      await new Promise((r) => setTimeout(r, 5000));
-      const inspected = pm.inspect("crash-on-request");
-      // Should have attempted at least one restart
-      expect(inspected).toBeDefined();
-      expect(inspected!.restartCount).toBeGreaterThanOrEqual(1);
+      await vi.waitFor(() => {
+        const inspected = pm.inspect("crash-on-request");
+        expect(inspected).toBeDefined();
+        expect(inspected!.restartCount).toBeGreaterThanOrEqual(1);
+      }, { timeout: 12_000, interval: 100 });
     }, 20_000);
 
     it("transitions to failed after max retries (3)", async () => {
+      await pm.shutdownAll();
+      pm = new ProcessManagerCtor({
+        homeDir: tmpHome,
+        portPool,
+        maxProcesses: 10,
+        reaperIntervalMs: 0,
+        maxRestartAttempts: 3,
+        restartBackoffMs: [10, 20, 40],
+      });
+
       // Create a fixture that starts, passes health check, then crashes 500ms later
       const badDir = join(tmpHome, "apps", "always-crash");
       await mkdir(badDir, { recursive: true });
@@ -519,13 +533,10 @@ server.listen(port, "127.0.0.1", () => {
       const record = await pm.ensureRunning("always-crash");
       expect(record.state).toBe("running");
 
-      // Wait for crash recovery to exhaust all retries
-      // Backoff: 1s + 4s + 16s = 21s + startup times + buffer
-      await new Promise((r) => setTimeout(r, 30_000));
-
-      const state = pm.inspect("always-crash")?.state;
-      expect(state).toBe("failed");
-    }, 45_000);
+      await vi.waitFor(() => {
+        expect(pm.inspect("always-crash")?.state).toBe("failed");
+      }, { timeout: 10_000, interval: 100 });
+    }, 15_000);
 
     it("treats SIGKILL exit code 137 as potential OOM", async () => {
       const record = await pm.ensureRunning("hello-next");
