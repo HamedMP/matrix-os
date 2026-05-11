@@ -48,8 +48,6 @@ services:
       - CONDUIT_ALLOW_FEDERATION=true
       - CONDUIT_MAX_REQUEST_SIZE=20000000
       - CONDUIT_TRUSTED_SERVERS=["matrix.org"]
-      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
-      - POSTHOG_HOST=${POSTHOG_HOST:-}
     volumes:
       - conduit-data:/var/lib/matrix-conduit
       - ./conduit.toml:/etc/matrix-conduit/conduit.toml:ro

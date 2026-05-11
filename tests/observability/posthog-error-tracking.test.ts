@@ -285,6 +285,28 @@ describe("PostHog error tracking", () => {
     }
   });
 
+  it("exposes a shutdown hook for the shell Next server reporter", async () => {
+    const source = await readFile("shell/instrumentation.ts", "utf8");
+
+    expect(source).toContain("export const shellPostHogReporter");
+    expect(source).toContain("export async function unregister()");
+    expect(source).toContain("await shellPostHogReporter.shutdown()");
+  });
+
+  it("does not pass PostHog secrets to external Conduit containers", async () => {
+    const composeFiles = [
+      "docker-compose.dev.yml",
+      "distro/docker-compose.platform.yml",
+    ];
+
+    for (const file of composeFiles) {
+      const source = await readFile(file, "utf8");
+      const conduitBlock = readYamlServiceBlock(source, "conduit");
+      expect(conduitBlock, file).not.toContain("POSTHOG_TOKEN");
+      expect(conduitBlock, file).not.toContain("POSTHOG_HOST");
+    }
+  });
+
   it("preserves the public PostHog project-token alias in shell build paths", async () => {
     const shellBuildConfigFiles = [
       "Dockerfile",
@@ -382,3 +404,17 @@ describe("PostHog error tracking", () => {
     }
   });
 });
+
+function readYamlServiceBlock(source: string, serviceName: string): string {
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === `  ${serviceName}:`);
+  if (start === -1) return "";
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith("  ") && !line.startsWith("    ") && line.trim().endsWith(":")) {
+      break;
+    }
+    block.push(line);
+  }
+  return block.join("\n");
+}

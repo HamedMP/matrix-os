@@ -220,8 +220,6 @@ services:
     image: matrixconduit/matrix-conduit:latest
     environment:
       - CONDUIT_CONFIG=/etc/conduit.toml
-      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
-      - POSTHOG_HOST=${POSTHOG_HOST:-}
     ports:
       - "6167:6167"
     volumes:
