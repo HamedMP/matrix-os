@@ -112,6 +112,34 @@ describe("PostHog error tracking", () => {
     }
   });
 
+  it("does not create a PostHog client during shutdown and recreates after shutdown", async () => {
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    const clientFactory = vi.fn(() => ({
+      captureException,
+      flush,
+      shutdown,
+    }));
+    const tracker = createPostHogErrorTracker({
+      env: { POSTHOG_TOKEN: "phc_test" },
+      service: "matrix-www",
+      clientFactory,
+    });
+
+    await tracker.shutdown();
+
+    expect(clientFactory).not.toHaveBeenCalled();
+
+    await expect(tracker.captureException(new Error("first"))).resolves.toBe(true);
+    await tracker.shutdown();
+    await expect(tracker.captureException(new Error("second"))).resolves.toBe(true);
+
+    expect(clientFactory).toHaveBeenCalledTimes(2);
+    expect(shutdown).toHaveBeenCalledOnce();
+    expect(captureException).toHaveBeenCalledTimes(2);
+  });
+
   it("extracts a PostHog distinct id from the browser cookie", () => {
     const encoded = encodeURIComponent(JSON.stringify({ distinct_id: "distinct-1" }));
 
@@ -172,16 +200,18 @@ describe("PostHog error tracking", () => {
       const source = await readFile(file, "utf8");
       expect(source, file).not.toContain("getPostHogClientConfig(process.env)");
       expect(source, file).not.toContain("...process.env");
+      expect(source, file).not.toContain("as never");
       expect(source, file).toContain("process.env.NEXT_PUBLIC_POSTHOG_KEY");
     }
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
-    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, wwwServer] = await Promise.all([
+    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, proxyMain, wwwServer] = await Promise.all([
       readFile("packages/gateway/src/social.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
       readFile("packages/platform/src/social-api.ts", "utf8"),
       readFile("packages/platform/src/main.ts", "utf8"),
+      readFile("packages/proxy/src/main.ts", "utf8"),
       readFile("www/src/lib/posthog-server.ts", "utf8"),
     ]);
 
@@ -189,6 +219,7 @@ describe("PostHog error tracking", () => {
     expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
     expect(platformSocialApi).toContain("shutdownPostHog");
     expect(platformMain).toContain("await app.shutdownPostHog()");
+    expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
     expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
 });

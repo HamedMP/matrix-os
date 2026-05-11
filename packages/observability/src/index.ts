@@ -155,12 +155,14 @@ export function createPostHogErrorTracker(
       }
     },
     async shutdown() {
-      const posthog = getClient();
+      const posthog = client;
       if (!posthog) return;
       try {
         await withTimeout(posthog.shutdown(), flushTimeoutMs);
       } catch (err: unknown) {
         logger.warn(`[posthog] Failed to shut down client for ${options.service}: ${errorKind(err)}`);
+      } finally {
+        client = null;
       }
     },
   };

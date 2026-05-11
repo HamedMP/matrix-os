@@ -11,7 +11,7 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
 
 const app = new Hono();
-installPostHogHonoErrorTracking(app, {
+const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
   service: 'matrix-proxy',
 });
 
@@ -286,6 +286,28 @@ for (const row of getMetricsSeed()) {
   }
 }
 
-serve({ fetch: app.fetch, port: PORT }, () => {
+const server = serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`Proxy listening on :${PORT} -> ${ANTHROPIC_API}`);
+});
+
+let isShuttingDown = false;
+
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`[proxy] Received ${signal}, shutting down`);
+  try {
+    await posthogErrorTracker.shutdown();
+  } catch (err: unknown) {
+    console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
+  } finally {
+    server.close(() => process.exit(0));
+  }
+}
+
+process.once('SIGTERM', () => {
+  void shutdown('SIGTERM');
+});
+process.once('SIGINT', () => {
+  void shutdown('SIGINT');
 });
