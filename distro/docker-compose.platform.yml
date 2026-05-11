@@ -48,6 +48,8 @@ services:
       - CONDUIT_ALLOW_FEDERATION=true
       - CONDUIT_MAX_REQUEST_SIZE=20000000
       - CONDUIT_TRUSTED_SERVERS=["matrix.org"]
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
     volumes:
       - conduit-data:/var/lib/matrix-conduit
       - ./conduit.toml:/etc/matrix-conduit/conduit.toml:ro
@@ -74,6 +76,9 @@ services:
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+        - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+        - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+        - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     entrypoint: ["node", "--import=tsx"]
     command: ["packages/platform/src/main.ts"]
     environment:
@@ -86,6 +91,11 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - POSTGRES_URL=postgresql://matrixos:${POSTGRES_PASSWORD:-matrixos}@postgres:5432
       - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
       - PIPEDREAM_CLIENT_ID=${PIPEDREAM_CLIENT_ID:-}
       - PIPEDREAM_CLIENT_SECRET=${PIPEDREAM_CLIENT_SECRET:-}
       - PIPEDREAM_PROJECT_ID=${PIPEDREAM_PROJECT_ID:-}
@@ -133,6 +143,9 @@ services:
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+        - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+        - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+        - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     entrypoint: ["node", "node_modules/next/dist/bin/next", "start", "shell", "-p", "3200"]
     environment:
       - NODE_ENV=production
@@ -142,6 +155,11 @@ services:
       - CLERK_SIGN_UP_URL=/sign-up
       - CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/
       - CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     healthcheck:
       test: wget -qO- http://localhost:3200/sign-in || exit 1
       interval: 10s
@@ -163,6 +181,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PROXY_PORT=8080
       - PROXY_DB_PATH=/data/proxy.db
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
     ports:
       - "8080:8080"
     volumes:

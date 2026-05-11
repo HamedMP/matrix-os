@@ -1,10 +1,7 @@
 import posthog from "posthog-js";
 import { getPostHogClientConfig } from "@matrix-os/observability/client";
 
-const config = getPostHogClientConfig({
-  ...process.env,
-  NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest",
-});
+const config = getPostHogClientConfig(process.env);
 
 if (config) {
   posthog.init(config.token, {

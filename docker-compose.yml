@@ -15,7 +15,12 @@ services:
       start_period: 10s
 
   matrix-os:
-    build: .
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
+        NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-}
+        NEXT_PUBLIC_POSTHOG_API_HOST: ${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -28,6 +33,11 @@ services:
       - .env.docker
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://matrixos:matrixos@postgres:5432/matrixos}
+      POSTHOG_TOKEN: ${POSTHOG_TOKEN:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
+      NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
+      NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
       interval: 30s

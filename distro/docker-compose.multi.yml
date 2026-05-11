@@ -11,6 +11,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PROXY_PORT=8080
       - PROXY_DB_PATH=/data/proxy.db
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
     ports:
       - "8080:8080"
     volumes:
@@ -30,6 +32,11 @@ services:
     environment:
       - ANTHROPIC_BASE_URL=http://proxy:8080
       - MATRIX_AUTH_TOKEN=${MATRIX_AUTH_TOKEN:-}
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     ports:
       - "3000:3000"
       - "4000:4000"

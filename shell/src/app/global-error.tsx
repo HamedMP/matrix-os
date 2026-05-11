@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { capturePostHogException } from "../lib/posthog-client";
+
 export default function GlobalError({
   error,
   reset,
@@ -7,6 +10,13 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    capturePostHogException(error, {
+      source: "shell-global-error-boundary",
+      digest: error.digest,
+    });
+  }, [error]);
+
   return (
     <html>
       <body>

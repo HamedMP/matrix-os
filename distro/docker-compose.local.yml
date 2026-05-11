@@ -21,6 +21,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PROXY_PORT=8080
       - PROXY_DB_PATH=/data/proxy.db
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
     ports:
       - "8080:8080"
     volumes:
@@ -43,6 +45,11 @@ services:
       - PROXY_URL=http://proxy:8080
       - GATEWAY_EXTERNAL_URL=http://alice:4000
       - SHELL_PORT=3000
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     ports:
       - "3001:3000"
       - "4001:4000"
@@ -64,6 +71,11 @@ services:
       - PROXY_URL=http://proxy:8080
       - GATEWAY_EXTERNAL_URL=http://bob:4000
       - SHELL_PORT=3000
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     ports:
       - "3002:3000"
       - "4002:4000"

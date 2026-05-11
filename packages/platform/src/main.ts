@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
+import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -872,6 +873,9 @@ export function createApp(deps: {
       internalContainerClerkUserId: string;
     };
   }>();
+  installPostHogHonoErrorTracking(app, {
+    service: 'matrix-platform',
+  });
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -1906,6 +1910,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
   for (const key of [
     'MATRIX_HOME_MIRROR',
+    'POSTHOG_TOKEN',
+    'POSTHOG_HOST',
+    'NEXT_PUBLIC_POSTHOG_KEY',
+    'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN',
+    'NEXT_PUBLIC_POSTHOG_HOST',
+    'NEXT_PUBLIC_POSTHOG_API_HOST',
   ]) {
     if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
   }

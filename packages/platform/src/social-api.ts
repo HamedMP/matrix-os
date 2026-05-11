@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { createPostHogErrorTracker } from '@matrix-os/observability';
 import type { PlatformDB } from './db.js';
 import {
   insertPost,
@@ -26,8 +27,12 @@ const SOCIAL_BODY_LIMIT = 4096;
 
 export function createSocialFeedApi(db: PlatformDB): Hono {
   const api = new Hono();
+  const posthogErrorTracker = createPostHogErrorTracker({
+    service: 'matrix-platform-social',
+  });
 
-  api.onError((err, c) => {
+  api.onError(async (err, c) => {
+    await posthogErrorTracker.captureHonoException(err, c);
     if (err.message.includes('JSON')) return c.json({ error: 'Invalid JSON body' }, 400);
     return c.json({ error: 'Internal error' }, 500);
   });

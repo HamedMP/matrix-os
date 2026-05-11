@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
+import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
 import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMetricsSeed } from './db.js';
 import { calculateCost } from './cost.js';
 import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
@@ -10,6 +11,9 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
 
 const app = new Hono();
+installPostHogHonoErrorTracking(app, {
+  service: 'matrix-proxy',
+});
 
 // Instance registry (in-memory -- instances register on startup)
 interface Instance {

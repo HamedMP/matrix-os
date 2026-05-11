@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@matrix-os/observability": "workspace:*",
     "dockerode": "^4.0.7",
     "hono": "^4.11.9",
     "jose": "^6.1.3",

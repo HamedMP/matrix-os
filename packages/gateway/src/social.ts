@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createPostHogErrorTracker } from "@matrix-os/observability";
 import type { AppDb } from "./app-db.js";
 import type { FilterValue, QueryEngine } from "./app-db-query.js";
 
@@ -506,8 +507,12 @@ export function createSocialRoutes(
   getCurrentUser: () => string,
 ): Hono {
   const api = new Hono();
+  const posthogErrorTracker = createPostHogErrorTracker({
+    service: "matrix-gateway-social",
+  });
 
-  api.onError((err, c) => {
+  api.onError(async (err, c) => {
+    await posthogErrorTracker.captureHonoException(err, c);
     if (err.message.includes("JSON")) return c.json({ error: "Invalid JSON body" }, 400);
     return c.json({ error: "Internal error" }, 500);
   });

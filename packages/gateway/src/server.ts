@@ -8,6 +8,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
@@ -266,6 +267,9 @@ export async function createGateway(config: GatewayConfig) {
   ));
 
   const app = new Hono();
+  const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
+    service: "matrix-gateway",
+  });
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   const sessionRegistry = new SessionRegistry(homePath, {
@@ -3632,6 +3636,7 @@ export async function createGateway(config: GatewayConfig) {
       syncR2?.destroy();
       await canvasRepository?.destroy();
       await appDb?.destroy();
+      await posthogErrorTracker.shutdown();
       server.close();
     },
   };

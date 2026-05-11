@@ -1,11 +1,31 @@
+import { createPostHogServerExceptionReporter, getPostHogConfig } from '@matrix-os/observability';
 import { PostHog } from 'posthog-node';
 
-let posthogClient: PostHog | null = null;
+type AnalyticsClient = Pick<PostHog, 'capture' | 'identify' | 'captureException' | 'flush' | 'shutdown'>;
+
+const noopClient: AnalyticsClient = {
+  capture: (..._args: Parameters<PostHog['capture']>) => undefined,
+  identify: (..._args: Parameters<PostHog['identify']>) => undefined,
+  captureException: (..._args: Parameters<PostHog['captureException']>) => undefined,
+  flush: async () => undefined,
+  shutdown: async () => undefined,
+};
+
+let posthogClient: AnalyticsClient | null = null;
+
+export const postHogServerErrorReporter = createPostHogServerExceptionReporter({
+  service: 'matrix-www',
+});
 
 export function getPostHogClient() {
   if (!posthogClient) {
-    posthogClient = new PostHog(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
-      host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+    const config = getPostHogConfig();
+    if (!config) {
+      posthogClient = noopClient;
+      return posthogClient;
+    }
+    posthogClient = new PostHog(config.token, {
+      ...(config.host ? { host: config.host } : {}),
       flushAt: 1,
       flushInterval: 0,
     });
@@ -16,5 +36,6 @@ export function getPostHogClient() {
 export async function shutdownPostHog() {
   if (posthogClient) {
     await posthogClient.shutdown();
+    posthogClient = null;
   }
 }
