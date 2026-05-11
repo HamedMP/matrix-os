@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --port 3001",
-    "build": "next build",
+    "build": "pnpm --dir .. --filter '@matrix-os/observability' build && next build",
     "start": "next start"
   },
   "dependencies": {

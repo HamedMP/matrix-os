@@ -24,6 +24,7 @@ mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime"
 
 pnpm install --frozen-lockfile
 pnpm rebuild node-pty
+pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/gateway' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"

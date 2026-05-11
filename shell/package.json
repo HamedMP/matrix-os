@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm --dir .. --filter '@matrix-os/observability' build && next build",
     "start": "next start",
     "lint": "eslint",
     "test:screenshots": "playwright test"

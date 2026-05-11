@@ -267,6 +267,51 @@ describe("PostHog error tracking", () => {
     }
   });
 
+  it("publishes observability through built export conditions", async () => {
+    const packageJson = JSON.parse(await readFile("packages/observability/package.json", "utf8")) as {
+      exports: Record<string, { types: string; import: string; default: string }>;
+    };
+
+    expect(packageJson.exports["."]).toEqual({
+      types: "./src/index.ts",
+      import: "./dist/index.js",
+      default: "./dist/index.js",
+    });
+    expect(packageJson.exports["./client"]).toEqual({
+      types: "./src/client.ts",
+      import: "./dist/client.js",
+      default: "./dist/client.js",
+    });
+  });
+
+  it("builds observability before package consumers that import it", async () => {
+    const consumerPackages = [
+      "packages/gateway/package.json",
+      "packages/platform/package.json",
+      "packages/proxy/package.json",
+      "shell/package.json",
+      "www/package.json",
+    ];
+
+    for (const file of consumerPackages) {
+      const packageJson = JSON.parse(await readFile(file, "utf8")) as { scripts: Record<string, string> };
+      expect(packageJson.scripts.build, file).toContain("@matrix-os/observability' build &&");
+    }
+
+    const rootPackage = JSON.parse(await readFile("package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(rootPackage.scripts["typecheck:build-kernel"]).toContain(
+      "pnpm --filter '@matrix-os/observability' build",
+    );
+    await expect(readFile("Dockerfile", "utf8")).resolves.toContain(
+      "pnpm --filter '@matrix-os/observability' build",
+    );
+    await expect(readFile("scripts/build-host-bundle.sh", "utf8")).resolves.toContain(
+      "pnpm --filter '@matrix-os/observability' build",
+    );
+  });
+
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
     const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, proxyMain, wwwServer] = await Promise.all([
       readFile("packages/gateway/src/social.ts", "utf8"),

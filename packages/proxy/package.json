@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "node --import=tsx src/main.ts",
-    "build": "tsc"
+    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

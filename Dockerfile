@@ -53,6 +53,7 @@ ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
 ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_API_HOST=$NEXT_PUBLIC_POSTHOG_API_HOST
+RUN pnpm --filter '@matrix-os/observability' build
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------

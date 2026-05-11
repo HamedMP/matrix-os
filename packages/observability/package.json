@@ -4,8 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./dist/client.js",
+      "default": "./dist/client.js"
+    }
   },
   "scripts": {
     "build": "tsc"
