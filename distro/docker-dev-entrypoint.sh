@@ -49,14 +49,14 @@ find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -
   fi
 done
 
-# Unify $HOME/.claude and $MATRIX_HOME/.claude (and same for .codex) into a
+# Unify $HOME/.agents/.claude/.codex and matching $MATRIX_HOME paths into a
 # single directory. The gateway runs with HOME=/home/matrixos and reads
 # $HOME/.claude/.credentials.json, but the in-app terminal opens with
 # HOME=$MATRIX_HOME -- so `claude login` from inside Matrix OS used to write
 # to a file the gateway never read. Symlinking $MATRIX_HOME/.claude to the
 # canonical /home/matrixos/.claude makes both paths the same on disk.
-mkdir -p /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
-for tool in .claude .codex; do
+mkdir -p /home/matrixos/.agents /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
+for tool in .agents .claude .codex; do
   if [ -e "$MATRIX_HOME/$tool" ] && [ ! -L "$MATRIX_HOME/$tool" ]; then
     # First-run migration: move any pre-existing files into the canonical
     # location (-n = no clobber, so a fresher token there always wins).
@@ -66,66 +66,14 @@ for tool in .claude .codex; do
   ln -sfn "/home/matrixos/$tool" "$MATRIX_HOME/$tool"
 done
 
-# Expose Matrix OS skills to Claude Code and Codex
-# Clean Matrix-managed copies from previous runs, then create fresh ones.
-# Both tools discover skills in project-level and user-level directories.
-cleanup_matrix_skills() {
-  skills_root="$1"
-  mkdir -p "$skills_root"
-  for generated in "$skills_root"/matrix-*; do
-    [ -e "$generated" ] || continue
-    [ -f "$generated/.matrix-os-managed" ] && rm -rf "$generated"
-  done
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    legacy="$skills_root/$name"
-    if [ -f "$legacy/SKILL.md" ] && grep -q "^name: matrix-$name\$" "$legacy/SKILL.md"; then
-      rm -rf "$legacy"
-    elif [ -f "$legacy/agents/openai.yaml" ] && grep -q 'display_name: "Matrix:' "$legacy/agents/openai.yaml"; then
-      rm -rf "$legacy"
-    fi
-  done
-}
-for skills_root in "/home/matrixos/.claude/skills" "/home/matrixos/.codex/skills" \
-                   "$MATRIX_HOME/.claude/skills" "$MATRIX_HOME/.codex/skills"; do
-  cleanup_matrix_skills "$skills_root"
-done
-
-for skills_root in "/home/matrixos/.claude/skills" "$MATRIX_HOME/.claude/skills"; do
-  mkdir -p "$skills_root"
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    out="$skills_root/matrix-$name"
-    mkdir -p "$out"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
-    touch "$out/.matrix-os-managed"
-  done
-done
-
-# Codex ignores symlinks and needs agents/openai.yaml for discovery
-for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; do
-  mkdir -p "$skills_root"
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    out="$skills_root/matrix-$name"
-    mkdir -p "$out/agents"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
-    touch "$out/.matrix-os-managed"
-    display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
-    desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
-    short_desc=$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    prompt_desc=$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    cat > "$out/agents/openai.yaml" <<EOYAML
-interface:
-  display_name: "Matrix: $display"
-  short_description: "$short_desc"
-  default_prompt: "Use \$matrix-$name for $prompt_desc."
-EOYAML
-  done
-done
+# Expose the canonical Hermes-format Matrix skill pack to Matrix, Claude Code,
+# and Codex. Codex reads ~/.agents/skills; Claude reads ~/.claude/skills.
+MATRIX_SKILL_TARGETS=matrix,claude,codex \
+  MATRIX_SKILLS_SOURCE=/app/skills/matrix \
+  HOME=/home/matrixos \
+  MATRIX_HOME="$MATRIX_HOME" \
+  bash /app/scripts/sync-matrix-agent-skills.sh
+chown -R matrixos:matrixos /home/matrixos/.agents /home/matrixos/.claude /home/matrixos/.codex 2>/dev/null || true
 
 # AI CLI auth persistence via shared external volume (matrixos-ai-auth)
 # Survives container rebuilds and is shared across feature branch containers.
@@ -225,7 +173,7 @@ exec su-exec matrixos bash -c '
     }
 
     qmd_add "$MATRIX_HOME/agents/knowledge"     knowledge     "**/*.md"
-    qmd_add "$MATRIX_HOME/agents/skills"         skills        "**/*.md"
+    qmd_add "$MATRIX_HOME/.agents/skills"        skills        "**/SKILL.md"
     qmd_add "$MATRIX_HOME/system/summaries"      summaries     "**/*.md"
     qmd_add "$MATRIX_HOME/system/conversations"  conversations "**/*.json"
     qmd_add "$MATRIX_HOME/apps"                  apps          "**/*.html"

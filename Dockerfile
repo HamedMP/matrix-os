@@ -28,6 +28,8 @@ RUN echo "shamefully-hoist=true" > .npmrc
 # Copy postinstall helper before install (package.json postinstall references it)
 COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
 COPY scripts/build-default-apps.mjs scripts/build-default-apps.mjs
+COPY scripts/install-hermes-matrix-skills.sh scripts/install-hermes-matrix-skills.sh
+COPY scripts/sync-matrix-agent-skills.sh scripts/sync-matrix-agent-skills.sh
 
 RUN pnpm install --frozen-lockfile
 
@@ -35,6 +37,7 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ packages/
 COPY shell/ shell/
 COPY home/ home/
+COPY skills/ skills/
 
 # Build bundled Vite default apps so seeded homes and existing homes can serve
 # them without asking the user to run a first-open build step.
@@ -199,7 +202,10 @@ COPY --from=builder /app/.npmrc ./
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/shell ./shell
 COPY --from=builder /app/home ./home
+COPY --from=builder /app/skills ./skills
 COPY --from=builder /app/scripts/build-default-apps.mjs ./scripts/build-default-apps.mjs
+COPY --from=builder /app/scripts/install-hermes-matrix-skills.sh ./scripts/install-hermes-matrix-skills.sh
+COPY --from=builder /app/scripts/sync-matrix-agent-skills.sh ./scripts/sync-matrix-agent-skills.sh
 COPY --from=builder /app/package.json ./
 COPY distro/customer-vps /app/distro/customer-vps
 COPY distro/zshrc /app/distro/zshrc

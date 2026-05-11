@@ -34,8 +34,8 @@ install_shell_config "/home/matrixos"
 # gateway/kernel processes run with HOME=/home/matrixos. Without this, a
 # `claude login` completed in the web terminal can write credentials to a
 # different directory than the process that later invokes Claude Code.
-mkdir -p /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
-for tool in .claude .codex; do
+mkdir -p /home/matrixos/.agents /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
+for tool in .agents .claude .codex; do
   if [ -e "$MATRIX_HOME/$tool" ] && [ ! -L "$MATRIX_HOME/$tool" ]; then
     cp -an "$MATRIX_HOME/$tool/." "/home/matrixos/$tool/" 2>/dev/null || true
     rm -rf "$MATRIX_HOME/$tool"
@@ -105,67 +105,15 @@ if [ -d /home/matrixos/.ssh ] && [ ! -L /home/matrixos/.ssh ]; then
 fi
 ln -sfn "$MATRIX_HOME/.ssh" /home/matrixos/.ssh
 
-# Expose Matrix OS skills to Claude Code (and Codex). Both tools discover
-# skills in $HOME/.claude/skills and $HOME/.codex/skills. Without this sync
-# the user sees "No skills found" inside Claude Code even though skills
-# live at $MATRIX_HOME/agents/skills/. Re-runs every boot so deletions and
-# updates flow through.
-echo "Syncing Matrix skills into ~/.claude/skills and ~/.codex/skills..."
-cleanup_matrix_skills() {
-  skills_root="$1"
-  mkdir -p "$skills_root"
-  for generated in "$skills_root"/matrix-*; do
-    [ -e "$generated" ] || continue
-    [ -f "$generated/.matrix-os-managed" ] && rm -rf "$generated"
-  done
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    legacy="$skills_root/$name"
-    if [ -f "$legacy/SKILL.md" ] && grep -q "^name: matrix-$name\$" "$legacy/SKILL.md"; then
-      rm -rf "$legacy"
-    elif [ -f "$legacy/agents/openai.yaml" ] && grep -q 'display_name: "Matrix:' "$legacy/agents/openai.yaml"; then
-      rm -rf "$legacy"
-    fi
-  done
-}
-for skills_root in "/home/matrixos/.claude/skills" "/home/matrixos/.codex/skills" \
-                   "$MATRIX_HOME/.claude/skills" "$MATRIX_HOME/.codex/skills"; do
-  cleanup_matrix_skills "$skills_root"
-done
-for skills_root in "/home/matrixos/.claude/skills" "$MATRIX_HOME/.claude/skills"; do
-  mkdir -p "$skills_root"
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    out="$skills_root/matrix-$name"
-    mkdir -p "$out"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
-    touch "$out/.matrix-os-managed"
-  done
-done
-for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; do
-  mkdir -p "$skills_root"
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    out="$skills_root/matrix-$name"
-    mkdir -p "$out/agents"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
-    touch "$out/.matrix-os-managed"
-    display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
-    desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
-    short_desc=$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    prompt_desc=$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    cat > "$out/agents/openai.yaml" <<EOYAML
-interface:
-  display_name: "Matrix: $display"
-  short_description: "$short_desc"
-  default_prompt: "Use \$matrix-$name for $prompt_desc."
-EOYAML
-  done
-done
-chown -R matrixos:matrixos /home/matrixos/.claude /home/matrixos/.codex 2>/dev/null || true
+# Expose the canonical Hermes-format Matrix skill pack to Matrix, Claude Code,
+# and Codex. Codex reads ~/.agents/skills; Claude reads ~/.claude/skills.
+echo "Syncing Matrix skills into .agents and .claude skill directories..."
+MATRIX_SKILL_TARGETS=matrix,claude,codex \
+  MATRIX_SKILLS_SOURCE=/app/skills/matrix \
+  HOME=/home/matrixos \
+  MATRIX_HOME="$MATRIX_HOME" \
+  bash /app/scripts/sync-matrix-agent-skills.sh
+chown -R matrixos:matrixos /home/matrixos/.agents /home/matrixos/.claude /home/matrixos/.codex 2>/dev/null || true
 
 start_matrix_code_server() {
   if ! command -v code-server >/dev/null 2>&1; then

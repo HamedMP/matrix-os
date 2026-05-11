@@ -2,46 +2,47 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const SKILLS_DIR = join(__dirname, "../../home/.agents/skills");
+const SKILLS_DIR = join(__dirname, "../../skills/matrix");
 
 const APP_SKILLS = [
-  { name: "build-for-matrix", category: "builder" },
-  { name: "design-matrix-app", category: "builder" },
-  { name: "build-game", category: "builder" },
-  { name: "app-builder", category: "system" },
-  { name: "build-react-app" },
-  { name: "build-html-app" },
+  { dir: "app-builder", name: "matrix-app-builder" },
+  { dir: "design-system", name: "matrix-design-system" },
+  { dir: "integrations", name: "matrix-integrations" },
+  { dir: "dev-vps", name: "matrix-dev-vps" },
+  { dir: "debug-app", name: "matrix-debug-app" },
 ];
 
-function skillPath(name: string): string {
-  return join(SKILLS_DIR, name, "SKILL.md");
+function skillPath(dir: string): string {
+  return join(SKILLS_DIR, dir, "SKILL.md");
 }
 
 describe("T1440-T1445: AI skills for app building", () => {
   for (const skill of APP_SKILLS) {
-    describe(`${skill.name}/SKILL.md`, () => {
+    describe(`${skill.dir}/SKILL.md`, () => {
       it("exists", () => {
-        expect(existsSync(skillPath(skill.name))).toBe(true);
+        expect(existsSync(skillPath(skill.dir))).toBe(true);
       });
 
       it("has valid frontmatter with name", () => {
-        const content = readFileSync(skillPath(skill.name), "utf-8");
+        const content = readFileSync(skillPath(skill.dir), "utf-8");
         expect(content).toMatch(/^---\n/);
         expect(content).toContain(`name: ${skill.name}`);
       });
 
-      it("has triggers", () => {
-        const content = readFileSync(skillPath(skill.name), "utf-8");
-        expect(content).toContain("triggers:");
+      it("has agent metadata", () => {
+        const content = readFileSync(skillPath(skill.dir), "utf-8");
+        expect(content).toContain("metadata:");
+        expect(content).toContain("agent:");
+        expect(content).toContain("tags:");
       });
 
-      it("has examples", () => {
-        const content = readFileSync(skillPath(skill.name), "utf-8");
-        expect(content).toContain("examples:");
+      it("has version metadata", () => {
+        const content = readFileSync(skillPath(skill.dir), "utf-8");
+        expect(content).toContain("version:");
       });
 
       it("has a body with content", () => {
-        const content = readFileSync(skillPath(skill.name), "utf-8");
+        const content = readFileSync(skillPath(skill.dir), "utf-8");
         const parts = content.split("---");
         expect(parts.length).toBeGreaterThanOrEqual(3);
         const body = parts.slice(2).join("---").trim();
@@ -50,48 +51,47 @@ describe("T1440-T1445: AI skills for app building", () => {
     });
   }
 
-  describe("build-for-matrix skill content", () => {
+  describe("matrix-app-builder skill content", () => {
     it("documents matrix.json format", () => {
-      const content = readFileSync(skillPath("build-for-matrix"), "utf-8");
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
       expect(content).toContain("matrix.json");
       expect(content).toContain("runtime");
-      expect(content).toContain("static");
+      expect(content).toContain("vite");
     });
 
     it("documents bridge API", () => {
-      const content = readFileSync(skillPath("build-for-matrix"), "utf-8");
-      expect(content).toContain("/api/bridge/data");
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
+      expect(content).toContain("/api/bridge/query");
     });
 
     it("documents theming", () => {
-      const content = readFileSync(skillPath("build-for-matrix"), "utf-8");
-      expect(content).toContain("#0a0a0a");
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
       expect(content).toContain("theme");
     });
 
-    it("is composable with build skills", () => {
-      const content = readFileSync(skillPath("build-for-matrix"), "utf-8");
-      expect(content).toContain("composable_with:");
-      expect(content).toContain("build-react-app");
-      expect(content).toContain("build-game");
+    it("links companion skills through agent metadata", () => {
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
+      expect(content).toContain("related_skills:");
+      expect(content).toContain("matrix-design-system");
+      expect(content).toContain("matrix-integrations");
     });
   });
 
-  describe("design-matrix-app skill content", () => {
-    it("documents color palette", () => {
-      const content = readFileSync(skillPath("design-matrix-app"), "utf-8");
-      expect(content).toContain("Color Palette");
-      expect(content).toContain("#e0e0e0");
+  describe("matrix-design-system skill content", () => {
+    it("documents Matrix theme variables", () => {
+      const content = readFileSync(skillPath("design-system"), "utf-8");
+      expect(content).toContain("--matrix-bg");
+      expect(content).toContain("--app-bg");
     });
 
     it("documents responsive patterns", () => {
-      const content = readFileSync(skillPath("design-matrix-app"), "utf-8");
-      expect(content).toContain("Responsive");
+      const content = readFileSync(skillPath("design-system"), "utf-8");
+      expect(content).toContain("No horizontal overflow");
     });
 
-    it("documents accessibility", () => {
-      const content = readFileSync(skillPath("design-matrix-app"), "utf-8");
-      expect(content).toContain("Accessibility");
+    it("documents shadcn-style primitives", () => {
+      const content = readFileSync(skillPath("design-system"), "utf-8");
+      expect(content).toContain("shadcn-style");
     });
   });
 });

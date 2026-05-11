@@ -1,6 +1,17 @@
 # Hermes Matrix Skills
 
-Matrix ships a Hermes-installable skill pack under `skills/matrix/`. These skills teach Hermes how to build and debug Matrix apps, use the Matrix design system, work with Matrix integrations, and operate on a dev VPS.
+Matrix ships one canonical Hermes-format skill pack under `skills/matrix/`. These skills teach Hermes, Claude Code, Codex, and the Matrix kernel how to build and debug Matrix apps, use the Matrix design system, work with Matrix integrations, and operate on a dev VPS.
+
+`skills/matrix/` is the source of truth. Runtime startup syncs it into the tool-specific discovery paths:
+
+| Consumer | Runtime path |
+| --- | --- |
+| Matrix kernel | `$MATRIX_HOME/.agents/skills/<skill>/SKILL.md` |
+| Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
+| Claude Code | `$HOME/.claude/skills/<skill>/SKILL.md` |
+| Hermes | `$HERMES_HOME/skills/<skill>/SKILL.md` |
+
+The sync script uses symlinked skill directories when possible, so updates to `skills/matrix/` are reflected without maintaining copied legacy skill files.
 
 ## Skills
 
@@ -28,6 +39,12 @@ The script installs all five skills from `HamedMP/matrix-os` by default. To inst
 ./scripts/install-hermes-matrix-skills.sh /home/matrix/projects/matrix-os
 MATRIX_SKILLS_SOURCE=HamedMP/matrix-os ./scripts/install-hermes-matrix-skills.sh
 HERMES_BIN=/opt/matrix/runtime/node/bin/hermes ./scripts/install-hermes-matrix-skills.sh
+```
+
+To sync the canonical pack into every local Matrix coding-agent location:
+
+```bash
+MATRIX_SKILL_TARGETS=matrix,claude,codex,hermes ./scripts/sync-matrix-agent-skills.sh skills/matrix
 ```
 
 Equivalent manual command:
@@ -62,14 +79,15 @@ hermes skills browse matrix
 Recommended target state:
 
 1. The Matrix image includes `uv` in the host runtime and installs Hermes during first boot as the `matrix` user via `/opt/matrix/bin/matrix-install-hermes`.
-2. First boot runs `scripts/install-hermes-matrix-skills.sh`.
-3. Hermes config sets Matrix's local gateway URL:
+2. Gateway startup runs `scripts/sync-matrix-agent-skills.sh` for Matrix, Claude Code, and Codex.
+3. First boot runs `scripts/install-hermes-matrix-skills.sh` for Hermes.
+4. Hermes config sets Matrix's local gateway URL:
 
    ```bash
    hermes config set skills.config.matrix.gateway_url http://localhost:4000
    ```
 
-4. No Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets are written to Hermes config or customer VPS env.
+5. No Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets are written to Hermes config or customer VPS env.
 
 For production user VPSes, installing Hermes plus the Matrix skills is safe because the skills contain instructions only. Authenticated Matrix actions should still go through Matrix gateway/platform APIs.
 

@@ -15,6 +15,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild better-sqlite3 node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
+    expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
     expect(script).toContain('bin app runtime release.json');
@@ -55,6 +56,8 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
     expect(launcher).toContain('sync_bundled_home_assets');
+    expect(launcher).toContain('sync-matrix-agent-skills.sh');
+    expect(launcher).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(launcher).toContain('$MATRIX_HOME/system/icons');
     expect(launcher).toContain('find "$bundled_home/apps" -type f -name matrix.json');
     expect(launcher).toContain('matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp');

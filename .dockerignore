@@ -18,6 +18,7 @@ www
 .specify
 .claude
 *.md
+!skills/**/*.md
 !home/**/*.md
 !packages/**/*.md
 !shell/**/*.md

@@ -23,6 +23,7 @@ services:
       - ./packages:/app/packages
       - ./shell:/app/shell
       - ./home:/app/home
+      - ./skills:/app/skills
       - ./tests:/app/tests
       - ./specs:/app/specs
       - ./docs:/app/docs

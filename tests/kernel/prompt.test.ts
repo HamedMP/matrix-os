@@ -108,10 +108,19 @@ describe("buildSystemPrompt", () => {
     expect(soulIdx).toBeLessThan(stateIdx);
   });
 
-  it("includes skills TOC section", () => {
-    const prompt = buildSystemPrompt(homePath);
+  it("includes skills TOC section when skills are installed", () => {
+    const tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-skills-")));
+    mkdirSync(join(tempHome, ".agents", "skills", "weather"), { recursive: true });
+    writeFileSync(
+      join(tempHome, ".agents", "skills", "weather", "SKILL.md"),
+      "---\nname: weather\ndescription: Check the weather\ntriggers: [weather]\n---\n\n# Weather\n",
+    );
+
+    const prompt = buildSystemPrompt(tempHome);
     expect(prompt).toContain("## Available Skills");
     expect(prompt).toContain("load_skill");
+
+    rmSync(tempHome, { recursive: true, force: true });
   });
 
   it("includes onboarding progress when setup plan is building", () => {

@@ -1,5 +1,6 @@
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { loadSkills } from "@matrix-os/kernel";
 import type { HostBundleRelease } from "./system-update.js";
 
 const startTime = Date.now();
@@ -103,13 +104,10 @@ export function getSystemInfo(homePath: string): SystemInfo {
   }
 
   let skills = 0;
-  const skillsDir = join(homePath, "agents", "skills");
-  if (existsSync(skillsDir)) {
-    try {
-      skills = readdirSync(skillsDir).filter((f) => f.endsWith(".md")).length;
-    } catch (err) {
-      logSystemInfoReadFailure("Failed to count skills", err);
-    }
+  try {
+    skills = loadSkills(homePath).length;
+  } catch (err) {
+    logSystemInfoReadFailure("Failed to count skills", err);
   }
 
   let templateVersion = "unknown";
