@@ -35,7 +35,7 @@ if [ "${HOST_BUNDLE_SKIP_SHELL_BUILD:-false}" = "true" ]; then
     exit 1
   }
 else
-  pnpm --filter './shell' build
+  pnpm --filter './shell' exec next build --webpack
 fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
