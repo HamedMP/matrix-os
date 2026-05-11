@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { chmod, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -142,6 +142,28 @@ describe("Symphony runner", () => {
         MATRIX_HOME: homePath,
       }),
     }));
+  });
+
+  it("creates the default Matrix-home workflow file before starting", async () => {
+    const child = new FakeProcess();
+    const spawnProcess = vi.fn(() => child as never);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+    const defaultWorkflowPath = join(homePath, "system", "symphony", "WORKFLOW.md");
+
+    const result = await runner.start({ serviceRoot, binPath: "./bin/symphony" });
+
+    expect(result).toMatchObject({ ok: true });
+    await expect(readFile(defaultWorkflowPath, "utf8")).resolves.toContain("tracker:");
+    expect(spawnProcess).toHaveBeenCalledWith(expect.any(String), [
+      await realpath(defaultWorkflowPath),
+      "--port",
+      "4066",
+      "--i-understand-that-this-will-be-running-without-the-usual-guardrails",
+    ], expect.any(Object));
   });
 
   it("spawns bare command names from the validated service root instead of PATH", async () => {

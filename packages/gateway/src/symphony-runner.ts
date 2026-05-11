@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod/v4";
 
 const SYMPHONY_CONFIG_VERSION = 1;
@@ -41,6 +41,36 @@ const SYMPHONY_ENV_DENYLIST = new Set([
   "UPGRADE_TOKEN",
 ]);
 const SYMPHONY_ENV_DENY_PREFIXES = ["PIPEDREAM_", "CLERK_", "CUSTOMER_VPS_", "MATRIX_"];
+const DEFAULT_SYMPHONY_WORKFLOW = `---
+tracker:
+  kind: linear
+  team_key: "MAT"
+  required_labels:
+    - symphony
+  active_states:
+    - Todo
+    - In Progress
+    - Merging
+    - Rework
+  terminal_states:
+    - Done
+    - Canceled
+    - Cancelled
+    - Duplicate
+polling:
+  interval_ms: 5000
+---
+
+You are working on a Linear ticket.
+
+Instructions:
+
+1. Determine the current ticket state before making changes.
+2. Keep one persistent workpad comment updated with plan, acceptance criteria, validation, and blockers.
+3. Reproduce the issue signal before changing code.
+4. Run targeted validation and required repository checks before pushing.
+5. Move the ticket to Human Review only after the PR is linked, feedback is resolved, and checks are green.
+`;
 
 const LocalPathSchema = z.string()
   .min(1)
@@ -236,6 +266,9 @@ class SymphonyRunner {
       };
     }
 
+    const defaultWorkflowReady = await this.ensureDefaultWorkflowFile(workflowPath);
+    if (!defaultWorkflowReady.ok) return defaultWorkflowReady.result;
+
     const missing = await firstUnavailablePath([
       { label: "serviceRoot", path: serviceRoot, mode: fsConstants.R_OK | fsConstants.X_OK },
       { label: "workflowPath", path: workflowPath, mode: fsConstants.R_OK },
@@ -406,8 +439,35 @@ class SymphonyRunner {
 
   private defaultConfig(): SymphonyConfig {
     return SymphonyConfigSchema.parse({
-      workflowPath: join(this.homePath, "system", "symphony", "WORKFLOW.md"),
+      workflowPath: this.defaultWorkflowPath(),
     });
+  }
+
+  private defaultWorkflowPath(): string {
+    return join(this.homePath, "system", "symphony", "WORKFLOW.md");
+  }
+
+  private async ensureDefaultWorkflowFile(workflowPath: string): Promise<
+    { ok: true } | { ok: false; result: SymphonyStartResult }
+  > {
+    if (resolve(workflowPath) !== resolve(this.defaultWorkflowPath())) return { ok: true };
+    try {
+      await mkdir(dirname(workflowPath), { recursive: true });
+      await writeFile(workflowPath, DEFAULT_SYMPHONY_WORKFLOW, { flag: "wx" });
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && err.code === "EEXIST") return { ok: true };
+      console.error("[symphony] Failed to create default workflow:", err);
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          status: 409,
+          code: "symphony_not_installed",
+          message: "Symphony workflow path is not available",
+        },
+      };
+    }
+    return { ok: true };
   }
 
   private mergeConfig(update: SymphonyConfigUpdate, base?: SymphonyConfig): SymphonyConfig {
