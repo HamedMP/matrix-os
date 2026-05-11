@@ -284,4 +284,17 @@ describe("PostHog error tracking", () => {
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
     expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
+
+  it("queues social route PostHog capture off the error response path", async () => {
+    const socialRouteFiles = [
+      "packages/gateway/src/social.ts",
+      "packages/platform/src/social-api.ts",
+    ];
+
+    for (const file of socialRouteFiles) {
+      const source = await readFile(file, "utf8");
+      expect(source, file).not.toContain("await posthogErrorTracker.captureHonoException");
+      expect(source, file).toContain("void posthogErrorTracker.captureHonoException(err, c).catch");
+    }
+  });
 });

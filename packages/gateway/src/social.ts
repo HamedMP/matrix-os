@@ -518,7 +518,10 @@ export function createSocialRoutes(
   api.shutdownPostHog = () => posthogErrorTracker.shutdown();
 
   api.onError(async (err, c) => {
-    await posthogErrorTracker.captureHonoException(err, c);
+    void posthogErrorTracker.captureHonoException(err, c).catch((captureErr: unknown) => {
+      const kind = captureErr instanceof Error ? captureErr.name : typeof captureErr;
+      console.warn(`[posthog] Failed to queue Hono exception for matrix-gateway-social: ${kind}`);
+    });
     if (err.message.includes("JSON")) return c.json({ error: "Invalid JSON body" }, 400);
     return c.json({ error: "Internal error" }, 500);
   });
