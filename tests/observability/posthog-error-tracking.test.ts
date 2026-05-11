@@ -144,6 +144,39 @@ describe("PostHog error tracking", () => {
     expect(flush).not.toHaveBeenCalled();
   });
 
+  it("preserves Hono-like HTTPExceptions from other module instances", async () => {
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const app = new Hono();
+
+    installPostHogHonoErrorTracking(app, {
+      env: { POSTHOG_TOKEN: "phc_test" },
+      service: "matrix-gateway",
+      clientFactory: () => ({
+        captureException,
+        flush,
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    app.get("/foreign-missing", () => {
+      throw new ForeignHTTPException(404, "foreign missing");
+    });
+    app.get("/foreign-unavailable", () => {
+      throw new ForeignHTTPException(503, "foreign unavailable");
+    });
+
+    const missing = await app.request("http://localhost/foreign-missing");
+    const unavailable = await app.request("http://localhost/foreign-unavailable");
+
+    expect(missing.status).toBe(404);
+    await expect(missing.text()).resolves.toBe("foreign missing");
+    expect(unavailable.status).toBe(503);
+    await expect(unavailable.text()).resolves.toBe("foreign unavailable");
+    expect(captureException).toHaveBeenCalledOnce();
+    expect(flush).toHaveBeenCalledOnce();
+  });
+
   it("captures 5xx Hono HTTPExceptions while preserving their response", async () => {
     const captureException = vi.fn();
     const flush = vi.fn().mockResolvedValue(undefined);
@@ -169,6 +202,28 @@ describe("PostHog error tracking", () => {
     await expect(res.text()).resolves.toBe("Service temporarily unavailable");
     expect(captureException).toHaveBeenCalledOnce();
     expect(flush).toHaveBeenCalledOnce();
+  });
+
+  it("logs fallback Hono errors when no custom error handler is provided", async () => {
+    const logger = { warn: vi.fn() };
+    const app = new Hono();
+
+    installPostHogHonoErrorTracking(app, {
+      env: {},
+      service: "matrix-gateway",
+      logger,
+    });
+
+    app.get("/boom", () => {
+      throw new Error("boom");
+    });
+
+    const res = await app.request("http://localhost/boom");
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: "Internal Server Error" });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Unhandled Hono exception"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Error: boom"));
   });
 
   it("returns Hono 500 responses without waiting for telemetry flush", async () => {
@@ -490,12 +545,13 @@ describe("PostHog error tracking", () => {
     expect(platformMain).toContain("await app.shutdownPostHog()");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
     const proxyCloseIndex = proxyMain.indexOf("server.close();");
-    const proxyForcedExitIndex = proxyMain.indexOf("setTimeout(() => process.exit(0), 5_000).unref()");
+    const proxyForcedExitIndex = proxyMain.indexOf("const forceExit = setTimeout(() => process.exit(1), 5_000)");
     const proxyTelemetryDrainIndex = proxyMain.indexOf("await posthogErrorTracker.shutdown()");
     expect(proxyCloseIndex).toBeGreaterThanOrEqual(0);
     expect(proxyCloseIndex).toBeLessThan(proxyTelemetryDrainIndex);
     expect(proxyForcedExitIndex).toBeLessThan(proxyTelemetryDrainIndex);
-    expect(proxyMain).toContain("setTimeout(() => process.exit(0), 5_000).unref()");
+    expect(proxyMain).not.toContain(".unref()");
+    expect(proxyMain).toContain("clearTimeout(forceExit)");
     expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
 
@@ -508,11 +564,26 @@ describe("PostHog error tracking", () => {
     for (const file of socialRouteFiles) {
       const source = await readFile(file, "utf8");
       expect(source, file).not.toContain("await posthogErrorTracker.captureHonoException");
-      expect(source, file).toContain("err instanceof HTTPException && err.status < 500");
+      expect(source, file).toContain("isHonoHTTPExceptionLike(err)");
+      expect(source, file).toContain("return err.getResponse()");
       expect(source, file).toContain("void posthogErrorTracker.captureHonoException(err, c).catch");
     }
   });
 });
+
+class ForeignHTTPException extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HTTPException";
+  }
+
+  getResponse(): Response {
+    return new Response(this.message, { status: this.status });
+  }
+}
 
 function readYamlServiceBlock(source: string, serviceName: string): string {
   const lines = source.split(/\r?\n/);

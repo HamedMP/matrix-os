@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { HTTPException } from 'hono/http-exception';
-import { createPostHogErrorTracker } from '@matrix-os/observability';
+import { createPostHogErrorTracker, isHonoHTTPExceptionLike } from '@matrix-os/observability';
 import type { PlatformDB } from './db.js';
 import {
   insertPost,
@@ -39,12 +38,13 @@ export function createSocialFeedApi(db: PlatformDB): SocialFeedApi {
   api.shutdownPostHog = () => posthogErrorTracker.shutdown();
 
   api.onError(async (err, c) => {
-    if (!(err instanceof HTTPException && err.status < 500)) {
+    if (!isHonoHTTPExceptionLike(err) || err.status >= 500) {
       void posthogErrorTracker.captureHonoException(err, c).catch((captureErr: unknown) => {
         const kind = captureErr instanceof Error ? captureErr.name : typeof captureErr;
         console.warn(`[posthog] Failed to queue Hono exception for matrix-platform-social: ${kind}`);
       });
     }
+    if (isHonoHTTPExceptionLike(err)) return err.getResponse();
     if (err.message.includes('JSON')) return c.json({ error: 'Invalid JSON body' }, 400);
     return c.json({ error: 'Internal error' }, 500);
   });

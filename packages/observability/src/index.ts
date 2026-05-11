@@ -5,6 +5,10 @@ import { HTTPException } from "hono/http-exception";
 type EnvSource = Record<string, string | undefined>;
 type PrimitiveProperty = string | number | boolean;
 type PostHogProperties = Record<string, PrimitiveProperty | null | undefined>;
+type HonoHTTPExceptionLike = Error & {
+  status: number;
+  getResponse(): Response;
+};
 
 export type PostHogCaptureClient = Pick<PostHog, "captureException" | "flush" | "shutdown">;
 
@@ -175,7 +179,7 @@ export function installPostHogHonoErrorTracking(
   const tracker = createPostHogErrorTracker(options);
   const logger = options.logger ?? console;
   app.onError(async (err, c) => {
-    if (err instanceof HTTPException) {
+    if (isHonoHTTPExceptionLike(err)) {
       if (err.status >= 500) {
         void tracker.captureHonoException(err, c).catch((captureErr: unknown) => {
           logger.warn(`[posthog] Failed to queue Hono exception for ${options.service}: ${errorKind(captureErr)}`);
@@ -183,6 +187,7 @@ export function installPostHogHonoErrorTracking(
       }
       return err.getResponse();
     }
+    logger.warn(`[posthog] Unhandled Hono exception for ${options.service}: ${errorForLog(err)}`);
     void tracker.captureHonoException(err, c).catch((captureErr: unknown) => {
       logger.warn(`[posthog] Failed to queue Hono exception for ${options.service}: ${errorKind(captureErr)}`);
     });
@@ -192,6 +197,19 @@ export function installPostHogHonoErrorTracking(
     return c.json({ error: options.clientErrorMessage ?? DEFAULT_CLIENT_ERROR_MESSAGE }, 500);
   });
   return tracker;
+}
+
+export function isHonoHTTPExceptionLike(error: unknown): error is HonoHTTPExceptionLike {
+  if (error instanceof HTTPException) return true;
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Partial<HonoHTTPExceptionLike>;
+  return (
+    typeof candidate.status === "number" &&
+    Number.isInteger(candidate.status) &&
+    candidate.status >= 400 &&
+    candidate.status <= 599 &&
+    typeof candidate.getResponse === "function"
+  );
 }
 
 export function createPostHogServerExceptionReporter(
@@ -385,4 +403,9 @@ class PostHogTimeoutError extends Error {
 
 function errorKind(err: unknown): string {
   return err instanceof Error ? err.name : typeof err;
+}
+
+function errorForLog(err: unknown): string {
+  if (err instanceof Error) return err.stack ?? `${err.name}: ${err.message}`;
+  return typeof err === "string" ? err : errorKind(err);
 }
