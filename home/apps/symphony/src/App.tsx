@@ -539,6 +539,7 @@ function App() {
   const [graphqlQuery, setGraphqlQuery] = useState("query MatrixLinearViewer { viewer { id name email } }");
   const [graphqlResult, setGraphqlResult] = useState("");
   const [runtimeStatus, setRuntimeStatus] = useState<SymphonyRuntimeStatus | null>(null);
+  const [runtimeConfigLoaded, setRuntimeConfigLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -654,11 +655,13 @@ function App() {
     Promise.all([readConfig(), fetchConnections(), fetchRuntimeStatus()])
       .then(([storedConfig, storedConnections, storedRuntimeStatus]) => {
         setRuntimeStatus(storedRuntimeStatus);
+        setRuntimeConfigLoaded(Boolean(storedRuntimeStatus));
         setConfig(mergeRuntimeConfig(storedConfig, storedRuntimeStatus));
         setConnections(storedConnections);
       })
       .catch((err: unknown) => {
         console.warn("[symphony] startup failed:", err instanceof Error ? err.message : String(err));
+        setRuntimeConfigLoaded(false);
         setError("Symphony could not load saved settings.");
       });
   }, []);
@@ -760,9 +763,11 @@ function App() {
     try {
       const next = await fetchRuntimeStatus();
       setRuntimeStatus(next);
+      setRuntimeConfigLoaded(Boolean(next));
       if (next) setConfig((current) => mergeRuntimeConfig(current, next));
     } catch (err: unknown) {
       console.warn("[symphony] runtime refresh failed:", err instanceof Error ? err.message : String(err));
+      setRuntimeConfigLoaded(false);
       setError("Symphony runner status could not be loaded.");
     } finally {
       setBusy(null);
@@ -770,6 +775,10 @@ function App() {
   }, []);
 
   const runStartRuntime = useCallback(async () => {
+    if (!runtimeConfigLoaded) {
+      setError("Symphony runner status could not be loaded.");
+      return;
+    }
     setBusy("Starting runner");
     setError(null);
     try {
@@ -782,7 +791,7 @@ function App() {
     } finally {
       setBusy(null);
     }
-  }, [config]);
+  }, [config, runtimeConfigLoaded]);
 
   const runStopRuntime = useCallback(async () => {
     setBusy("Stopping runner");
@@ -841,7 +850,7 @@ function App() {
       ) : null}
 
       <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <StatusCard icon={<Power />} label="Runner" value={runtimeStatus?.running ? `Running :${runtimeStatus.config.port}` : "Stopped"} ok={Boolean(runtimeStatus?.running)} />
+        <StatusCard icon={<Power />} label="Runner" value={!runtimeConfigLoaded ? "Loading" : runtimeStatus?.running ? `Running :${runtimeStatus.config.port}` : "Stopped"} ok={Boolean(runtimeStatus?.running)} />
         <StatusCard icon={<Ticket />} label="Linear" value={linearConnection?.account_label ?? "Not connected"} ok={Boolean(linearConnection)} onClick={() => runConnect("linear")} />
         <StatusCard icon={<Github />} label="GitHub" value={githubConnection?.account_label ?? "Not connected"} ok={Boolean(githubConnection)} onClick={() => runConnect("github")} />
         <StatusCard icon={<Layers3 />} label="Project" value={selectedProject?.slugId || config.projectSlug || "Unset"} ok={Boolean(config.projectId || config.projectSlug)} />
@@ -919,14 +928,14 @@ function App() {
 
             <div className="grid gap-2 rounded-lg border bg-muted/30 p-3 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <div className="min-w-0">
-                <div className="font-semibold">{runtimeStatus?.running ? `Running on port ${runtimeStatus.config.port}` : "Local runner stopped"}</div>
+                <div className="font-semibold">{!runtimeConfigLoaded ? "Runner config loading" : runtimeStatus?.running ? `Running on port ${runtimeStatus.config.port}` : "Local runner stopped"}</div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {runtimeStatus?.linearApiKeyConfigured ? "LINEAR_API_KEY is available" : "LINEAR_API_KEY is missing"}
+                  {!runtimeConfigLoaded ? "Loading runner status" : runtimeStatus?.linearApiKeyConfigured ? "LINEAR_API_KEY is available" : "LINEAR_API_KEY is missing"}
                   {runtimeStatus?.pid ? ` · pid ${runtimeStatus.pid}` : ""}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button onClick={runStartRuntime} disabled={Boolean(busy) || Boolean(runtimeStatus?.running)}>
+                <Button onClick={runStartRuntime} disabled={Boolean(busy) || Boolean(runtimeStatus?.running) || !runtimeConfigLoaded}>
                   <Play />Start
                 </Button>
                 <Button variant="outline" onClick={runStopRuntime} disabled={Boolean(busy) || !runtimeStatus?.running}>

@@ -63,6 +63,7 @@ describe("Symphony app", () => {
   let runtimeRunning = false;
   let runtimePort = 4066;
   let startRuntimeFailureCode: string | null = null;
+  let runtimeStatusPromise: Promise<Response> | null = null;
   let runtimeConfigSavePromise: Promise<Response> | null = null;
 
   beforeEach(() => {
@@ -82,6 +83,7 @@ describe("Symphony app", () => {
     runtimeRunning = false;
     runtimePort = 4066;
     startRuntimeFailureCode = null;
+    runtimeStatusPromise = null;
     runtimeConfigSavePromise = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -96,6 +98,7 @@ describe("Symphony app", () => {
         return json({ ok: true });
       }
       if (url === "/api/symphony/status") {
+        if (runtimeStatusPromise) return await runtimeStatusPromise;
         return json({
           running: runtimeRunning,
           pid: runtimeRunning ? 123 : null,
@@ -428,6 +431,44 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect(screen.getByText("Symphony runner paths must stay inside the allowed local checkout roots.")).toBeTruthy());
     expect(warnSpy).toHaveBeenCalledWith("[symphony] runtime start failed:", "symphony_path_not_allowed");
+  });
+
+  it("keeps Start disabled until runtime config loads", async () => {
+    let resolveRuntimeStatus: (response: Response) => void = () => {};
+    runtimeStatusPromise = new Promise<Response>((resolve) => {
+      resolveRuntimeStatus = resolve;
+    });
+    render(<App />);
+
+    const startButton = screen.getByRole("button", { name: /Start/ }) as HTMLButtonElement;
+    expect(startButton.disabled).toBe(true);
+    fireEvent.click(startButton);
+    expect(vi.mocked(global.fetch).mock.calls.filter(([input]) => input === "/api/symphony/start")).toHaveLength(0);
+
+    resolveRuntimeStatus(json({
+      running: false,
+      pid: null,
+      startedAt: null,
+      lastExitAt: null,
+      lastExitCode: null,
+      dashboardUrl: `http://127.0.0.1:${runtimePort}`,
+      linearApiKeyConfigured: true,
+      config: {
+        version: 1,
+        serviceRoot: "/home/matrixos/code/symphony/elixir",
+        binPath: "./bin/symphony",
+        workflowPath: "/home/matrixos/system/symphony/WORKFLOW.md",
+        port: runtimePort,
+        tracker: {
+          kind: "linear",
+          teamKey: runtimeTeamKey,
+          requiredLabels: ["symphony"],
+          activeStates: runtimeActiveStates,
+        },
+      },
+    }));
+
+    await waitFor(() => expect(startButton.disabled).toBe(false));
   });
 
   it("starts with generic repository defaults before runtime config loads", async () => {
