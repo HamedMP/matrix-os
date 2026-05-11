@@ -296,13 +296,14 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`[proxy] Received ${signal}, shutting down`);
+  server.close();
+  setTimeout(() => process.exit(0), 5_000).unref();
   try {
     await posthogErrorTracker.shutdown();
   } catch (err: unknown) {
     console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
   } finally {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 5_000).unref();
+    process.exit(0);
   }
 }
 

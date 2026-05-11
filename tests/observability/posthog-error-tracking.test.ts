@@ -427,6 +427,12 @@ describe("PostHog error tracking", () => {
     expect(platformSocialApi).toContain("shutdownPostHog");
     expect(platformMain).toContain("await app.shutdownPostHog()");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
+    const proxyCloseIndex = proxyMain.indexOf("server.close();");
+    const proxyForcedExitIndex = proxyMain.indexOf("setTimeout(() => process.exit(0), 5_000).unref()");
+    const proxyTelemetryDrainIndex = proxyMain.indexOf("await posthogErrorTracker.shutdown()");
+    expect(proxyCloseIndex).toBeGreaterThanOrEqual(0);
+    expect(proxyCloseIndex).toBeLessThan(proxyTelemetryDrainIndex);
+    expect(proxyForcedExitIndex).toBeLessThan(proxyTelemetryDrainIndex);
     expect(proxyMain).toContain("setTimeout(() => process.exit(0), 5_000).unref()");
     expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
