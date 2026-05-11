@@ -74,6 +74,20 @@ describe("integrations registry", () => {
     expect(body.variables).not.toHaveProperty("labelName");
   });
 
+  it("paginates Linear project listing requests", () => {
+    const action = getAction("linear", "list_projects");
+    expect(action).toBeDefined();
+
+    const body = action!.directApi?.mapBody?.({ first: 100, after: "cursor_1" }) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+
+    expect(body.query).toContain("projects(first: $first, after: $after)");
+    expect(body.query).toContain("pageInfo { hasNextPage endCursor }");
+    expect(body.variables).toMatchObject({ first: 100, after: "cursor_1" });
+  });
+
   it("includes the Linear label comparator when a label name is requested", () => {
     const action = getAction("linear", "list_issues");
     expect(action).toBeDefined();

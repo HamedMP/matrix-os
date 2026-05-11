@@ -39,6 +39,8 @@ const FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_RUNNER_PORT = 4066;
 const LABEL_PAGE_SIZE = 250;
 const LABEL_MAX_PAGES = 10;
+const PROJECT_PAGE_SIZE = 100;
+const PROJECT_MAX_PAGES = 10;
 const ISSUE_PAGE_SIZE = 100;
 const ISSUE_TARGET_COUNT = 50;
 const ISSUE_MAX_PAGES = 5;
@@ -421,6 +423,28 @@ async function fetchRequiredLinearLabelIds(teamId: string, labelNames: string[])
   return names.map((label) => found.get(label.toLowerCase())).filter((id): id is string => Boolean(id));
 }
 
+async function fetchLinearProjects(): Promise<Project[]> {
+  const projects: Project[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < PROJECT_MAX_PAGES; page += 1) {
+    const payload = await callService<unknown>("linear", "list_projects", {
+      first: PROJECT_PAGE_SIZE,
+      ...(after ? { after } : {}),
+    });
+    const projectData = graphData<{
+      projects?: {
+        nodes?: Project[];
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(payload).projects;
+    projects.push(...(projectData?.nodes ?? []));
+    const endCursor = projectData?.pageInfo?.endCursor;
+    if (!projectData?.pageInfo?.hasNextPage || !endCursor) break;
+    after = endCursor;
+  }
+  return projects;
+}
+
 function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
   const required = labelNames.map((label) => label.trim().toLowerCase()).filter(Boolean);
   if (required.length === 0) return true;
@@ -575,12 +599,11 @@ function App() {
     setBusy("Refreshing Linear");
     setError(null);
     try {
-      const [teamPayload, projectPayload] = await Promise.all([
+      const [teamPayload, nextProjects] = await Promise.all([
         callService<unknown>("linear", "list_teams", { first: 100 }),
-        callService<unknown>("linear", "list_projects", { first: 100 }),
+        fetchLinearProjects(),
       ]);
       const nextTeams = graphData<{ teams?: { nodes?: Team[] } }>(teamPayload).teams?.nodes ?? [];
-      const nextProjects = graphData<{ projects?: { nodes?: Project[] } }>(projectPayload).projects?.nodes ?? [];
       const teamId = selectLinearTeamId(baseConfig, nextTeams);
       const projectId = selectLinearProjectId(baseConfig, nextProjects, teamId);
       const selectedTeam = nextTeams.find((team) => team.id === teamId);

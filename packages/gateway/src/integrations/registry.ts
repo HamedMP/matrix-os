@@ -513,13 +513,14 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
         description: "List Linear projects",
         params: {
           first: { type: "number" },
+          after: { type: "string" },
         },
         directApi: {
           method: "POST",
           url: "https://api.linear.app/graphql",
           mapBody: (p) => linearGraphqlBody(`
-            query MatrixLinearProjects($first: Int!) {
-              projects(first: $first) {
+            query MatrixLinearProjects($first: Int!, $after: String) {
+              projects(first: $first, after: $after) {
                 nodes {
                   id
                   name
@@ -528,9 +529,13 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
                   description
                   teams { nodes { id key name } }
                 }
+                pageInfo { hasNextPage endCursor }
               }
             }
-          `, { first: cappedPositiveInt(p.first, 50, 100) }),
+          `, {
+            first: cappedPositiveInt(p.first, 50, 100),
+            after: typeof p.after === "string" && p.after.trim() ? p.after : null,
+          }),
         },
       },
       list_workflow_states: {

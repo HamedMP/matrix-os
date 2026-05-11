@@ -52,6 +52,7 @@ describe("Symphony app", () => {
   let availableLabels: Array<{ id: string; name: string }> = [];
   let availableLabelPages: Record<string, { nodes: Array<{ id: string; name: string }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let linearProjects: Array<{ id: string; name: string; slugId?: string; teams?: { nodes?: Array<{ id: string; key?: string; name?: string }> } }> = [];
+  let linearProjectPages: Record<string, { nodes: Array<{ id: string; name: string; slugId?: string; teams?: { nodes?: Array<{ id: string; key?: string; name?: string }> } }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let workflowStates: Array<{ id: string; name: string; type?: string; color?: string; team?: { id: string; key?: string; name?: string } }> = [];
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
@@ -69,6 +70,7 @@ describe("Symphony app", () => {
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
     availableLabelPages = null;
     linearProjects = [];
+    linearProjectPages = null;
     workflowStates = [];
     createdIssues = [];
     listedIssues = [];
@@ -185,7 +187,12 @@ describe("Symphony app", () => {
           ] } } });
         }
         if (body.action === "list_projects") {
-          return json({ data: { projects: { nodes: linearProjects } } });
+          const after = body.params?.after ?? "";
+          const page = linearProjectPages?.[after] ?? {
+            nodes: linearProjects,
+            pageInfo: { hasNextPage: false, endCursor: null },
+          };
+          return json({ data: { projects: page } });
         }
         if (body.action === "list_workflow_states") {
           return json({ data: { workflowStates: { nodes: workflowStates } } });
@@ -244,6 +251,33 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_ops"));
     expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("");
+  });
+
+  it("pages Linear projects before restoring a saved project", async () => {
+    storedConfig = JSON.stringify({
+      teamId: "team_mat",
+      teamKey: "MAT",
+      projectId: "project_late",
+      projectSlug: "late-project",
+    });
+    linearProjectPages = {
+      "": {
+        nodes: [],
+        pageInfo: { hasNextPage: true, endCursor: "cursor_1" },
+      },
+      cursor_1: {
+        nodes: [
+          { id: "project_late", name: "Late project", slugId: "late-project", teams: { nodes: [{ id: "team_mat", key: "MAT", name: "Matrix" }] } },
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    };
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("project_late");
+    const projectCalls = integrationCalls.filter((call) => call.action === "list_projects");
+    expect(projectCalls.map((call) => call.params?.after ?? "")).toEqual(["", "cursor_1"]);
   });
 
   it("clears the selected Linear project when switching teams", async () => {
