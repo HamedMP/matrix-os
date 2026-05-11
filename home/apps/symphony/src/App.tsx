@@ -371,9 +371,19 @@ function selectLinearTeamId(config: SymphonyConfig, teams: Team[]): string {
   return teams[0]?.id ?? "";
 }
 
-function selectLinearProjectId(config: SymphonyConfig, projects: Project[]): string {
-  if (config.projectId && projects.some((project) => project.id === config.projectId)) return config.projectId;
-  const slugMatch = projects.find((project) => project.slugId?.toLowerCase() === config.projectSlug.toLowerCase());
+function projectBelongsToTeam(project: Project, teamId: string): boolean {
+  if (!teamId) return true;
+  return (project.teams?.nodes ?? []).some((team) => team.id === teamId);
+}
+
+function projectsForTeam(projects: Project[], teamId: string): Project[] {
+  return projects.filter((project) => projectBelongsToTeam(project, teamId));
+}
+
+function selectLinearProjectId(config: SymphonyConfig, projects: Project[], teamId: string): string {
+  const teamProjects = projectsForTeam(projects, teamId);
+  if (config.projectId && teamProjects.some((project) => project.id === config.projectId)) return config.projectId;
+  const slugMatch = teamProjects.find((project) => project.slugId?.toLowerCase() === config.projectSlug.toLowerCase());
   return slugMatch?.id ?? "";
 }
 
@@ -434,6 +444,7 @@ async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, pro
   const requiredLabels = baseConfig.requiredLabels.map((label) => label.trim()).filter(Boolean);
   let after: string | undefined;
   let pagesFetched = 0;
+  let hitPageCap = false;
   for (let page = 0; page < ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT; page += 1) {
     const issuePayload = await callService<unknown>("linear", "list_issues", {
       teamId,
@@ -451,10 +462,15 @@ async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, pro
     }>(issuePayload).issues;
     collected.push(...(issueData?.nodes ?? []).filter((issue) => issueHasRequiredLabels(issue, baseConfig.requiredLabels)));
     pagesFetched = page + 1;
-    if (!issueData?.pageInfo?.hasNextPage || !issueData.pageInfo.endCursor) break;
-    after = issueData.pageInfo.endCursor;
+    const endCursor = issueData?.pageInfo?.endCursor;
+    if (!issueData?.pageInfo?.hasNextPage || !endCursor) break;
+    if (page + 1 >= ISSUE_MAX_PAGES) {
+      hitPageCap = true;
+      break;
+    }
+    after = endCursor;
   }
-  if (requiredLabels.length > 1 && pagesFetched >= ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT) {
+  if (requiredLabels.length > 1 && hitPageCap && collected.length < ISSUE_TARGET_COUNT) {
     console.warn("[symphony] Linear issue label filter reached the page cap before filling the board", {
       collected: collected.length,
       pages: pagesFetched,
@@ -497,7 +513,8 @@ function App() {
 
   const linearConnection = useMemo(() => connectionFor(connections, "linear"), [connections]);
   const githubConnection = useMemo(() => connectionFor(connections, "github"), [connections]);
-  const selectedProject = projects.find((project) => project.id === config.projectId);
+  const visibleProjects = useMemo(() => projectsForTeam(projects, config.teamId), [projects, config.teamId]);
+  const selectedProject = visibleProjects.find((project) => project.id === config.projectId);
   const activeStateTemplates = useMemo(() => templatesForActiveStates(config.activeStates), [config.activeStates]);
   const boardStates = useMemo(() => activeStateTemplates.map((state) => state.name), [activeStateTemplates]);
   const missingSymphonyStates = activeStateTemplates.filter(
@@ -557,7 +574,7 @@ function App() {
       const nextTeams = graphData<{ teams?: { nodes?: Team[] } }>(teamPayload).teams?.nodes ?? [];
       const nextProjects = graphData<{ projects?: { nodes?: Project[] } }>(projectPayload).projects?.nodes ?? [];
       const teamId = selectLinearTeamId(baseConfig, nextTeams);
-      const projectId = selectLinearProjectId(baseConfig, nextProjects);
+      const projectId = selectLinearProjectId(baseConfig, nextProjects, teamId);
       const selectedTeam = nextTeams.find((team) => team.id === teamId);
       const selectedLinearProject = nextProjects.find((project) => project.id === projectId);
       const nextConfig = {
@@ -565,7 +582,7 @@ function App() {
         teamId,
         teamKey: selectedTeam?.key ?? baseConfig.teamKey,
         projectId,
-        projectSlug: selectedLinearProject?.slugId ?? baseConfig.projectSlug,
+        projectSlug: selectedLinearProject?.slugId ?? "",
       };
       setTeams(nextTeams);
       setProjects(nextProjects);
@@ -832,16 +849,22 @@ function App() {
               <Field label="Team">
                 <Select value={config.teamId} onChange={(event) => {
                   const team = teams.find((candidate) => candidate.id === event.target.value);
-                  void saveConfig({ ...config, teamId: event.target.value, teamKey: team?.key ?? config.teamKey });
+                  void saveConfig({
+                    ...config,
+                    teamId: event.target.value,
+                    teamKey: team?.key ?? config.teamKey,
+                    projectId: "",
+                    projectSlug: "",
+                  });
                 }}>
                   <option value="">Select team</option>
                   {teams.map((team) => <option key={team.id} value={team.id}>{team.key} - {team.name}</option>)}
                 </Select>
               </Field>
               <Field label="Project">
-                <Select value={config.projectId} onChange={(event) => saveConfig({ ...config, projectId: event.target.value, projectSlug: projects.find((project) => project.id === event.target.value)?.slugId ?? config.projectSlug })}>
+                <Select value={config.projectId} onChange={(event) => saveConfig({ ...config, projectId: event.target.value, projectSlug: visibleProjects.find((project) => project.id === event.target.value)?.slugId ?? "" })}>
                   <option value="">No project filter</option>
-                  {projects.map((project) => <option key={project.id} value={project.id}>{project.slugId ?? project.name}</option>)}
+                  {visibleProjects.map((project) => <option key={project.id} value={project.id}>{project.slugId ?? project.name}</option>)}
                 </Select>
               </Field>
             </div>

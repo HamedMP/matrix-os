@@ -48,37 +48,47 @@ function json(body: unknown, init?: ResponseInit): Response {
 
 describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
+  let storedConfig: string | null = null;
   let availableLabels: Array<{ id: string; name: string }> = [];
   let availableLabelPages: Record<string, { nodes: Array<{ id: string; name: string }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
+  let linearProjects: Array<{ id: string; name: string; slugId?: string; teams?: { nodes?: Array<{ id: string; key?: string; name?: string }> } }> = [];
   let workflowStates: Array<{ id: string; name: string; type?: string; color?: string; team?: { id: string; key?: string; name?: string } }> = [];
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let integrationCalls: Array<{ action?: string; params?: Record<string, unknown> }> = [];
   let runtimeActiveStates: string[] = [];
+  let runtimeTeamKey = "MAT";
   let runtimeRunning = false;
   let runtimePort = 4066;
   let startRuntimeFailureCode: string | null = null;
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
+    storedConfig = null;
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
     availableLabelPages = null;
+    linearProjects = [];
     workflowStates = [];
     createdIssues = [];
     listedIssues = [];
     listedIssuePages = null;
     integrationCalls = [];
     runtimeActiveStates = ["Todo", "In Progress", "Merging", "Rework"];
+    runtimeTeamKey = "MAT";
     runtimeRunning = false;
     runtimePort = 4066;
     startRuntimeFailureCode = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
-        return json({ value: null });
+        return json({ value: storedConfig });
       }
       if (url === "/api/bridge/data" && init?.method === "POST") {
+        const body = typeof init.body === "string"
+          ? JSON.parse(init.body) as { action?: string; value?: string }
+          : {};
+        if (body.action === "write") storedConfig = body.value ?? null;
         return json({ ok: true });
       }
       if (url === "/api/symphony/status") {
@@ -98,7 +108,7 @@ describe("Symphony app", () => {
             port: runtimePort,
             tracker: {
               kind: "linear",
-              teamKey: "MAT",
+              teamKey: runtimeTeamKey,
               requiredLabels: ["symphony"],
               activeStates: runtimeActiveStates,
             },
@@ -153,7 +163,7 @@ describe("Symphony app", () => {
             port: requestedConfig.port ?? runtimePort,
             tracker: {
               kind: "linear",
-              teamKey: "MAT",
+              teamKey: runtimeTeamKey,
               requiredLabels: ["symphony"],
               activeStates: requestedConfig.tracker?.activeStates ?? runtimeActiveStates,
             },
@@ -175,7 +185,7 @@ describe("Symphony app", () => {
           ] } } });
         }
         if (body.action === "list_projects") {
-          return json({ data: { projects: { nodes: [] } } });
+          return json({ data: { projects: { nodes: linearProjects } } });
         }
         if (body.action === "list_workflow_states") {
           return json({ data: { workflowStates: { nodes: workflowStates } } });
@@ -216,6 +226,52 @@ describe("Symphony app", () => {
     expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat");
     expect(global.fetch).not.toHaveBeenCalledWith("/api/bridge/data", expect.objectContaining({ method: "POST" }));
     expect(warnSpy).toHaveBeenCalledWith("[symphony] config save failed:", "runtime_config_failed");
+  });
+
+  it("does not restore a saved Linear project from another team", async () => {
+    runtimeTeamKey = "OPS";
+    storedConfig = JSON.stringify({
+      teamId: "team_ops",
+      teamKey: "OPS",
+      projectId: "project_mat",
+      projectSlug: "matrix-os",
+    });
+    linearProjects = [
+      { id: "project_mat", name: "Matrix OS", slugId: "matrix-os", teams: { nodes: [{ id: "team_mat", key: "MAT", name: "Matrix" }] } },
+      { id: "project_ops", name: "Ops", slugId: "ops", teams: { nodes: [{ id: "team_ops", key: "OPS", name: "Ops" }] } },
+    ];
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_ops"));
+    expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("");
+  });
+
+  it("clears the selected Linear project when switching teams", async () => {
+    storedConfig = JSON.stringify({
+      teamId: "team_mat",
+      teamKey: "MAT",
+      projectId: "project_mat",
+      projectSlug: "matrix-os",
+    });
+    linearProjects = [
+      { id: "project_mat", name: "Matrix OS", slugId: "matrix-os", teams: { nodes: [{ id: "team_mat", key: "MAT", name: "Matrix" }] } },
+      { id: "project_ops", name: "Ops", slugId: "ops", teams: { nodes: [{ id: "team_ops", key: "OPS", name: "Ops" }] } },
+    ];
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("project_mat"));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team_ops" } });
+    });
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_ops"));
+    expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("");
+    expect(JSON.parse(storedConfig ?? "{}")).toEqual(expect.objectContaining({
+      teamId: "team_ops",
+      teamKey: "OPS",
+      projectId: "",
+      projectSlug: "",
+    }));
   });
 
   it("preserves comma-separated list edits while typing", async () => {
@@ -488,7 +544,7 @@ describe("Symphony app", () => {
           state: { id: "state_todo", name: "Todo" },
           labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
         }],
-        pageInfo: { hasNextPage: index < 4, endCursor: index < 4 ? `cursor_${index + 1}` : null },
+        pageInfo: { hasNextPage: true, endCursor: `cursor_${index + 1}` },
       }];
     }));
     render(<App />);
@@ -512,6 +568,43 @@ describe("Symphony app", () => {
       );
     });
     expect(screen.getByText("Board is incomplete: only 0 of 50 target issues found after scanning 5 pages. Consider reducing the number of required labels.")).toBeTruthy();
+  });
+
+  it("does not warn when the final scanned issue page is complete", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    listedIssuePages = Object.fromEntries(Array.from({ length: 5 }, (_, index) => {
+      const cursor = index === 0 ? "" : `cursor_${index}`;
+      return [cursor, {
+        nodes: [{
+          id: `issue_page_${index}`,
+          identifier: `MAT-${index + 1}`,
+          title: `Partial label page ${index + 1}`,
+          url: `https://linear.app/matrix-os/issue/MAT-${index + 1}`,
+          state: { id: "state_todo", name: "Todo" },
+          labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
+        }],
+        pageInfo: { hasNextPage: index < 4, endCursor: index < 4 ? `cursor_${index + 1}` : null },
+      }];
+    }));
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Partial label page 1")).toBeTruthy());
+    await act(async () => {
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+      fireEvent.blur(requiredLabelsInput);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Sync Linear/ }));
+    });
+
+    await waitFor(() => expect(screen.queryByText(/Board is incomplete:/)).toBeNull());
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "[symphony] Linear issue label filter reached the page cap before filling the board",
+      expect.anything(),
+    );
   });
 
   it("omits the Linear label filter when required labels are empty", async () => {
