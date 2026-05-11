@@ -55,6 +55,9 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
+    expect(syncAgent).toContain('for _ in $(seq 1 18); do');
+    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
+    expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

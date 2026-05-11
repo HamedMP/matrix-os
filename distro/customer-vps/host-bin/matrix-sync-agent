@@ -135,7 +135,7 @@ apply_update() {
   sudo systemctl start matrix-gateway matrix-shell
   log "Running health check..."
   local healthy=false
-  for _ in $(seq 1 6); do
+  for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
       healthy=true; break
     fi
@@ -162,13 +162,14 @@ do_rollback() {
   sudo systemctl stop matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
     sudo mkdir -p "$STAGING_DIR"
-  sudo chown matrix:matrix "$STAGING_DIR"
-    mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
+    sudo chown matrix:matrix "$STAGING_DIR"
+    sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
   fi
-  mv "$APP_DIR.rollback" "$APP_DIR"
+  sudo mv "$APP_DIR.rollback" "$APP_DIR"
+  sudo chown -R matrix:matrix "$APP_DIR"
   sudo systemctl start matrix-gateway matrix-shell
   local healthy=false
-  for _ in $(seq 1 6); do
+  for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
       healthy=true; break
     fi
