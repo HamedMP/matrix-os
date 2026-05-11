@@ -89,7 +89,7 @@ export function compareHostBundleVersions(
 function isExpectedAccessFailure(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const code = (err as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || code === "EACCES" || code === "ENOTDIR";
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM" || code === "ENOTDIR";
 }
 
 export async function fetchHostBundleChannelManifest(options: {

@@ -298,12 +298,12 @@ icon: N
         join(appDir, "matrix.json"),
         JSON.stringify({
           name: "Dashboard",
-          slug: "dashboard",
           description: "System dashboard",
           category: "utility",
+          slug: "dashboard",
           runtime: "static",
+          runtimeVersion: "^1.0.0",
           version: "1.0.0",
-          runtimeVersion: "1.0.0",
           icon: "chart",
         }),
       );
@@ -326,11 +326,11 @@ icon: N
         join(dir, "matrix.json"),
         JSON.stringify({
           name: "Dashboard",
-          slug: "dashboard",
           category: "utility",
+          slug: "dashboard",
           runtime: "static",
+          runtimeVersion: "^1.0.0",
           version: "1.0.0",
-          runtimeVersion: "1.0.0",
         }),
       );
 

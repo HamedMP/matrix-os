@@ -23,16 +23,16 @@ CUSTOM_SOUL_LINE="I am a customized soul for testing purposes."
 echo -e "${YELLOW}[SETUP]${NC} Customizing soul.md..."
 $COMPOSE exec -T dev sh -c "echo '$CUSTOM_SOUL_LINE' >> /home/matrixos/home/system/soul.md"
 
-# Modify an agent skill description
+# Add a user-managed agent skill
 CUSTOM_SKILL_LINE="# CUSTOM: This skill has been modified by the user."
 echo -e "${YELLOW}[SETUP]${NC} Customizing agent skill..."
-$COMPOSE exec -T dev sh -c "echo '$CUSTOM_SKILL_LINE' >> /home/matrixos/home/agents/skills/calculator.md"
+$COMPOSE exec -T dev sh -c "mkdir -p /home/matrixos/home/.agents/skills/custom-skill && printf '%s\n' '---' 'name: custom-skill' 'description: User managed skill' '---' '$CUSTOM_SKILL_LINE' > /home/matrixos/home/.agents/skills/custom-skill/SKILL.md"
 
 # Verify customizations are in place before restart
 assert_file_contains "dev" "/home/matrixos/home/system/soul.md" \
   "customized soul" "soul.md has custom content before restart"
 
-assert_file_contains "dev" "/home/matrixos/home/agents/skills/calculator.md" \
+assert_file_contains "dev" "/home/matrixos/home/.agents/skills/custom-skill/SKILL.md" \
   "CUSTOM" "skill has custom content before restart"
 
 # Remove sync log to get fresh entries
@@ -49,7 +49,7 @@ wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 assert_file_contains "dev" "/home/matrixos/home/system/soul.md" \
   "customized soul" "soul.md still has custom content after sync"
 
-assert_file_contains "dev" "/home/matrixos/home/agents/skills/calculator.md" \
+assert_file_contains "dev" "/home/matrixos/home/.agents/skills/custom-skill/SKILL.md" \
   "CUSTOM" "skill still has custom content after sync"
 
 # Verify sync log shows files were skipped

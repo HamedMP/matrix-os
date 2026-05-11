@@ -224,8 +224,8 @@ After creating the files, the app appears automatically in the OS launcher (F3) 
 
 ## Skills & Knowledge
 
-Skills are markdown files in `~/agents/skills/` with frontmatter (name, description, trigger). They teach the AI agent domain-specific capabilities and are loaded on demand via the kernel.
+Skills are directory-based Agent Skills in `~/.agents/skills/<name>/SKILL.md` with frontmatter (`name`, `description`, optional metadata). They teach the AI agent domain-specific capabilities and are loaded on demand via the kernel.
 
 Knowledge files in `~/agents/knowledge/` provide persistent context the agent can reference -- user preferences, project notes, domain expertise. These are injected at prompt time when relevant.
 
-To create a skill: add a `.md` file to `~/agents/skills/` with a descriptive name and frontmatter. The kernel's skill loader will discover it automatically.
+To create a skill: add `~/.agents/skills/<slug>/SKILL.md` with a descriptive name and frontmatter. The kernel's skill loader will discover it automatically. Matrix-shipped coding skills are synced from the canonical `skills/matrix/` pack into Matrix, Claude, Codex, and Hermes skill locations.

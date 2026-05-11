@@ -50,4 +50,3 @@ export const vpsHealthy = new Gauge({
   labelNames: ['handle'] as const,
   registers: [metricsRegistry],
 });
-

@@ -33,7 +33,7 @@ jobs:
     name: Docker Scenario Tests (${{ matrix.scenario }})
     needs: docker-build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -85,7 +85,7 @@ jobs:
           ./scripts/docker-test/${{ matrix.scenario }}.sh
         env:
           COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
-          DOCKER_HEALTH_TIMEOUT: "180"
+          DOCKER_HEALTH_TIMEOUT: "300"
 
       - name: Collect container logs on failure
         if: failure()

@@ -9,7 +9,8 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { dirname, relative, join } from "node:path";
+import { loadSkills } from "@matrix-os/kernel";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
@@ -148,19 +149,11 @@ export function createSettingsRoutes(opts: {
   });
 
   app.get("/skills", async (c) => {
-    const skillsDir = join(homePath, "agents/skills");
-    if (!(await fileExists(skillsDir))) return c.json([]);
-    const files = (await readdir(skillsDir)).filter((f: string) => f.endsWith(".md"));
-    const skills = await Promise.all(files.map(async (f: string) => {
-      const content = await readFile(join(skillsDir, f), "utf-8");
-      const name = f.replace(".md", "");
-      const descMatch = content.match(/description:\s*(.+)/);
-      return {
-        name,
-        file: f,
-        description: descMatch?.[1]?.trim(),
-        enabled: true,
-      };
+    const skills = loadSkills(homePath).map((skill) => ({
+      name: skill.name,
+      file: relative(homePath, skill.sourcePath),
+      description: skill.description,
+      enabled: true,
     }));
     return c.json(skills);
   });

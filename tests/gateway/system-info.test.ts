@@ -127,9 +127,10 @@ describe("T135: System info", () => {
 
   it("counts skills", () => {
     const homePath = tmpHome();
-    mkdirSync(join(homePath, "agents", "skills"), { recursive: true });
-    writeFileSync(join(homePath, "agents", "skills", "summarize.md"), "---\nname: summarize\n---\n");
-    writeFileSync(join(homePath, "agents", "skills", "reminder.md"), "---\nname: reminder\n---\n");
+    mkdirSync(join(homePath, ".agents", "skills", "summarize"), { recursive: true });
+    mkdirSync(join(homePath, ".agents", "skills", "reminder"), { recursive: true });
+    writeFileSync(join(homePath, ".agents", "skills", "summarize", "SKILL.md"), "---\nname: summarize\ndescription: Summarize text\n---\n");
+    writeFileSync(join(homePath, ".agents", "skills", "reminder", "SKILL.md"), "---\nname: reminder\ndescription: Set reminders\n---\n");
     const info = getSystemInfo(homePath);
     expect(info.skills).toBe(2);
     rmSync(homePath, { recursive: true, force: true });

@@ -331,7 +331,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // to the google_drive-upload-file Pipedream component, which requires
       // a paid Pipedream plan. On a free plan, agents should fall back to
       // get_file + share_file workflows instead. Documented in the
-      // integrations skill at home/agents/skills/integrations.md.
+      // integrations skill at home/.agents/skills/matrix-integrations/SKILL.md.
       upload_file: {
         description: "Upload a file to Google Drive (requires paid Pipedream plan)",
         params: {

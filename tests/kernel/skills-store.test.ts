@@ -8,11 +8,12 @@ import {
 } from "@matrix-os/kernel/skill-registry";
 
 const TEST_HOME = join(tmpdir(), `matrix-skill-store-${Date.now()}`);
-const SKILLS_DIR = join(TEST_HOME, "agents", "skills");
+const SKILLS_DIR = join(TEST_HOME, ".agents", "skills");
 const REGISTRY_PATH = join(TEST_HOME, "system", "skill-registry.json");
 
 function writeSkillFile(name: string, content: string) {
-  writeFileSync(join(SKILLS_DIR, `${name}.md`), content, "utf-8");
+  mkdirSync(join(SKILLS_DIR, name), { recursive: true });
+  writeFileSync(join(SKILLS_DIR, name, "SKILL.md"), content, "utf-8");
 }
 
 const SAMPLE_SKILL = `---
@@ -151,7 +152,7 @@ describe("T1450-T1454: Skill registry", () => {
 
       // Simulate install target (different home with no skill file)
       const targetHome = join(tmpdir(), `matrix-target-${Date.now()}`);
-      const targetSkills = join(targetHome, "agents", "skills");
+      const targetSkills = join(targetHome, ".agents", "skills");
       const targetSystem = join(targetHome, "system");
       mkdirSync(targetSkills, { recursive: true });
       mkdirSync(targetSystem, { recursive: true });
@@ -165,7 +166,7 @@ describe("T1450-T1454: Skill registry", () => {
       const targetRegistry = createSkillRegistry(targetHome);
       const result = await targetRegistry.install("test-skill");
       expect(result.installed).toBe(true);
-      expect(existsSync(join(targetSkills, "test-skill.md"))).toBe(true);
+      expect(existsSync(join(targetSkills, "test-skill", "SKILL.md"))).toBe(true);
 
       rmSync(targetHome, { recursive: true, force: true });
     });

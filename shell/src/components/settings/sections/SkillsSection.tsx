@@ -19,6 +19,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { SparklesIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
+const REQUEST_TIMEOUT_MS = 10_000;
 
 interface SkillInfo {
   name: string;
@@ -45,6 +46,13 @@ function parseSkillFrontmatter(name: string, raw: string): SkillInfo {
   return skill;
 }
 
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetch(input, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+}
+
 export function SkillsSection() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -54,23 +62,27 @@ export function SkillsSection() {
 
   const loadSkills = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY}/api/settings/skills`);
+      const res = await fetchWithTimeout(`${GATEWAY}/api/settings/skills`);
       if (!res.ok) return;
       const data: Array<{ name: string; file: string; description?: string; enabled: boolean }> = await res.json();
       const loaded: SkillInfo[] = [];
       for (const entry of data) {
         try {
-          const r = await fetch(`${GATEWAY}/files/agents/skills/${entry.file}`);
+          const r = await fetchWithTimeout(`${GATEWAY}/files/${entry.file}`);
           if (r.ok) {
             const content = await r.text();
             const skill = parseSkillFrontmatter(entry.name, content);
             if (!skill.description && entry.description) skill.description = entry.description;
             loaded.push(skill);
           }
-        } catch { /* skip */ }
+        } catch (error) {
+          console.warn("Failed to load skill content", error);
+        }
       }
       setSkills(loaded);
-    } catch { /* skip */ }
+    } catch (error) {
+      console.warn("Failed to load skills", error);
+    }
   }, []);
 
   useEffect(() => {
@@ -100,7 +112,7 @@ export function SkillsSection() {
 
     setSaving(true);
     try {
-      const res = await fetch(`${GATEWAY}/files/agents/skills/${slug}.md`, {
+      const res = await fetchWithTimeout(`${GATEWAY}/files/.agents/skills/${slug}/SKILL.md`, {
         method: "PUT",
         body: content,
       });

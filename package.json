@@ -36,7 +36,8 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "sh -c 'pnpm --filter @matrix-os/kernel build && vitest run --coverage \"$@\"' --",
     "test:e2e": "sh -c 'pnpm --filter @matrix-os/kernel build && vitest run --config vitest.e2e.config.ts \"$@\"' --",
-    "typecheck": "pnpm --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit",
+    "typecheck:build-kernel": "pnpm --filter '@matrix-os/kernel' build",
+    "typecheck": "bun run typecheck:build-kernel && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit",
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
     "lint": "bun run --filter './shell' lint"
@@ -59,6 +60,7 @@
   },
   "devDependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
+    "@matrix-os/gateway": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

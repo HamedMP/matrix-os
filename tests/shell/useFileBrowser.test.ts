@@ -59,16 +59,16 @@ describe("useFileBrowser store", () => {
     });
 
     it("navigate calls fetch with correct URL", () => {
-      useFileBrowser.getState().navigate("agents/skills");
+      useFileBrowser.getState().navigate(".agents/skills");
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/files/list?path=agents%2Fskills"),
+        expect.stringContaining("/api/files/list?path=.agents%2Fskills"),
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
 
     it("goBack moves back in history", () => {
       useFileBrowser.getState().navigate("agents");
-      useFileBrowser.getState().navigate("agents/skills");
+      useFileBrowser.getState().navigate(".agents/skills");
       useFileBrowser.getState().goBack();
       expect(useFileBrowser.getState().currentPath).toBe("agents");
       expect(useFileBrowser.getState().historyIndex).toBe(1);

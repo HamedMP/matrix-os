@@ -64,6 +64,35 @@ async function hashLockfile(appDir) {
   return lockfile ? createHash("sha256").update(lockfile).digest("hex") : "";
 }
 
+async function readBuildStamp(appDir) {
+  const raw = await readFile(join(appDir, ".build-stamp"), "utf8").catch((err) => {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  });
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+}
+
+async function hasCurrentBuild(appDir, output, sourceHash, lockfileHash) {
+  const outputStat = await stat(join(appDir, output, "index.html")).catch((err) => {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  });
+  if (!outputStat?.isFile()) return false;
+
+  const stamp = await readBuildStamp(appDir);
+  return (
+    stamp?.exitCode === 0 &&
+    stamp?.sourceHash === sourceHash &&
+    stamp?.lockfileHash === lockfileHash
+  );
+}
+
 async function buildApp(manifestPath) {
   const appDir = dirname(manifestPath);
   if (relative(appsRoot, appDir).split(/[\\/]/).some((part) => part.startsWith("_"))) {
@@ -78,6 +107,14 @@ async function buildApp(manifestPath) {
   const command = manifest.build.command;
   const output = manifest.build.output ?? "dist";
   if (!command) throw new Error(`${manifestPath} is missing build.command`);
+  const sourceGlobs = manifest.build.sourceGlobs ?? ["src/**", "public/**", "*.config.*", "index.html", "matrix.json"];
+  const sourceHash = await hashSources(appDir, sourceGlobs);
+  const lockfileHash = await hashLockfile(appDir);
+
+  if (await hasCurrentBuild(appDir, output, sourceHash, lockfileHash)) {
+    console.log(`[default-apps] skipping ${slug} (up to date)`);
+    return;
+  }
 
   console.log(`[default-apps] building ${slug}`);
   if (install !== "true") {
@@ -86,13 +123,12 @@ async function buildApp(manifestPath) {
   await run(command, appDir, timeoutMs);
 
   await stat(join(appDir, output, "index.html"));
-  const sourceGlobs = manifest.build.sourceGlobs ?? ["src/**", "public/**", "*.config.*", "index.html", "matrix.json"];
   await writeFile(
     join(appDir, ".build-stamp"),
     JSON.stringify(
       {
-        sourceHash: await hashSources(appDir, sourceGlobs),
-        lockfileHash: await hashLockfile(appDir),
+        sourceHash,
+        lockfileHash,
         builtAt: Date.now(),
         exitCode: 0,
       },

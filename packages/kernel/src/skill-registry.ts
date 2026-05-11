@@ -45,6 +45,16 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function localSkillPath(homePath: string, skillName: string): Promise<string | null> {
+  const directoryPath = join(homePath, ".agents", "skills", skillName, "SKILL.md");
+  if (await pathExists(directoryPath)) return directoryPath;
+
+  const legacyPath = join(homePath, "agents", "skills", `${skillName}.md`);
+  if (await pathExists(legacyPath)) return legacyPath;
+
+  return null;
+}
+
 async function loadRegistryData(homePath: string): Promise<RegistryData> {
   const path = registryPath(homePath);
   if (!(await pathExists(path))) return { skills: [] };
@@ -89,10 +99,9 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
   return {
     async publish(skillName: string): Promise<SkillRegistryEntry> {
       const data = await getData();
-      const skillsDir = join(homePath, "agents", "skills");
-      const filePath = join(skillsDir, `${skillName}.md`);
-      if (!(await pathExists(filePath))) {
-        throw new Error(`Skill file not found: ${filePath}`);
+      const filePath = await localSkillPath(homePath, skillName);
+      if (!filePath) {
+        throw new Error(`Skill file not found: ${join(homePath, ".agents", "skills", skillName, "SKILL.md")}`);
       }
 
       const content = await readFile(filePath, "utf-8");
@@ -130,8 +139,8 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
         return { installed: false, reason: "Skill not found in registry" };
       }
 
-      const skillsDir = join(homePath, "agents", "skills");
-      const targetPath = join(skillsDir, `${skillName}.md`);
+      const skillsDir = join(homePath, ".agents", "skills", skillName);
+      const targetPath = join(skillsDir, "SKILL.md");
       if (await pathExists(targetPath)) {
         return { installed: false, reason: "Skill already installed locally" };
       }
