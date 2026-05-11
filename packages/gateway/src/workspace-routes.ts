@@ -302,12 +302,16 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.delete("/api/projects/:slug/worktrees/:worktreeId", limited, async (c) => {
-    const body = await parseJson(c, DeleteWorktreeSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let confirmDirtyDelete: boolean | undefined;
+    if (requestHasBody(c)) {
+      const body = await parseJson(c, DeleteWorktreeSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      confirmDirtyDelete = body.value.confirmDirtyDelete;
+    }
     const result = await worktreeManager.deleteWorktree({
       projectSlug: c.req.param("slug"),
       worktreeId: c.req.param("worktreeId"),
-      confirmDirtyDelete: body.value.confirmDirtyDelete,
+      confirmDirtyDelete,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });

@@ -129,6 +129,40 @@ describe("workspace API routes", () => {
     expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
   });
 
+  it("allows bodyless worktree deletes even when clients send JSON headers", async () => {
+    const worktreeManager = {
+      createWorktree: vi.fn(),
+      listWorktrees: vi.fn(),
+      deleteWorktree: vi.fn(async () => ({ ok: true as const })),
+    };
+    const app = createWorkspaceRoutes({ homePath, worktreeManager });
+    const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo/worktrees/wt_abc123def456"));
+
+    expect(res.status).toBe(200);
+    expect(worktreeManager.deleteWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      confirmDirtyDelete: undefined,
+    });
+  });
+
+  it("allows empty worktree delete bodies with JSON headers", async () => {
+    const worktreeManager = {
+      createWorktree: vi.fn(),
+      listWorktrees: vi.fn(),
+      deleteWorktree: vi.fn(async () => ({ ok: true as const })),
+    };
+    const app = createWorkspaceRoutes({ homePath, worktreeManager });
+    const res = await app.request(emptyJsonDeleteRequest("/api/projects/repo/worktrees/wt_abc123def456"));
+
+    expect(res.status).toBe(200);
+    expect(worktreeManager.deleteWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      confirmDirtyDelete: undefined,
+    });
+  });
+
   it("rejects invalid workspace delete slugs before state deletion", async () => {
     await mkdir(join(homePath, "projects", "keep"), { recursive: true });
     const app = createWorkspaceRoutes({ homePath });

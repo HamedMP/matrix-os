@@ -46,7 +46,7 @@ interface WorkspaceWorktree {
   id?: string;
   currentBranch?: string;
   dirtyState?: string;
-  pr?: number;
+  pr?: number | { number?: number };
 }
 
 interface WorkspacePreview {
@@ -95,6 +95,11 @@ function projectLabel(project: ProjectSummary): string {
 
 function projectRepo(project: ProjectSummary): string {
   return project.github?.owner && project.github.repo ? `${project.github.owner}/${project.github.repo}` : "-";
+}
+
+function worktreePrNumber(worktree?: WorkspaceWorktree): number | undefined {
+  const value = typeof worktree?.pr === "number" ? worktree.pr : worktree?.pr?.number;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
@@ -338,6 +343,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setStartingAgent(true);
     try {
       const selectedWorktree = worktrees.find((worktree) => worktree.id === worktreeId);
+      const pr = worktreePrNumber(selectedWorktree);
       const data = await fetchJson<{ session?: WorkspaceSession }>("/api/sessions", {
         method: "POST",
         body: JSON.stringify({
@@ -345,7 +351,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
           agent: selectedAgent,
           projectSlug: activeSlug,
           worktreeId,
-          ...(typeof selectedWorktree?.pr === "number" ? { pr: selectedWorktree.pr } : {}),
+          ...(pr ? { pr } : {}),
           prompt,
           runtimePreference: "zellij",
         }),

@@ -7,7 +7,7 @@ import { WorkspaceApp } from "../../shell/src/components/workspace/WorkspaceApp.
 
 describe("WorkspaceApp", () => {
   beforeEach(() => {
-    let createdWorktree: { id: string; currentBranch: string; dirtyState: string; pr?: number } | undefined;
+    let createdWorktree: { id: string; currentBranch: string; dirtyState: string; pr?: number | { number: number } } | undefined;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/workspace/projects")) {
@@ -37,7 +37,7 @@ describe("WorkspaceApp", () => {
         })) });
       }
       if (url.includes("/api/projects/repo/worktrees") && init?.method === "POST") {
-        createdWorktree = { id: "wt_new123", currentBranch: "feature/mat-5", dirtyState: "clean", pr: 88 };
+        createdWorktree = { id: "wt_new123", currentBranch: "feature/mat-5", dirtyState: "clean", pr: { number: 88 } };
         return json({ worktree: createdWorktree });
       }
       if (url.includes("/api/projects/repo/worktrees")) {
