@@ -673,7 +673,10 @@ export async function listContainers(db: PlatformDB, status?: string): Promise<C
   await db.ready;
   let query = db.executor.selectFrom('containers').selectAll();
   if (status) query = query.where('status', '=', status);
-  const rows = await query.orderBy('created_at', 'desc').execute();
+  const rows = await query
+    .orderBy('created_at', 'desc')
+    .orderBy('handle', 'desc')
+    .execute();
   return rows.map(mapContainer);
 }
 

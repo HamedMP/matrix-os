@@ -36,6 +36,7 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
 
+    expect(updater).toContain('/opt/matrix/app/.update-available.json');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');

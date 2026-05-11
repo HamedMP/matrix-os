@@ -302,9 +302,9 @@ icon: N
           description: "System dashboard",
           category: "utility",
           runtime: "static",
-          version: "1.0.0",
           runtimeVersion: "1.0.0",
           icon: "chart",
+          version: "1.0.0",
         }),
       );
 
@@ -329,8 +329,8 @@ icon: N
           slug: "dashboard",
           category: "utility",
           runtime: "static",
-          version: "1.0.0",
           runtimeVersion: "1.0.0",
+          version: "1.0.0",
         }),
       );
 
