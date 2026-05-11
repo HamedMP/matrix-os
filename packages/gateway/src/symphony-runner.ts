@@ -206,6 +206,11 @@ class SymphonyRunner {
   async saveConfig(update: SymphonyConfigUpdate): Promise<SymphonyConfig> {
     const current = await this.getConfig();
     const next = this.mergeConfig(update, current);
+    await this.writeConfig(next);
+    return next;
+  }
+
+  private async writeConfig(next: SymphonyConfig): Promise<void> {
     const systemPath = join(this.homePath, "system");
     await mkdir(systemPath, { recursive: true });
     const tempPath = join(systemPath, `.symphony-${randomUUID()}.json.tmp`);
@@ -216,7 +221,6 @@ class SymphonyRunner {
       await removeTempFile(tempPath);
       throw err;
     }
-    return next;
   }
 
   async status(): Promise<SymphonyStatus> {
@@ -245,7 +249,8 @@ class SymphonyRunner {
       };
     }
 
-    const config = update ? await this.saveConfig(update) : await this.getConfig();
+    const currentConfig = await this.getConfig();
+    const config = update ? this.mergeConfig(update, currentConfig) : currentConfig;
     const serviceRoot = expandLocalPath(config.serviceRoot);
     const workflowPath = expandLocalPath(config.workflowPath);
     const command = isAbsolute(config.binPath) ? expandLocalPath(config.binPath) : config.binPath;
@@ -327,6 +332,8 @@ class SymphonyRunner {
         message: realPathPolicy.message,
       };
     }
+
+    if (update) await this.writeConfig(config);
 
     const runId = randomUUID();
     const child = this.spawnProcess(realCommandPath, [

@@ -247,6 +247,30 @@ describe("Symphony runner", () => {
     expect(spawnProcess).not.toHaveBeenCalled();
   });
 
+  it("does not persist rejected start config updates", async () => {
+    const spawnProcess = vi.fn();
+    const outsideRoot = join(homePath, "tmp", "evil");
+    const outsideBinPath = join(outsideRoot, "bin", "symphony");
+    await mkdir(join(outsideRoot, "bin"), { recursive: true });
+    await writeFile(outsideBinPath, "#!/bin/sh\n");
+    await chmod(outsideBinPath, 0o755);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+
+    const result = await runner.start({
+      serviceRoot: outsideRoot,
+      workflowPath,
+      binPath: "./bin/symphony",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "symphony_path_not_allowed" });
+    await expect(runner.getConfig()).resolves.not.toMatchObject({ serviceRoot: outsideRoot });
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it("rejects workflow paths outside Matrix home even when under gateway cwd", async () => {
     const spawnProcess = vi.fn();
     const runner = createSymphonyRunner({
