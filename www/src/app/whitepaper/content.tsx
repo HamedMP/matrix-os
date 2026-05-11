@@ -484,7 +484,7 @@ export function WhitepaperContent() {
                 <li>
                   <strong>Simplicity Over Sophistication.</strong> Single-process
                   async before worker threads. File-based IPC before message
-                  queues. SQLite before Postgres. Escalate complexity only when
+                  queues. Owner-local Postgres before external data services. Escalate complexity only when
                   the simpler approach fails.
                 </li>
                 <li>
@@ -636,8 +636,8 @@ export function WhitepaperContent() {
                 TypeScript 5.5+ with strict mode and ES modules. Node.js 22+
                 runtime. Claude Agent SDK V1 with <code>query()</code> and{" "}
                 <code>resume</code> for kernel operation. Next.js 16 with React
-                19 for the shell. Hono for the HTTP/WebSocket gateway. SQLite
-                via Drizzle ORM for structured data. Zod 4 for runtime
+                19 for the shell. Hono for the HTTP/WebSocket gateway. PostgreSQL
+                via Kysely for structured data. Zod 4 for runtime
                 validation. Vitest for testing. pnpm for dependency management.
               </p>
 

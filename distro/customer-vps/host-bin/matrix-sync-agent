@@ -115,13 +115,14 @@ apply_update() {
   # Stop services, backup, install
   log "Stopping services..."
   sudo systemctl stop matrix-gateway matrix-shell || true
-  rm -rf "$APP_DIR.rollback"
+  sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
-    mv "$APP_DIR" "$APP_DIR.rollback"
+    sudo mv "$APP_DIR" "$APP_DIR.rollback"
     log "Backed up current app to $APP_DIR.rollback"
   fi
-  mv "$extract_dir/app" "$APP_DIR"
-  echo "$version" > "$VERSION_FILE"
+  sudo mv "$extract_dir/app" "$APP_DIR"
+  sudo chown -R matrix:matrix "$APP_DIR"
+  echo "$version" | sudo tee "$VERSION_FILE" >/dev/null
   log "Installed app $version"
   if [ -d "$extract_dir/bin" ]; then
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;

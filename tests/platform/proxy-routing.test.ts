@@ -685,6 +685,150 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("requires authentication before serving app-domain shell static assets", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("asset", {
+        status: 200,
+        headers: {
+          "content-type": "text/javascript",
+          "cache-control": "public, max-age=31536000",
+        },
+      }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue({ authenticated: false });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_123";
+    try {
+      const res = await app.request("/_next/static/chunks/app.js", {
+        headers: {
+          host: "app.matrix-os.com",
+        },
+      });
+
+      expect(res.status).toBe(401);
+      expect(await res.text()).toBe("Unauthorized");
+      expect(res.headers.get("content-type")).not.toContain("text/html");
+      expect(res.headers.get("cache-control")).toBe("no-store, private");
+      expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+      expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+      expect(verifyToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    }
+  });
+
+  it("routes app-domain shell static assets with the short-lived shell route cookie", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("asset", {
+        status: 200,
+        headers: {
+          "content-encoding": "gzip",
+          "content-length": "999",
+          "content-type": "text/javascript",
+        },
+      }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue({ authenticated: false });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/_next/static/chunks/app.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_shell_route=alice",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("asset");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.11:443/_next/static/chunks/app.js");
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("x-platform-user-id")).toBe("user_alice");
+    expect(headers.get("x-platform-verified")).toBeNull();
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("routes app-domain manifest assets with the short-lived shell route cookie", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response('{"name":"Matrix OS"}', {
+        status: 200,
+        headers: {
+          "content-type": "application/manifest+json",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/manifest.json", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_shell_route=alice",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"name":"Matrix OS"}');
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.11:443/manifest.json");
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("x-platform-user-id")).toBe("user_alice");
+    expect(headers.get("x-platform-verified")).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
   it("marks the code-domain auth page as non-cacheable", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     const app = createApp({

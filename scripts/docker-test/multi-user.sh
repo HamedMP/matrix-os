@@ -93,7 +93,7 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Each instance is independent (local SQLite)
+# Each instance is independent.
 assert_status "$ALICE_URL/api/apps" "200" \
   "Alice: GET /api/apps returns 200"
 

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { isPublicShellPath } from "../../shell/src/lib/proxy-routes";
 
 /**
  * Unit tests for the proxy.ts auth logic.
@@ -52,6 +53,13 @@ describe("proxy auth: route classification", () => {
     expect(isPublicPath("/manifest.json")).toBe(true);
     expect(isPublicPath("/og.png")).toBe(true);
     expect(isPublicPath("/favicon.ico")).toBe(true);
+  });
+
+  it("classifies Clerk auth pages as public shell paths", () => {
+    expect(isPublicShellPath("/sign-in")).toBe(true);
+    expect(isPublicShellPath("/sign-in/sso-callback")).toBe(true);
+    expect(isPublicShellPath("/sign-up")).toBe(true);
+    expect(isPublicShellPath("/sign-up/verify-email-address")).toBe(true);
   });
 
   it("non-public paths require auth", () => {

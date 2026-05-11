@@ -13,7 +13,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
-    expect(script).toContain('pnpm rebuild better-sqlite3 node-pty');
+    expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
@@ -41,6 +41,17 @@ describe('customer VPS host bundle', () => {
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
     expect(updater).toContain('Usage: matrix-update [apply|rollback]');
+  });
+
+  it('sync agent replaces the app tree with root permissions', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('sudo rm -rf "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
+    expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
+    expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {
