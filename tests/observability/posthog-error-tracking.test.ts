@@ -310,6 +310,9 @@ describe("PostHog error tracking", () => {
     await expect(readFile("scripts/build-host-bundle.sh", "utf8")).resolves.toContain(
       "pnpm --filter '@matrix-os/observability' build",
     );
+    await expect(readFile("distro/docker-dev-entrypoint.sh", "utf8")).resolves.toContain(
+      "pnpm --filter @matrix-os/observability build",
+    );
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {

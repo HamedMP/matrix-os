@@ -11,6 +11,9 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
+echo "[matrix-os-dev] Building observability package..."
+pnpm --filter @matrix-os/observability build
+
 echo "[matrix-os-dev] Building kernel package..."
 pnpm --filter @matrix-os/kernel build
 
