@@ -114,9 +114,15 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('prepare_triggered_update');
     expect(syncAgent).toContain('release_url_for_version');
     expect(syncAgent).toContain('release_url_for_channel');
+    expect(syncAgent).toContain('default_update_channel');
+    expect(syncAgent).toContain('channel="$(default_update_channel)"');
+    expect(syncAgent).toContain('marker_channel="$(json_field "$manifest" channel)"');
+    expect(syncAgent).toContain('prepared release metadata missing');
     expect(syncAgent).toContain('url="$(manifest_url)"');
     expect(syncAgent).toContain('No update available on ${target} — nothing to apply');
     expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
+    expect(syncAgent).toContain('readonly RELEASE_FILE="/opt/matrix/release.json"');
+    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"');
     expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
     expect(syncAgent).toContain('Update failed — will retry on next trigger');
     expect(syncAgent).toContain('Update (via SIGUSR1) failed — will retry on next trigger');

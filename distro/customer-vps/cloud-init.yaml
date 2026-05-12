@@ -594,6 +594,7 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_IMAGE_VERSION={{imageVersion}}
+      MATRIX_UPDATE_CHANNEL={{imageVersion}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
@@ -670,6 +671,10 @@ runcmd:
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    if [ -f /opt/matrix/release.json ]; then
+      chown root:matrix /opt/matrix/release.json
+      chmod 0644 /opt/matrix/release.json
+    fi
     chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes
     for cli in node npm npx claude codex opencode pi code-server uv uvx; do
       if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then

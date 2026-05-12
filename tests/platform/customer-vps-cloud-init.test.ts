@@ -14,8 +14,8 @@ describe('platform/customer-vps-cloud-init', () => {
     machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
     clerkUserId: 'user_123',
     handle: 'alice',
-    imageVersion: 'matrix-os-host-2026.04.26-1',
-    hostBundleUrl: 'https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+    imageVersion: 'stable',
+    hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
@@ -48,8 +48,9 @@ describe('platform/customer-vps-cloud-init', () => {
     const rendered = renderCloudInitTemplate(cloudInit, input);
 
     expect(rendered).toContain(
-      'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+      'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
+    expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
 
@@ -111,11 +112,20 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('runcmd:');
     expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
+    expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{imageVersion}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
     expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
+  });
+
+  it('keeps installed release metadata readable by the gateway after first boot', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('chown root:matrix /opt/matrix/release.json');
+    expect(cloudInit).toContain('chmod 0644 /opt/matrix/release.json');
   });
 
   it('routes code.matrix-os.com to the customer host code proxy', () => {

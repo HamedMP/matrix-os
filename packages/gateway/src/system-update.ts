@@ -59,6 +59,25 @@ export function parseUpdateChannel(value: unknown): UpdateChannel | null {
   return UPDATE_CHANNELS.has(value) ? value as UpdateChannel : null;
 }
 
+export function resolveSystemUpdateChannel(
+  requested: unknown,
+  options: {
+    envChannel?: unknown;
+    installedChannel?: unknown;
+    fallback?: UpdateChannel;
+  } = {},
+): UpdateChannel | null {
+  if (typeof requested === "string" && requested.length > 0) {
+    return parseUpdateChannel(requested);
+  }
+  return (
+    parseUpdateChannel(options.envChannel) ??
+    parseUpdateChannel(options.installedChannel) ??
+    options.fallback ??
+    "stable"
+  );
+}
+
 const UPDATE_VERSION_RE = /^v[0-9][A-Za-z0-9._-]{0,127}$/;
 
 export function parseUpdateVersion(value: unknown): string | null {

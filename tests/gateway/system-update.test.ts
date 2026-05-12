@@ -9,6 +9,7 @@ import {
   parseUpdateChannel,
   parseInternalUpgradeTarget,
   parseUpdateVersion,
+  resolveSystemUpdateChannel,
   startSystemUpdate,
   writeInternalUpgradeTrigger,
 } from "../../packages/gateway/src/system-update.js";
@@ -32,6 +33,14 @@ describe("system update checks", () => {
     expect(parseUpdateChannel("dev")).toBe("dev");
     expect(parseUpdateChannel("../stable")).toBeNull();
     expect(parseUpdateChannel("nightly")).toBeNull();
+  });
+
+  it("resolves the update channel from request, environment, installed release, then stable", () => {
+    expect(resolveSystemUpdateChannel("canary", { envChannel: "dev", installedChannel: "stable" })).toBe("canary");
+    expect(resolveSystemUpdateChannel(undefined, { envChannel: "dev", installedChannel: "stable" })).toBe("dev");
+    expect(resolveSystemUpdateChannel(undefined, { installedChannel: "beta" })).toBe("beta");
+    expect(resolveSystemUpdateChannel(undefined, { installedChannel: "matrix-os-host-dev" })).toBe("stable");
+    expect(resolveSystemUpdateChannel("nightly", { envChannel: "dev" })).toBeNull();
   });
 
   it("validates explicit update versions for internal deploy triggers", () => {
