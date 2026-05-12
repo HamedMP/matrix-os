@@ -22,6 +22,22 @@ function closeServer(server: { close: (callback?: (err?: Error) => void) => void
     });
 }
 
+function mockPlatformDb(rows: { container?: unknown; machine?: unknown }): PlatformDB {
+  return {
+    ready: Promise.resolve(),
+    executor: {
+      selectFrom: (table: string) => {
+        const builder = {
+          selectAll: () => builder,
+          where: () => builder,
+          executeTakeFirst: async () => (table === "containers" ? rows.container : rows.machine),
+        };
+        return builder;
+      },
+    },
+  } as unknown as PlatformDB;
+}
+
 describe("platform Gemini Live proxy", () => {
   it("accepts the internal per-container proxy path", () => {
     expect(parseInternalGeminiLivePath("/internal/containers/alice/gemini-live")).toEqual({ handle: "alice" });
@@ -56,27 +72,25 @@ describe("platform Gemini Live proxy", () => {
         req,
         socket,
         head,
-        db: {
-          ready: Promise.resolve(),
-          executor: {
-            selectFrom: () => ({
-              selectAll: () => ({
-                where: () => ({
-                  executeTakeFirst: async () => ({
-                    handle: "alice",
-                    clerk_user_id: "user_alice",
-                    container_id: "matrixos-alice",
-                    port: 3001,
-                    shell_port: 3101,
-                    status: "running",
-                    created_at: new Date().toISOString(),
-                    last_active: new Date().toISOString(),
-                  }),
-                }),
-              }),
-            }),
+        db: mockPlatformDb({
+          machine: {
+            machine_id: "machine-alice",
+            clerk_user_id: "user_alice",
+            handle: "alice",
+            hetzner_server_id: 123,
+            public_ipv4: "203.0.113.10",
+            public_ipv6: null,
+            status: "running",
+            image_version: "v1",
+            registration_token_hash: null,
+            registration_token_expires_at: null,
+            provisioned_at: new Date().toISOString(),
+            last_seen_at: new Date().toISOString(),
+            deleted_at: null,
+            failure_code: null,
+            failure_at: null,
           },
-        } as unknown as PlatformDB,
+        }),
         platformSecret,
         geminiApiKey: "gemini-key",
         geminiWsUrl: `ws://127.0.0.1:${providerPort}`,

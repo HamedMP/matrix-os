@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
-import { getContainer, type PlatformDB } from "./db.js";
+import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -56,8 +56,9 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
     return true;
   }
 
-  const record = await getContainer(opts.db, parsed.handle);
-  if (!record?.clerkUserId) {
+  const container = await getContainer(opts.db, parsed.handle);
+  const machine = container?.clerkUserId ? undefined : await getRunningUserMachineByHandle(opts.db, parsed.handle);
+  if (!container?.clerkUserId && !machine?.clerkUserId) {
     rejectUpgrade(opts.socket, 404, "Not Found");
     return true;
   }
