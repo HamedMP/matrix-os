@@ -166,6 +166,10 @@ export class BrowserService {
     return this.repo.listSessions(input.ownerId);
   }
 
+  async getSession(input: { ownerId: string; sessionId: string }): Promise<BrowserSessionRecord | null> {
+    return this.repo.getSession(input.ownerId, input.sessionId);
+  }
+
   async closeSession(input: {
     ownerId: string;
     sessionId: string;

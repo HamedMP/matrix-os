@@ -25,10 +25,12 @@ describe("Browser TURN policy", () => {
   });
 
   it("filters non-relay and topology-leaking candidates", () => {
-    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 203.0.113.20 3478 typ relay")).toBe(true);
-    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 203.0.113.20 3478 typ srflx")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 93.184.216.34 3478 typ relay")).toBe(true);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 93.184.216.34 3478 typ srflx")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 192.168.1.10 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 ::ffff:192.168.1.10 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 100.64.0.1 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 224.0.0.1 3478 typ relay")).toBe(false);
     expect(() => assertBrowserRelayCandidate("candidate:1 1 udp 1 fe80::1 3478 typ relay")).toThrow("media_policy");
   });
 });

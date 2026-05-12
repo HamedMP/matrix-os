@@ -63,7 +63,7 @@ export async function signBrowserHandoffToken(opts: {
 export async function verifyBrowserHandoffToken(opts: {
   token: string;
   publicKey: CryptoKey | string | Uint8Array;
-  expectedOwnerId: string;
+  expectedOwnerId?: string;
   replayStore?: BrowserHandoffReplayStore;
   now?: Date;
 }): Promise<BrowserHandoffClaims> {
@@ -75,7 +75,7 @@ export async function verifyBrowserHandoffToken(opts: {
     audience: HANDOFF_AUDIENCE,
     currentDate: opts.now,
   });
-  if (payload.ownerId !== opts.expectedOwnerId) {
+  if (opts.expectedOwnerId && payload.ownerId !== opts.expectedOwnerId) {
     throw new Error("invalid_handoff");
   }
   if (

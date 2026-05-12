@@ -163,4 +163,18 @@ describe("BrowserService", () => {
     await expect(service.listDownloads({ ownerId: "owner_1" })).resolves.toEqual([]);
     expect((await repo.listAuditEvents("owner_1")).map((event) => event.eventType)).toContain("download.deleted");
   });
+
+  it("paginates audit events with a stable tie-breaker", async () => {
+    const repo = new InMemoryBrowserRepository();
+    const createdAt = new Date(1_000).toISOString();
+    for (const id of ["audit_1", "audit_2", "audit_3"]) {
+      repo.addAuditEvent({ id, ownerId: "owner_1", eventType: "session.created", createdAt });
+    }
+
+    const first = repo.listAuditPage({ ownerId: "owner_1", limit: 2 });
+    const second = repo.listAuditPage({ ownerId: "owner_1", limit: 2, cursor: first.nextCursor ?? undefined });
+
+    expect(first.events.map((event) => event.id)).toEqual(["audit_3", "audit_2"]);
+    expect(second.events.map((event) => event.id)).toEqual(["audit_1"]);
+  });
 });

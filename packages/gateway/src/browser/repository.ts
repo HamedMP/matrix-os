@@ -612,14 +612,14 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     eventType?: BrowserAuditEventType;
   }): BrowserAuditPage {
     const limit = clampLimit(opts.limit);
-    const cursorTime = opts.cursor ? Date.parse(Buffer.from(opts.cursor, "base64url").toString("utf8")) : Number.POSITIVE_INFINITY;
+    const cursor = decodeAuditCursor(opts.cursor);
     const events = this.audit
       .filter((event) =>
         event.ownerId === opts.ownerId &&
         (!opts.eventType || event.eventType === opts.eventType) &&
-        Date.parse(event.createdAt) < cursorTime
+        (!cursor || event.createdAt < cursor.createdAt || (event.createdAt === cursor.createdAt && event.id < cursor.id))
       )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
       .slice(0, limit + 1);
     const page = events.slice(0, limit).map((event) => ({
       ...event,
@@ -627,7 +627,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     }));
     return {
       events: page,
-      nextCursor: events.length > limit ? encodeAuditCursor(page[page.length - 1]?.createdAt) : null,
+      nextCursor: events.length > limit ? encodeAuditCursor(page[page.length - 1]) : null,
     };
   }
 
@@ -1365,24 +1365,31 @@ export class KyselyBrowserRepository implements BrowserRepository {
     eventType?: BrowserAuditEventType;
   }): Promise<BrowserAuditPage> {
     const limit = clampLimit(opts.limit);
-    const cursorTime = opts.cursor ? Buffer.from(opts.cursor, "base64url").toString("utf8") : null;
+    const cursor = decodeAuditCursor(opts.cursor);
     let query = this.kysely
       .selectFrom("browser_audit_events")
       .selectAll()
       .where("owner_id", "=", opts.ownerId)
       .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
       .limit(limit + 1);
     if (opts.eventType) {
       query = query.where("event_type", "=", opts.eventType);
     }
-    if (cursorTime) {
-      query = query.where("created_at", "<", cursorTime);
+    if (cursor) {
+      query = query.where((eb) => eb.or([
+        eb("created_at", "<", cursor.createdAt),
+        eb.and([
+          eb("created_at", "=", cursor.createdAt),
+          eb("id", "<", cursor.id),
+        ]),
+      ]));
     }
     const rows = await query.execute();
     const page = rows.slice(0, limit).map(toAuditEvent);
     return {
       events: page,
-      nextCursor: rows.length > limit ? encodeAuditCursor(page[page.length - 1]?.createdAt) : null,
+      nextCursor: rows.length > limit ? encodeAuditCursor(page[page.length - 1]) : null,
     };
   }
 
@@ -1570,7 +1577,24 @@ function clampLimit(limit = 50): number {
   return Math.min(Math.max(limit, 1), 100);
 }
 
-function encodeAuditCursor(createdAt: string | undefined): string | null {
-  if (!createdAt) return null;
-  return Buffer.from(createdAt).toString("base64url");
+function encodeAuditCursor(event: Pick<BrowserAuditEvent, "createdAt" | "id"> | undefined): string | null {
+  if (!event) return null;
+  return Buffer.from(JSON.stringify({ createdAt: event.createdAt, id: event.id })).toString("base64url");
+}
+
+function decodeAuditCursor(cursor: string | undefined): { createdAt: string; id: string } | null {
+  if (!cursor) return null;
+  const raw = Buffer.from(cursor, "base64url").toString("utf8");
+  try {
+    const parsed = JSON.parse(raw) as { createdAt?: unknown; id?: unknown };
+    if (typeof parsed.createdAt === "string" && typeof parsed.id === "string") {
+      return { createdAt: parsed.createdAt, id: parsed.id };
+    }
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[browser/repository] Invalid audit cursor:", error instanceof Error ? error.message : String(error));
+    }
+    // Older cursors were just the timestamp. Keep them readable during rolling upgrades.
+  }
+  return { createdAt: raw, id: "\uffff" };
 }

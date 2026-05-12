@@ -1,5 +1,6 @@
 import { mkdir, rm, lstat, readdir, link } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, resolve, relative } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export function resolveWithinHome(homePath: string, ...segments: string[]): string {
   const base = resolve(homePath);
@@ -28,8 +29,9 @@ export async function createBrowserDownloadPaths(homePath: string, filename: str
   const finalDir = resolveWithinHome(homePath, "files", "downloads");
   await mkdir(stagingDir, { recursive: true, mode: 0o700 });
   await mkdir(finalDir, { recursive: true, mode: 0o755 });
+  const nonce = randomUUID().replaceAll("-", "");
   return {
-    stagingPath: join(stagingDir, `${Date.now()}-${safeName}.part`),
+    stagingPath: join(stagingDir, `${Date.now()}-${nonce}-${safeName}.part`),
     finalPath: await uniqueBrowserDownloadPath(finalDir, safeName),
   };
 }
