@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 
@@ -75,6 +75,17 @@ async function listFiles(dir: string, prefix = "", recursive = true): Promise<st
       if (recursive) {
         files.push(...await listFiles(dir, rel, true));
       }
+    } else if (entry.isSymbolicLink()) {
+      try {
+        const target = await stat(join(dir, rel));
+        if (target.isDirectory()) {
+          if (recursive) files.push(...await listFiles(dir, rel, true));
+        } else if (target.isFile()) {
+          files.push(rel);
+        }
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
     } else {
       files.push(rel);
     }
@@ -88,12 +99,28 @@ function matchesGlob(path: string, pattern: string): boolean {
     const prefix = pattern.slice(0, -3);
     return path === prefix || path.startsWith(`${prefix}/`);
   }
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replaceAll("**", "\0")
-    .replaceAll("*", "[^/]*")
-    .replaceAll("\0", ".*");
-  return new RegExp(`^${escaped}$`).test(path);
+  let regex = "^";
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    const next = pattern[i + 1];
+    if (char === "*" && next === "*") {
+      if (pattern[i + 2] === "/") {
+        regex += "(?:.*/)?";
+        i += 2;
+      } else {
+        regex += ".*";
+        i += 1;
+      }
+    } else if (char === "*") {
+      regex += "[^/]*";
+    } else if (char === "?") {
+      regex += "[^/]";
+    } else {
+      regex += char && /[.+^${}()|[\]\\]/.test(char) ? `\\${char}` : char;
+    }
+  }
+  regex += "$";
+  return new RegExp(regex).test(path);
 }
 
 export async function hashLockfile(appDir: string): Promise<string> {

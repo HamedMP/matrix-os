@@ -397,7 +397,10 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let browserRepository: BrowserRepository = new InMemoryBrowserRepository();
-  let browserService = new BrowserService({ repo: browserRepository });
+  let browserService = new BrowserService({
+    repo: browserRepository,
+    runtimeBaseUrl: process.env.BROWSER_RUNTIME_URL,
+  });
   const browserStreamHub = new BrowserStreamHub({ maxConnections: 256, staleMs: 60_000 });
 
   if (databaseUrl) {
@@ -413,7 +416,10 @@ export async function createGateway(config: GatewayConfig) {
       await canvasRepository.bootstrap();
       browserRepository = new KyselyBrowserRepository(kysely as unknown as Kysely<BrowserDatabase>);
       await browserRepository.bootstrap?.();
-      browserService = new BrowserService({ repo: browserRepository });
+      browserService = new BrowserService({
+        repo: browserRepository,
+        runtimeBaseUrl: process.env.BROWSER_RUNTIME_URL,
+      });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       canvasSubscriptionHub = new CanvasSubscriptionHub({
         authorize: async (subscriber) => {
@@ -3419,6 +3425,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/browser", createBrowserRoutes({
     service: browserService,
     getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    streamHub: browserStreamHub,
   }));
   app.get(
     "/api/browser/sessions/:sessionId/ws",

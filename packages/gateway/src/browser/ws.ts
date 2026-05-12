@@ -153,6 +153,31 @@ export class BrowserStreamHub {
     return delivered;
   }
 
+  notifySessionClosed(sessionId: string, state = "closed"): number {
+    const message: BrowserServerMessage = {
+      type: "stream.error",
+      payload: {
+        code: state === "hibernated" ? "idle_hibernated" : "session_closed",
+        message: "Browser session closed.",
+      },
+    };
+    const payload = JSON.stringify(message);
+    let delivered = 0;
+    for (const [id, connection] of this.connections.entries()) {
+      if (connection.sessionId !== sessionId) continue;
+      try {
+        connection.sender.send(payload);
+        delivered += 1;
+      } catch (error: unknown) {
+        console.warn("[browser/ws] Close notification failed:", error instanceof Error ? error.message : String(error));
+      } finally {
+        this.closeConnection(connection);
+        this.connections.delete(id);
+      }
+    }
+    return delivered;
+  }
+
   closeAll(message: BrowserServerMessage | ReturnType<typeof browserTakenOverMessage> = {
     type: "stream.error",
     payload: {

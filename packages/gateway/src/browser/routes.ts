@@ -127,7 +127,9 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
       const sessionId = z.string().min(1).max(128).parse(c.req.param("sessionId"));
       const input = closeSessionSchema.parse(await c.req.json());
       const state = input.reason === "idle" ? "hibernated" : input.reason === "recoverable" ? "recoverable" : "closed";
-      return c.json({ session: await service.closeSession({ ownerId, sessionId, state }) });
+      const session = await service.closeSession({ ownerId, sessionId, state });
+      if (session) opts.streamHub?.notifySessionClosed(sessionId, state);
+      return c.json({ session });
     } catch (error) {
       const safe = toBrowserSafeError(error);
       return c.json({ error: { code: safe.code, message: safe.message } }, safe.code === "payload_too_large" ? 413 : 400);

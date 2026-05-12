@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -60,6 +60,26 @@ describe("build-cache", () => {
       await writeFile(join(tmpDir, "src", "index.ts"), "export {};");
       const h = await hashSources(tmpDir, ["src/**"]);
       expect(h.length).toBeGreaterThan(0);
+    });
+
+    it("matches top-level files for double-star globs and question wildcards", async () => {
+      await mkdir(join(tmpDir, "src"), { recursive: true });
+      await writeFile(join(tmpDir, "src", "index.ts"), "export const value = 1;");
+      await writeFile(join(tmpDir, "src", "page1.ts"), "export const page = 1;");
+      const before = await hashSources(tmpDir, ["src/**/*.ts", "src/page?.ts"]);
+      await writeFile(join(tmpDir, "src", "index.ts"), "export const value = 2;");
+      const after = await hashSources(tmpDir, ["src/**/*.ts", "src/page?.ts"]);
+      expect(after).not.toBe(before);
+    });
+
+    it("follows symlinked source directories", async () => {
+      await mkdir(join(tmpDir, "real-src"), { recursive: true });
+      await writeFile(join(tmpDir, "real-src", "index.ts"), "export const value = 1;");
+      await symlink(join(tmpDir, "real-src"), join(tmpDir, "src"));
+      const before = await hashSources(tmpDir, ["src/**"]);
+      await writeFile(join(tmpDir, "real-src", "index.ts"), "export const value = 2;");
+      const after = await hashSources(tmpDir, ["src/**"]);
+      expect(after).not.toBe(before);
     });
 
     it("ignores dependency and output trees outside source glob roots", async () => {
