@@ -156,6 +156,7 @@ Request:
 {
   "profileName": "default",
   "targetUrl": "https://example.com",
+  "handoffToken": "optional-one-use-platform-token",
   "surface": "canvas",
   "deviceId": "device_abc"
 }
@@ -181,6 +182,7 @@ Response:
 
 Validation:
 - `targetUrl` is optional. When present, it is normalized and server-preflighted before runtime navigation.
+- `handoffToken` is optional and only accepted on owner VPS session bootstrap. When present, the owner VPS verifies the platform signature, owner binding, expiry, key id, nonce, and replay store before consuming the token exactly once. The verified token target overrides any client-supplied `targetUrl`.
 - If another physical device holds the profile lock, response is `409 takeover_required`.
 
 ## `POST /api/browser/sessions/:sessionId/takeover`
@@ -338,6 +340,10 @@ Response:
 
 Lists owner Browser downloads that completed or failed.
 
+Query:
+- `limit`: 1-100, default 50
+- `cursor`: opaque cursor returned by the prior page
+
 Response:
 
 ```json
@@ -351,7 +357,8 @@ Response:
       "filePath": "/Downloads/report.pdf",
       "completedAt": "2026-05-12T12:00:00.000Z"
     }
-  ]
+  ],
+  "nextCursor": null
 }
 ```
 

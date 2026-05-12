@@ -229,7 +229,8 @@ Candidates that expose local, loopback, link-local, private, multicast, or direc
       "maxFrameRate": 30,
       "maxBitrateKbps": 2500,
       "iceTransportPolicy": "relay",
-      "turnCredentialExpiresAt": "2026-05-12T12:05:00.000Z"
+      "turnCredentialExpiresAt": "2026-05-12T12:05:00.000Z",
+      "turnRefreshAt": "2026-05-12T12:04:00.000Z"
     },
     "limits": {
       "maxFrameQueue": 3,
@@ -238,6 +239,11 @@ Candidates that expose local, loopback, link-local, private, multicast, or direc
   }
 }
 ```
+
+Clients MUST reconnect media before `turnCredentialExpiresAt`. The server sends a fresh `media.offer`
+with new TURN credentials when the client reconnects or when the current credentials are within the
+`turnRefreshAt` window. If refresh cannot complete, the server falls back to the bounded WS frame
+transport or sends `stream.error` with `media_policy`.
 
 ### `media.offer`
 
@@ -313,6 +319,7 @@ Fallback frame buffers are capped. If the client falls behind, old frames are dr
       "id": "tab_123",
       "title": "Example",
       "currentUrl": "https://example.com/",
+      "faviconUrl": "https://example.com/favicon.ico",
       "state": "ready"
     }
   }

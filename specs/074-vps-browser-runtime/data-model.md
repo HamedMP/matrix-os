@@ -231,6 +231,7 @@ Event types:
 - `download.started`
 - `download.completed`
 - `download.failed`
+- `download.deleted`
 - `profile.cleared`
 - `permission.granted`
 - `permission.revoked`
