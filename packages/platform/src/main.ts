@@ -58,6 +58,11 @@ import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
+import {
+  buildBrowserHandoffRedirectUrl,
+  normalizeBrowserHandoffTarget,
+  signPlatformBrowserHandoff,
+} from './browser-handoff.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
@@ -1428,6 +1433,53 @@ export function createApp(deps: {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', identity.handle);
       return next();
+    }
+
+    if (isAppDomain && (path === '/browser' || path.startsWith('/browser/'))) {
+      const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+      if (!runningMachine) {
+        const activeMachine = await getActiveUserMachineByHandle(db, identity.handle);
+        if (activeMachine) {
+          return c.html(getVpsBootPage({
+            handle: activeMachine.handle,
+            status: activeMachine.status,
+          }), 503);
+        }
+        return c.html(getNoContainerPage());
+      }
+
+      const privateKeyPem = process.env.BROWSER_HANDOFF_PRIVATE_KEY;
+      const keyId = process.env.BROWSER_HANDOFF_KEY_ID ?? 'browser-handoff-1';
+      if (!privateKeyPem) {
+        return c.json({ error: 'Browser handoff unavailable' }, 503);
+      }
+      try {
+        const target = normalizeBrowserHandoffTarget(path);
+        const token = await signPlatformBrowserHandoff({
+          privateKeyPem,
+          keyId,
+          ownerId: identity.userId,
+          deviceId: c.req.query('deviceId') ?? `browser_${randomBytes(8).toString('hex')}`,
+          target,
+          ttlSeconds: Number(process.env.BROWSER_HANDOFF_TTL_SECONDS ?? 60),
+        });
+        const redirectUrl = buildBrowserHandoffRedirectUrl({
+          machine: runningMachine,
+          targetPath: path,
+          token,
+          ownerHostAllowlist: (process.env.BROWSER_OWNER_HOST_ALLOWLIST ?? '')
+            .split(',')
+            .map((host) => host.trim().toLowerCase())
+            .filter(Boolean),
+        });
+        if (!redirectUrl) {
+          return c.json({ error: 'Browser unavailable' }, 502);
+        }
+        return c.redirect(redirectUrl, 303);
+      } catch (err: unknown) {
+        logPlatformRouteError('/browser handoff', err);
+        return c.json({ error: 'Browser handoff unavailable' }, 503);
+      }
     }
 
     if (isAppDomain && path === '/api/auth/ws-token') {

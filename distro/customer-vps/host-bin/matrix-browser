@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export NODE_ENV="${NODE_ENV:-production}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/var/lib/matrix-browser/playwright}"
+export BROWSER_RUNTIME_PORT="${BROWSER_RUNTIME_PORT:-4011}"
+
+cd /opt/matrix/app
+exec /opt/matrix/runtime/node/bin/node --import tsx /opt/matrix/app/packages/mcp-browser/src/runtime-service.ts

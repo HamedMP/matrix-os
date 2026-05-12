@@ -1,0 +1,43 @@
+---
+title: Browser
+description: Use a private Matrix Browser that runs on your own VPS.
+---
+
+# Browser
+
+Matrix Browser opens web pages from your own Matrix VPS. The browser runtime, profile data, downloads, cookies, storage, history, and audit records belong to your Matrix owner environment rather than the platform control plane.
+
+## Open a Site
+
+Open Browser from the Matrix app launcher or visit `/browser/{site}` on your Matrix host. Platform links such as `app.matrix-os.com/browser/google.com` redirect to your owner VPS with a short-lived handoff token; the platform does not proxy page contents, cookies, WebRTC media, downloads, or Browser APIs.
+
+## Persistence
+
+Browser profile metadata, sessions, tabs, permission grants, and audit records are stored in owner-controlled Postgres. Chromium profile files, staged downloads, completed downloads, screenshots, thumbnails, and crash artifacts live under owner-scoped filesystem paths.
+
+Idle sessions restore by reopening saved tab URLs. Page runtime state is not preserved: analytics, page-load handlers, and login checks can run again after hibernation. Cookies and local storage keep normal site login state when the site supports it.
+
+## Downloads
+
+Downloads are staged first and then atomically published into the owner file surface when complete. Failed or partial downloads stay out of completed files and are eligible for cleanup.
+
+## Clear Data
+
+Browser can clear selected profile scopes: cookies, local storage, session storage, IndexedDB, cache, service workers, site permissions, saved form data, saved passwords, history, and downloads.
+
+## Limits
+
+The first production version is intentionally bounded:
+
+- One live runtime session per Browser profile.
+- Bounded tabs and streams per session.
+- WebRTC media is primary; bounded frame streaming is fallback only.
+- Audio output is supported and starts muted. Microphone input remains deferred.
+
+## Agent Access
+
+Agents need explicit Browser Permission Grants for actions such as navigating, reading DOM state, screenshots, downloads, or automated input. Grants are domain-scoped, expire by default, can be revoked, and emit redacted audit events.
+
+## Deferred
+
+Passkeys/WebAuthn, camera, microphone input, geolocation, clipboard write, file picker upload, and screen capture are intentionally deferred until their security model is specified and reviewed.

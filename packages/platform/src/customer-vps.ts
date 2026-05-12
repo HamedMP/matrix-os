@@ -213,6 +213,10 @@ function buildHostConfig(
     r2Bucket: config.r2Bucket,
     r2Prefix: `${config.r2PrefixRoot}/${input.clerkUserId}/` as `matrixos-sync/${string}/`,
     postgresPassword,
+    browserTurnUrls: config.browserTurnUrls,
+    browserTurnSecret: config.browserTurnSecret,
+    browserHandoffPublicKey: config.browserHandoffPublicKey,
+    browserHandoffJwksUrl: config.browserHandoffJwksUrl,
   };
 }
 

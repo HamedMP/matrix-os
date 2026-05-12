@@ -81,7 +81,7 @@ find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -t
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/zellij"
+chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-browser" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/zellij"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
@@ -92,6 +92,8 @@ cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-d
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
+mkdir -p "$STAGE_DIR/systemd"
+cp -a "$ROOT_DIR/distro/customer-vps/systemd/matrix-browser.service" "$STAGE_DIR/systemd/matrix-browser.service"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
 if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
@@ -105,7 +107,7 @@ find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {
 
 # Writes release.json into the bundle and manifest.json beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime release.json
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd release.json
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

@@ -18,6 +18,13 @@ export interface CustomerVpsConfig {
   registrationTokenTtlMs: number;
   reconciliationBatchSize: number;
   reconciliationStaleAfterMs: number;
+  browserTurnUrls: string;
+  browserTurnSecret: string;
+  browserHandoffPublicKey: string;
+  browserHandoffJwksUrl: string;
+  browserHandoffKeyId: string;
+  browserHandoffTtlSeconds: number;
+  browserOwnerHostAllowlist: string[];
 }
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
@@ -52,5 +59,15 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     registrationTokenTtlMs: numberFromEnv(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS, 15 * 60 * 1000),
     reconciliationBatchSize: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE, 50),
     reconciliationStaleAfterMs: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS, 10 * 60 * 1000),
+    browserTurnUrls: env.BROWSER_TURN_URLS ?? '',
+    browserTurnSecret: env.BROWSER_TURN_SECRET ?? '',
+    browserHandoffPublicKey: env.BROWSER_HANDOFF_PUBLIC_KEY ?? '',
+    browserHandoffJwksUrl: env.BROWSER_HANDOFF_JWKS_URL ?? '',
+    browserHandoffKeyId: env.BROWSER_HANDOFF_KEY_ID ?? 'browser-handoff-1',
+    browserHandoffTtlSeconds: numberFromEnv(env.BROWSER_HANDOFF_TTL_SECONDS, 60),
+    browserOwnerHostAllowlist: (env.BROWSER_OWNER_HOST_ALLOWLIST ?? '')
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
   };
 }

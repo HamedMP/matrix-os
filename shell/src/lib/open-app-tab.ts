@@ -1,4 +1,5 @@
 import { openAppSession } from "@/lib/app-session";
+import { buildBrowserStandaloneAppUrl } from "@/lib/proxy-routes";
 
 function extractTopLevelAppSlug(path: string): string | null {
   const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
@@ -7,6 +8,9 @@ function extractTopLevelAppSlug(path: string): string | null {
 
 function getStandaloneAppUrl(path: string): { url: string; slug: string | null } | null {
   if (path.startsWith("__")) return null;
+  if (path === "apps/browser" || path === "apps/browser/index.html") {
+    return { url: buildBrowserStandaloneAppUrl(undefined), slug: "browser" };
+  }
   const slug = extractTopLevelAppSlug(path);
   if (slug) return { url: `/apps/${slug}/`, slug };
   return { url: `/files/${path}`, slug: null };

@@ -1,0 +1,189 @@
+:root {
+  color: #e8edf2;
+  background: #0b1014;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #0b1014;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.browser-app {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  min-height: 100vh;
+  background: #0b1014;
+}
+
+.browser-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111820;
+}
+
+.browser-owner-panel {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #9aa8b5;
+  background: #0d141b;
+  font-size: 12px;
+}
+
+.browser-owner-panel button,
+.browser-download-item {
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #dce5ee;
+  background: #18222c;
+}
+
+.browser-downloads {
+  display: flex;
+  max-width: 220px;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.browser-download-item {
+  max-width: 160px;
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.browser-controls button,
+.browser-icon-button,
+.browser-address-form button {
+  display: inline-grid;
+  place-items: center;
+  height: 32px;
+  min-width: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #dce5ee;
+  background: #18222c;
+  cursor: pointer;
+}
+
+.browser-controls button:disabled,
+.browser-address-form button:disabled {
+  color: #667481;
+  cursor: not-allowed;
+  background: #121a22;
+}
+
+.browser-address-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-address-form input {
+  min-width: 0;
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #b8c4d0;
+  background: #0b1014;
+  text-overflow: ellipsis;
+}
+
+.browser-viewport {
+  display: grid;
+  min-height: 0;
+  place-items: center;
+  background: #0f151b;
+}
+
+.browser-state {
+  max-width: 360px;
+  padding: 24px;
+  text-align: center;
+}
+
+.browser-state h1,
+.browser-stream-placeholder h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.browser-state p,
+.browser-stream-placeholder p {
+  margin: 0;
+  color: #9aa8b5;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.browser-state button {
+  margin-top: 16px;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 0 12px;
+  color: #0b1014;
+  background: #77d4b0;
+  cursor: pointer;
+}
+
+.browser-frame {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: min(100%, 1280px);
+  height: min(100%, 720px);
+  min-height: 360px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0b1014;
+}
+
+.browser-frame-bar {
+  overflow: hidden;
+  padding: 8px 10px;
+  color: #9aa8b5;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.browser-stream-placeholder {
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  text-align: center;
+}

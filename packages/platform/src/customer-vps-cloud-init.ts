@@ -18,6 +18,10 @@ export interface CustomerHostConfig {
   r2Bucket: string;
   r2Prefix: `matrixos-sync/${string}/`;
   postgresPassword: string;
+  browserTurnUrls: string;
+  browserTurnSecret: string;
+  browserHandoffPublicKey: string;
+  browserHandoffJwksUrl: string;
 }
 
 const SECRET_KEYS = [

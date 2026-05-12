@@ -138,6 +138,17 @@ For each changed file, classify it and apply the matching checklist:
 - [ ] Every path/query/header param validated before use
 - [ ] Error responses don't leak internals (no `err.message`, no Zod `.issues`)
 - [ ] Auth middleware applied — check mounting order in parent
+
+**Browser runtime files** (`browser/*`, `mcp-browser/*`):
+- [ ] Browser REST mutations use `bodyLimit` before `c.req.json()`
+- [ ] Browser WebSockets verify signed stream tokens or handoff tokens at the route boundary
+- [ ] Platform `/browser/*` only redirects to the owner VPS; it never proxies target-site content
+- [ ] URL policy rejects private, loopback, link-local, multicast, documentation, and rebinding targets
+- [ ] Redirects and Chromium runtime requests are revalidated against the navigation binding
+- [ ] WebRTC uses relay-only ICE/TURN and filters host/private candidates
+- [ ] Audit metadata is redacted and has bounded retention
+- [ ] Download staging publishes atomically and cleans failed partial files
+- [ ] systemd/Chromium hardening keeps sandboxing enabled and runs as non-root
 - [ ] bodyLimit on every mutating endpoint
 - [ ] Rate limiter keyed on trusted IP source
 

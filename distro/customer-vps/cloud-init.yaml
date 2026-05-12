@@ -119,6 +119,44 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-browser.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS browser runtime
+      After=matrix-restore.service network-online.target
+      Wants=network-online.target
+      Requires=matrix-restore.service
+      ConditionPathExists=/opt/matrix/restore-complete
+      ConditionPathExists=/opt/matrix/bin/matrix-browser
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-browser
+      ExecStop=/bin/kill -TERM $MAINPID
+      KillSignal=SIGTERM
+      TimeoutStopSec=20
+      Restart=on-failure
+      RestartSec=5
+      NoNewPrivileges=yes
+      PrivateTmp=yes
+      ProtectSystem=strict
+      ProtectHome=read-only
+      ReadWritePaths=/home/matrix/home /var/lib/matrix-browser /tmp
+      RuntimeDirectory=matrix-browser
+      RuntimeDirectoryMode=0750
+      StateDirectory=matrix-browser
+      StateDirectoryMode=0750
+      MemoryMax=1536M
+      TasksMax=512
+      LimitNOFILE=8192
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /etc/systemd/system/matrix-sync-agent.service
     owner: root:root
     permissions: "0644"
@@ -245,6 +283,10 @@ write_files:
 
         location /apps/ {
           proxy_pass http://127.0.0.1:4000;
+        }
+
+        location /browser/ {
+          proxy_pass http://127.0.0.1:3000;
         }
 
         location /health {
@@ -602,6 +644,12 @@ write_files:
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
+      BROWSER_RUNTIME_PORT=4011
+      BROWSER_TURN_URLS={{browserTurnUrls}}
+      BROWSER_TURN_SECRET={{browserTurnSecret}}
+      BROWSER_HANDOFF_PUBLIC_KEY={{browserHandoffPublicKey}}
+      BROWSER_HANDOFF_JWKS_URL={{browserHandoffJwksUrl}}
+      PLAYWRIGHT_BROWSERS_PATH=/var/lib/matrix-browser/playwright
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/r2.env
     owner: root:root
@@ -642,7 +690,10 @@ runcmd:
       apt_get_update
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 fonts-liberation
+    if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y chromium || DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser
+    fi
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
@@ -655,7 +706,7 @@ runcmd:
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
-    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs /var/lib/matrix-browser /var/lib/matrix-browser/playwright
     ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user
     chown -h matrix:matrix /home/matrix/.config/systemd/user
     install -d -o root -g root -m 0755 /home/matrixos
@@ -675,7 +726,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes
+    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-browser /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes
     for cli in node npm npx claude codex opencode pi code-server uv uvx; do
       if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then
         ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"
@@ -710,7 +761,7 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-browser.service matrix-sync-agent.service matrix-db-backup.timer nginx
+    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-browser.service matrix-sync-agent.service
     systemctl restart nginx
     systemctl start matrix-db-backup.timer

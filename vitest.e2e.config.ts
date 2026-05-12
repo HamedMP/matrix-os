@@ -15,7 +15,7 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    include: ["tests/e2e/**/*.e2e.test.ts"],
+    include: ["tests/e2e/**/*.e2e.test.ts", "shell/e2e/browser-app.spec.ts"],
     testTimeout: 30_000,
     hookTimeout: 20_000,
     sequence: { concurrent: false },

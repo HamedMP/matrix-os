@@ -11,6 +11,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-gateway');
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
+    expect(script).toContain('matrix-browser');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
@@ -18,7 +19,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
-    expect(script).toContain('bin app runtime release.json');
+    expect(script).toContain('bin app runtime systemd release.json');
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');

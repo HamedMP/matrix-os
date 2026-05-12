@@ -23,3 +23,23 @@ export function isGatewayProxyPath(pathname: string): boolean {
     pathname.startsWith("/ws/")
   );
 }
+
+export function normalizeBrowserRouteTarget(target: string | string[] | undefined): string {
+  const raw = Array.isArray(target) ? target.join("/") : target;
+  const trimmed = raw?.trim().replace(/^\/+/, "") ?? "";
+  if (!trimmed || trimmed === "about:blank") return "about:blank";
+  if (/^https?:\/\//i.test(trimmed)) {
+    return new URL(trimmed).toString();
+  }
+  return new URL(`https://${trimmed}`).toString();
+}
+
+export function buildBrowserStandaloneAppUrl(target: string | string[] | undefined, handoffToken?: string): string {
+  const url = new URL("/apps/browser/", "https://matrix.local");
+  url.searchParams.set("target", normalizeBrowserRouteTarget(target));
+  url.searchParams.set("surface", "standalone");
+  if (handoffToken) {
+    url.searchParams.set("handoff", handoffToken);
+  }
+  return `${url.pathname}${url.search}`;
+}

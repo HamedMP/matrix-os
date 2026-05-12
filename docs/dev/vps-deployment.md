@@ -56,6 +56,33 @@ system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
 
 The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
 
+### Browser Runtime
+
+Customer VPS host bundles include `matrix-browser.service` and `host-bin/matrix-browser`. Browser runs as a non-root host service alongside gateway, shell, and code.
+
+Browser rollout requires these platform/customer env values:
+
+| Env | Owner | Purpose |
+|-----|-------|---------|
+| `BROWSER_TURN_URLS` | Platform and customer VPS | Comma-separated TURN URLs advertised to Browser clients |
+| `BROWSER_TURN_SECRET` | Platform and customer VPS | Secret for short-lived TURN credentials |
+| `BROWSER_HANDOFF_PRIVATE_KEY` | Platform only | PKCS8 private key for `app.matrix-os.com/browser/*` handoff JWTs |
+| `BROWSER_HANDOFF_PUBLIC_KEY` | Customer VPS | Public key used to verify platform handoff JWTs |
+| `BROWSER_HANDOFF_JWKS_URL` | Customer VPS | Optional JWKS URL for handoff verification |
+| `BROWSER_HANDOFF_KEY_ID` | Platform | JWT `kid` for handoff signing |
+| `BROWSER_HANDOFF_TTL_SECONDS` | Platform | Handoff token TTL, default 60 seconds |
+| `BROWSER_OWNER_HOST_ALLOWLIST` | Platform | Optional allowed owner hosts for redirect-only Browser handoff |
+
+After publishing a host bundle, verify Browser on a target VPS:
+
+```bash
+systemctl show matrix-browser.service -p User -p NoNewPrivileges -p PrivateTmp -p MemoryMax
+curl -fsS http://localhost:4011/health
+curl -fsS http://localhost:4000/api/browser/capability
+```
+
+The platform `/browser/*` entrypoint must return a redirect to the owner VPS. It must not proxy page contents, cookies, downloads, WebRTC media, or Browser APIs.
+
 ### Archived Legacy Shared-Container Mode
 
 This section is historical context for old deployments only. Do not use it for new production work.
