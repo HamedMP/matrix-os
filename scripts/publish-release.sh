@@ -131,9 +131,14 @@ echo "$SHA256  matrix-host-bundle.tar.gz" | aws s3 cp - "s3://$R2_BUCKET/$CHECKS
 
 echo "  Registering release in platform DB..."
 : "${PLATFORM_SECRET:?set PLATFORM_SECRET}"
+AUTH_HEADER_FILE="$(mktemp)"
+cleanup_auth_header() { rm -f "$AUTH_HEADER_FILE"; }
+trap cleanup_auth_header EXIT
+chmod 0600 "$AUTH_HEADER_FILE"
+printf 'Authorization: Bearer %s\n' "$PLATFORM_SECRET" > "$AUTH_HEADER_FILE"
 printf '%s' "$REGISTRATION_BODY" | curl --fail --silent --show-error --max-time 30 \
   -X POST "${PLATFORM_PUBLIC_URL%/}/system-bundles/releases" \
-  -H "Authorization: Bearer ${PLATFORM_SECRET}" \
+  -H "@$AUTH_HEADER_FILE" \
   -H "Content-Type: application/json" \
   --data-binary @-
 

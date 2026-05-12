@@ -987,11 +987,7 @@ export function createApp(deps: {
     event: string,
     properties: Record<string, string | number | boolean | null | undefined>,
   ): void {
-    const captureEvent = (posthogErrorTracker as {
-      captureEvent?: typeof posthogErrorTracker.captureEvent;
-    }).captureEvent;
-    if (typeof captureEvent !== 'function') return;
-    void captureEvent.call(posthogErrorTracker, event, {
+    void posthogErrorTracker.captureEvent(event, {
       distinctId: 'matrix-platform',
       properties,
     }).catch((err: unknown) => {

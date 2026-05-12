@@ -43,6 +43,16 @@ describe('customer VPS host bundle', () => {
     expect(releaseScript).toContain('bundleSha256: checksum');
   });
 
+  it('publish script keeps platform secrets out of curl arguments', () => {
+    const root = process.cwd();
+    const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
+
+    expect(publishScript).toContain('AUTH_HEADER_FILE="$(mktemp)"');
+    expect(publishScript).toContain('printf \'Authorization: Bearer %s\\n\' "$PLATFORM_SECRET" > "$AUTH_HEADER_FILE"');
+    expect(publishScript).toContain('-H "@$AUTH_HEADER_FILE"');
+    expect(publishScript).not.toContain('-H "Authorization: Bearer ${PLATFORM_SECRET}"');
+  });
+
   it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
@@ -70,6 +80,8 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('prepare_triggered_update');
     expect(syncAgent).toContain('release_url_for_version');
     expect(syncAgent).toContain('release_url_for_channel');
+    expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
+    expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
     expect(syncAgent).toContain('PLATFORM_INTERNAL_URL:-https://app.matrix-os.com');
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');

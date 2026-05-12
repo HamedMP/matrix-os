@@ -252,8 +252,12 @@ while true; do
   if [ -f "$UPDATE_TRIGGER" ]; then
     sudo rm -f "$UPDATE_TRIGGER"
     rm -f "$AUTO_APPLY_FAILED_MARKER"
-    prepare_triggered_update || log "Requested release metadata fetch failed"
-    apply_update || log "Update failed — will retry on next trigger"
+    if prepare_triggered_update; then
+      apply_update || log "Update failed — will retry on next trigger"
+    else
+      log "Requested release metadata fetch failed — skipping apply"
+      rm -f "$UPDATE_MARKER"
+    fi
     rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
@@ -262,8 +266,12 @@ while true; do
   fi
   if [ "$update_requested" = true ]; then
     update_requested=false
-    prepare_triggered_update || log "Requested release metadata fetch failed"
-    apply_update || log "Update (via SIGUSR1) failed"
+    if prepare_triggered_update; then
+      apply_update || log "Update (via SIGUSR1) failed"
+    else
+      log "Requested release metadata fetch failed — skipping apply"
+      rm -f "$UPDATE_MARKER"
+    fi
     rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
   fi
 
