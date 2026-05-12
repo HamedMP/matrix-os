@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useSocket, type ServerMessage } from "@/hooks/useSocket";
+import { getGatewayWs } from "@/lib/gateway";
 import {
   GlobeIcon,
-  ArrowLeftIcon,
   RefreshCwIcon,
   XIcon,
   LoaderCircleIcon,
@@ -13,108 +12,172 @@ import {
 export function BrowserPanel() {
   const [url, setUrl] = useState("");
   const [inputUrl, setInputUrl] = useState("");
-  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [title, setTitle] = useState("");
-  const imgRef = useRef<HTMLImageElement>(null);
+  const [connected, setConnected] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewportSize = useRef({ width: 1280, height: 800 });
 
-  const fetchStatus = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/browser/status`);
-      const data = await res.json();
-      setActive(data.active ?? false);
-      if (data.url) {
-        setUrl(data.url);
-        setInputUrl(data.url);
-      }
-      if (data.title) setTitle(data.title);
-      if (data.active) {
-        setScreenshotUrl(`/api/browser/screenshot?t=${Date.now()}`);
-      }
-    } catch {}
+  const getScale = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 1, y: 1 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: viewportSize.current.width / rect.width,
+      y: viewportSize.current.height / rect.height,
+    };
+  }, []);
+
+  const connectWs = useCallback(() => {
+    const base = getGatewayWs().replace("/ws", "");
+    const wsUrl = `${base}/ws/browser`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    if (!imgRef.current) {
+      imgRef.current = new Image();
+    }
+
+    ws.onopen = () => setConnected(true);
+
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === "frame") {
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          const img = imgRef.current!;
+          img.onload = () => {
+            if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              viewportSize.current = { width: img.naturalWidth, height: img.naturalHeight };
+            }
+            ctx.drawImage(img, 0, 0);
+          };
+          img.src = "data:image/jpeg;base64," + msg.data;
+          setActive(true);
+          setLoading(false);
+        } else if (msg.type === "status") {
+          setActive(msg.active);
+          if (msg.url) { setUrl(msg.url); setInputUrl(msg.url); }
+          if (msg.title) setTitle(msg.title);
+          setLoading(false);
+        } else if (msg.type === "closed") {
+          setActive(false);
+        }
+      } catch {}
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      setTimeout(() => {
+        if (wsRef.current === ws) connectWs();
+      }, 2000);
+    };
   }, []);
 
   useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
-
-  const { subscribe } = useSocket();
-  useEffect(() => {
-    return subscribe((msg: ServerMessage) => {
-      if (msg.type === "browser:screenshot") {
-        setScreenshotUrl(`/files/${msg.path}?t=${Date.now()}`);
-        fetchStatus();
+    connectWs();
+    return () => {
+      if (wsRef.current) {
+        const ws = wsRef.current;
+        wsRef.current = null;
+        ws.close();
       }
-    });
-  }, [subscribe, fetchStatus]);
+    };
+  }, [connectWs]);
 
-  const navigate = useCallback(async (targetUrl: string) => {
+  const sendWs = useCallback((msg: Record<string, unknown>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
+  }, []);
+
+  const navigate = useCallback((targetUrl: string) => {
     if (!targetUrl.trim()) return;
     let normalized = targetUrl.trim();
-    if (!/^https?:\/\//i.test(normalized)) {
-      normalized = `https://${normalized}`;
-    }
-    setLoading(true);
+    if (!/^https?:\/\//i.test(normalized)) normalized = `https://${normalized}`;
     setInputUrl(normalized);
-    try {
-      const res = await fetch(`/api/browser/navigate`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: normalized }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setUrl(data.url ?? normalized);
-        setInputUrl(data.url ?? normalized);
-        setTitle(data.title ?? "");
-        setActive(true);
-        if (data.screenshotPath) {
-          setScreenshotUrl(`/files/${data.screenshotPath}?t=${Date.now()}`);
-        }
-      }
-    } catch {
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    setLoading(true);
+    sendWs({ type: "navigate", url: normalized });
+  }, [sendWs]);
 
   const closeBrowser = useCallback(async () => {
-    await fetch(`/api/browser/close`, { method: "POST" }).catch(() => {});
+    await fetch("/api/browser/close", { method: "POST" }).catch(() => {});
     setActive(false);
-    setScreenshotUrl(null);
     setUrl("");
     setTitle("");
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
   }, []);
 
-  const handleClick = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
-    if (!imgRef.current || !active) return;
-    const rect = imgRef.current.getBoundingClientRect();
-    const scaleX = imgRef.current.naturalWidth / rect.width;
-    const scaleY = imgRef.current.naturalHeight / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX);
-    const y = Math.round((e.clientY - rect.top) * scaleY);
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/browser/click`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ x, y }),
+  const handleMouseEvent = useCallback((e: React.MouseEvent, type: string) => {
+    const scale = getScale();
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) * scale.x);
+    const y = Math.round((e.clientY - rect.top) * scale.y);
+    const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+    sendWs({
+      type: "mouse",
+      params: { type, x, y, button, clickCount: type === "mousePressed" ? 1 : 0, modifiers: 0 },
+    });
+  }, [getScale, sendWs]);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    const scale = getScale();
+    const rect = canvasRef.current!.getBoundingClientRect();
+    sendWs({
+      type: "wheel",
+      x: Math.round((e.clientX - rect.left) * scale.x),
+      y: Math.round((e.clientY - rect.top) * scale.y),
+      deltaX: e.deltaX,
+      deltaY: e.deltaY,
+    });
+  }, [getScale, sendWs]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    e.preventDefault();
+    const modifiers = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+    sendWs({
+      type: "key",
+      params: {
+        type: "keyDown",
+        key: e.key,
+        code: e.code,
+        windowsVirtualKeyCode: e.keyCode,
+        modifiers,
+        text: e.key.length === 1 ? e.key : undefined,
+      },
+    });
+    if (e.key.length === 1) {
+      sendWs({
+        type: "key",
+        params: { type: "char", text: e.key, key: e.key, code: e.code, modifiers },
       });
-      const data = await res.json();
-      if (data.screenshotPath) {
-        setScreenshotUrl(`/files/${data.screenshotPath}?t=${Date.now()}`);
-      }
-      fetchStatus();
-    } catch {
-    } finally {
-      setLoading(false);
     }
-  }, [active, fetchStatus]);
+  }, [sendWs]);
+
+  const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
+    e.preventDefault();
+    const modifiers = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+    sendWs({
+      type: "key",
+      params: { type: "keyUp", key: e.key, code: e.code, windowsVirtualKeyCode: e.keyCode, modifiers },
+    });
+  }, [sendWs]);
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* URL bar */}
       <div className="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
         <button
           onClick={() => navigate(url)}
@@ -129,7 +192,7 @@ export function BrowserPanel() {
             type="text"
             value={inputUrl}
             onChange={(e) => setInputUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && navigate(inputUrl)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); navigate(inputUrl); } }}
             placeholder="Enter URL..."
             className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
           />
@@ -146,16 +209,20 @@ export function BrowserPanel() {
         )}
       </div>
 
-      {/* Browser viewport */}
-      <div className="flex-1 overflow-auto">
-        {screenshotUrl ? (
-          <img
-            ref={imgRef}
-            src={screenshotUrl}
-            alt={title || "Browser"}
-            className="w-full cursor-pointer"
-            onClick={handleClick}
-            draggable={false}
+      <div ref={containerRef} className="flex-1 overflow-hidden relative">
+        {active ? (
+          <canvas
+            ref={canvasRef}
+            tabIndex={0}
+            className="w-full h-full object-contain cursor-default outline-none"
+            style={{ imageRendering: "auto" }}
+            onMouseDown={(e) => handleMouseEvent(e, "mousePressed")}
+            onMouseUp={(e) => handleMouseEvent(e, "mouseReleased")}
+            onMouseMove={(e) => handleMouseEvent(e, "mouseMoved")}
+            onWheel={handleWheel}
+            onKeyDown={handleKeyDown}
+            onKeyUp={handleKeyUp}
+            onContextMenu={(e) => e.preventDefault()}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
@@ -168,13 +235,10 @@ export function BrowserPanel() {
         )}
       </div>
 
-      {/* Status bar */}
-      {active && (
-        <div className="flex items-center gap-2 border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
-          <span className="truncate">{title || url}</span>
-        </div>
-      )}
+      <div className="flex items-center gap-2 border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
+        <span className={`size-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-amber-500"}`} />
+        <span className="truncate">{active ? (title || url || "Browser") : "Not connected"}</span>
+      </div>
     </div>
   );
 }

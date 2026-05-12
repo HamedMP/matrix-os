@@ -3335,11 +3335,13 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(report);
   });
 
-  // ── Browser API (shared browser for user + agent) ──────────────────
+  // ── Browser API (shared browser with CDP screencast) ────────────────
   let sharedBrowserContext: Awaited<ReturnType<typeof import("playwright").chromium.launchPersistentContext>> | null = null;
   let sharedBrowserPage: import("playwright").Page | null = null;
+  let sharedCdpSession: Awaited<ReturnType<import("playwright").BrowserContext["newCDPSession"]>> | null = null;
   const browserProfileDir = join(homePath, "data", "browser-profiles", "default");
   const browserScreenshotDir = join(homePath, "data", "screenshots");
+  const browserStreamClients = new Set<{ send: (data: string) => void }>();
 
   async function ensureSharedBrowser() {
     if (sharedBrowserPage && !sharedBrowserPage.isClosed()) return sharedBrowserPage;
@@ -3354,12 +3356,36 @@ export async function createGateway(config: GatewayConfig) {
       sharedBrowserContext = await pw.chromium.launchPersistentContext(browserProfileDir, {
         headless: true,
         serviceWorkers: "block",
+        viewport: { width: 1280, height: 800 },
       });
       sharedBrowserPage = sharedBrowserContext.pages()[0] ?? await sharedBrowserContext.newPage();
+      sharedCdpSession = await sharedBrowserContext.newCDPSession(sharedBrowserPage);
       return sharedBrowserPage;
     } catch (err: unknown) {
       console.warn("[browser-api] Failed to launch browser:", err instanceof Error ? err.message : String(err));
       return null;
+    }
+  }
+
+  async function startScreencast() {
+    if (!sharedCdpSession) return;
+    try {
+      sharedCdpSession.on("Page.screencastFrame", (frame: { data: string; sessionId: number; metadata: Record<string, unknown> }) => {
+        const msg = JSON.stringify({ type: "frame", data: frame.data, metadata: frame.metadata });
+        for (const client of browserStreamClients) {
+          try { client.send(msg); } catch {}
+        }
+        sharedCdpSession?.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
+      });
+      await sharedCdpSession.send("Page.startScreencast", {
+        format: "jpeg",
+        quality: 60,
+        maxWidth: 1280,
+        maxHeight: 800,
+        everyNthFrame: 2,
+      });
+    } catch (err: unknown) {
+      console.warn("[browser-api] Failed to start screencast:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -3377,47 +3403,94 @@ export async function createGateway(config: GatewayConfig) {
     if (!page) return c.json({ error: "Browser unavailable" }, 503);
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
-      const ssPath = join(browserScreenshotDir, `user-${Date.now()}.png`);
-      await page.screenshot({ fullPage: false, path: ssPath });
-      const relPath = `data/screenshots/${ssPath.split("/").pop()}`;
-      broadcast({ type: "browser:screenshot", path: relPath });
-      return c.json({ ok: true, url: page.url(), title: await page.title(), screenshotPath: relPath });
+      return c.json({ ok: true, url: page.url(), title: await page.title() });
     } catch (err: unknown) {
       return c.json({ error: err instanceof Error ? err.message : "Navigation failed" }, 500);
     }
   });
 
-  app.get("/api/browser/screenshot", async (c) => {
-    const page = sharedBrowserPage;
-    if (!page || page.isClosed()) return c.json({ error: "No active browser" }, 404);
-    try {
-      const buffer = await page.screenshot({ fullPage: false });
-      return new Response(buffer, { headers: { "content-type": "image/png", "cache-control": "no-cache" } });
-    } catch (err: unknown) {
-      return c.json({ error: "Screenshot failed" }, 500);
-    }
-  });
-
-  app.post("/api/browser/click", async (c) => {
-    const { x, y } = await c.req.json<{ x: number; y: number }>();
-    const page = sharedBrowserPage;
-    if (!page || page.isClosed()) return c.json({ error: "No active browser" }, 404);
-    await page.mouse.click(x, y);
-    const ssPath = join(browserScreenshotDir, `click-${Date.now()}.png`);
-    await page.screenshot({ fullPage: false, path: ssPath });
-    const relPath = `data/screenshots/${ssPath.split("/").pop()}`;
-    broadcast({ type: "browser:screenshot", path: relPath });
-    return c.json({ ok: true, url: page.url(), screenshotPath: relPath });
-  });
-
   app.post("/api/browser/close", async (_c) => {
+    if (sharedCdpSession) {
+      try { await sharedCdpSession.send("Page.stopScreencast"); } catch {}
+      try { await sharedCdpSession.detach(); } catch {}
+      sharedCdpSession = null;
+    }
     if (sharedBrowserContext) {
       try { await sharedBrowserContext.close(); } catch {}
       sharedBrowserContext = null;
       sharedBrowserPage = null;
     }
+    for (const client of browserStreamClients) {
+      try { client.send(JSON.stringify({ type: "closed" })); } catch {}
+    }
+    browserStreamClients.clear();
     return _c.json({ ok: true });
   });
+
+  app.get(
+    "/ws/browser",
+    upgradeWebSocket(() => {
+      return {
+        async onOpen(_evt, ws) {
+          const page = await ensureSharedBrowser();
+          if (!page) {
+            ws.send(JSON.stringify({ type: "error", message: "Browser unavailable" }));
+            ws.close();
+            return;
+          }
+          const client = { send: (data: string) => ws.send(data) };
+          browserStreamClients.add(client);
+
+          if (browserStreamClients.size === 1) {
+            await startScreencast();
+          }
+
+          ws.send(JSON.stringify({
+            type: "status",
+            active: true,
+            url: page.url(),
+            title: await page.title().catch(() => ""),
+          }));
+
+          (ws as unknown as { _browserClient: typeof client })._browserClient = client;
+        },
+        async onMessage(evt, ws) {
+          if (!sharedCdpSession || !sharedBrowserPage) return;
+          try {
+            const msg = JSON.parse(typeof evt.data === "string" ? evt.data : evt.data.toString());
+            if (msg.type === "mouse") {
+              await sharedCdpSession.send("Input.dispatchMouseEvent", msg.params);
+            } else if (msg.type === "key") {
+              await sharedCdpSession.send("Input.dispatchKeyEvent", msg.params);
+            } else if (msg.type === "wheel") {
+              await sharedCdpSession.send("Input.dispatchMouseEvent", {
+                type: "mouseWheel",
+                x: msg.x,
+                y: msg.y,
+                deltaX: msg.deltaX,
+                deltaY: msg.deltaY,
+              });
+            } else if (msg.type === "navigate") {
+              await sharedBrowserPage.goto(msg.url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+              ws.send(JSON.stringify({
+                type: "status",
+                active: true,
+                url: sharedBrowserPage.url(),
+                title: await sharedBrowserPage.title().catch(() => ""),
+              }));
+            }
+          } catch {}
+        },
+        onClose(_evt, ws) {
+          const client = (ws as unknown as { _browserClient?: { send: (data: string) => void } })._browserClient;
+          if (client) browserStreamClients.delete(client);
+          if (browserStreamClients.size === 0 && sharedCdpSession) {
+            sharedCdpSession.send("Page.stopScreencast").catch(() => {});
+          }
+        },
+      };
+    }),
+  );
 
   app.get("/api/system/info", (c) => {
     const info = getSystemInfo(homePath);
