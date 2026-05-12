@@ -103,7 +103,7 @@ export interface SessionManagerOptions {
 export class SessionManager {
   private session: BrowserSession | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
-  private launching: { profile: string; promise: Promise<BrowserSession> } | undefined;
+  private launching: { profile: string; deviceId?: string; promise: Promise<BrowserSession> } | undefined;
   private launcher: Launcher;
   private headless: boolean;
   private idleTimeoutMs: number;
@@ -128,7 +128,16 @@ export class SessionManager {
   async launch(opts: { profile?: string; deviceId?: string } = {}): Promise<BrowserSession> {
     const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
     if (this.launching) {
-      if (this.launching.profile === profile) return this.launching.promise;
+      if (this.launching.profile === profile) {
+        if (
+          opts.deviceId &&
+          this.launching.deviceId &&
+          this.launching.deviceId !== opts.deviceId
+        ) {
+          throw new BrowserProfileLockedError("Browser profile is opening on another device");
+        }
+        return this.launching.promise;
+      }
       try {
         await this.launching.promise;
       } catch (error: unknown) {
@@ -151,7 +160,7 @@ export class SessionManager {
         this.launching = undefined;
       }
     });
-    this.launching = { profile, promise };
+    this.launching = { profile, deviceId: opts.deviceId, promise };
 
     return promise;
   }

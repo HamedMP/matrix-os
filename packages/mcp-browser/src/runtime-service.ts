@@ -90,6 +90,7 @@ export class BrowserRuntimeService {
       profileRoot: opts.profileRoot,
       defaultProfile: opts.defaultProfile,
       headless: opts.headless ?? true,
+      idleTimeoutMs: this.idleMs,
     });
   }
 
@@ -278,21 +279,101 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
 
 export function startBrowserRuntimeDaemon(opts: { port?: number } = {}) {
   const port = opts.port ?? Number(process.env.BROWSER_RUNTIME_PORT ?? 4011);
+  const runtimePromise = createDefaultBrowserRuntimeService().catch((error: unknown) => {
+    console.error("[matrix-browser] runtime initialization failed:", error instanceof Error ? error.message : String(error));
+    throw error;
+  });
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.method === "GET" && req.url === "/health") {
-      writeJson(res, 200, {
-        ok: true,
-        passwordStore: chromiumBrowserLaunchArgs().includes("--password-store=basic"),
-        sandbox: !chromiumBrowserLaunchArgs().includes("--no-sandbox"),
-      });
-      return;
-    }
-    writeJson(res, 404, { error: "not_found" });
+    void handleBrowserRuntimeRequest(req, res, runtimePromise).catch((error: unknown) => {
+      console.error("[matrix-browser] request failed:", error instanceof Error ? error.message : String(error));
+      writeJson(res, 500, { error: "internal_error" });
+    });
   });
   server.listen(port, "127.0.0.1", () => {
     console.info(`[matrix-browser] runtime listening on 127.0.0.1:${port}`);
   });
   return server;
+}
+
+async function handleBrowserRuntimeRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtimePromise: Promise<BrowserRuntimeService>,
+): Promise<void> {
+  const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  if (req.method === "GET" && req.url === "/health") {
+    writeJson(res, 200, {
+      ok: true,
+      passwordStore: chromiumBrowserLaunchArgs().includes("--password-store=basic"),
+      sandbox: !chromiumBrowserLaunchArgs().includes("--no-sandbox"),
+    });
+    return;
+  }
+  const runtime = await runtimePromise;
+  if (req.method === "POST" && url.pathname === "/sessions") {
+    const body = await readJsonBody(req);
+    const profileName = typeof body.profileName === "string" ? body.profileName : "default";
+    const deviceId = typeof body.deviceId === "string" ? body.deviceId : undefined;
+    const targetUrl = typeof body.targetUrl === "string" ? body.targetUrl : undefined;
+    let state = await runtime.open({ profile: profileName, deviceId });
+    if (targetUrl && targetUrl !== "about:blank") {
+      state = await runtime.navigate(targetUrl);
+    }
+    writeJson(res, 200, { session: state });
+    return;
+  }
+  const navigateMatch = url.pathname.match(/^\/sessions\/([^/]+)\/navigate$/);
+  if (req.method === "POST" && navigateMatch) {
+    const body = await readJsonBody(req);
+    if (typeof body.targetUrl !== "string") {
+      writeJson(res, 400, { error: "validation_error" });
+      return;
+    }
+    writeJson(res, 200, { session: await runtime.navigate(body.targetUrl) });
+    return;
+  }
+  writeJson(res, 404, { error: "not_found" });
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > 16 * 1024) throw new Error("payload_too_large");
+    chunks.push(buffer);
+  }
+  if (chunks.length === 0) return {};
+  const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+}
+
+async function createDefaultBrowserRuntimeService(): Promise<BrowserRuntimeService> {
+  const playwright = await import("playwright");
+  return new BrowserRuntimeService({
+    profileRoot: process.env.BROWSER_PROFILE_ROOT ?? "/var/lib/matrix-browser/profiles",
+    defaultProfile: "default",
+    headless: process.env.BROWSER_HEADLESS !== "false",
+    launcher: async (launchOpts) => {
+      const args = launchOpts?.args ?? chromiumBrowserLaunchArgs();
+      if (launchOpts?.userDataDir) {
+        const context = await playwright.chromium.launchPersistentContext(launchOpts.userDataDir, {
+          headless: launchOpts.headless ?? true,
+          args,
+        });
+        return {
+          newPage: () => context.newPage(),
+          close: () => context.close(),
+          contexts: () => [context],
+        } as BrowserLike;
+      }
+      return await playwright.chromium.launch({
+        headless: launchOpts?.headless ?? true,
+        args,
+      }) as unknown as BrowserLike;
+    },
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
