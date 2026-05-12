@@ -264,6 +264,31 @@ transport or sends `stream.error` with `media_policy`.
 }
 ```
 
+### `media.turn_refresh`
+
+Rotates short-lived TURN credentials before expiry without dropping the existing WebRTC peer connection.
+
+```json
+{
+  "type": "media.turn_refresh",
+  "payload": {
+    "iceServers": [
+      {
+        "urls": ["turns:turn.matrix-os.com:5349"],
+        "username": "short-lived-session-user",
+        "credential": "short-lived-session-credential"
+      }
+    ],
+    "iceTransportPolicy": "relay",
+    "turnCredentialExpiresAt": "2026-05-12T12:10:00.000Z",
+    "turnRefreshAt": "2026-05-12T12:09:00.000Z"
+  }
+}
+```
+
+The server emits `media.turn_refresh` before `turnRefreshAt`; clients call `setConfiguration`
+with the new `iceServers` and perform an ICE restart if the peer connection needs one.
+
 ### `media.ice`
 
 ```json

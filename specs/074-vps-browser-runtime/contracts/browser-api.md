@@ -183,6 +183,7 @@ Response:
 Validation:
 - `targetUrl` is optional. When present, it is normalized and server-preflighted before runtime navigation.
 - `handoffToken` is optional and only accepted on owner VPS session bootstrap. When present, the owner VPS verifies the platform signature, owner binding, expiry, key id, nonce, and replay store before consuming the token exactly once. The verified token target overrides any client-supplied `targetUrl`.
+- Handoff token TTL MUST NOT exceed 60 seconds. The replay store keeps consumed nonces until token expiry plus 30 seconds, caps at 10,000 entries per owner VPS process, evicts oldest entries first, and treats process restart inside the TTL window as an accepted residual replay risk unless a durable nonce store is configured.
 - If another physical device holds the profile lock, response is `409 takeover_required`.
 
 ## `POST /api/browser/sessions/:sessionId/takeover`
@@ -217,7 +218,7 @@ Response:
 Server behavior:
 - Sends `stream.taken_over` to streams attached to the previous session before closing them.
 - Marks the previous session recoverable/closed according to whether durable tab metadata can be restored.
-- Releases the old profile lock before creating the replacement runtime session.
+- Keeps the old profile lock held until the replacement session and new `lockDeviceId` are committed in the same transaction or compare-and-swap critical section.
 
 ## `POST /api/browser/sessions/:sessionId/close`
 
