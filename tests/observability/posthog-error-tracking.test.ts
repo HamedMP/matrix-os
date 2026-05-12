@@ -69,6 +69,45 @@ describe("PostHog error tracking", () => {
 
     expect(tracker.enabled).toBe(false);
     await expect(tracker.captureException(new Error("boom"))).resolves.toBe(false);
+    await expect(tracker.captureEvent("host_bundle_release_registered")).resolves.toBe(false);
+  });
+
+  it("captures non-error PostHog events with sanitized properties", async () => {
+    const capture = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const tracker = createPostHogErrorTracker({
+      env: {
+        POSTHOG_TOKEN: "phc_test",
+        POSTHOG_HOST: "https://eu.i.posthog.com",
+      },
+      service: "matrix-platform",
+      clientFactory: () => ({
+        capture,
+        captureException: vi.fn(),
+        flush,
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    await expect(tracker.captureEvent("host_bundle_release_registered", {
+      distinctId: "admin-1",
+      properties: {
+        version: "v2026.05.12-1",
+        token: "secret".repeat(200),
+      },
+    })).resolves.toBe(true);
+
+    expect(capture).toHaveBeenCalledWith({
+      distinctId: "admin-1",
+      event: "host_bundle_release_registered",
+      properties: {
+        service: "matrix-platform",
+        version: "v2026.05.12-1",
+        token: expect.stringMatching(/^secret/),
+      },
+    });
+    expect(capture.mock.calls[0]?.[0].properties.token.length).toBeLessThanOrEqual(512);
+    expect(flush).toHaveBeenCalledOnce();
   });
 
   it("captures Hono errors with sanitized request properties", async () => {

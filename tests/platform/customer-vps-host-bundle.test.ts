@@ -48,10 +48,13 @@ describe('customer VPS host bundle', () => {
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
 
     expect(updater).toContain('/opt/matrix/app/.update-available.json');
+    expect(updater).toContain('/opt/matrix/app/.update-channel');
+    expect(updater).toContain('/opt/matrix/app/.update-version');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
+    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback]');
+    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|<version>]');
   });
 
   it('sync agent replaces the app tree with root permissions', () => {
@@ -64,6 +67,10 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
     expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('prepare_triggered_update');
+    expect(syncAgent).toContain('release_url_for_version');
+    expect(syncAgent).toContain('release_url_for_channel');
+    expect(syncAgent).toContain('PLATFORM_INTERNAL_URL:-https://app.matrix-os.com');
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');

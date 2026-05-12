@@ -40,7 +40,7 @@ export const provisionDuration = new Histogram({
 export const vpsInfo = new Gauge({
   name: 'matrix_vps_info',
   help: 'VPS instance info (value is always 1, labels carry metadata)',
-  labelNames: ['handle', 'version', 'status'] as const,
+  labelNames: ['handle', 'machine_id', 'version', 'status'] as const,
   registers: [metricsRegistry],
 });
 
@@ -50,3 +50,25 @@ export const vpsHealthy = new Gauge({
   labelNames: ['handle'] as const,
   registers: [metricsRegistry],
 });
+
+export function refreshVpsMetrics(
+  machines: Array<{
+    machineId: string;
+    handle: string;
+    imageVersion: string | null;
+    status: string;
+  }>,
+): void {
+  vpsInfo.reset();
+  for (const machine of machines) {
+    vpsInfo.set(
+      {
+        handle: machine.handle,
+        machine_id: machine.machineId,
+        version: machine.imageVersion ?? 'unknown',
+        status: machine.status,
+      },
+      1,
+    );
+  }
+}

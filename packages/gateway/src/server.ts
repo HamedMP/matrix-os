@@ -3392,6 +3392,21 @@ export async function createGateway(config: GatewayConfig) {
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
+    const captureEvent = (posthogErrorTracker as {
+      captureEvent?: typeof posthogErrorTracker.captureEvent;
+    }).captureEvent;
+    if (typeof captureEvent === "function") {
+      void captureEvent.call(posthogErrorTracker, "matrix_system_update_requested", {
+        distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
+        properties: {
+          channel,
+          handle: process.env.MATRIX_HANDLE,
+        },
+      }).catch((err: unknown) => {
+        const kind = err instanceof Error ? err.name : typeof err;
+        console.warn(`[posthog] Failed to queue system update event: ${kind}`);
+      });
+    }
     return c.json({ ok: true, status: result.status, channel }, 202);
   }
 

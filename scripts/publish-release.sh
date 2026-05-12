@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publish a host bundle to R2 so VPS sync-agents can discover and apply it.
+# Publish an immutable host bundle to R2 and register its metadata in platform DB.
 #
 # Usage:
 #   ./scripts/publish-release.sh v0.9.1
 #   ./scripts/publish-release.sh v0.9.1 --dry-run
-#   ./scripts/publish-release.sh v0.9.1 --severity security --changelog "Fix auth bypass"
+#   ./scripts/publish-release.sh v0.9.1 --channel canary --severity security --changelog "Fix auth bypass"
 #
 # Flags:
 #   --dry-run              Print what would happen without uploading
-#   --severity <level>     Update severity: normal (default), important, security
+#   --channel <name>       Promote channel after registering: dev, canary, beta, stable
+#   --severity <level>     Update severity: normal (default) or security
 #   --changelog <text>     One-line changelog entry for the manifest
 #
 # Expects build-host-bundle.sh to have already run (tarball at dist/host-bundle/).
 # Env: R2_ACCOUNT_ID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, R2_BUCKET
-#      (source /opt/matrix/env/r2.env for VPS-local runs)
+#      PLATFORM_PUBLIC_URL, PLATFORM_SECRET
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${HOST_BUNDLE_DIST_DIR:-$ROOT_DIR/dist/host-bundle}"
 BUNDLE="$DIST_DIR/matrix-host-bundle.tar.gz"
-CHANNEL="${MATRIX_IMAGE_VERSION:-matrix-os-host-dev}"
+CHANNEL="${HOST_BUNDLE_CHANNEL:-${MATRIX_IMAGE_VERSION:-dev}}"
 VERSION=""
 DRY_RUN=""
 SEVERITY="normal"
@@ -31,6 +32,8 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1; shift ;;
     --severity)
       SEVERITY="${2:-normal}"; shift 2 ;;
+    --channel)
+      CHANNEL="${2:-dev}"; shift 2 ;;
     --changelog)
       CHANGELOG="${2:-}"; shift 2 ;;
     *)
@@ -42,8 +45,13 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$VERSION" ]; then
-  echo "Usage: publish-release.sh <version> [--dry-run] [--severity <level>] [--changelog <text>]" >&2; exit 1
+  echo "Usage: publish-release.sh <version> [--dry-run] [--channel <name>] [--severity <level>] [--changelog <text>]" >&2; exit 1
 fi
+
+case "$CHANNEL" in
+  dev|canary|beta|stable) ;;
+  *) echo "Invalid channel: $CHANNEL" >&2; exit 1 ;;
+esac
 
 # Derive updateType from severity: security triggers auto-update
 if [ "$SEVERITY" = "security" ]; then
@@ -62,25 +70,37 @@ fi
 : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"
 R2_BUCKET="${R2_BUCKET:-matrixos-sync}"
 R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+PLATFORM_PUBLIC_URL="${PLATFORM_PUBLIC_URL:-https://app.matrix-os.com}"
 
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
 PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+GIT_COMMIT="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('gitCommit',''))" "$DIST_DIR/manifest.json" 2>/dev/null || true)"
+GIT_REF="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('gitRef',''))" "$DIST_DIR/manifest.json" 2>/dev/null || true)"
+BUILD_TIME="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('buildTime',''))" "$DIST_DIR/manifest.json" 2>/dev/null || true)"
+GIT_COMMIT="${GIT_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+GIT_REF="${GIT_REF:-$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)}"
+BUILD_TIME="${BUILD_TIME:-$PUBLISHED}"
+BUNDLE_KEY="system-bundles/$VERSION/matrix-host-bundle.tar.gz"
+CHECKSUM_KEY="system-bundles/$VERSION/matrix-host-bundle.tar.gz.sha256"
 
-# Build manifest JSON safely (handles special chars in changelog)
-MANIFEST=$(python3 -c "
+REGISTRATION_BODY=$(python3 -c "
 import json, sys
 print(json.dumps({
     'version': sys.argv[1],
-    'sha256': sys.argv[2],
-    'size': int(sys.argv[3]),
-    'published': sys.argv[4],
-    'channel': sys.argv[5],
-    'severity': sys.argv[6],
-    'updateType': sys.argv[7],
-    'changelog': sys.argv[8],
+    'gitCommit': sys.argv[2],
+    'gitRef': sys.argv[3] or None,
+    'buildTime': sys.argv[4],
+    'bundleKey': sys.argv[5],
+    'checksumKey': sys.argv[6],
+    'sha256': sys.argv[7],
+    'size': int(sys.argv[8]),
+    'severity': sys.argv[9],
+    'updateType': sys.argv[10],
+    'changelog': sys.argv[11] or None,
+    'channel': sys.argv[12],
 }, indent=2))
-" "$VERSION" "$SHA256" "$SIZE" "$PUBLISHED" "$CHANNEL" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG")
+" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL")
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
@@ -93,13 +113,12 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "UpdateType: $UPDATE_TYPE"
   echo "Changelog: $CHANGELOG"
   echo ""
-  echo "Would upload:"
-  echo "  $BUNDLE → s3://$R2_BUCKET/system-bundles/$VERSION/matrix-host-bundle.tar.gz"
-  echo "  $BUNDLE → s3://$R2_BUCKET/system-bundles/$CHANNEL/matrix-host-bundle.tar.gz"
-  echo "  manifest → s3://$R2_BUCKET/system-bundles/$CHANNEL/manifest.json"
+  echo "Would upload immutable artifacts:"
+  echo "  $BUNDLE → s3://$R2_BUCKET/$BUNDLE_KEY"
+  echo "  sha256 → s3://$R2_BUCKET/$CHECKSUM_KEY"
   echo ""
-  echo "Manifest:"
-  echo "$MANIFEST"
+  echo "Would register release in platform DB:"
+  echo "$REGISTRATION_BODY"
   exit 0
 fi
 
@@ -107,17 +126,19 @@ echo "Publishing $VERSION to channel $CHANNEL..."
 echo "  Bundle: $SIZE bytes, sha256: $SHA256"
 
 echo "  Uploading versioned archive..."
-aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/system-bundles/$VERSION/matrix-host-bundle.tar.gz" "${AWS_ARGS[@]}"
-echo "$SHA256  matrix-host-bundle.tar.gz" | aws s3 cp - "s3://$R2_BUCKET/system-bundles/$VERSION/matrix-host-bundle.tar.gz.sha256" "${AWS_ARGS[@]}"
+aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY" "${AWS_ARGS[@]}"
+echo "$SHA256  matrix-host-bundle.tar.gz" | aws s3 cp - "s3://$R2_BUCKET/$CHECKSUM_KEY" "${AWS_ARGS[@]}"
 
-echo "  Uploading channel latest..."
-aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/system-bundles/$CHANNEL/matrix-host-bundle.tar.gz" "${AWS_ARGS[@]}"
-
-echo "  Writing manifest..."
-echo "$MANIFEST" | aws s3 cp - "s3://$R2_BUCKET/system-bundles/$CHANNEL/manifest.json" --content-type application/json "${AWS_ARGS[@]}"
+echo "  Registering release in platform DB..."
+: "${PLATFORM_SECRET:?set PLATFORM_SECRET}"
+printf '%s' "$REGISTRATION_BODY" | curl --fail --silent --show-error --max-time 30 \
+  -X POST "${PLATFORM_PUBLIC_URL%/}/system-bundles/releases" \
+  -H "Authorization: Bearer ${PLATFORM_SECRET}" \
+  -H "Content-Type: application/json" \
+  --data-binary @-
 
 echo ""
 echo "Published $VERSION to $CHANNEL"
-echo "  Manifest URL: s3://$R2_BUCKET/system-bundles/$CHANNEL/manifest.json"
+echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
 echo "  Sync agents will discover this within 5 minutes."
 echo "  To deploy now: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\"}'"
