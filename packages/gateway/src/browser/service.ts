@@ -285,7 +285,11 @@ export class BrowserService {
     if (input.url) {
       try {
         hostname = new URL(input.url).hostname.toLowerCase();
-      } catch {
+      } catch (error: unknown) {
+        console.warn(
+          "[browser/service] Invalid agent action URL:",
+          error instanceof Error ? error.message : String(error),
+        );
         throw new BrowserSafeError("invalid_url", "Browser URL is invalid.");
       }
     }
