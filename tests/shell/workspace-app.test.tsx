@@ -140,6 +140,18 @@ describe("WorkspaceApp", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /duplicate sess_abc123/i }));
     });
+    const duplicateCall = vi.mocked(global.fetch).mock.calls.find(
+      ([url, init]) => /\/api\/sessions$/.test(String(url)) && init?.method === "POST",
+    );
+    expect(duplicateCall).toBeDefined();
+    expect(JSON.parse(String(duplicateCall?.[1]?.body))).toMatchObject({
+      kind: "agent",
+      agent: "codex",
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      taskId: "task_0",
+      pr: 77,
+    });
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/sessions"),
       expect.objectContaining({
