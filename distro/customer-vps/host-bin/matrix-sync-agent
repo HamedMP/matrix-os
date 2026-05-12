@@ -14,6 +14,7 @@ readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
 readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
+readonly RELEASE_FILE="/opt/matrix/release.json"
 readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
 readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
 readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
@@ -25,8 +26,22 @@ readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+default_update_channel() {
+  local channel="${MATRIX_UPDATE_CHANNEL:-}"
+  case "$channel" in
+    stable|canary|beta|dev) echo "$channel"; return 0 ;;
+  esac
+  if [ -f "$RELEASE_FILE" ]; then
+    channel="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('channel',''))" "$RELEASE_FILE" 2>/dev/null || true)"
+    case "$channel" in
+      stable|canary|beta|dev) echo "$channel"; return 0 ;;
+    esac
+  fi
+  echo "stable"
+}
 manifest_url() {
-  local channel="${MATRIX_UPDATE_CHANNEL:-stable}"
+  local channel
+  channel="$(default_update_channel)"
   echo "$(platform_url)/system-bundles/channels/${channel}.json"
 }
 release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.json"; }
@@ -52,8 +67,18 @@ prepare_triggered_update() {
     target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update channel file is empty"; return 1; }
     url="$(release_url_for_channel "$target")"
+  elif [ -f "$UPDATE_MARKER" ]; then
+    local manifest remote_version marker_channel
+    manifest="$(cat "$UPDATE_MARKER")"
+    remote_version="$(json_field "$manifest" version)"
+    if [ -z "$remote_version" ]; then
+      log "WARN: prepared release metadata missing 'version' field"; return 1
+    fi
+    marker_channel="$(json_field "$manifest" channel)"
+    log "Prepared requested update target ${marker_channel:-prepared}: $remote_version"
+    return 0
   else
-    target="${MATRIX_UPDATE_CHANNEL:-stable}"
+    target="$(default_update_channel)"
     url="$(manifest_url)"
   fi
 
@@ -170,6 +195,10 @@ apply_update() {
   sudo chown -R matrix:matrix "$APP_DIR"
   echo "$version" | sudo tee "$VERSION_FILE" >/dev/null
   log "Installed app $version"
+  if [ -f "$extract_dir/release.json" ]; then
+    sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
+    log "Updated release metadata"
+  fi
   if [ -d "$extract_dir/bin" ]; then
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +

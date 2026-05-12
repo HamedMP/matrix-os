@@ -70,10 +70,9 @@ import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
   checkForSystemUpdate,
-  parseUpdateChannel,
+  resolveSystemUpdateChannel,
   startSystemUpdate,
   writeInternalUpgradeTrigger,
-  type UpdateChannel,
 } from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
@@ -3289,18 +3288,13 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
-  function resolveUpdateChannel(value: unknown): UpdateChannel | null {
-    return parseUpdateChannel(
-      typeof value === "string" && value.length > 0
-        ? value
-        : process.env.MATRIX_UPDATE_CHANNEL ?? "stable",
-    );
-  }
-
   app.get("/api/system/update", async (c) => {
-    const channel = resolveUpdateChannel(c.req.query("channel"));
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
     const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
     const result = await checkForSystemUpdate({
       installed: info.release ?? {
         version: info.version,
@@ -3338,7 +3332,11 @@ export async function createGateway(config: GatewayConfig) {
     }
     const requestedChannel =
       body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
-    const channel = resolveUpdateChannel(requestedChannel);
+    const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(requestedChannel, {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
     if (!channel) return c.json({ error: "Invalid update channel" }, 400);
 
     const result = await startSystemUpdate({ channel });
