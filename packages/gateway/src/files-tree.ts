@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, rm, stat, lstat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, relative, extname } from "node:path";
@@ -18,6 +18,18 @@ export interface FileTreeEntry {
   created?: string;
   mime?: string;
   children?: number;
+}
+
+export interface BrowserDataExportEntry {
+  path: string;
+  exists: boolean;
+  size: number;
+  entries: number;
+}
+
+export interface BrowserDataExportManifest {
+  exportedAt: string;
+  paths: BrowserDataExportEntry[];
 }
 
 interface GitStatusCache {
@@ -208,4 +220,78 @@ export async function listDirectory(
 
 export function clearGitStatusCache(): void {
   cacheMap.clear();
+}
+
+const BROWSER_OWNER_DATA_PATHS = [
+  "data/browser-profiles",
+  "system/browser",
+  "files/downloads",
+] as const;
+
+export async function exportBrowserDataManifest(
+  homePath: string,
+  now = Date.now(),
+): Promise<BrowserDataExportManifest> {
+  const paths = await Promise.all(
+    BROWSER_OWNER_DATA_PATHS.map(async (path) => inspectBrowserDataPath(homePath, path)),
+  );
+  return {
+    exportedAt: new Date(now).toISOString(),
+    paths,
+  };
+}
+
+export async function deleteBrowserOwnerData(homePath: string): Promise<{ deleted: string[] }> {
+  const deleted: string[] = [];
+  for (const path of BROWSER_OWNER_DATA_PATHS) {
+    const resolved = resolveWithinHome(homePath, path);
+    if (!resolved) continue;
+    try {
+      await rm(resolved, { recursive: true, force: true });
+      deleted.push(path);
+    } catch (err: unknown) {
+      console.warn(
+        `[files-tree] Failed to delete Browser data ${path}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+  return { deleted };
+}
+
+async function inspectBrowserDataPath(homePath: string, path: string): Promise<BrowserDataExportEntry> {
+  const resolved = resolveWithinHome(homePath, path);
+  if (!resolved) return { path, exists: false, size: 0, entries: 0 };
+  try {
+    const summary = await summarizePath(resolved);
+    return { path, exists: true, ...summary };
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      return { path, exists: false, size: 0, entries: 0 };
+    }
+    console.warn(
+      `[files-tree] Failed to inspect Browser data ${path}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return { path, exists: false, size: 0, entries: 0 };
+  }
+}
+
+async function summarizePath(path: string): Promise<{ size: number; entries: number }> {
+  const entryStat = await lstat(path);
+  if (entryStat.isSymbolicLink()) {
+    return { size: entryStat.size, entries: 1 };
+  }
+  if (!entryStat.isDirectory()) {
+    return { size: entryStat.size, entries: 1 };
+  }
+  let size = entryStat.size;
+  let entries = 1;
+  const children = await readdir(path);
+  for (const child of children) {
+    const childSummary = await summarizePath(join(path, child));
+    size += childSummary.size;
+    entries += childSummary.entries;
+  }
+  return { size, entries };
 }
