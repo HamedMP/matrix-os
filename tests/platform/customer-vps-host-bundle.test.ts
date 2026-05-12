@@ -80,6 +80,8 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('prepare_triggered_update');
     expect(syncAgent).toContain('release_url_for_version');
     expect(syncAgent).toContain('release_url_for_channel');
+    expect(syncAgent).toContain('url="$(manifest_url)"');
+    expect(syncAgent).toContain('No update available on ${target} — nothing to apply');
     expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
     expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
     expect(syncAgent).toContain('PLATFORM_INTERNAL_URL:-https://app.matrix-os.com');

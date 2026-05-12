@@ -53,7 +53,8 @@ prepare_triggered_update() {
     [ -n "$target" ] || { log "WARN: update channel file is empty"; return 1; }
     url="$(release_url_for_channel "$target")"
   else
-    return 0
+    target="${MATRIX_UPDATE_CHANNEL:-stable}"
+    url="$(manifest_url)"
   fi
 
   local manifest remote_version
@@ -61,6 +62,11 @@ prepare_triggered_update() {
   remote_version="$(json_field "$manifest" version)"
   if [ -z "$remote_version" ]; then
     log "WARN: release metadata missing 'version' field"; return 1
+  fi
+  if [ ! -f "$UPDATE_VERSION_FILE" ] && [ ! -f "$UPDATE_CHANNEL_FILE" ] && [ "$remote_version" = "$(current_version)" ]; then
+    log "No update available on ${target} — nothing to apply"
+    rm -f "$UPDATE_MARKER"
+    return 1
   fi
   echo "$manifest" > "$UPDATE_MARKER"
   log "Prepared requested update target ${target}: $remote_version"

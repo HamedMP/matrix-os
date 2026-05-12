@@ -242,10 +242,10 @@ describe('platform host bundle route', () => {
     });
   });
 
-  it('keeps immutable artifact fields when release metadata is re-registered', async () => {
+  it('rejects release re-registration when immutable artifact fields differ', async () => {
     await seedRelease('v2026.05.12-3');
 
-    const updated = await upsertHostBundleRelease(db, {
+    await expect(upsertHostBundleRelease(db, {
       version: 'v2026.05.12-3',
       gitCommit: 'updatedsha',
       gitRef: 'refs/tags/v2026.05.12-3',
@@ -257,24 +257,77 @@ describe('platform host bundle route', () => {
       severity: 'security',
       updateType: 'auto',
       changelog: 'metadata only',
-    });
-
-    expect(updated).toMatchObject({
-      version: 'v2026.05.12-3',
-      gitCommit: 'updatedsha',
-      severity: 'security',
-      updateType: 'auto',
-      changelog: 'metadata only',
-      bundleKey: 'system-bundles/v2026.05.12-3/matrix-host-bundle.tar.gz',
-      checksumKey: 'system-bundles/v2026.05.12-3/matrix-host-bundle.tar.gz.sha256',
-      sha256: 'a'.repeat(64),
-      size: 1234,
-    });
+    })).rejects.toThrow('Host bundle release already exists with different artifact fields');
 
     await expect(getHostBundleRelease(db, 'v2026.05.12-3')).resolves.toMatchObject({
       bundleKey: 'system-bundles/v2026.05.12-3/matrix-host-bundle.tar.gz',
       sha256: 'a'.repeat(64),
       size: 1234,
+    });
+  });
+
+  it('allows release metadata re-registration when immutable artifact fields match', async () => {
+    await seedRelease('v2026.05.12-4');
+
+    const updated = await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-4',
+      gitCommit: 'updatedsha',
+      gitRef: 'refs/tags/v2026.05.12-4',
+      buildTime: '2026-05-12T02:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+      severity: 'security',
+      updateType: 'auto',
+      changelog: 'metadata only',
+    });
+
+    expect(updated).toMatchObject({
+      version: 'v2026.05.12-4',
+      gitCommit: 'updatedsha',
+      severity: 'security',
+      updateType: 'auto',
+      changelog: 'metadata only',
+      bundleKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+    });
+  });
+
+  it('returns 409 when release registration would replace an immutable artifact', async () => {
+    await seedRelease('v2026.05.12-5');
+    const app = createApp({
+      db,
+      orchestrator,
+      platformSecret: 'secret',
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/releases', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        version: 'v2026.05.12-5',
+        gitCommit: 'updatedsha',
+        gitRef: 'refs/tags/v2026.05.12-5',
+        buildTime: '2026-05-12T02:00:00.000Z',
+        bundleKey: 'system-bundles/v2026.05.12-5/matrix-host-bundle.tar.gz',
+        checksumKey: 'system-bundles/v2026.05.12-5/matrix-host-bundle.tar.gz.sha256',
+        sha256: 'c'.repeat(64),
+        size: 9999,
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: 'Release already exists with different artifact metadata',
     });
   });
 });

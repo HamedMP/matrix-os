@@ -257,6 +257,13 @@ export interface NewHostBundleRelease {
   createdAt?: string;
 }
 
+export class HostBundleReleaseConflictError extends Error {
+  constructor(version: string) {
+    super(`Host bundle release already exists with different artifact fields: ${version}`);
+    this.name = 'HostBundleReleaseConflictError';
+  }
+}
+
 export interface HostBundleChannelRecord {
   channel: string;
   version: string;
@@ -1047,22 +1054,38 @@ export async function upsertHostBundleRelease(
 ): Promise<HostBundleReleaseRecord> {
   await db.ready;
   const row = toHostBundleReleaseRow(record);
-  const saved = await db.executor
-    .insertInto('host_bundle_releases')
-    .values(row)
-    .onConflict((oc) =>
-      oc.column('version').doUpdateSet({
-        git_commit: row.git_commit,
-        git_ref: row.git_ref,
-        build_time: row.build_time,
-        severity: row.severity,
-        update_type: row.update_type,
-        changelog: row.changelog,
-      }),
-    )
-    .returningAll()
-    .executeTakeFirstOrThrow();
-  return mapHostBundleRelease(saved);
+  return db.transaction(async (tx) => {
+    const existing = await tx.executor
+      .selectFrom('host_bundle_releases')
+      .selectAll()
+      .where('version', '=', row.version)
+      .executeTakeFirst();
+    if (existing) {
+      const artifactMatches = existing.bundle_key === row.bundle_key
+        && existing.checksum_key === row.checksum_key
+        && existing.sha256 === row.sha256
+        && existing.size === row.size;
+      if (!artifactMatches) {
+        throw new HostBundleReleaseConflictError(row.version);
+      }
+    }
+    const saved = await tx.executor
+      .insertInto('host_bundle_releases')
+      .values(row)
+      .onConflict((oc) =>
+        oc.column('version').doUpdateSet({
+          git_commit: row.git_commit,
+          git_ref: row.git_ref,
+          build_time: row.build_time,
+          severity: row.severity,
+          update_type: row.update_type,
+          changelog: row.changelog,
+        }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return mapHostBundleRelease(saved);
+  });
 }
 
 export async function getHostBundleRelease(

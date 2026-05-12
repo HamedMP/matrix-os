@@ -25,6 +25,8 @@ describe("system update checks", () => {
   it("rejects unsupported update channels", () => {
     expect(parseUpdateChannel("stable")).toBe("stable");
     expect(parseUpdateChannel("canary")).toBe("canary");
+    expect(parseUpdateChannel("beta")).toBe("beta");
+    expect(parseUpdateChannel("dev")).toBe("dev");
     expect(parseUpdateChannel("../stable")).toBeNull();
     expect(parseUpdateChannel("nightly")).toBeNull();
   });

@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
-const UPDATE_CHANNELS = new Set(["stable", "canary", "dev"]);
+const UPDATE_CHANNELS = new Set(["stable", "canary", "beta", "dev"]);
 
 export type UpdateSeverity = "security" | "critical" | "normal";
 export type UpdateType = "auto" | "manual";
@@ -51,7 +51,7 @@ export interface SystemUpdateCheck {
   error?: string;
 }
 
-export type UpdateChannel = "stable" | "canary" | "dev";
+export type UpdateChannel = "stable" | "canary" | "beta" | "dev";
 
 export function parseUpdateChannel(value: unknown): UpdateChannel | null {
   if (typeof value !== "string") return null;

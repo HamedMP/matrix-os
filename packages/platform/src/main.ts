@@ -25,6 +25,7 @@ import {
   listContainers,
   getHostBundleRelease,
   getHostBundleReleaseByChannel,
+  HostBundleReleaseConflictError,
   listHostBundleReleases,
   promoteHostBundleChannel,
   upsertHostBundleRelease,
@@ -1114,6 +1115,9 @@ export function createApp(deps: {
         ...(channel ? { channel } : {}),
       });
     } catch (err: unknown) {
+      if (err instanceof HostBundleReleaseConflictError) {
+        return c.json({ error: 'Release already exists with different artifact metadata' }, 409);
+      }
       logPlatformRouteError('/system-bundles/releases', err);
       return c.json({ error: 'Host bundle unavailable' }, 502);
     }
