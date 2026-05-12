@@ -1,6 +1,7 @@
-import { access } from "node:fs/promises";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 const UPDATE_CHANNELS = new Set(["stable", "canary", "beta", "dev"]);
@@ -56,6 +57,76 @@ export type UpdateChannel = "stable" | "canary" | "beta" | "dev";
 export function parseUpdateChannel(value: unknown): UpdateChannel | null {
   if (typeof value !== "string") return null;
   return UPDATE_CHANNELS.has(value) ? value as UpdateChannel : null;
+}
+
+const UPDATE_VERSION_RE = /^v[0-9][A-Za-z0-9._-]{0,127}$/;
+
+export function parseUpdateVersion(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return UPDATE_VERSION_RE.test(trimmed) ? trimmed : null;
+}
+
+export type InternalUpgradeTarget =
+  | { type: "version"; value: string }
+  | { type: "channel"; value: UpdateChannel };
+
+export function parseInternalUpgradeTarget(body: unknown):
+  | { ok: true; target: InternalUpgradeTarget | null }
+  | { ok: false; error: string } {
+  if (body === undefined || body === null) return { ok: true, target: null };
+  if (typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "Invalid upgrade request" };
+  }
+
+  const record = body as Record<string, unknown>;
+  const hasVersion = record.version !== undefined && record.version !== null && record.version !== "";
+  const hasChannel = record.channel !== undefined && record.channel !== null && record.channel !== "";
+  if (hasVersion && hasChannel) {
+    return { ok: false, error: "Specify either version or channel" };
+  }
+  if (hasVersion) {
+    const version = parseUpdateVersion(record.version);
+    if (!version) return { ok: false, error: "Invalid update version" };
+    return { ok: true, target: { type: "version", value: version } };
+  }
+  if (hasChannel) {
+    const channel = parseUpdateChannel(record.channel);
+    if (!channel) return { ok: false, error: "Invalid update channel" };
+    return { ok: true, target: { type: "channel", value: channel } };
+  }
+  return { ok: true, target: null };
+}
+
+export async function writeInternalUpgradeTrigger(options: {
+  body: unknown;
+  appDir?: string;
+  writeFileImpl?: typeof writeFile;
+  rmImpl?: typeof rm;
+  mkdirImpl?: typeof mkdir;
+}): Promise<
+  | { ok: true; target: InternalUpgradeTarget | null }
+  | { ok: false; error: string }
+> {
+  const parsed = parseInternalUpgradeTarget(options.body);
+  if (!parsed.ok) return parsed;
+
+  const appDir = options.appDir ?? process.env.MATRIX_APP_DIR ?? "/opt/matrix/app";
+  const writeFileImpl = options.writeFileImpl ?? writeFile;
+  const rmImpl = options.rmImpl ?? rm;
+  const mkdirImpl = options.mkdirImpl ?? mkdir;
+
+  await mkdirImpl(appDir, { recursive: true });
+  if (parsed.target?.type === "version") {
+    await writeFileImpl(join(appDir, ".update-version"), parsed.target.value);
+    await rmImpl(join(appDir, ".update-channel"), { force: true });
+  } else if (parsed.target?.type === "channel") {
+    await writeFileImpl(join(appDir, ".update-channel"), parsed.target.value);
+    await rmImpl(join(appDir, ".update-version"), { force: true });
+  }
+  await writeFileImpl(join(appDir, ".update-now"), "");
+
+  return parsed;
 }
 
 function parseReleaseNumber(version: string | undefined): number[] | null {
