@@ -15,14 +15,14 @@
 
 **Purpose**: Create the feature skeleton, test locations, and spike documentation surfaces.
 
-- [ ] T001 Create gateway messages module directory with placeholder README in `packages/gateway/src/messages/README.md`
-- [ ] T002 Create gateway messages test directories with placeholder README in `tests/gateway/messages/README.md`
-- [ ] T003 Create deploy test directory for customer-VPS messaging validation in `tests/deploy/customer-vps/README.md`
-- [ ] T004 Create first-party Messages app scaffold manifest in `home/apps/messages/matrix.json`
-- [ ] T005 Create first-party Messages app source placeholder in `home/apps/messages/src/main.tsx`
-- [ ] T006 Create shell messages component directory placeholder in `shell/src/components/messages/README.md`
-- [ ] T007 Create spike result ledger template in `specs/077-matrix-messaging-bridge/spike-results.md`
-- [ ] T008 Create messaging docs placeholder in `docs/platform/dev/messaging-bridge.md`
+- [X] T001 Create gateway messages module directory with placeholder README in `packages/gateway/src/messages/README.md`
+- [X] T002 Create gateway messages test directories with placeholder README in `tests/gateway/messages/README.md`
+- [X] T003 Create deploy test directory for customer-VPS messaging validation in `tests/deploy/customer-vps/README.md`
+- [X] T004 Create first-party Messages app scaffold manifest in `home/apps/messages/matrix.json`
+- [X] T005 Create first-party Messages app source placeholder in `home/apps/messages/src/main.tsx`
+- [X] T006 Create shell messages component directory placeholder in `shell/src/components/messages/README.md`
+- [X] T007 Create spike result ledger template in `specs/077-matrix-messaging-bridge/spike-results.md`
+- [X] T008 Create messaging docs placeholder in `docs/platform/dev/messaging-bridge.md`
 
 ---
 
@@ -30,18 +30,18 @@
 
 **Purpose**: Resolve blocking architecture and safety gates before any user story implementation. No user story work may start until T009-T030 are complete.
 
-- [ ] T009 [P] Write failing homeserver spike harness for Conduit appservice registration in `tests/deploy/customer-vps/matrix-messaging-conduit-spike.test.ts`
-- [ ] T010 [P] Write failing homeserver spike harness for Synapse appservice registration in `tests/deploy/customer-vps/matrix-messaging-synapse-spike.test.ts`
-- [ ] T011 [P] Write failing Telegram bridge spike test covering inbound/outbound text and restart recovery in `tests/deploy/customer-vps/telegram-bridge-spike.test.ts`
-- [ ] T012 [P] Write failing WhatsApp bridge spike test covering pairing, inbound/outbound text, and restart recovery in `tests/deploy/customer-vps/whatsapp-bridge-spike.test.ts`
-- [ ] T013 [P] Write failing media/backfill spike test with capped latest-100 import in `tests/deploy/customer-vps/messaging-media-backfill-spike.test.ts`
-- [ ] T014 [P] Write failing E2EE posture spike test that blocks Hermes delivery without proven key-sharing semantics in `tests/deploy/customer-vps/messaging-e2ee-spike.test.ts`
-- [ ] T015 [P] Write failing backup/restore spike test for homeserver DB, bridge DBs, mappings, and WhatsApp relink boundary in `tests/deploy/customer-vps/messaging-restore-spike.test.ts`
-- [ ] T016 [P] Write failing duplicate-adapter reconciliation test in `tests/gateway/messages/duplicate-adapter-policy.test.ts`
-- [ ] T017 [P] Write failing resource-floor validation test in `tests/deploy/customer-vps/messaging-resource-floor.test.ts`
-- [ ] T018 Implement reusable spike fixture helpers for homeserver candidates in `tests/deploy/customer-vps/helpers/matrix-homeserver-fixtures.ts`
-- [ ] T019 Implement reusable spike fixture helpers for Telegram and WhatsApp bridge lifecycle in `tests/deploy/customer-vps/helpers/matrix-bridge-fixtures.ts`
-- [ ] T020 Implement resource-floor detector helper for messaging-enabled VPSes in `tests/deploy/customer-vps/helpers/messaging-resource-floor.ts`
+- [X] T009 [P] Write failing homeserver spike harness for Conduit appservice registration in `tests/deploy/customer-vps/matrix-messaging-conduit-spike.test.ts`
+- [X] T010 [P] Write failing homeserver spike harness for Synapse appservice registration in `tests/deploy/customer-vps/matrix-messaging-synapse-spike.test.ts`
+- [X] T011 [P] Write failing Telegram bridge spike test covering inbound/outbound text and restart recovery in `tests/deploy/customer-vps/telegram-bridge-spike.test.ts`
+- [X] T012 [P] Write failing WhatsApp bridge spike test covering pairing, inbound/outbound text, and restart recovery in `tests/deploy/customer-vps/whatsapp-bridge-spike.test.ts`
+- [X] T013 [P] Write failing media/backfill spike test with capped latest-100 import in `tests/deploy/customer-vps/messaging-media-backfill-spike.test.ts`
+- [X] T014 [P] Write failing E2EE posture spike test that blocks Hermes delivery without proven key-sharing semantics in `tests/deploy/customer-vps/messaging-e2ee-spike.test.ts`
+- [X] T015 [P] Write failing backup/restore spike test for homeserver DB, bridge DBs, mappings, and WhatsApp relink boundary in `tests/deploy/customer-vps/messaging-restore-spike.test.ts`
+- [X] T016 [P] Write failing duplicate-adapter reconciliation test in `tests/gateway/messages/duplicate-adapter-policy.test.ts`
+- [X] T017 [P] Write failing resource-floor validation test in `tests/deploy/customer-vps/messaging-resource-floor.test.ts`
+- [X] T018 Implement reusable spike fixture helpers for homeserver candidates in `tests/deploy/customer-vps/helpers/matrix-homeserver-fixtures.ts`
+- [X] T019 Implement reusable spike fixture helpers for Telegram and WhatsApp bridge lifecycle in `tests/deploy/customer-vps/helpers/matrix-bridge-fixtures.ts`
+- [X] T020 Implement resource-floor detector helper for messaging-enabled VPSes in `tests/deploy/customer-vps/helpers/messaging-resource-floor.ts`
 - [ ] T021 Record Conduit vs Synapse vs split-homeserver spike outcome in `specs/077-matrix-messaging-bridge/spike-results.md`
 - [ ] T022 Record selected Hermes participation mode and E2EE posture in `specs/077-matrix-messaging-bridge/spike-results.md`
 - [ ] T023 Record storage map, numeric caps, and customer-VPS floor in `specs/077-matrix-messaging-bridge/spike-results.md`
