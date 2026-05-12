@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createWatcherIgnoredGlobs } from "../../packages/gateway/src/watcher.js";
+import {
+  createWatcherIgnoredGlobs,
+  createWatcherPaths,
+} from "../../packages/gateway/src/watcher.js";
 
 describe("gateway home watcher", () => {
   it("ignores large development and cache directories by default", () => {
@@ -25,5 +28,17 @@ describe("gateway home watcher", () => {
       "**/.claude/**",
       "**/.codex/**",
     ]));
+  });
+
+  it("watches bounded Matrix-owned roots instead of the whole home", () => {
+    expect(createWatcherPaths("/home/matrix/home")).toEqual(expect.arrayContaining([
+      "/home/matrix/home/apps",
+      "/home/matrix/home/data",
+      "/home/matrix/home/system",
+      "/home/matrix/home/.matrix-version",
+    ]));
+    expect(createWatcherPaths("/home/matrix/home")).not.toContain("/home/matrix/home");
+    expect(createWatcherPaths("/home/matrix/home")).not.toContain("/home/matrix/home/projects");
+    expect(createWatcherPaths("/home/matrix/home")).not.toContain("/home/matrix/home/matrix-os");
   });
 });

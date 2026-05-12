@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 
 export type FileEvent = "add" | "change" | "unlink";
@@ -39,6 +40,26 @@ const DEFAULT_PROJECT_IGNORED_GLOBS = [
   "**/matrix-os/**",
 ];
 
+const WATCHED_HOME_DIRECTORIES = [
+  "agents",
+  "apps",
+  "data",
+  "modules",
+  "plugins",
+  "sessions",
+  "system",
+  "templates",
+  "themes",
+  "tools",
+];
+
+const WATCHED_HOME_FILES = [
+  ".matrix-version",
+  ".syncignore",
+  ".template-manifest.json",
+  "CLAUDE.md",
+];
+
 export function createWatcherIgnoredGlobs(
   options: WatcherIgnoredGlobsOptions = {},
 ): string[] {
@@ -48,15 +69,20 @@ export function createWatcherIgnoredGlobs(
   ];
 }
 
+export function createWatcherPaths(homePath: string): string[] {
+  return [
+    ...WATCHED_HOME_DIRECTORIES.map((entry) => join(homePath, entry)),
+    ...WATCHED_HOME_FILES.map((entry) => join(homePath, entry)),
+  ];
+}
+
 export function createWatcher(homePath: string): Watcher {
   const listeners: Array<(event: FileChangeEvent) => void> = [];
 
-  // chokidar v4 uses fs.watch which on macOS (kqueue) opens one FD per
-  // path and hits EMFILE on large trees. On Linux, inotify avoids
-  // per-file FDs but still walks every directory to set up watches —
-  // with a large MATRIX_HOME containing projects/node_modules this
-  // exhausts memory. Polling is bounded and predictable on both.
-  const fsWatcher: FSWatcher = watch(homePath, {
+  // Watch Matrix-owned home roots explicitly. Watching the whole home and
+  // relying on ignores still lets chokidar traverse large user/project trees
+  // during startup on customer VPSes.
+  const fsWatcher: FSWatcher = watch(createWatcherPaths(homePath), {
     ignoreInitial: true,
     usePolling: true,
     interval: 2000,
