@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/browser-tool.ts",
     "./server": "./src/server.ts",
+    "./runtime-service": "./src/runtime-service.ts",
+    "./media-service": "./src/media-service.ts",
+    "./stream-protocol": "./src/stream-protocol.ts",
     "./session-manager": "./src/session-manager.ts",
     "./security": "./src/security.ts",
     "./role-snapshot": "./src/role-snapshot.ts"

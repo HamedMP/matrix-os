@@ -103,6 +103,13 @@ interface BrowserUrlSafetyOptions {
   protocolErrorMessage?: string;
 }
 
+export interface BrowserNavigationPolicyBinding {
+  normalizedUrl: string;
+  hostname: string;
+  addresses: string[];
+  expiresAt: string;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -311,6 +318,65 @@ export async function assertSafeBrowserUrl(
   }
 
   return parsed.toString();
+}
+
+export async function createBrowserNavigationPolicy(
+  rawUrl: string,
+  opts: BrowserUrlSafetyOptions & { now?: number; ttlMs?: number } = {},
+): Promise<BrowserNavigationPolicyBinding> {
+  const normalizedUrl = await assertSafeBrowserUrl(rawUrl, opts);
+  const parsed = new URL(normalizedUrl);
+  const hostname = parsed.hostname.replace(/^\[(.*)]$/, "$1");
+  const literalIpVersion = isIP(hostname);
+  const addresses = literalIpVersion
+    ? [hostname]
+    : await withTimeout(
+      (opts.resolveHostname ?? resolveBrowserHostname)(hostname),
+      opts.dnsTimeoutMs ?? DNS_LOOKUP_TIMEOUT_MS,
+    );
+
+  if (addresses.length === 0 || addresses.some((address) => isBlockedAddress(address))) {
+    throw new BrowserInputError("Browser navigation URL is not allowed");
+  }
+
+  return {
+    normalizedUrl,
+    hostname,
+    addresses,
+    expiresAt: new Date((opts.now ?? Date.now()) + (opts.ttlMs ?? 30_000)).toISOString(),
+  };
+}
+
+export async function assertRuntimeRequestMatchesPolicy(
+  rawUrl: string,
+  policy: BrowserNavigationPolicyBinding,
+  opts: Pick<BrowserUrlSafetyOptions, "resolveHostname" | "dnsTimeoutMs"> & { now?: number } = {},
+): Promise<string> {
+  if ((opts.now ?? Date.now()) > Date.parse(policy.expiresAt)) {
+    throw new BrowserInputError("Browser navigation URL could not be verified");
+  }
+  const normalizedUrl = await assertSafeBrowserUrl(rawUrl, opts);
+  const parsed = new URL(normalizedUrl);
+  const hostname = parsed.hostname.replace(/^\[(.*)]$/, "$1");
+  if (hostname !== policy.hostname) {
+    throw new BrowserInputError("Browser navigation URL is not allowed");
+  }
+  const resolved = isIP(hostname)
+    ? [hostname]
+    : await withTimeout(
+      (opts.resolveHostname ?? resolveBrowserHostname)(hostname),
+      opts.dnsTimeoutMs ?? DNS_LOOKUP_TIMEOUT_MS,
+    );
+  const allowed = new Set(policy.addresses);
+  if (resolved.length === 0 || resolved.some((address) => !allowed.has(address) || isBlockedAddress(address))) {
+    throw new BrowserInputError("Browser navigation URL is not allowed");
+  }
+  return normalizedUrl;
+}
+
+export function createChromiumHostResolverRules(policy: BrowserNavigationPolicyBinding): string[] {
+  if (policy.addresses.length === 0) return [];
+  return policy.addresses.map((address) => `MAP ${policy.hostname} ${address}`);
 }
 
 export async function assertSafeBrowserWebSocketUrl(

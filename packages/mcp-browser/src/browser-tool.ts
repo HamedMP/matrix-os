@@ -69,6 +69,20 @@ export interface BrowserToolResult {
 }
 
 type Launcher = (opts?: { headless?: boolean; userDataDir?: string }) => Promise<BrowserLike>;
+export type BrowserPermissionScope =
+  | "read_dom"
+  | "screenshot"
+  | "navigate"
+  | "download"
+  | "automate_input";
+
+export interface BrowserAgentActionAuthorization {
+  action: BrowserAction;
+  scope: BrowserPermissionScope;
+  sessionId: string;
+  profile: string;
+  url?: string;
+}
 
 export interface BrowserToolOptions {
   homePath: string;
@@ -78,6 +92,7 @@ export interface BrowserToolOptions {
   timeout?: number;
   defaultProfile?: string;
   resolveHostname?: ResolveHostname;
+  authorizeAgentAction?: (input: BrowserAgentActionAuthorization) => Promise<void>;
 }
 
 function wrapBrowserContent(content: string): string {
@@ -87,7 +102,6 @@ function wrapBrowserContent(content: string): string {
 export function createBrowserTool(opts: BrowserToolOptions) {
   const defaultProfile = normalizeBrowserProfileName(opts.defaultProfile, "default");
   const resolveHostname = opts.resolveHostname ?? resolveBrowserHostname;
-  let actionQueue: Promise<void> = Promise.resolve();
   const manager = new SessionManager({
     launcher: opts.launcher,
     headless: opts.headless ?? true,
@@ -173,32 +187,20 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     return session;
   }
 
-  async function serializeAction<T>(run: () => Promise<T>): Promise<T> {
-    const previous = actionQueue;
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
+  async function authorizeAgentAction(input: BrowserToolInput, session: Awaited<ReturnType<typeof ensureSession>>, url?: string): Promise<void> {
+    const scope = scopeForAction(input.action);
+    if (!scope || !opts.authorizeAgentAction) return;
+    await opts.authorizeAgentAction({
+      action: input.action,
+      scope,
+      sessionId: session.id,
+      profile: session.profile ?? defaultProfile,
+      ...(url ? { url } : {}),
     });
-    const queued = previous.then(() => current, () => current);
-    actionQueue = queued;
+  }
 
-    try {
-      await previous;
-    } catch (error: unknown) {
-      console.warn(
-        "[mcp-browser] Previous browser action failed:",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-
-    try {
-      return await run();
-    } finally {
-      release();
-      if (actionQueue === queued) {
-        actionQueue = Promise.resolve();
-      }
-    }
+  async function serializeAction<T>(run: () => Promise<T>): Promise<T> {
+    return manager.enqueueAction(run, { agent: true });
   }
 
   async function executeAction(input: BrowserToolInput): Promise<BrowserToolResult> {
@@ -222,6 +224,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           if (!session) {
             return { action, success: true, content: "No active browser session" };
           }
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           return {
             action,
@@ -236,6 +239,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           }
           const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname });
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, safeUrl);
           const page = session.page;
           await page.goto(safeUrl, { waitUntil: "domcontentloaded" });
           const title = await page.title();
@@ -255,6 +259,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "snapshot": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           const tree = await page.accessibility.snapshot() as AXNode | null;
           const snapshot = formatAccessibilityTree(tree);
@@ -269,6 +274,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "click": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
 
           if (input.role && input.name) {
@@ -293,6 +299,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
             return { action, success: false, error: "type requires selector and text" };
           }
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           await page.fill(input.selector, input.text);
 
@@ -309,6 +316,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
             return { action, success: false, error: "select requires selector and value" };
           }
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           await session.page.selectOption(input.selector, input.value);
 
           const tree = await session.page.accessibility.snapshot() as AXNode | null;
@@ -321,6 +329,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "screenshot": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           const buffer = await page.screenshot({ fullPage: input.fullPage ?? true });
 
@@ -334,6 +343,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "pdf": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           const buffer = await page.pdf();
 
@@ -350,6 +360,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
             return { action, success: false, error: "evaluate requires expression" };
           }
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const result = await session.page.evaluate(input.expression);
           const text = typeof result === "string" ? result : JSON.stringify(result);
           return {
@@ -361,6 +372,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "wait": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           const timeout = input.timeout ?? 30_000;
 
@@ -374,6 +386,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "scroll": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
           await page.mouse.wheel({ deltaX: 0, deltaY: 500 });
           return { action, success: true, content: "Scrolled down" };
@@ -381,6 +394,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "tabs": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const ctx = session.page.context();
           const pages = ctx.pages();
           const tabInfo = pages.map((p, i) => `${i}: ${p.url()}`);
@@ -398,13 +412,17 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           await installRequestGuard(newPage);
           if (input.url) {
             const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname });
+            await authorizeAgentAction(input, session, safeUrl);
             await newPage.goto(safeUrl, { waitUntil: "domcontentloaded" });
+          } else {
+            await authorizeAgentAction(input, session, session.page.url());
           }
           return { action, success: true, content: "New tab opened" };
         }
 
         case "tab_close": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const ctx = session.page.context();
           const pages = ctx.pages();
           const currentIndex = pages.indexOf(session.page);
@@ -435,6 +453,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "tab_switch": {
           const session = await ensureSession(input.profile);
+          await authorizeAgentAction(input, session, session.page.url());
           const ctx = session.page.context();
           const pages = ctx.pages();
           const index = parseInt(input.value ?? "0", 10);
@@ -448,6 +467,10 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "console": {
+          const session = manager.getActive();
+          if (session) {
+            await authorizeAgentAction(input, session, session.page.url());
+          }
           const messages = manager.getConsoleMessages();
           const text = messages.length > 0
             ? messages.map((m) => `[${m.type}] ${m.text}`).join("\n")
@@ -485,4 +508,33 @@ export function createBrowserTool(opts: BrowserToolOptions) {
   }
 
   return { execute, close: () => manager.close() };
+}
+
+function scopeForAction(action: BrowserAction): BrowserPermissionScope | null {
+  switch (action) {
+    case "navigate":
+    case "tab_new":
+      return "navigate";
+    case "screenshot":
+      return "screenshot";
+    case "snapshot":
+    case "tabs":
+    case "console":
+    case "status":
+      return "read_dom";
+    case "pdf":
+      return "download";
+    case "click":
+    case "type":
+    case "select":
+    case "scroll":
+    case "evaluate":
+    case "wait":
+    case "tab_close":
+    case "tab_switch":
+      return "automate_input";
+    case "launch":
+    case "close":
+      return null;
+  }
 }

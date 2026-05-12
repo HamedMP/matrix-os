@@ -300,6 +300,51 @@ describe("Browser Tool (composite action dispatch)", () => {
     });
   });
 
+  describe("grant authorization", () => {
+    it("authorizes navigation and input actions before mutating the shared runtime", async () => {
+      const authorizeAgentAction = vi.fn().mockResolvedValue(undefined);
+      const tool = createBrowserTool({
+        homePath,
+        launcher: launcher as never,
+        idleTimeoutMs: 300_000,
+        resolveHostname: async () => ["93.184.216.34"],
+        authorizeAgentAction,
+      });
+
+      await expect(tool.execute({ action: "navigate", url: "https://example.com" })).resolves.toMatchObject({ success: true });
+      await expect(tool.execute({ action: "click", selector: "#go" })).resolves.toMatchObject({ success: true });
+
+      expect(authorizeAgentAction).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        action: "navigate",
+        scope: "navigate",
+        profile: "default",
+        url: "https://example.com/",
+        sessionId: expect.stringMatching(/^session_/),
+      }));
+      expect(authorizeAgentAction).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        action: "click",
+        scope: "automate_input",
+        url: "https://example.com",
+      }));
+      expect(mockPage.click).toHaveBeenCalledWith("#go");
+    });
+
+    it("blocks action side effects when the grant authorizer rejects", async () => {
+      const tool = createBrowserTool({
+        homePath,
+        launcher: launcher as never,
+        idleTimeoutMs: 300_000,
+        resolveHostname: async () => ["93.184.216.34"],
+        authorizeAgentAction: vi.fn().mockRejectedValue(new Error("grant required")),
+      });
+
+      const result = await tool.execute({ action: "navigate", url: "https://example.com" });
+
+      expect(result).toMatchObject({ success: false, error: "Browser action failed" });
+      expect(mockPage.goto).not.toHaveBeenCalled();
+    });
+  });
+
   describe("snapshot", () => {
     it("returns accessibility tree", async () => {
       await execute({ action: "launch" });

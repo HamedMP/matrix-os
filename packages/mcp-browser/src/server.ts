@@ -1,6 +1,10 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
-import { createBrowserTool, type BrowserAction } from "./browser-tool.js";
+import {
+  createBrowserTool,
+  type BrowserAction,
+  type BrowserAgentActionAuthorization,
+} from "./browser-tool.js";
 
 export interface BrowserServerConfig {
   homePath: string;
@@ -8,6 +12,7 @@ export interface BrowserServerConfig {
   timeout?: number;
   idleTimeout?: number;
   defaultProfile?: string;
+  authorizeAgentAction?: (input: BrowserAgentActionAuthorization) => Promise<void>;
 }
 
 export function createBrowserMcpServer(config: BrowserServerConfig) {
@@ -60,6 +65,7 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
       idleTimeoutMs: config.idleTimeout ?? 300_000,
       timeout: config.timeout ?? 30_000,
       defaultProfile: config.defaultProfile ?? "default",
+      ...(config.authorizeAgentAction ? { authorizeAgentAction: config.authorizeAgentAction } : {}),
     });
     return browserTool;
   }

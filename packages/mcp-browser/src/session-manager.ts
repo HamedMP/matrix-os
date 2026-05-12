@@ -11,6 +11,16 @@ export interface BrowserSession {
   profilePath?: string;
   createdAt: number;
   lastActivity: number;
+  lockDeviceId?: string;
+  focusSurfaceId?: string;
+  surfaces?: Map<string, BrowserSurface>;
+}
+
+export interface BrowserSurface {
+  id: string;
+  deviceId: string;
+  kind: "canvas" | "standalone";
+  lastTouched: number;
 }
 
 type BrowserRoutePattern = string | RegExp | ((url: URL) => boolean);
@@ -87,6 +97,7 @@ export interface SessionManagerOptions {
   timeout?: number;
   profileRoot?: string;
   defaultProfile?: string;
+  maxSurfaces?: number;
 }
 
 export class SessionManager {
@@ -99,8 +110,10 @@ export class SessionManager {
   private timeout: number;
   private profileRoot: string | undefined;
   private defaultProfile: string;
+  private maxSurfaces: number;
   private consoleMessages: Array<{ type: string; text: string }> = [];
   private consolePages = new WeakSet<PageLike>();
+  private actionQueue: Promise<unknown> = Promise.resolve();
 
   constructor(opts: SessionManagerOptions) {
     this.launcher = opts.launcher;
@@ -109,9 +122,10 @@ export class SessionManager {
     this.timeout = opts.timeout ?? 30000;
     this.profileRoot = opts.profileRoot ? resolve(opts.profileRoot) : undefined;
     this.defaultProfile = normalizeBrowserProfileName(opts.defaultProfile, "default");
+    this.maxSurfaces = opts.maxSurfaces ?? 3;
   }
 
-  async launch(opts: { profile?: string } = {}): Promise<BrowserSession> {
+  async launch(opts: { profile?: string; deviceId?: string } = {}): Promise<BrowserSession> {
     const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
     if (this.launching) {
       if (this.launching.profile === profile) return this.launching.promise;
@@ -123,11 +137,16 @@ export class SessionManager {
           error instanceof Error ? error.message : String(error),
         );
       }
-      return this.launch({ profile });
+      return this.launch({ profile, deviceId: opts.deviceId });
     }
-    if (this.session?.profile === profile) return this.session;
+    if (this.session?.profile === profile) {
+      if (opts.deviceId && this.session.lockDeviceId && this.session.lockDeviceId !== opts.deviceId) {
+        throw new BrowserProfileLockedError("Browser profile is open on another device");
+      }
+      return this.session;
+    }
 
-    const promise = this.openSession(profile).finally(() => {
+    const promise = this.openSession(profile, opts.deviceId).finally(() => {
       if (this.launching?.promise === promise) {
         this.launching = undefined;
       }
@@ -137,7 +156,7 @@ export class SessionManager {
     return promise;
   }
 
-  private async openSession(profile: string): Promise<BrowserSession> {
+  private async openSession(profile: string, deviceId?: string): Promise<BrowserSession> {
     if (this.session) {
       await this.close();
     }
@@ -161,6 +180,8 @@ export class SessionManager {
       browser,
       page,
       profile,
+      ...(deviceId ? { lockDeviceId: deviceId } : {}),
+      surfaces: new Map(),
       ...(profilePath ? { profilePath } : {}),
       createdAt: Date.now(),
       lastActivity: Date.now(),
@@ -169,6 +190,89 @@ export class SessionManager {
     this.session = session;
     this.resetIdleTimer();
     return session;
+  }
+
+  attachSurface(opts: {
+    sessionId: string;
+    surfaceId: string;
+    deviceId: string;
+    kind: "canvas" | "standalone";
+  }): BrowserSurface {
+    if (!this.session || this.session.id !== opts.sessionId) {
+      throw new BrowserSessionError("Browser session not found");
+    }
+    if (this.session.lockDeviceId && this.session.lockDeviceId !== opts.deviceId) {
+      throw new BrowserProfileLockedError("Browser profile is open on another device");
+    }
+    this.session.lockDeviceId = opts.deviceId;
+    const surface: BrowserSurface = {
+      id: opts.surfaceId,
+      deviceId: opts.deviceId,
+      kind: opts.kind,
+      lastTouched: Date.now(),
+    };
+    this.session.surfaces ??= new Map();
+    if (!this.session.surfaces.has(opts.surfaceId) && this.session.surfaces.size >= this.maxSurfaces) {
+      throw new BrowserStreamLimitError("Browser stream limit reached");
+    }
+    this.session.surfaces.set(opts.surfaceId, surface);
+    if (!this.session.focusSurfaceId) {
+      this.session.focusSurfaceId = opts.surfaceId;
+    }
+    this.touch();
+    return surface;
+  }
+
+  focusSurface(surfaceId: string): void {
+    if (!this.session?.surfaces?.has(surfaceId)) {
+      throw new BrowserSessionError("Browser surface not found");
+    }
+    this.session.focusSurfaceId = surfaceId;
+    this.touch();
+  }
+
+  assertFocusedSurface(surfaceId: string): void {
+    if (!this.session || this.session.focusSurfaceId !== surfaceId) {
+      throw new BrowserStaleFocusError("Browser input came from a background surface");
+    }
+  }
+
+  async enqueueAction<T>(
+    run: () => Promise<T>,
+    opts: { surfaceId?: string; agent?: boolean } = {},
+  ): Promise<T> {
+    if (!opts.agent && opts.surfaceId) {
+      this.assertFocusedSurface(opts.surfaceId);
+    }
+    const previous = this.actionQueue;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.actionQueue = previous.then(() => current, () => current);
+    try {
+      try {
+        await previous;
+      } catch (error: unknown) {
+        console.warn(
+          "[mcp-browser] Previous browser action failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      return await run();
+    } finally {
+      release();
+      this.touch();
+    }
+  }
+
+  takeover(opts: { deviceId: string }): BrowserSession | undefined {
+    if (!this.session) return undefined;
+    this.session.lockDeviceId = opts.deviceId;
+    this.session.focusSurfaceId = undefined;
+    this.session.surfaces?.clear();
+    this.touch();
+    return this.session;
   }
 
   private preparePage(page: PageLike): void {
@@ -240,5 +344,33 @@ export class SessionManager {
     this.idleTimer = setTimeout(() => {
       this.close();
     }, this.idleTimeoutMs);
+  }
+}
+
+export class BrowserSessionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserSessionError";
+  }
+}
+
+export class BrowserProfileLockedError extends BrowserSessionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserProfileLockedError";
+  }
+}
+
+export class BrowserStaleFocusError extends BrowserSessionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserStaleFocusError";
+  }
+}
+
+export class BrowserStreamLimitError extends BrowserSessionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserStreamLimitError";
   }
 }
