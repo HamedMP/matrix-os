@@ -13,39 +13,51 @@ export interface Watcher {
   close(): Promise<void>;
 }
 
-export interface WatcherIgnoredGlobsOptions {
+export interface WatcherIgnoredOptions {
   watchProjects?: boolean;
 }
 
-const ALWAYS_IGNORED_GLOBS = [
-  "**/node_modules/**",
-  "**/.git/**",
-  "**/.next/**",
-  "**/.turbo/**",
-  "**/.cache/**",
-  "**/.trash/**",
-  "**/dist/**",
-  "**/build/**",
-  "**/system/matrix.db*",
-  "**/.claude/**",
-  "**/.codex/**",
-  "**/.hermes/**",
-  "**/.local/**",
-  "**/.npm/**",
-];
+// Directories to skip entirely — prevents chokidar from readdir-ing into
+// large trees (node_modules, .git, etc.) which starves the event loop
+// during the initial poll scan even when ignoreInitial is true.
+//
+// Glob patterns like `**/node_modules/**` only match paths *inside* the
+// directory, not the directory entry itself, so chokidar still recurses
+// into it before filtering contents. A function check on path segments
+// catches the directory before readdir runs.
+const ALWAYS_IGNORED_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".turbo",
+  ".cache",
+  ".trash",
+  "dist",
+  "build",
+  ".claude",
+  ".codex",
+  ".hermes",
+  ".local",
+  ".npm",
+]);
 
-const DEFAULT_PROJECT_IGNORED_GLOBS = [
-  "**/projects/**",
-  "**/matrix-os/**",
-];
+const PROJECT_IGNORED_DIRS = new Set([
+  "projects",
+  "matrix-os",
+]);
 
-export function createWatcherIgnoredGlobs(
-  options: WatcherIgnoredGlobsOptions = {},
-): string[] {
-  return [
-    ...ALWAYS_IGNORED_GLOBS,
-    ...(options.watchProjects ? [] : DEFAULT_PROJECT_IGNORED_GLOBS),
-  ];
+export function createWatcherIgnored(
+  options: WatcherIgnoredOptions = {},
+): (path: string) => boolean {
+  return (filePath: string) => {
+    const segments = filePath.split("/");
+    for (const seg of segments) {
+      if (ALWAYS_IGNORED_DIRS.has(seg)) return true;
+      if (!options.watchProjects && PROJECT_IGNORED_DIRS.has(seg)) return true;
+    }
+    if (segments.some(s => s.startsWith("matrix.db"))) return true;
+    return false;
+  };
 }
 
 export function createWatcher(homePath: string): Watcher {
@@ -61,7 +73,7 @@ export function createWatcher(homePath: string): Watcher {
     usePolling: true,
     interval: 2000,
     binaryInterval: 5000,
-    ignored: createWatcherIgnoredGlobs({
+    ignored: createWatcherIgnored({
       watchProjects: process.env.MATRIX_WATCH_PROJECTS === "true",
     }),
   });
