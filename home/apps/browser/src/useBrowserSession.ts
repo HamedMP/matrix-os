@@ -35,6 +35,7 @@ export function useBrowserSession() {
     const wsUrl = new URL(session.wsUrl, window.location.origin);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(wsUrl.toString(), [`browser-stream.${session.streamToken}`]);
+    let closingForCleanup = false;
     socketRef.current = socket;
 
     socket.onopen = () => {
@@ -76,6 +77,10 @@ export function useBrowserSession() {
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
+      if (!closingForCleanup) {
+        setState("recoverable");
+        setError("Browser stream disconnected.");
+      }
     };
     socket.onerror = () => {
       setState("error");
@@ -83,6 +88,7 @@ export function useBrowserSession() {
     };
 
     return () => {
+      closingForCleanup = true;
       if (socketRef.current === socket) {
         socketRef.current = null;
       }

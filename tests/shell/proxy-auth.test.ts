@@ -62,6 +62,11 @@ describe("proxy auth: route classification", () => {
     expect(isPublicShellPath("/sign-up/verify-email-address")).toBe(true);
   });
 
+  it("classifies Browser handoff routes as public token-gated shell paths", () => {
+    expect(isPublicShellPath("/browser")).toBe(true);
+    expect(isPublicShellPath("/browser/google.com")).toBe(true);
+  });
+
   it("non-public paths require auth", () => {
     expect(isPublicPath("/")).toBe(false);
     expect(isPublicPath("/api/message")).toBe(false);

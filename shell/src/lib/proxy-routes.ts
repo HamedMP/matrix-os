@@ -7,7 +7,9 @@ export function isPublicShellPath(pathname: string): boolean {
     pathname === "/sign-in" ||
     pathname.startsWith("/sign-in/") ||
     pathname === "/sign-up" ||
-    pathname.startsWith("/sign-up/")
+    pathname.startsWith("/sign-up/") ||
+    pathname === "/browser" ||
+    pathname.startsWith("/browser/")
   );
 }
 
@@ -25,7 +27,11 @@ export function isGatewayProxyPath(pathname: string): boolean {
 }
 
 export function normalizeBrowserRouteTarget(target: string | string[] | undefined, targetQuery?: URLSearchParams): string {
-  const raw = Array.isArray(target) ? target.join("/") : target;
+  const raw = Array.isArray(target)
+    ? /^https?:$/i.test(target[0] ?? "")
+      ? `${target[0]}//${target.slice(1).join("/")}`
+      : target.join("/")
+    : target;
   const trimmed = raw?.trim().replace(/^\/+/, "") ?? "";
   if (!trimmed || trimmed === "about:blank") return "about:blank";
   try {

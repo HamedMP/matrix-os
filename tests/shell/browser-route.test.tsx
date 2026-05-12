@@ -9,6 +9,7 @@ describe("standalone Browser route helpers", () => {
     expect(normalizeBrowserRouteTarget(["google.com"])).toBe("https://google.com/");
     expect(normalizeBrowserRouteTarget(["example.com", "docs"])).toBe("https://example.com/docs");
     expect(normalizeBrowserRouteTarget(["https://example.com/path"])).toBe("https://example.com/path");
+    expect(normalizeBrowserRouteTarget(["https:", "example.com", "search"])).toBe("https://example.com/search");
     expect(normalizeBrowserRouteTarget(undefined)).toBe("about:blank");
     expect(normalizeBrowserRouteTarget(["[::z]"])).toBe("about:blank");
   });

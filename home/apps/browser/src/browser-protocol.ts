@@ -26,6 +26,26 @@ export class BrowserProtocolError extends Error {
   }
 }
 
+const SAFE_BROWSER_MESSAGES: Record<string, string> = {
+  browser_unavailable: "Browser is unavailable right now.",
+  unauthorized: "Browser request is invalid.",
+  invalid_request: "Browser request is invalid.",
+  validation_error: "Browser request is invalid.",
+  unsafe_url: "This destination is blocked.",
+  blocked_redirect: "This destination is blocked.",
+  limit_reached: "Browser limit reached.",
+  profile_locked: "This profile is already open on another device.",
+  takeover_required: "This profile is already open on another device.",
+  session_not_found: "Browser session was not found.",
+  download_not_found: "Download was not found.",
+  deferred_feature: "This site feature is unavailable in Matrix Browser v1.",
+  conflict: "Browser request conflicted with a newer change.",
+  upgrade_required: "Browser needs to be refreshed.",
+  stale_focus: "Browser input came from a background surface.",
+  media_policy: "Browser media relay is unavailable.",
+  internal_error: "Browser is unavailable right now.",
+};
+
 export function normalizeBrowserTarget(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return "about:blank";
@@ -60,10 +80,8 @@ export async function createBrowserSession(opts: {
     throw new BrowserProtocolError("Browser is unavailable right now.");
   });
   if (!res.ok) {
-    const safeMessage = typeof body?.error?.message === "string" && body.error.message.length < 160
-      ? body.error.message
-      : "Browser is unavailable right now.";
-    throw new BrowserProtocolError(safeMessage);
+    const code = typeof body?.error?.code === "string" ? body.error.code : "";
+    throw new BrowserProtocolError(SAFE_BROWSER_MESSAGES[code] ?? "Browser is unavailable right now.");
   }
   return body as BrowserSessionResponse;
 }
