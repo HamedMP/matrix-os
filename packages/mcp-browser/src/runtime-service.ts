@@ -1,12 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import {
+  assertRuntimeRequestMatchesPolicy,
   createBrowserNavigationPolicy,
   type BrowserNavigationPolicyBinding,
   type ResolveHostname,
 } from "./security.js";
 import { chromiumBrowserLaunchArgs } from "./media-service.js";
-import { SessionManager, type BrowserLike } from "./session-manager.js";
+import { SessionManager, type BrowserLike, type PageLike } from "./session-manager.js";
 
 export interface BrowserRuntimeSessionState {
   id: string;
@@ -72,6 +73,8 @@ export class BrowserRuntimeService {
   private readonly downloads = new Map<string, BrowserRuntimeDownloadState>();
   private recoverableTabs: BrowserRuntimeTabState[] = [];
   private activeTabId: string | undefined;
+  private activePolicy: BrowserNavigationPolicyBinding | undefined;
+  private requestPolicyInstalled = false;
 
   constructor(opts: BrowserRuntimeServiceOptions) {
     this.resolveHostname = opts.resolveHostname;
@@ -132,6 +135,7 @@ export class BrowserRuntimeService {
     if (!session) {
       throw new Error("browser_session_not_open");
     }
+    await this.installRequestPolicy(session, policy);
     await session.page.goto(policy.normalizedUrl, { waitUntil: "domcontentloaded" });
     this.manager.touch();
     const activeTabId = this.activeTabId ?? this.tabs.keys().next().value ?? "tab_1";
@@ -151,6 +155,14 @@ export class BrowserRuntimeService {
       state: "active",
       tabs: this.listTabs(),
     };
+  }
+
+  async navigateSession(sessionId: string, url: string): Promise<BrowserRuntimeSessionState> {
+    const session = this.manager.getActive();
+    if (!session || session.id !== sessionId) {
+      throw new Error("browser_session_not_found");
+    }
+    return await this.navigate(url);
   }
 
   createTab(input: { url?: string; title?: string | null } = {}): BrowserRuntimeTabState {
@@ -245,7 +257,36 @@ export class BrowserRuntimeService {
     this.downloads.clear();
     this.recoverableTabs = [];
     this.activeTabId = undefined;
+    this.activePolicy = undefined;
+    this.requestPolicyInstalled = false;
     await this.manager.close();
+  }
+
+  private async installRequestPolicy(session: { page: PageLike }, policy: BrowserNavigationPolicyBinding): Promise<void> {
+    this.activePolicy = policy;
+    if (this.requestPolicyInstalled) return;
+    const context = session.page.context();
+    if (!context.route) return;
+    await context.route("**/*", async (route) => {
+      const currentPolicy = this.activePolicy;
+      if (!currentPolicy) {
+        await route.abort("blockedbyclient");
+        return;
+      }
+      try {
+        await assertRuntimeRequestMatchesPolicy(route.request().url(), currentPolicy, {
+          ...(this.resolveHostname ? { resolveHostname: this.resolveHostname } : {}),
+        });
+        await route.continue();
+      } catch (error: unknown) {
+        console.warn(
+          "[matrix-browser] runtime request blocked:",
+          error instanceof Error ? error.message : String(error),
+        );
+        await route.abort("blockedbyclient");
+      }
+    });
+    this.requestPolicyInstalled = true;
   }
 
   private upsertRuntimeTab(tab: BrowserRuntimeTabState): void {
@@ -329,7 +370,7 @@ async function handleBrowserRuntimeRequest(
       writeJson(res, 400, { error: "validation_error" });
       return;
     }
-    writeJson(res, 200, { session: await runtime.navigate(body.targetUrl) });
+    writeJson(res, 200, { session: await runtime.navigateSession(navigateMatch[1] ?? "", body.targetUrl) });
     return;
   }
   writeJson(res, 404, { error: "not_found" });
@@ -357,10 +398,12 @@ async function createDefaultBrowserRuntimeService(): Promise<BrowserRuntimeServi
     headless: process.env.BROWSER_HEADLESS !== "false",
     launcher: async (launchOpts) => {
       const args = launchOpts?.args ?? chromiumBrowserLaunchArgs();
+      const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH;
       if (launchOpts?.userDataDir) {
         const context = await playwright.chromium.launchPersistentContext(launchOpts.userDataDir, {
           headless: launchOpts.headless ?? true,
           args,
+          ...(executablePath ? { executablePath } : {}),
         });
         return {
           newPage: () => context.newPage(),
@@ -371,6 +414,7 @@ async function createDefaultBrowserRuntimeService(): Promise<BrowserRuntimeServi
       return await playwright.chromium.launch({
         headless: launchOpts?.headless ?? true,
         args,
+        ...(executablePath ? { executablePath } : {}),
       }) as unknown as BrowserLike;
     },
   });

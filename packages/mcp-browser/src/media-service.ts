@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 
 const PRIVATE_IPV4 = [
@@ -93,10 +93,12 @@ export function createEphemeralTurnCredential(opts: {
   }
   const now = opts.now ?? Date.now();
   const ttlMs = opts.ttlMs ?? 5 * 60 * 1000;
+  const expiresSeconds = Math.floor((now + ttlMs) / 1000);
+  const username = `${expiresSeconds}:${opts.ownerId}:${opts.sessionId}:${randomUUID()}`;
   return {
     urls: opts.urls,
-    username: `${opts.ownerId}:${opts.sessionId}:${randomUUID()}`,
-    credential: opts.secret,
+    username,
+    credential: createHmac("sha1", opts.secret).update(username).digest("base64"),
     expiresAt: new Date(now + ttlMs).toISOString(),
   };
 }

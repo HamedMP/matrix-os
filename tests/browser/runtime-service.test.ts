@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { BrowserRuntimeService } from "../../packages/mcp-browser/src/runtime-service.js";
 import type { BrowserLike, PageLike } from "../../packages/mcp-browser/src/session-manager.js";
 
-function fakePage(): PageLike {
+type RouteHandler = (route: { request(): { url(): string }; continue(): Promise<void>; abort(errorCode?: string): Promise<void> }) => Promise<void> | void;
+
+function fakePage(): PageLike & { __routes: RouteHandler[] } {
   let currentUrl = "about:blank";
+  const routes: RouteHandler[] = [];
   return {
     async goto(url: string) {
       currentUrl = url;
@@ -27,7 +30,8 @@ function fakePage(): PageLike {
     mouse: { async wheel() {} },
     accessibility: { async snapshot() { return null; } },
     on() {},
-    context() { return { pages: () => [this], async newPage() { return fakePage(); }, async close() {} }; },
+    context() { return { pages: () => [this], async newPage() { return fakePage(); }, async close() {}, async route(_url, handler) { routes.push(handler); } }; },
+    __routes: routes,
   };
 }
 
@@ -67,6 +71,40 @@ describe("BrowserRuntimeService", () => {
       expect.objectContaining({ url: "about:blank" }),
       expect.objectContaining({ url: "https://example.com/docs" }),
     ]);
+  });
+
+  it("checks runtime requests against the active navigation policy", async () => {
+    const page = fakePage();
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => ({
+        async newPage() { return page; },
+        async close() {},
+        contexts() {
+          return [{ pages: () => [page], async newPage() { return page; }, async close() {}, async route(_url, handler) { page.__routes.push(handler); } }];
+        },
+      }),
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async (hostname) => hostname === "example.com" ? ["93.184.216.34"] : ["10.0.0.2"],
+    });
+
+    await runtime.open({ profile: "default", deviceId: "device_1" });
+    await runtime.navigate("https://example.com/docs");
+
+    const outcomes: string[] = [];
+    const handler = page.__routes[0];
+    expect(handler).toBeDefined();
+    await handler?.({
+      request: () => ({ url: () => "https://example.com/asset.js" }),
+      continue: async () => { outcomes.push("continue"); },
+      abort: async () => { outcomes.push("abort"); },
+    });
+    await handler?.({
+      request: () => ({ url: () => "https://internal.example/secret" }),
+      continue: async () => { outcomes.push("continue"); },
+      abort: async () => { outcomes.push("abort"); },
+    });
+
+    expect(outcomes).toEqual(["continue", "abort"]);
   });
 
   it("enforces session, stream, memory, disk, and download limits", async () => {

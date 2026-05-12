@@ -58,8 +58,9 @@ describe("Browser media plane", () => {
       ttlMs: 300_000,
     });
 
-    expect(credential.username).toContain("owner_1:session_1:");
-    expect(credential.credential).toBe("credential");
+    expect(credential.username).toContain(":owner_1:session_1:");
+    expect(credential.credential).not.toBe("credential");
+    expect(credential.credential.length).toBeGreaterThan(0);
     expect(credential.expiresAt).toBe(new Date(301_000).toISOString());
   });
 
