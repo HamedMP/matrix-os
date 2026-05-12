@@ -33,7 +33,7 @@ export function BrowserPanel() {
         setScreenshotUrl(`/api/browser/screenshot?t=${Date.now()}`);
       }
     } catch {}
-  }, [gateway]);
+  }, []);
 
   useEffect(() => {
     fetchStatus();
@@ -77,7 +77,7 @@ export function BrowserPanel() {
     } finally {
       setLoading(false);
     }
-  }, [gateway]);
+  }, []);
 
   const closeBrowser = useCallback(async () => {
     await fetch(`/api/browser/close`, { method: "POST" }).catch(() => {});
@@ -85,7 +85,7 @@ export function BrowserPanel() {
     setScreenshotUrl(null);
     setUrl("");
     setTitle("");
-  }, [gateway]);
+  }, []);
 
   const handleClick = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
     if (!imgRef.current || !active) return;
@@ -110,7 +110,7 @@ export function BrowserPanel() {
     } finally {
       setLoading(false);
     }
-  }, [active, gateway, fetchStatus]);
+  }, [active, fetchStatus]);
 
   return (
     <div className="flex h-full flex-col bg-background">
