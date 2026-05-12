@@ -71,7 +71,7 @@ export class BrowserRuntimeService {
   private readonly tabs = new Map<string, BrowserRuntimeTabState>();
   private readonly downloads = new Map<string, BrowserRuntimeDownloadState>();
   private recoverableTabs: BrowserRuntimeTabState[] = [];
-  private activePolicy: BrowserNavigationPolicyBinding | undefined;
+  private activeTabId: string | undefined;
 
   constructor(opts: BrowserRuntimeServiceOptions) {
     this.resolveHostname = opts.resolveHostname;
@@ -94,12 +94,16 @@ export class BrowserRuntimeService {
   }
 
   async open(opts: { profile?: string; deviceId?: string }): Promise<BrowserRuntimeSessionState> {
-    this.assertOwnerLimits({ sessions: this.manager.getActive() ? 1 : 0 });
+    const active = this.manager.getActive();
+    if (!active) {
+      this.assertOwnerLimits({ sessions: 0 });
+    }
     const session = await this.manager.launch(opts);
     if (this.tabs.size === 0 && this.recoverableTabs.length > 0) {
       for (const tab of this.recoverableTabs) {
         this.tabs.set(tab.id, { ...tab });
       }
+      this.activeTabId = this.recoverableTabs[0]?.id;
       this.recoverableTabs = [];
     }
     return {
@@ -114,25 +118,28 @@ export class BrowserRuntimeService {
   }
 
   async prepareNavigation(url: string): Promise<BrowserNavigationPolicyBinding> {
-    this.activePolicy = await createBrowserNavigationPolicy(url, {
+    return await createBrowserNavigationPolicy(url, {
       ...(this.resolveHostname ? { resolveHostname: this.resolveHostname } : {}),
     });
-    return this.activePolicy;
   }
 
   async navigate(url: string): Promise<BrowserRuntimeSessionState> {
-    const policy = this.activePolicy ?? await this.prepareNavigation(url);
+    const policy = await createBrowserNavigationPolicy(url, {
+      ...(this.resolveHostname ? { resolveHostname: this.resolveHostname } : {}),
+    });
     const session = this.manager.getActive();
     if (!session) {
       throw new Error("browser_session_not_open");
     }
     await session.page.goto(policy.normalizedUrl, { waitUntil: "domcontentloaded" });
     this.manager.touch();
+    const activeTabId = this.activeTabId ?? this.tabs.keys().next().value ?? "tab_1";
+    const activeTab = this.tabs.get(activeTabId);
     this.upsertRuntimeTab({
-      id: this.tabs.keys().next().value ?? "tab_1",
+      id: activeTabId,
       url: policy.normalizedUrl,
       title: null,
-      order: 0,
+      order: activeTab?.order ?? 0,
     });
     return {
       id: session.id,
@@ -156,6 +163,7 @@ export class BrowserRuntimeService {
       order: this.tabs.size,
     };
     this.tabs.set(tab.id, tab);
+    this.activeTabId = tab.id;
     this.manager.touch();
     return { ...tab };
   }
@@ -188,7 +196,7 @@ export class BrowserRuntimeService {
   }
 
   assertOwnerLimits(usage: BrowserRuntimeResourceUsage): void {
-    if ((usage.sessions ?? 0) >= this.maxSessions && !this.manager.getActive()) {
+    if ((usage.sessions ?? 0) >= this.maxSessions) {
       throw new Error("browser_session_limit_reached");
     }
     if ((usage.streams ?? 0) > this.maxStreams) {
@@ -226,6 +234,7 @@ export class BrowserRuntimeService {
       tabs: this.recoverableTabs.map((tab) => ({ ...tab })),
     };
     this.tabs.clear();
+    this.activeTabId = undefined;
     await this.manager.close();
     return state;
   }
@@ -234,6 +243,7 @@ export class BrowserRuntimeService {
     this.tabs.clear();
     this.downloads.clear();
     this.recoverableTabs = [];
+    this.activeTabId = undefined;
     await this.manager.close();
   }
 
@@ -242,6 +252,7 @@ export class BrowserRuntimeService {
       throw new Error("browser_tab_limit_reached");
     }
     this.tabs.set(tab.id, { ...tab });
+    this.activeTabId = tab.id;
   }
 
   private updateDownload(

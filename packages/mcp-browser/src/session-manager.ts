@@ -245,25 +245,26 @@ export class SessionManager {
       this.assertFocusedSurface(opts.surfaceId);
     }
     const previous = this.actionQueue;
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
+    const ready = previous.catch((error: unknown) => {
+      console.warn(
+        "[mcp-browser] Previous browser action failed:",
+        error instanceof Error ? error.message : String(error),
+      );
     });
-    this.actionQueue = previous.then(() => current, () => current);
-    try {
-      try {
-        await previous;
-      } catch (error: unknown) {
-        console.warn(
-          "[mcp-browser] Previous browser action failed:",
-          error instanceof Error ? error.message : String(error),
-        );
+    const queued = ready.then(async () => {
+      if (!opts.agent && opts.surfaceId) {
+        this.assertFocusedSurface(opts.surfaceId);
       }
       return await run();
-    } finally {
-      release();
+    });
+    const drain = queued.catch(() => undefined).finally(() => {
+      if (this.actionQueue === drain) {
+        this.actionQueue = Promise.resolve();
+      }
       this.touch();
-    }
+    });
+    this.actionQueue = drain;
+    return await queued;
   }
 
   takeover(opts: { deviceId: string }): BrowserSession | undefined {

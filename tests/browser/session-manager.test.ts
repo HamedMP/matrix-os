@@ -90,6 +90,40 @@ describe("Browser SessionManager shared runtime", () => {
     expect(order).toEqual(["first-start", "first-end", "second"]);
   });
 
+  it("rejects queued user input if the surface loses focus before execution", async () => {
+    const manager = new SessionManager({ launcher: async () => fakeBrowser() });
+    const order: string[] = [];
+    const session = await manager.launch({ profile: "default", deviceId: "device_a" });
+    manager.attachSurface({ sessionId: session.id, surfaceId: "surface_1", deviceId: "device_a", kind: "canvas" });
+    manager.attachSurface({ sessionId: session.id, surfaceId: "surface_2", deviceId: "device_a", kind: "standalone" });
+    manager.focusSurface("surface_1");
+
+    let release!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const blocker = manager.enqueueAction(async () => {
+      order.push("blocker");
+      markStarted();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }, { agent: true });
+    const staleInput = manager.enqueueAction(async () => {
+      order.push("stale-input");
+    }, { surfaceId: "surface_1" });
+
+    await started;
+    manager.focusSurface("surface_2");
+    release();
+
+    await blocker;
+    await expect(staleInput).rejects.toBeInstanceOf(BrowserStaleFocusError);
+    await expect(manager.enqueueAction(async () => "after", { agent: true })).resolves.toBe("after");
+    expect(order).toEqual(["blocker"]);
+  });
+
   it("caps multiplexed stream surfaces per live runtime", async () => {
     const manager = new SessionManager({ launcher: async () => fakeBrowser(), maxSurfaces: 2 });
     const session = await manager.launch({ profile: "default", deviceId: "device_a" });

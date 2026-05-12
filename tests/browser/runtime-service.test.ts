@@ -57,11 +57,16 @@ describe("BrowserRuntimeService", () => {
 
     expect(() => runtime.createTab()).toThrow("browser_tab_limit_reached");
     expect(runtime.listTabs()).toHaveLength(2);
+    await runtime.prepareNavigation("https://example.com/old");
     await expect(runtime.navigate("https://example.com/docs")).resolves.toMatchObject({
       currentUrl: "https://example.com/docs",
       state: "active",
       tabs: expect.arrayContaining([expect.objectContaining({ url: "https://example.com/docs" })]),
     });
+    expect(runtime.listTabs()).toEqual([
+      expect.objectContaining({ url: "about:blank" }),
+      expect.objectContaining({ url: "https://example.com/docs" }),
+    ]);
   });
 
   it("enforces session, stream, memory, disk, and download limits", async () => {
@@ -90,6 +95,32 @@ describe("BrowserRuntimeService", () => {
     expect(runtime.completeDownload(download.id, 2000)).toMatchObject({ state: "complete" });
     expect(runtime.failDownload(download.id, 3000)).toMatchObject({ state: "failed" });
     expect(runtime.listDownloads()).toHaveLength(1);
+  });
+
+  it("allows reopening the active runtime while enforcing the new-session cap", async () => {
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowser(),
+      profileRoot: "/tmp/browser-profiles",
+      limits: { maxSessions: 1 },
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await expect(runtime.open({ profile: "default", deviceId: "device_1" })).resolves.toMatchObject({
+      state: "active",
+    });
+    await expect(runtime.open({ profile: "default", deviceId: "device_1" })).resolves.toMatchObject({
+      state: "active",
+    });
+
+    const disabledRuntime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowser(),
+      profileRoot: "/tmp/browser-profiles",
+      limits: { maxSessions: 0 },
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+    await expect(disabledRuntime.open({ profile: "default", deviceId: "device_1" })).rejects.toThrow(
+      "browser_session_limit_reached",
+    );
   });
 
   it("hibernates idle sessions and restores saved tab URLs on reopen", async () => {
