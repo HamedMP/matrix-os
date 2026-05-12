@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasSettings } from "@/stores/canvas-settings";
@@ -398,7 +399,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   );
 
   if (isFullscreen) {
-    return (
+    return createPortal(
       <div
         className="fixed inset-0 z-[100] bg-background overflow-hidden"
         style={{ transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)" }}
@@ -442,7 +443,8 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             <span className="text-[10px] font-medium tracking-wide opacity-0 group-hover/fsexit:opacity-100 transition-opacity duration-300">Exit</span>
           </button>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 

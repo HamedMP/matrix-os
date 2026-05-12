@@ -1734,7 +1734,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                 key={win.id}
                 data-window-id={win.id}
                 className={isFullscreen
-                  ? "app-window fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0"
+                  ? "fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0 bg-background"
                   : "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl"
                 }
                 style={isFullscreen ? {
