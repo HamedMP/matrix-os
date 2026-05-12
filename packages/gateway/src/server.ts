@@ -3359,7 +3359,7 @@ export async function createGateway(config: GatewayConfig) {
       sharedBrowserContext = await pw.chromium.launchPersistentContext(browserProfileDir, {
         headless: true,
         serviceWorkers: "block",
-        viewport: { width: 1280, height: 800 },
+        viewport: { width: 1024, height: 768 },
       });
       sharedBrowserPage = sharedBrowserContext.pages()[0] ?? await sharedBrowserContext.newPage();
       sharedCdpSession = await sharedBrowserContext.newCDPSession(sharedBrowserPage);
@@ -3384,9 +3384,9 @@ export async function createGateway(config: GatewayConfig) {
     try {
       await sharedCdpSession.send("Page.startScreencast", {
         format: "jpeg",
-        quality: 60,
-        maxWidth: 1280,
-        maxHeight: 800,
+        quality: 40,
+        maxWidth: 1024,
+        maxHeight: 768,
         everyNthFrame: 1,
       });
       screencastActive = true;
