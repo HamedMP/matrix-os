@@ -189,6 +189,27 @@ describe('platform host bundle route', () => {
     );
   });
 
+  it('serves channel alias checksums with mutable cache headers', async () => {
+    await seedRelease();
+    await promoteHostBundleChannel(db, 'stable', 'v2026.05.12-1');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/stable/matrix-host-bundle.tar.gz.sha256');
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(`${'a'.repeat(64)}  matrix-host-bundle.tar.gz\n`);
+    expect(res.headers.get('cache-control')).toBe('private, max-age=30');
+    expect(res.headers.get('cdn-cache-control')).toBe('private, max-age=30');
+    expect(res.headers.get('cloudflare-cdn-cache-control')).toBe('private, max-age=30');
+  });
+
   it('registers release metadata in platform DB and promotes channels', async () => {
     const app = createApp({
       db,

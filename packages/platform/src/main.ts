@@ -1187,9 +1187,10 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid request' }, 400);
     }
 
+    const isChannelAlias = HOST_BUNDLE_CHANNEL_PATTERN.test(imageVersion);
     let release: HostBundleReleaseRecord | undefined;
     try {
-      release = HOST_BUNDLE_CHANNEL_PATTERN.test(imageVersion)
+      release = isChannelAlias
         ? await getHostBundleReleaseByChannel(db, imageVersion)
         : await getHostBundleRelease(db, imageVersion);
     } catch (err: unknown) {
@@ -1214,11 +1215,20 @@ export function createApp(deps: {
     }
 
     if (file.endsWith('.sha256')) {
+      const cacheHeaders = isChannelAlias
+        ? {
+          'cache-control': 'private, max-age=30',
+          'cdn-cache-control': 'private, max-age=30',
+          'cloudflare-cdn-cache-control': 'private, max-age=30',
+        }
+        : {
+          'cache-control': 'public, max-age=31536000, immutable',
+          'cdn-cache-control': 'public, max-age=31536000, immutable',
+          'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
+        };
       return c.text(`${release.sha256}  matrix-host-bundle.tar.gz\n`, 200, {
         'content-type': 'text/plain; charset=utf-8',
-        'cache-control': 'public, max-age=31536000, immutable',
-        'cdn-cache-control': 'public, max-age=31536000, immutable',
-        'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
+        ...cacheHeaders,
       });
     }
 
