@@ -357,8 +357,8 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
               fontSize: "10px",
               lineHeight: 1,
             }}
-            onClick={(e) => { e.stopPropagation(); fitWindow(); }}
-            aria-label="Maximize"
+            onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
+            aria-label="Fullscreen"
           >
             <Maximize2 className="size-2.5" />
           </button>

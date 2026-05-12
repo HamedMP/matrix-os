@@ -1260,7 +1260,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   useEffect(() => {
     if (!fullscreenWindowId) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") wmExitFullscreen();
+      if (e.key === "Escape" && !e.defaultPrevented) wmExitFullscreen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
