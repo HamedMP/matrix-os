@@ -8,10 +8,15 @@ const HANDOFF_ISSUER = "matrix-os-platform";
 export function normalizeBrowserHandoffTarget(path: string): string {
   const raw = path.replace(/^\/browser\/?/, "").trim();
   if (!raw || raw === "about:blank") return "about:blank";
-  if (/^https?:\/\//i.test(raw)) {
-    return new URL(raw).toString();
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      return new URL(raw).toString();
+    }
+    return new URL(`https://${raw}`).toString();
+  } catch (error: unknown) {
+    console.warn("[browser-handoff] Invalid target path:", error instanceof Error ? error.message : String(error));
+    return "about:blank";
   }
-  return new URL(`https://${raw}`).toString();
 }
 
 export function buildBrowserHandoffRedirectUrl(opts: {

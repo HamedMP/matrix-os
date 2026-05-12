@@ -161,5 +161,6 @@ describe("BrowserService", () => {
       completedPath: "/home/matrix/home/files/downloads/report.pdf",
     })).resolves.toBeNull();
     await expect(service.listDownloads({ ownerId: "owner_1" })).resolves.toEqual([]);
+    expect((await repo.listAuditEvents("owner_1")).map((event) => event.eventType)).toContain("download.deleted");
   });
 });

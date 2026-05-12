@@ -11,6 +11,7 @@ export type BrowserAuditEventType =
   | "download.started"
   | "download.completed"
   | "download.failed"
+  | "download.deleted"
   | "profile.cleared"
   | "permission.granted"
   | "permission.revoked"
@@ -512,9 +513,17 @@ export class InMemoryBrowserRepository implements BrowserRepository {
 
   deleteDownload(opts: { ownerId: string; downloadId: string; now?: number }): BrowserDownloadRecord | null {
     const download = this.downloads.get(opts.downloadId);
-    if (!download || download.ownerId !== opts.ownerId) return null;
+    if (!download || download.ownerId !== opts.ownerId || download.state === "deleted") return null;
+    const timestamp = iso(opts.now);
     download.state = "deleted";
-    download.updatedAt = iso(opts.now);
+    download.updatedAt = timestamp;
+    this.addAuditEvent({
+      id: id("audit"),
+      ownerId: opts.ownerId,
+      eventType: "download.deleted",
+      createdAt: timestamp,
+      metadata: { downloadId: opts.downloadId, filename: download.filename },
+    });
     return { ...download };
   }
 
@@ -1227,17 +1236,29 @@ export class KyselyBrowserRepository implements BrowserRepository {
   }
 
   async deleteDownload(opts: { ownerId: string; downloadId: string; now?: number }): Promise<BrowserDownloadRecord | null> {
-    const row = await this.kysely
-      .updateTable("browser_downloads")
-      .set({
-        state: "deleted",
-        updated_at: iso(opts.now),
-      })
-      .where("owner_id", "=", opts.ownerId)
-      .where("id", "=", opts.downloadId)
-      .returningAll()
-      .executeTakeFirst();
-    return row ? toDownloadRecord(row) : null;
+    return this.kysely.transaction().execute(async (trx) => {
+      const timestamp = iso(opts.now);
+      const row = await trx
+        .updateTable("browser_downloads")
+        .set({
+          state: "deleted",
+          updated_at: timestamp,
+        })
+        .where("owner_id", "=", opts.ownerId)
+        .where("id", "=", opts.downloadId)
+        .where("state", "!=", "deleted")
+        .returningAll()
+        .executeTakeFirst();
+      if (!row) return null;
+      await this.addAuditEventIn(trx, {
+        id: id("audit"),
+        ownerId: opts.ownerId,
+        eventType: "download.deleted",
+        createdAt: timestamp,
+        metadata: { downloadId: opts.downloadId, filename: row.filename },
+      });
+      return toDownloadRecord(row);
+    });
   }
 
   async createGrant(input: CreateBrowserGrantInput): Promise<BrowserGrantRecord> {
@@ -1379,7 +1400,7 @@ export class KyselyBrowserRepository implements BrowserRepository {
 
   private async upsertProfileIn(db: BrowserDb, ownerId: string, name: string, now = Date.now()): Promise<BrowserProfileRecord> {
     const timestamp = iso(now);
-    const row = await db
+    const inserted = await db
       .insertInto("browser_profiles")
       .values({
         id: id("browser_profile"),
@@ -1389,10 +1410,20 @@ export class KyselyBrowserRepository implements BrowserRepository {
         created_at: timestamp,
         updated_at: timestamp,
       })
-      .onConflict((oc) => oc.columns(["owner_id", "name"]).doUpdateSet({ updated_at: timestamp }))
+      .onConflict((oc) => oc.columns(["owner_id", "name"]).doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
-    return toProfileRecord(row);
+      .executeTakeFirst();
+    if (inserted) return toProfileRecord(inserted);
+    const existing = await db
+      .selectFrom("browser_profiles")
+      .selectAll()
+      .where("owner_id", "=", ownerId)
+      .where("name", "=", name)
+      .executeTakeFirst();
+    if (!existing) {
+      throw new BrowserRepositoryError("profile_not_found");
+    }
+    return toProfileRecord(existing);
   }
 
   private async addAuditEventIn(db: BrowserDb, event: BrowserAuditEvent): Promise<void> {
