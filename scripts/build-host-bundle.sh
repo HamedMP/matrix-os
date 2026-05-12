@@ -97,6 +97,12 @@ if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi
 
+# Keep the host bundle runtime-only. These directories are generated or
+# build-time dependency stores; carrying them to every VPS bloats R2 artifacts
+# and slows upgrades without changing runtime behavior.
+rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
+find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+
 # Writes release.json into the bundle and manifest.json beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime release.json

@@ -539,7 +539,7 @@ system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
 system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
 ```
 
-Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users:
+Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users. The normal path is the GitHub Actions release workflow on `main`; local builds are for break-glass verification or emergency release preparation.
 
 ```bash
 set -a
@@ -552,7 +552,19 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish both generated files to R2 under `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`. New VPS provisions use that key automatically. Existing VPSes do not update themselves yet; refresh them in place by copying the tarball to the host, extracting it under `/opt/matrix`, and restarting `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
+Publish with `./scripts/publish-release.sh <version> --channel <channel>` or let `.github/workflows/host-bundle-release.yml` do it on `main`. The publish step uploads immutable R2 objects and registers the release in platform Postgres; platform Postgres is the source of truth for release metadata and channel pointers.
+
+Existing VPSes update through platform fan-out:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST https://app.matrix-os.com/vps/deploy \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"version":"v2026.05.12-43"}'
+```
+
+Do not SSH-copy bundles except for break-glass recovery. The sync agent downloads the registered bundle through platform, verifies the SHA-256, stages extraction, keeps `/opt/matrix/app.rollback`, swaps `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts services.
 
 Operational rules:
 
@@ -562,11 +574,15 @@ Operational rules:
 - During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
 - Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, pi, and uv update themselves through the Matrix runtime prefix; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`. Hermes installs for the `matrix` user through `/opt/matrix/bin/matrix-install-hermes`.
 - Preserve `/opt/matrix/env`, `/home/matrix/home`, and the local Postgres data directory during in-place refreshes.
-- Record the checksum in `specs/070-vps-per-user/changelog.md` after publishing and mention which customer VPSes were refreshed.
+- Host bundle sync may replace `/opt/matrix/app` only. It must not overwrite owner files under `/home/matrix/home`; protected template paths such as `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, configs, layouts, sessions, logs, conversations, memory, and state are user data.
+- Record the checksum/release version after publishing and mention which customer VPSes were refreshed.
 
 Verification after deploying a host bundle:
 
 ```bash
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
+systemctl is-active matrix-gateway matrix-shell matrix-sync-agent
 curl -fsS http://127.0.0.1:4000/health
 
 source /opt/matrix/env/host.env
@@ -593,7 +609,7 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish the generated tarball and checksum to R2 under `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh the target VPSes in place and restart their Matrix systemd units.
+Publish with `./scripts/publish-release.sh <version> --channel <channel>`, then trigger `/vps/deploy` for the tested version or promoted channel. Manual SSH extraction is reserved for break-glass recovery.
 
 ## Archived Legacy Horizontal Scaling
 
