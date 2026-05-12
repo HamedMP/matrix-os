@@ -104,6 +104,25 @@ print(json.dumps({
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
+upload_immutable_object() {
+  local source_file="$1"
+  local key="$2"
+  local content_type="$3"
+
+  if aws s3api head-object --bucket "$R2_BUCKET" --key "$key" "${AWS_ARGS[@]}" >/dev/null 2>&1; then
+    echo "  Immutable object already exists: s3://$R2_BUCKET/$key"
+    return 0
+  fi
+
+  aws s3api put-object \
+    --bucket "$R2_BUCKET" \
+    --key "$key" \
+    --body "$source_file" \
+    --content-type "$content_type" \
+    --if-none-match '*' \
+    "${AWS_ARGS[@]}" >/dev/null
+}
+
 if [ "$DRY_RUN" = "1" ]; then
   echo "=== DRY RUN ==="
   echo "Bundle: $BUNDLE ($SIZE bytes, sha256: $SHA256)"
@@ -125,15 +144,19 @@ fi
 echo "Publishing $VERSION to channel $CHANNEL..."
 echo "  Bundle: $SIZE bytes, sha256: $SHA256"
 
+AUTH_HEADER_FILE=""
+CHECKSUM_FILE="$(mktemp)"
+cleanup_temp_files() { rm -f "$AUTH_HEADER_FILE" "$CHECKSUM_FILE"; }
+trap cleanup_temp_files EXIT
+printf '%s  matrix-host-bundle.tar.gz\n' "$SHA256" > "$CHECKSUM_FILE"
+
 echo "  Uploading versioned archive..."
-aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY" "${AWS_ARGS[@]}"
-echo "$SHA256  matrix-host-bundle.tar.gz" | aws s3 cp - "s3://$R2_BUCKET/$CHECKSUM_KEY" "${AWS_ARGS[@]}"
+upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"
+upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
 
 echo "  Registering release in platform DB..."
 : "${PLATFORM_SECRET:?set PLATFORM_SECRET}"
 AUTH_HEADER_FILE="$(mktemp)"
-cleanup_auth_header() { rm -f "$AUTH_HEADER_FILE"; }
-trap cleanup_auth_header EXIT
 chmod 0600 "$AUTH_HEADER_FILE"
 printf 'Authorization: Bearer %s\n' "$PLATFORM_SECRET" > "$AUTH_HEADER_FILE"
 printf '%s' "$REGISTRATION_BODY" | curl --fail --silent --show-error --max-time 30 \

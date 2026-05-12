@@ -53,6 +53,19 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).not.toContain('-H "Authorization: Bearer ${PLATFORM_SECRET}"');
   });
 
+  it('publish script writes immutable R2 objects without overwriting existing keys', () => {
+    const root = process.cwd();
+    const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
+
+    expect(publishScript).toContain('upload_immutable_object()');
+    expect(publishScript).toContain('aws s3api head-object --bucket "$R2_BUCKET" --key "$key"');
+    expect(publishScript).toContain('aws s3api put-object');
+    expect(publishScript).toContain('--if-none-match');
+    expect(publishScript).toContain('upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"');
+    expect(publishScript).toContain('upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"');
+    expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
+  });
+
   it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
