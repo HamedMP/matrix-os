@@ -73,6 +73,12 @@ function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function stringArrayOrUndefined(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
 function linearGraphqlBody(query: string, variables?: Record<string, unknown>): Record<string, unknown> {
   return variables ? { query, variables } : { query };
 }
@@ -507,13 +513,14 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
         description: "List Linear projects",
         params: {
           first: { type: "number" },
+          after: { type: "string" },
         },
         directApi: {
           method: "POST",
           url: "https://api.linear.app/graphql",
           mapBody: (p) => linearGraphqlBody(`
-            query MatrixLinearProjects($first: Int!) {
-              projects(first: $first) {
+            query MatrixLinearProjects($first: Int!, $after: String) {
+              projects(first: $first, after: $after) {
                 nodes {
                   id
                   name
@@ -522,9 +529,13 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
                   description
                   teams { nodes { id key name } }
                 }
+                pageInfo { hasNextPage endCursor }
               }
             }
-          `, { first: cappedPositiveInt(p.first, 50, 100) }),
+          `, {
+            first: cappedPositiveInt(p.first, 50, 100),
+            after: typeof p.after === "string" && p.after.trim() ? p.after : null,
+          }),
         },
       },
       list_workflow_states: {
@@ -555,6 +566,8 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           teamId: { type: "string" },
           projectId: { type: "string" },
           state: { type: "string" },
+          labelName: { type: "string" },
+          after: { type: "string" },
         },
         directApi: {
           method: "POST",
@@ -563,15 +576,43 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             const teamId = stringOrUndefined(p.teamId);
             const projectId = stringOrUndefined(p.projectId);
             const state = stringOrUndefined(p.state);
+            const labelName = stringOrUndefined(p.labelName);
+            const after = stringOrUndefined(p.after);
+            const variables: Record<string, unknown> = {
+              first: cappedPositiveInt(p.first, 50, 100),
+              after: after ?? null,
+            };
+            const variableDefs = ["$first: Int!", "$after: String"];
+            const filters: string[] = [];
+            if (teamId) {
+              variableDefs.push("$teamId: String!");
+              filters.push("team: { id: { eq: $teamId } }");
+              variables.teamId = teamId;
+            }
+            if (projectId) {
+              variableDefs.push("$projectId: String!");
+              filters.push("project: { id: { eq: $projectId } }");
+              variables.projectId = projectId;
+            }
+            if (state) {
+              variableDefs.push("$state: String!");
+              filters.push("state: { name: { eq: $state } }");
+              variables.state = state;
+            }
+            if (labelName) {
+              variableDefs.push("$labelName: String!");
+              filters.push("labels: { name: { eq: $labelName } }");
+              variables.labelName = labelName;
+            }
+            const filterBlock = filters.length > 0
+              ? `filter: {\n${filters.map((filter) => `                    ${filter}`).join("\n")}\n                  }`
+              : "";
             return linearGraphqlBody(`
-              query MatrixLinearIssues($first: Int!, $teamId: String, $projectId: String, $state: String) {
+              query MatrixLinearIssues(${variableDefs.join(", ")}) {
                 issues(
                   first: $first
-                  filter: {
-                    team: { id: { eq: $teamId } }
-                    project: { id: { eq: $projectId } }
-                    state: { name: { eq: $state } }
-                  }
+                  after: $after
+                  ${filterBlock}
                   orderBy: updatedAt
                 ) {
                   nodes {
@@ -585,16 +626,13 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
                     assignee { id name displayName }
                     state { id name type color }
                     team { id key name }
+                    labels { nodes { id name } }
                     project { id name slugId }
                   }
+                  pageInfo { hasNextPage endCursor }
                 }
               }
-            `, {
-              first: cappedPositiveInt(p.first, 50, 100),
-              teamId: teamId ?? null,
-              projectId: projectId ?? null,
-              state: state ?? null,
-            });
+            `, variables);
           },
         },
       },
@@ -608,28 +646,33 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           stateId: { type: "string" },
           assigneeId: { type: "string" },
           priority: { type: "number" },
+          labelIds: { type: "array" },
         },
         directApi: {
           method: "POST",
           url: "https://api.linear.app/graphql",
-          mapBody: (p) => linearGraphqlBody(`
-            mutation MatrixLinearCreateIssue($input: IssueCreateInput!) {
-              issueCreate(input: $input) {
-                success
-                issue { id identifier title url state { id name } project { id name slugId } }
+          mapBody: (p) => {
+            const labelIds = stringArrayOrUndefined(p.labelIds);
+            return linearGraphqlBody(`
+              mutation MatrixLinearCreateIssue($input: IssueCreateInput!) {
+                issueCreate(input: $input) {
+                  success
+                  issue { id identifier title url state { id name } labels { nodes { id name } } project { id name slugId } }
+                }
               }
-            }
-          `, {
-            input: {
-              teamId: String(p.teamId),
-              title: String(p.title),
-              ...(p.description ? { description: String(p.description) } : {}),
-              ...(p.projectId ? { projectId: String(p.projectId) } : {}),
-              ...(p.stateId ? { stateId: String(p.stateId) } : {}),
-              ...(p.assigneeId ? { assigneeId: String(p.assigneeId) } : {}),
-              ...(p.priority !== undefined ? { priority: Number(p.priority) } : {}),
-            },
-          }),
+            `, {
+              input: {
+                teamId: String(p.teamId),
+                title: String(p.title),
+                ...(p.description ? { description: String(p.description) } : {}),
+                ...(p.projectId ? { projectId: String(p.projectId) } : {}),
+                ...(p.stateId ? { stateId: String(p.stateId) } : {}),
+                ...(p.assigneeId ? { assigneeId: String(p.assigneeId) } : {}),
+                ...(p.priority !== undefined ? { priority: Number(p.priority) } : {}),
+                ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
+              },
+            });
+          },
         },
       },
       update_issue: {

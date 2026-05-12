@@ -7,6 +7,7 @@ import { WorkspaceApp } from "../../shell/src/components/workspace/WorkspaceApp.
 
 describe("WorkspaceApp", () => {
   beforeEach(() => {
+    let createdWorktree: { id: string; currentBranch: string; dirtyState: string; pr?: number | { number: number } } | undefined;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/workspace/projects")) {
@@ -35,8 +36,17 @@ describe("WorkspaceApp", () => {
           order: index,
         })) });
       }
+      if (url.includes("/api/projects/repo/worktrees") && init?.method === "POST") {
+        createdWorktree = { id: "wt_new123", currentBranch: "feature/mat-5", dirtyState: "clean", pr: { number: 88 } };
+        return json({ worktree: createdWorktree });
+      }
       if (url.includes("/api/projects/repo/worktrees")) {
-        return json({ worktrees: [{ id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "dirty" }] });
+        return json({
+          worktrees: [
+            { id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "dirty" },
+            ...(createdWorktree ? [createdWorktree] : []),
+          ],
+        });
       }
       if (url.includes("/api/reviews")) {
         return json({ reviews: [{ id: "rev_abc123", status: "reviewing", round: 2 }] });
@@ -57,7 +67,13 @@ describe("WorkspaceApp", () => {
         return json({ session: { id: "sess_abc123", status: "exited" } });
       }
       if (url.endsWith("/api/sessions") && init?.method === "POST") {
-        return json({ session: { id: "sess_duplicate", status: "starting" } });
+        const body = typeof init.body === "string" ? JSON.parse(init.body) as { kind?: string } : {};
+        return json({
+          session: {
+            id: body.kind === "agent" ? "sess_agent123" : "sess_duplicate",
+            status: "starting",
+          },
+        });
       }
       if (url.includes("/api/sessions")) {
         return json({ sessions: [{
@@ -65,6 +81,8 @@ describe("WorkspaceApp", () => {
           status: "running",
           projectSlug: "repo",
           taskId: "task_0",
+          worktreeId: "wt_abc123def456",
+          pr: 77,
           agent: "codex",
           runtime: { status: "running" },
           nativeAttachCommand: ["zellij", "attach", "matrix-sess_abc123"],
@@ -87,7 +105,7 @@ describe("WorkspaceApp", () => {
     expect(screen.getByText("1,000 tasks")).toBeTruthy();
     expect(screen.getByText("Task 0")).toBeTruthy();
     expect(screen.queryByText("Task 999")).toBeNull();
-    expect(screen.getByText("feature/workspace")).toBeTruthy();
+    expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0);
     expect(screen.getByText(/Round 2/)).toBeTruthy();
     expect(screen.getByText("Local app").closest("a")?.getAttribute("href")).toBe("http://localhost:3000");
     expect(screen.getByText("Open IDE").getAttribute("href")).toContain("code.matrix-os.com");
@@ -124,7 +142,17 @@ describe("WorkspaceApp", () => {
     });
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/sessions"),
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "agent",
+          agent: "codex",
+          projectSlug: "repo",
+          taskId: "task_0",
+          worktreeId: "wt_abc123def456",
+          pr: 77,
+        }),
+      }),
     );
 
     await act(async () => {
@@ -171,6 +199,154 @@ describe("WorkspaceApp", () => {
         body: JSON.stringify({ url: "github.com/owner/new-repo", slug: "new-repo" }),
       }),
     );
+  });
+
+  it("creates a branch worktree and starts a coding agent from Workspace", async () => {
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("Repo").length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByLabelText("New worktree branch"), { target: { value: "feature/mat-5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /create worktree/i }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/projects/repo/worktrees"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ branch: "feature/mat-5" }),
+      }),
+    );
+    await waitFor(() => expect((screen.getByLabelText("Agent worktree") as HTMLSelectElement).value).toBe("wt_new123"));
+
+    fireEvent.change(screen.getByLabelText("Agent prompt"), { target: { value: "Implement MAT-5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start agent/i }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "agent",
+          agent: "codex",
+          projectSlug: "repo",
+          worktreeId: "wt_new123",
+          pr: 88,
+          prompt: "Implement MAT-5",
+          runtimePreference: "zellij",
+        }),
+      }),
+    );
+    expect(await screen.findByText("Started sess_agent123")).toBeTruthy();
+  });
+
+  it("clears pending project action spinners when switching projects", async () => {
+    let resolveSession: (response: Response) => void = () => {};
+    const pendingSession = new Promise<Response>((resolve) => {
+      resolveSession = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [
+          { slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } },
+          { slug: "repo-2", name: "Project 2", github: { owner: "owner", repo: "repo-2" } },
+        ] });
+      }
+      if (url.includes("/api/projects/repo/worktrees")) {
+        return json({ worktrees: [{ id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "clean" }] });
+      }
+      if (url.includes("/api/projects/repo-2/worktrees")) {
+        return json({ worktrees: [{ id: "wt_two", currentBranch: "feature/two", dirtyState: "clean" }] });
+      }
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return await pendingSession;
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ tasks: [], sessions: [], reviews: [], previews: [], events: [] });
+      }
+      return json({});
+    }));
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0));
+    fireEvent.change(screen.getByLabelText("Agent prompt"), { target: { value: "Implement MAT-5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start agent/i }));
+    });
+    expect(screen.getByRole("button", { name: /starting/i })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Project 2"));
+    });
+
+    await waitFor(() => expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0));
+    expect(screen.getByRole("button", { name: /start agent/i })).toBeTruthy();
+    resolveSession(json({ session: { id: "sess_agent123", status: "starting" } }));
+    await act(async () => {
+      await pendingSession;
+    });
+    expect(screen.queryByText("Started sess_agent123")).toBeNull();
+    expect(screen.queryByText("feature/workspace")).toBeNull();
+    expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0);
+  });
+
+  it("ignores stale worktree creation responses after switching projects", async () => {
+    let resolveWorktree: (response: Response) => void = () => {};
+    const pendingWorktree = new Promise<Response>((resolve) => {
+      resolveWorktree = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [
+          { slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } },
+          { slug: "repo-2", name: "Project 2", github: { owner: "owner", repo: "repo-2" } },
+        ] });
+      }
+      if (url.includes("/api/projects/repo/worktrees") && init?.method === "POST") {
+        return await pendingWorktree;
+      }
+      if (url.includes("/api/projects/repo/worktrees")) {
+        return json({ worktrees: [{ id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "clean" }] });
+      }
+      if (url.includes("/api/projects/repo-2/worktrees")) {
+        return json({ worktrees: [{ id: "wt_two", currentBranch: "feature/two", dirtyState: "clean" }] });
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ tasks: [], sessions: [], reviews: [], previews: [], events: [] });
+      }
+      return json({});
+    }));
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0));
+    fireEvent.change(screen.getByLabelText("New worktree branch"), { target: { value: "feature/new" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /create worktree/i }));
+    });
+    expect(screen.getByRole("button", { name: /creating/i })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Project 2"));
+    });
+
+    await waitFor(() => expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0));
+    resolveWorktree(json({ worktree: { id: "wt_new", currentBranch: "feature/new", dirtyState: "clean" } }));
+    await act(async () => {
+      await pendingWorktree;
+    });
+
+    expect(screen.queryByText("Created wt_new")).toBeNull();
+    expect(screen.queryByText("feature/new")).toBeNull();
+    expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0);
   });
 
   it("shows an actionable empty state when no managed projects exist", async () => {

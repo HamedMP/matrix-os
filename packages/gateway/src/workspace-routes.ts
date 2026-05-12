@@ -21,6 +21,7 @@ import { createWorkspaceEventStore } from "./workspace-events.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import { requestHasBody } from "./http-body.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
@@ -260,7 +261,11 @@ export function createWorkspaceRoutes(options: {
     return c.json({ project: result.project });
   });
 
-  app.delete("/api/projects/:slug", async (c) => {
+  app.delete("/api/projects/:slug", limited, async (c) => {
+    if (requestHasBody(c)) {
+      const body = await parseJson(c, EmptyObjectSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    }
     const result = await projectManager.deleteProject(c.req.param("slug"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });
@@ -297,12 +302,16 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.delete("/api/projects/:slug/worktrees/:worktreeId", limited, async (c) => {
-    const body = await parseJson(c, DeleteWorktreeSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let confirmDirtyDelete: boolean | undefined;
+    if (requestHasBody(c)) {
+      const body = await parseJson(c, DeleteWorktreeSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      confirmDirtyDelete = body.value.confirmDirtyDelete;
+    }
     const result = await worktreeManager.deleteWorktree({
       projectSlug: c.req.param("slug"),
       worktreeId: c.req.param("worktreeId"),
-      confirmDirtyDelete: body.value.confirmDirtyDelete,
+      confirmDirtyDelete,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });

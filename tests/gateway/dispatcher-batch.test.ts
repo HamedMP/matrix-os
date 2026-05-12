@@ -135,7 +135,7 @@ describe("T404: Dispatcher batch mode", () => {
 
     const serialPromise = dispatcher.dispatch("serial-first", undefined, () => {});
 
-    await vi.waitFor(() => expect(releaseSerial).not.toBeNull());
+    await vi.waitFor(() => expect(order).toEqual(["serial-start"]));
 
     const batchPromise = dispatcher.dispatchBatch([
       { taskId: "t1", message: "app-1", onEvent: () => {} },
@@ -143,6 +143,8 @@ describe("T404: Dispatcher batch mode", () => {
 
     await vi.waitFor(() => expect(dispatcher.queueLength).toBe(1));
     expect(order).toEqual(["serial-start"]);
+    expect(dispatcher.activeCount).toBe(1);
+    expect(dispatcher.queueLength).toBe(1);
 
     releaseSerial!();
     await Promise.all([serialPromise, batchPromise]);

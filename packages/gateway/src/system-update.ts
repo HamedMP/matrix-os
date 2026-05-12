@@ -89,6 +89,12 @@ export function compareHostBundleVersions(
   return latest.version !== installed.version;
 }
 
+function isExpectedAccessFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM" || code === "ENOTDIR";
+}
+
 export async function fetchHostBundleChannelManifest(options: {
   platformUrl: string;
   channel: UpdateChannel;
@@ -162,13 +168,9 @@ export async function startSystemUpdate(options: {
   try {
     await access(updateCommand, constants.X_OK);
   } catch (err: unknown) {
-    if (
-      !(err instanceof Error) ||
-      !("code" in err) ||
-      !["ENOENT", "EACCES", "EPERM"].includes(String((err as NodeJS.ErrnoException).code))
-    ) {
+    if (!isExpectedAccessFailure(err)) {
       console.warn(
-        "[system-update] update command access check failed:",
+        "[system-update] Failed to check updater command:",
         err instanceof Error ? err.message : String(err),
       );
     }

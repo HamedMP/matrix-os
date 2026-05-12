@@ -29,6 +29,7 @@ describe("API key validation and storage", () => {
     rmSync(homePath, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("validateApiKeyFormat", () => {

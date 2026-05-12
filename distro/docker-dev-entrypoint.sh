@@ -15,7 +15,16 @@ echo "[matrix-os-dev] Building observability package..."
 pnpm --filter @matrix-os/observability build
 
 echo "[matrix-os-dev] Building kernel package..."
-pnpm --filter @matrix-os/kernel build
+# Dev container startup needs emitted kernel JS before the gateway starts.
+# This tolerant path is dev-only: production/CI build scripts still fail on
+# kernel type errors instead of running partially typed output.
+if ! pnpm --filter '@matrix-os/kernel' exec tsc --noEmitOnError false; then
+  if [ ! -f /app/packages/kernel/dist/index.js ]; then
+    echo "[matrix-os-dev] Kernel build failed before emitting dist"
+    exit 1
+  fi
+  echo "[matrix-os-dev] Kernel build emitted dist with type errors; continuing for dev runtime"
+fi
 
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then

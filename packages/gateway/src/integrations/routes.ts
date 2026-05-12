@@ -90,6 +90,8 @@ export function validateActionParams(
         typeErrors.push(`${name}: expected boolean, got ${actualType}`);
       } else if (expectedType === "object" && (actualType !== "object" || Array.isArray(value))) {
         typeErrors.push(`${name}: expected object, got ${actualType}`);
+      } else if (expectedType === "array" && !Array.isArray(value)) {
+        typeErrors.push(`${name}: expected array, got ${actualType}`);
       }
     }
   }

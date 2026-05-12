@@ -22,6 +22,21 @@ function deleteJsonRequest(path: string, body: unknown): Request {
   });
 }
 
+function bodylessJsonDeleteRequest(path: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function emptyJsonDeleteRequest(path: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", "Content-Length": "0" },
+    body: "",
+  });
+}
+
 function patchJsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method: "PATCH",
@@ -61,6 +76,91 @@ describe("workspace API routes", () => {
     const res = await app.request(jsonRequest("/api/projects", { url: "github.com/owner/repo", padding: "x".repeat(70 * 1024) }));
 
     expect(res.status).toBe(413);
+  });
+
+  it("applies body limits before deleting a project", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const res = await app.request(deleteJsonRequest("/api/projects/repo", { padding: "x".repeat(70 * 1024) }));
+
+    expect(res.status).toBe(413);
+    expect(projectManager.deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("allows bodyless project deletes even when clients send JSON headers", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(async () => ({ ok: true as const })),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo"));
+
+    expect(res.status).toBe(200);
+    expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
+  });
+
+  it("allows empty project delete bodies with JSON headers", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(async () => ({ ok: true as const })),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const res = await app.request(emptyJsonDeleteRequest("/api/projects/repo"));
+
+    expect(res.status).toBe(200);
+    expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
+  });
+
+  it("allows bodyless worktree deletes even when clients send JSON headers", async () => {
+    const worktreeManager = {
+      createWorktree: vi.fn(),
+      listWorktrees: vi.fn(),
+      deleteWorktree: vi.fn(async () => ({ ok: true as const })),
+    };
+    const app = createWorkspaceRoutes({ homePath, worktreeManager });
+    const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo/worktrees/wt_abc123def456"));
+
+    expect(res.status).toBe(200);
+    expect(worktreeManager.deleteWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      confirmDirtyDelete: undefined,
+    });
+  });
+
+  it("allows empty worktree delete bodies with JSON headers", async () => {
+    const worktreeManager = {
+      createWorktree: vi.fn(),
+      listWorktrees: vi.fn(),
+      deleteWorktree: vi.fn(async () => ({ ok: true as const })),
+    };
+    const app = createWorkspaceRoutes({ homePath, worktreeManager });
+    const res = await app.request(emptyJsonDeleteRequest("/api/projects/repo/worktrees/wt_abc123def456"));
+
+    expect(res.status).toBe(200);
+    expect(worktreeManager.deleteWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      confirmDirtyDelete: undefined,
+    });
   });
 
   it("rejects invalid workspace delete slugs before state deletion", async () => {

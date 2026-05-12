@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bot,
   CheckCircle2,
@@ -11,9 +11,11 @@ import {
   ListChecks,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Send,
   Settings2,
+  Square,
   Ticket,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -34,11 +36,25 @@ import "./index.css";
 const APP_ID = "symphony";
 const CONFIG_KEY = "config";
 const FETCH_TIMEOUT_MS = 10_000;
-const SYMPHONY_STATES = [
-  { name: "Rework", color: "#db6e1f" },
-  { name: "Human Review", color: "#da8b0d" },
-  { name: "Merging", color: "#0f783c" },
+const DEFAULT_RUNNER_PORT = 4066;
+const LABEL_PAGE_SIZE = 250;
+const LABEL_MAX_PAGES = 10;
+const PROJECT_PAGE_SIZE = 100;
+const PROJECT_MAX_PAGES = 10;
+const ISSUE_PAGE_SIZE = 100;
+const ISSUE_TARGET_COUNT = 50;
+const ISSUE_MAX_PAGES = 5;
+const REQUIRED_LABELS_MISSING_MESSAGE = "One or more required labels could not be found in the selected Linear team. Check that all required labels exist.";
+const BOARD_INCOMPLETE_ERROR_PREFIX = "Board is incomplete:";
+type SymphonyStateTemplate = { name: string; color: string; type: "backlog" | "unstarted" | "started" | "completed" | "canceled" };
+const SYMPHONY_STATES: SymphonyStateTemplate[] = [
+  { name: "Todo", color: "#6b7280", type: "unstarted" },
+  { name: "In Progress", color: "#2563eb", type: "started" },
+  { name: "Rework", color: "#db6e1f", type: "started" },
+  { name: "Merging", color: "#0f783c", type: "started" },
 ];
+const DEFAULT_ACTIVE_STATES = SYMPHONY_STATES.map((state) => state.name);
+const REQUIRED_LABELS = ["symphony"];
 
 type Connection = {
   id: string;
@@ -58,14 +74,63 @@ type Issue = {
   url: string;
   updatedAt?: string;
   state?: { id: string; name: string; color?: string };
+  labels?: { nodes?: Array<{ id: string; name: string }> };
   project?: { id: string; name: string; slugId?: string };
 };
+
+type SymphonyRuntimeConfig = {
+  version: 1;
+  serviceRoot: string;
+  binPath: string;
+  workflowPath: string;
+  port: number;
+  tracker: {
+    kind: "linear";
+    teamKey: string;
+    requiredLabels: string[];
+    activeStates: string[];
+  };
+};
+
+type SymphonyRuntimeStatus = {
+  running: boolean;
+  pid: number | null;
+  startedAt: string | null;
+  lastExitAt: string | null;
+  lastExitCode: number | null;
+  dashboardUrl: string;
+  linearApiKeyConfigured: boolean;
+  config: SymphonyRuntimeConfig;
+};
+
+type SymphonyRuntimeErrorCode =
+  | "missing_linear_api_key"
+  | "symphony_path_not_allowed"
+  | "symphony_not_installed"
+  | "symphony_start_failed"
+  | "runtime_start_failed";
+
+class SymphonyRuntimeError extends Error {
+  readonly code: SymphonyRuntimeErrorCode;
+
+  constructor(code: SymphonyRuntimeErrorCode) {
+    super(code);
+    this.name = "SymphonyRuntimeError";
+    this.code = code;
+  }
+}
 
 type SymphonyConfig = {
   repoUrl: string;
   cloneUrl: string;
   githubRepo: string;
   workflowPath: string;
+  serviceRoot: string;
+  binPath: string;
+  runnerPort: number;
+  teamKey: string;
+  requiredLabels: string[];
+  activeStates: string[];
   projectSlug: string;
   teamId: string;
   projectId: string;
@@ -73,14 +138,20 @@ type SymphonyConfig = {
 };
 
 const DEFAULT_CONFIG: SymphonyConfig = {
-  repoUrl: "https://github.com/HamedMP/matrix-os",
-  cloneUrl: "https://github.com/HamedMP/matrix-os.git",
-  githubRepo: "HamedMP/matrix-os",
-  workflowPath: "/home/deploy/matrix-os/WORKFLOW.md",
+  repoUrl: "",
+  cloneUrl: "",
+  githubRepo: "",
+  workflowPath: "~/code/symphony/WORKFLOW.md",
+  serviceRoot: "~/code/symphony/elixir",
+  binPath: "./bin/symphony",
+  runnerPort: DEFAULT_RUNNER_PORT,
+  teamKey: "MAT",
+  requiredLabels: REQUIRED_LABELS,
+  activeStates: DEFAULT_ACTIVE_STATES,
   projectSlug: "",
   teamId: "",
   projectId: "",
-  dashboardUrl: "http://127.0.0.1:4001",
+  dashboardUrl: `http://127.0.0.1:${DEFAULT_RUNNER_PORT}`,
 };
 
 async function readConfig(): Promise<SymphonyConfig> {
@@ -112,6 +183,80 @@ async function writeConfig(config: SymphonyConfig): Promise<void> {
     }),
   });
   if (!response.ok) throw new Error("config_write_failed");
+}
+
+async function fetchRuntimeStatus(): Promise<SymphonyRuntimeStatus | null> {
+  const response = await fetch("/api/symphony/status", {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) return null;
+  return (await response.json()) as SymphonyRuntimeStatus;
+}
+
+async function saveRuntimeConfig(config: SymphonyConfig): Promise<SymphonyRuntimeConfig> {
+  const response = await fetch("/api/symphony/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    body: JSON.stringify(runtimeConfigFromApp(config)),
+  });
+  if (!response.ok) throw new Error("runtime_config_failed");
+  return (await response.json()) as SymphonyRuntimeConfig;
+}
+
+async function startRuntime(config: SymphonyConfig): Promise<SymphonyRuntimeStatus> {
+  const response = await fetch("/api/symphony/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    body: JSON.stringify(runtimeConfigFromApp(config)),
+  });
+  if (!response.ok) throw await runtimeErrorFromResponse(response);
+  return (await response.json()) as SymphonyRuntimeStatus;
+}
+
+async function stopRuntime(): Promise<SymphonyRuntimeStatus> {
+  const response = await fetch("/api/symphony/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    body: "{}",
+  });
+  if (!response.ok) throw new Error("runtime_stop_failed");
+  return (await response.json()) as SymphonyRuntimeStatus;
+}
+
+async function runtimeErrorFromResponse(response: Response): Promise<SymphonyRuntimeError> {
+  try {
+    const payload = (await response.json()) as { error?: { code?: string } };
+    if (payload.error?.code === "missing_linear_api_key" ||
+      payload.error?.code === "symphony_path_not_allowed" ||
+      payload.error?.code === "symphony_not_installed" ||
+      payload.error?.code === "symphony_start_failed") {
+      return new SymphonyRuntimeError(payload.error.code);
+    }
+  } catch (err: unknown) {
+    console.warn("[symphony] start error body could not be read:", err instanceof Error ? err.message : String(err));
+  }
+  return new SymphonyRuntimeError("runtime_start_failed");
+}
+
+function startErrorMessage(err: unknown): string {
+  if (err instanceof SymphonyRuntimeError) {
+    switch (err.code) {
+      case "missing_linear_api_key":
+        return "Symphony runner could not be started because LINEAR_API_KEY is missing.";
+      case "symphony_path_not_allowed":
+        return "Symphony runner paths must stay inside the allowed local checkout roots.";
+      case "symphony_not_installed":
+        return "Symphony checkout, workflow, or runner binary could not be found or executed.";
+      case "symphony_start_failed":
+        return "Symphony runner exited during startup.";
+      case "runtime_start_failed":
+        return "Symphony runner could not be started.";
+    }
+  }
+  return "Symphony runner could not be started.";
 }
 
 async function fetchConnections(): Promise<Connection[]> {
@@ -157,15 +302,233 @@ function connectionFor(connections: Connection[], service: string): Connection |
   return connections.find((connection) => connection.service === service && connection.status !== "revoked");
 }
 
+function runtimeConfigFromApp(config: SymphonyConfig): Omit<SymphonyRuntimeConfig, "version"> {
+  return {
+    serviceRoot: config.serviceRoot,
+    binPath: config.binPath,
+    workflowPath: config.workflowPath,
+    port: config.runnerPort,
+    tracker: {
+      kind: "linear",
+      teamKey: config.teamKey,
+      requiredLabels: config.requiredLabels,
+      activeStates: config.activeStates,
+    },
+  };
+}
+
+function mergeRuntimeConfig(config: SymphonyConfig, status: SymphonyRuntimeStatus | null): SymphonyConfig {
+  if (!status) return config;
+  return {
+    ...config,
+    workflowPath: status.config.workflowPath,
+    serviceRoot: status.config.serviceRoot,
+    binPath: status.config.binPath,
+    runnerPort: status.config.port,
+    teamKey: status.config.tracker.teamKey,
+    requiredLabels: status.config.tracker.requiredLabels,
+    activeStates: status.config.tracker.activeStates,
+    dashboardUrl: status.dashboardUrl,
+  };
+}
+
+function statusAfterSavedRuntimeConfig(
+  current: SymphonyRuntimeStatus | null,
+  runtimeConfig: SymphonyRuntimeConfig,
+): SymphonyRuntimeStatus | null {
+  if (!current || current.running) return current;
+  return {
+    ...current,
+    dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
+    config: runtimeConfig,
+  };
+}
+
+function normalizeNameList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const value of values) {
+    const name = value.trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
+}
+
+function templateForActiveState(name: string): SymphonyStateTemplate {
+  const builtIn = SYMPHONY_STATES.find((state) => state.name.toLowerCase() === name.toLowerCase());
+  return builtIn ? { ...builtIn, name } : { name, color: "#2563eb", type: "started" };
+}
+
+function templatesForActiveStates(activeStates: string[]): SymphonyStateTemplate[] {
+  return normalizeNameList(activeStates).map(templateForActiveState);
+}
+
+function selectLinearTeamId(config: SymphonyConfig, teams: Team[]): string {
+  const keyMatch = teams.find((team) => team.key.toLowerCase() === config.teamKey.toLowerCase());
+  if (keyMatch) return keyMatch.id;
+  if (config.teamId && teams.some((team) => team.id === config.teamId)) return config.teamId;
+  return teams[0]?.id ?? "";
+}
+
+function projectBelongsToTeam(project: Project, teamId: string): boolean {
+  if (!teamId) return true;
+  return (project.teams?.nodes ?? []).some((team) => team.id === teamId);
+}
+
+function projectsForTeam(projects: Project[], teamId: string): Project[] {
+  return projects.filter((project) => projectBelongsToTeam(project, teamId));
+}
+
+function selectLinearProjectId(config: SymphonyConfig, projects: Project[], teamId: string): string {
+  const teamProjects = projectsForTeam(projects, teamId);
+  if (config.projectId && teamProjects.some((project) => project.id === config.projectId)) return config.projectId;
+  const slugMatch = teamProjects.find((project) => project.slugId?.toLowerCase() === config.projectSlug.toLowerCase());
+  return slugMatch?.id ?? "";
+}
+
+async function fetchRequiredLinearLabelIds(teamId: string, labelNames: string[]): Promise<string[]> {
+  const names = labelNames.map((label) => label.trim()).filter(Boolean);
+  if (names.length === 0) return [];
+  const required = new Set(names.map((label) => label.toLowerCase()));
+  const found = new Map<string, string>();
+  let after: string | undefined;
+  for (let page = 0; page < LABEL_MAX_PAGES && found.size < required.size; page += 1) {
+    const payload = await callService<unknown>("linear", "graphql", {
+      query: `
+        query MatrixSymphonyLabels($teamId: String!, $first: Int!, $after: String) {
+          issueLabels(first: $first, after: $after, filter: { team: { id: { eq: $teamId } } }) {
+            nodes { id name }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      `,
+      variables: { teamId, first: LABEL_PAGE_SIZE, after: after ?? null },
+    });
+    const issueLabels = graphData<{
+      issueLabels?: {
+        nodes?: Array<{ id: string; name: string }>;
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(payload).issueLabels;
+    for (const label of issueLabels?.nodes ?? []) {
+      const normalized = label.name.toLowerCase();
+      if (required.has(normalized)) found.set(normalized, label.id);
+    }
+    if (!issueLabels?.pageInfo?.hasNextPage || !issueLabels.pageInfo.endCursor) break;
+    after = issueLabels.pageInfo.endCursor;
+  }
+  return names.map((label) => found.get(label.toLowerCase())).filter((id): id is string => Boolean(id));
+}
+
+async function fetchLinearProjects(): Promise<Project[]> {
+  const projects: Project[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < PROJECT_MAX_PAGES; page += 1) {
+    const payload = await callService<unknown>("linear", "list_projects", {
+      first: PROJECT_PAGE_SIZE,
+      ...(after ? { after } : {}),
+    });
+    const projectData = graphData<{
+      projects?: {
+        nodes?: Project[];
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(payload).projects;
+    projects.push(...(projectData?.nodes ?? []));
+    const endCursor = projectData?.pageInfo?.endCursor;
+    if (!projectData?.pageInfo?.hasNextPage || !endCursor) break;
+    after = endCursor;
+  }
+  return projects;
+}
+
+function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
+  const required = labelNames.map((label) => label.trim().toLowerCase()).filter(Boolean);
+  if (required.length === 0) return true;
+  const issueLabels = new Set((issue.labels?.nodes ?? []).map((label) => label.name.toLowerCase()));
+  return required.every((label) => issueLabels.has(label));
+}
+
+function workflowStateBelongsToTeam(state: WorkflowState, teamId: string): boolean {
+  if (!teamId) return true;
+  return state.team?.id === teamId;
+}
+
+function boardIncompleteMessage(collected: number, pages: number): string {
+  return `${BOARD_INCOMPLETE_ERROR_PREFIX} only ${collected} of ${ISSUE_TARGET_COUNT} target issues found after scanning ${pages} pages. Consider reducing the number of required labels.`;
+}
+
+function safeLinearErrorMessage(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  if (err.message === REQUIRED_LABELS_MISSING_MESSAGE) return err.message;
+  if (err.message.startsWith(BOARD_INCOMPLETE_ERROR_PREFIX)) return err.message;
+  return null;
+}
+
+async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, projectId: string, selectedState: string): Promise<Issue[]> {
+  const collected: Issue[] = [];
+  const requiredLabels = baseConfig.requiredLabels.map((label) => label.trim()).filter(Boolean);
+  let after: string | undefined;
+  let pagesFetched = 0;
+  let hitPageCap = false;
+  for (let page = 0; page < ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT; page += 1) {
+    const issuePayload = await callService<unknown>("linear", "list_issues", {
+      teamId,
+      projectId: projectId || undefined,
+      state: selectedState || undefined,
+      ...(requiredLabels[0] ? { labelName: requiredLabels[0] } : {}),
+      first: ISSUE_PAGE_SIZE,
+      ...(after ? { after } : {}),
+    });
+    const issueData = graphData<{
+      issues?: {
+        nodes?: Issue[];
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(issuePayload).issues;
+    collected.push(...(issueData?.nodes ?? []).filter((issue) => issueHasRequiredLabels(issue, baseConfig.requiredLabels)));
+    pagesFetched = page + 1;
+    const endCursor = issueData?.pageInfo?.endCursor;
+    if (!issueData?.pageInfo?.hasNextPage || !endCursor) break;
+    if (page + 1 >= ISSUE_MAX_PAGES) {
+      hitPageCap = true;
+      break;
+    }
+    after = endCursor;
+  }
+  if (requiredLabels.length > 1 && hitPageCap && collected.length < ISSUE_TARGET_COUNT) {
+    console.warn("[symphony] Linear issue label filter reached the page cap before filling the board", {
+      collected: collected.length,
+      pages: pagesFetched,
+      requiredLabels: requiredLabels.length,
+    });
+    throw new Error(boardIncompleteMessage(collected.length, pagesFetched));
+  }
+  return collected.slice(0, ISSUE_TARGET_COUNT);
+}
+
 function stateBadgeVariant(stateName: string | undefined): "secondary" | "success" | "warning" | "outline" {
   if (!stateName) return "outline";
-  if (stateName === "Human Review" || stateName === "Merging") return "success";
+  if (stateName === "Merging") return "success";
   if (stateName === "Rework") return "warning";
   return "secondary";
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function App() {
   const [config, setConfig] = useState<SymphonyConfig>(DEFAULT_CONFIG);
+  const configRef = useRef(DEFAULT_CONFIG);
+  const configSaveSequenceRef = useRef(0);
+  const pendingPersistBaseRef = useRef<SymphonyConfig | null>(null);
+  const [requiredLabelsInput, setRequiredLabelsInput] = useState(DEFAULT_CONFIG.requiredLabels.join(", "));
+  const [activeStatesInput, setActiveStatesInput] = useState(DEFAULT_CONFIG.activeStates.join(", "));
+  const [focusedListField, setFocusedListField] = useState<"requiredLabels" | "activeStates" | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -176,33 +539,93 @@ function App() {
   const [newIssueDescription, setNewIssueDescription] = useState("");
   const [graphqlQuery, setGraphqlQuery] = useState("query MatrixLinearViewer { viewer { id name email } }");
   const [graphqlResult, setGraphqlResult] = useState("");
+  const [runtimeStatus, setRuntimeStatus] = useState<SymphonyRuntimeStatus | null>(null);
+  const [runtimeConfigLoaded, setRuntimeConfigLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const linearConnection = useMemo(() => connectionFor(connections, "linear"), [connections]);
   const githubConnection = useMemo(() => connectionFor(connections, "github"), [connections]);
-  const selectedProject = projects.find((project) => project.id === config.projectId);
-  const missingSymphonyStates = SYMPHONY_STATES.filter(
-    (required) => !states.some((state) => state.name.toLowerCase() === required.name.toLowerCase()),
+  const visibleProjects = useMemo(() => projectsForTeam(projects, config.teamId), [projects, config.teamId]);
+  const selectedProject = visibleProjects.find((project) => project.id === config.projectId);
+  const activeStateTemplates = useMemo(() => templatesForActiveStates(config.activeStates), [config.activeStates]);
+  const boardStates = useMemo(() => activeStateTemplates.map((state) => state.name), [activeStateTemplates]);
+  const missingSymphonyStates = activeStateTemplates.filter(
+    (required) => !states.some((state) => (
+      workflowStateBelongsToTeam(state, config.teamId) &&
+      state.name.toLowerCase() === required.name.toLowerCase()
+    )),
   );
 
-  const saveConfig = useCallback(async (next: SymphonyConfig) => {
+  useEffect(() => {
+    if (focusedListField !== "requiredLabels") setRequiredLabelsInput(config.requiredLabels.join(", "));
+  }, [config.requiredLabels, focusedListField]);
+
+  useEffect(() => {
+    if (focusedListField !== "activeStates") setActiveStatesInput(config.activeStates.join(", "));
+  }, [config.activeStates, focusedListField]);
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
+  const saveConfig = useCallback(async (next: SymphonyConfig): Promise<boolean> => {
+    const previous = configRef.current;
+    const saveId = configSaveSequenceRef.current + 1;
+    configSaveSequenceRef.current = saveId;
+    configRef.current = next;
     setConfig(next);
-    await writeConfig(next);
+    setError(null);
+    try {
+      const runtimeConfig = await saveRuntimeConfig(next);
+      await writeConfig(next);
+      if (configSaveSequenceRef.current === saveId) {
+        pendingPersistBaseRef.current = null;
+        setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
+      }
+      return true;
+    } catch (err: unknown) {
+      console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
+      if (configSaveSequenceRef.current === saveId) {
+        configRef.current = previous;
+        setConfig(previous);
+        setError("Symphony settings could not be saved.");
+      }
+      return false;
+    }
   }, []);
 
   const updateConfig = useCallback((patch: Partial<SymphonyConfig>) => {
-    setConfig((current) => ({ ...current, ...patch }));
+    setConfig((current) => {
+      pendingPersistBaseRef.current ??= current;
+      const next = { ...current, ...patch };
+      configRef.current = next;
+      return next;
+    });
   }, []);
 
   const persistConfig = useCallback(async () => {
+    const previous = pendingPersistBaseRef.current ?? configRef.current;
+    const next = configRef.current;
+    const saveId = configSaveSequenceRef.current + 1;
+    configSaveSequenceRef.current = saveId;
     try {
-      await writeConfig(config);
+      const runtimeConfig = await saveRuntimeConfig(next);
+      await writeConfig(next);
+      if (configSaveSequenceRef.current === saveId) {
+        pendingPersistBaseRef.current = null;
+        setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
+      }
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony settings could not be saved.");
+      if (configSaveSequenceRef.current === saveId) {
+        pendingPersistBaseRef.current = null;
+        configRef.current = previous;
+        setConfig(previous);
+        setError("Symphony settings could not be saved.");
+      }
     }
-  }, [config]);
+  }, []);
 
   const refreshConnections = useCallback(async () => {
     const next = await fetchConnections();
@@ -214,50 +637,61 @@ function App() {
     setBusy("Refreshing Linear");
     setError(null);
     try {
-      const [teamPayload, projectPayload] = await Promise.all([
+      const [teamPayload, nextProjects] = await Promise.all([
         callService<unknown>("linear", "list_teams", { first: 100 }),
-        callService<unknown>("linear", "list_projects", { first: 100 }),
+        fetchLinearProjects(),
       ]);
       const nextTeams = graphData<{ teams?: { nodes?: Team[] } }>(teamPayload).teams?.nodes ?? [];
-      const nextProjects = graphData<{ projects?: { nodes?: Project[] } }>(projectPayload).projects?.nodes ?? [];
-      const teamId = baseConfig.teamId || nextTeams[0]?.id || "";
-      const projectId = baseConfig.projectId || nextProjects[0]?.id || "";
-      const nextConfig = { ...baseConfig, teamId, projectId };
+      const teamId = selectLinearTeamId(baseConfig, nextTeams);
+      const projectId = selectLinearProjectId(baseConfig, nextProjects, teamId);
+      const selectedTeam = nextTeams.find((team) => team.id === teamId);
+      const selectedLinearProject = nextProjects.find((project) => project.id === projectId);
+      const nextConfig = {
+        ...baseConfig,
+        teamId,
+        teamKey: selectedTeam?.key ?? baseConfig.teamKey,
+        projectId,
+        projectSlug: selectedLinearProject?.slugId ?? "",
+      };
       setTeams(nextTeams);
       setProjects(nextProjects);
       setConfig(nextConfig);
       if (teamId) {
-        const [statePayload, issuePayload] = await Promise.all([
+        const [statePayload, nextIssues] = await Promise.all([
           callService<unknown>("linear", "list_workflow_states", { teamId, first: 100 }),
-          callService<unknown>("linear", "list_issues", {
-            teamId,
-            projectId: projectId || undefined,
-            state: selectedState || undefined,
-            first: 50,
-          }),
+          fetchLinearIssues(baseConfig, teamId, projectId, selectedState),
         ]);
         setStates(graphData<{ workflowStates?: { nodes?: WorkflowState[] } }>(statePayload).workflowStates?.nodes ?? []);
-        setIssues(graphData<{ issues?: { nodes?: Issue[] } }>(issuePayload).issues?.nodes ?? []);
+        setIssues(nextIssues);
       }
     } catch (err: unknown) {
       console.warn("[symphony] Linear refresh failed:", err instanceof Error ? err.message : String(err));
-      setError("Linear data could not be loaded.");
+      setError(safeLinearErrorMessage(err) ?? "Linear data could not be loaded.");
     } finally {
       setBusy(null);
     }
   }, [config, linearConnection, selectedState]);
 
   useEffect(() => {
-    Promise.all([readConfig(), fetchConnections()])
-      .then(([storedConfig, storedConnections]) => {
-        setConfig(storedConfig);
+    Promise.all([readConfig(), fetchConnections(), fetchRuntimeStatus()])
+      .then(([storedConfig, storedConnections, storedRuntimeStatus]) => {
+        const nextConfig = mergeRuntimeConfig(storedConfig, storedRuntimeStatus);
+        configRef.current = nextConfig;
+        setRuntimeStatus(storedRuntimeStatus);
+        setRuntimeConfigLoaded(Boolean(storedRuntimeStatus));
+        setConfig(nextConfig);
         setConnections(storedConnections);
       })
       .catch((err: unknown) => {
         console.warn("[symphony] startup failed:", err instanceof Error ? err.message : String(err));
+        setRuntimeConfigLoaded(false);
         setError("Symphony could not load saved settings.");
       });
   }, []);
+
+  useEffect(() => {
+    setSelectedState((current) => boardStates.includes(current) ? current : boardStates[0] ?? "");
+  }, [boardStates]);
 
   useEffect(() => {
     if (linearConnection) void refreshLinear(config);
@@ -287,7 +721,7 @@ function App() {
           teamId: config.teamId,
           name: state.name,
           color: state.color,
-          type: "started",
+          type: state.type,
         });
       }
       await refreshLinear();
@@ -304,22 +738,32 @@ function App() {
     setBusy("Creating issue");
     setError(null);
     try {
+      const labelIds = await fetchRequiredLinearLabelIds(config.teamId, config.requiredLabels);
+      if (config.requiredLabels.length > 0 && labelIds.length < config.requiredLabels.length) {
+        throw new Error(REQUIRED_LABELS_MISSING_MESSAGE);
+      }
+      const selectedWorkflowState = states.find((state) => (
+        workflowStateBelongsToTeam(state, config.teamId) &&
+        state.name.toLowerCase() === selectedState.toLowerCase()
+      ));
       await callService("linear", "create_issue", {
         teamId: config.teamId,
         projectId: config.projectId || undefined,
+        stateId: selectedWorkflowState?.id,
         title: newIssueTitle.trim(),
         description: newIssueDescription.trim() || undefined,
+        labelIds,
       });
       setNewIssueTitle("");
       setNewIssueDescription("");
       await refreshLinear();
     } catch (err: unknown) {
       console.warn("[symphony] issue creation failed:", err instanceof Error ? err.message : String(err));
-      setError("Issue could not be created.");
+      setError(safeLinearErrorMessage(err) ?? "Issue could not be created.");
     } finally {
       setBusy(null);
     }
-  }, [config.projectId, config.teamId, newIssueDescription, newIssueTitle, refreshLinear]);
+  }, [config.projectId, config.requiredLabels, config.teamId, newIssueDescription, newIssueTitle, refreshLinear, selectedState, states]);
 
   const runGraphql = useCallback(async () => {
     if (!graphqlQuery.trim()) return;
@@ -336,12 +780,60 @@ function App() {
     }
   }, [graphqlQuery]);
 
+  const refreshRuntime = useCallback(async () => {
+    setBusy("Refreshing runner");
+    setError(null);
+    try {
+      const next = await fetchRuntimeStatus();
+      setRuntimeStatus(next);
+      setRuntimeConfigLoaded(Boolean(next));
+      if (next) setConfig((current) => mergeRuntimeConfig(current, next));
+    } catch (err: unknown) {
+      console.warn("[symphony] runtime refresh failed:", err instanceof Error ? err.message : String(err));
+      setRuntimeConfigLoaded(false);
+      setError("Symphony runner status could not be loaded.");
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const runStartRuntime = useCallback(async () => {
+    if (!runtimeConfigLoaded) {
+      setError("Symphony runner status could not be loaded.");
+      return;
+    }
+    setBusy("Starting runner");
+    setError(null);
+    try {
+      const next = await startRuntime(config);
+      setRuntimeStatus(next);
+      setConfig((current) => mergeRuntimeConfig(current, next));
+    } catch (err: unknown) {
+      console.warn("[symphony] runtime start failed:", err instanceof Error ? err.message : String(err));
+      setError(startErrorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }, [config, runtimeConfigLoaded]);
+
+  const runStopRuntime = useCallback(async () => {
+    setBusy("Stopping runner");
+    setError(null);
+    try {
+      const next = await stopRuntime();
+      setRuntimeStatus(next);
+      setConfig((current) => mergeRuntimeConfig(current, next));
+    } catch (err: unknown) {
+      console.warn("[symphony] runtime stop failed:", err instanceof Error ? err.message : String(err));
+      setError("Symphony runner could not be stopped.");
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
   const command = [
-    "set -a",
-    "source .env",
-    "set +a",
-    "cd /home/deploy/symphony/elixir",
-    `mise exec -- ./bin/symphony ${config.workflowPath} --port 4001 --i-understand-that-this-will-be-running-without-the-usual-guardrails`,
+    "cd " + shellQuote(config.serviceRoot),
+    `LINEAR_API_KEY=... mise exec -- ${shellQuote(config.binPath)} ${shellQuote(config.workflowPath)} --port ${config.runnerPort} --i-understand-that-this-will-be-running-without-the-usual-guardrails`,
   ].join(" && ");
 
   return (
@@ -360,7 +852,10 @@ function App() {
           <Button variant="outline" onClick={() => refreshConnections()} disabled={Boolean(busy)}>
             <RefreshCw />Refresh
           </Button>
-          <Button onClick={() => window.open(config.dashboardUrl, "_blank", "noopener,noreferrer")}>
+          <Button variant="outline" onClick={refreshRuntime} disabled={Boolean(busy)}>
+            <RefreshCw />Runner
+          </Button>
+          <Button onClick={() => window.open(runtimeStatus?.dashboardUrl ?? config.dashboardUrl, "_blank", "noopener,noreferrer")}>
             <Play />Dashboard
           </Button>
         </div>
@@ -377,7 +872,8 @@ function App() {
         </div>
       ) : null}
 
-      <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <StatusCard icon={<Power />} label="Runner" value={!runtimeConfigLoaded ? "Loading" : runtimeStatus?.running ? `Running :${runtimeStatus.config.port}` : "Stopped"} ok={Boolean(runtimeStatus?.running)} />
         <StatusCard icon={<Ticket />} label="Linear" value={linearConnection?.account_label ?? "Not connected"} ok={Boolean(linearConnection)} onClick={() => runConnect("linear")} />
         <StatusCard icon={<Github />} label="GitHub" value={githubConnection?.account_label ?? "Not connected"} ok={Boolean(githubConnection)} onClick={() => runConnect("github")} />
         <StatusCard icon={<Layers3 />} label="Project" value={selectedProject?.slugId || config.projectSlug || "Unset"} ok={Boolean(config.projectId || config.projectSlug)} />
@@ -403,21 +899,78 @@ function App() {
               <Field label="Workflow path">
                 <Input value={config.workflowPath} onChange={(event) => updateConfig({ workflowPath: event.target.value })} onBlur={persistConfig} />
               </Field>
+              <Field label="Symphony checkout">
+                <Input value={config.serviceRoot} onChange={(event) => updateConfig({ serviceRoot: event.target.value })} onBlur={persistConfig} />
+              </Field>
+              <Field label="Runner binary">
+                <Input value={config.binPath} onChange={(event) => updateConfig({ binPath: event.target.value })} onBlur={persistConfig} />
+              </Field>
+              <Field label="Runner port">
+                <Input type="number" min={1024} max={65535} value={config.runnerPort} onChange={(event) => updateConfig({ runnerPort: Number(event.target.value) || DEFAULT_RUNNER_PORT })} onBlur={persistConfig} />
+              </Field>
+              <Field label="Linear team key">
+                <Input value={config.teamKey} onChange={(event) => updateConfig({ teamKey: event.target.value })} onBlur={persistConfig} />
+              </Field>
+              <Field label="Required labels">
+                <Input value={requiredLabelsInput} onFocus={() => setFocusedListField("requiredLabels")} onChange={(event) => setRequiredLabelsInput(event.target.value)} onBlur={() => {
+                  setFocusedListField(null);
+                  void saveConfig({ ...config, requiredLabels: normalizeNameList(requiredLabelsInput.split(",")) });
+                }} />
+              </Field>
+              <Field label="Active states">
+                <Input value={activeStatesInput} onFocus={() => setFocusedListField("activeStates")} onChange={(event) => setActiveStatesInput(event.target.value)} onBlur={() => {
+                  setFocusedListField(null);
+                  void saveConfig({ ...config, activeStates: normalizeNameList(activeStatesInput.split(",")) });
+                }} />
+              </Field>
               <Field label="Project slug">
                 <Input value={config.projectSlug} onChange={(event) => updateConfig({ projectSlug: event.target.value })} onBlur={persistConfig} placeholder="Linear slugId" />
               </Field>
               <Field label="Team">
-                <Select value={config.teamId} onChange={(event) => saveConfig({ ...config, teamId: event.target.value })}>
+                <Select value={config.teamId} onChange={(event) => {
+                  const team = teams.find((candidate) => candidate.id === event.target.value);
+                  void saveConfig({
+                    ...config,
+                    teamId: event.target.value,
+                    teamKey: team?.key ?? config.teamKey,
+                    projectId: "",
+                    projectSlug: "",
+                  });
+                }}>
                   <option value="">Select team</option>
                   {teams.map((team) => <option key={team.id} value={team.id}>{team.key} - {team.name}</option>)}
                 </Select>
               </Field>
               <Field label="Project">
-                <Select value={config.projectId} onChange={(event) => saveConfig({ ...config, projectId: event.target.value, projectSlug: projects.find((project) => project.id === event.target.value)?.slugId ?? config.projectSlug })}>
+                <Select value={config.projectId} onChange={(event) => {
+                  const project = visibleProjects.find((candidate) => candidate.id === event.target.value);
+                  const nextConfig = { ...config, projectId: event.target.value, projectSlug: project?.slugId ?? "" };
+                  void (async () => {
+                    if (await saveConfig(nextConfig)) await refreshLinear(nextConfig);
+                  })();
+                }}>
                   <option value="">No project filter</option>
-                  {projects.map((project) => <option key={project.id} value={project.id}>{project.slugId ?? project.name}</option>)}
+                  {visibleProjects.map((project) => <option key={project.id} value={project.id}>{project.slugId ?? project.name}</option>)}
                 </Select>
               </Field>
+            </div>
+
+            <div className="grid gap-2 rounded-lg border bg-muted/30 p-3 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <div className="min-w-0">
+                <div className="font-semibold">{!runtimeConfigLoaded ? "Runner config loading" : runtimeStatus?.running ? `Running on port ${runtimeStatus.config.port}` : "Local runner stopped"}</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {!runtimeConfigLoaded ? "Loading runner status" : runtimeStatus?.linearApiKeyConfigured ? "LINEAR_API_KEY is available" : "LINEAR_API_KEY is missing"}
+                  {runtimeStatus?.pid ? ` · pid ${runtimeStatus.pid}` : ""}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={runStartRuntime} disabled={Boolean(busy) || Boolean(runtimeStatus?.running) || !runtimeConfigLoaded}>
+                  <Play />Start
+                </Button>
+                <Button variant="outline" onClick={runStopRuntime} disabled={Boolean(busy) || !runtimeStatus?.running}>
+                  <Square />Stop
+                </Button>
+              </div>
             </div>
 
             <div className="overflow-hidden rounded-lg border bg-slate-950 text-slate-100">
@@ -446,7 +999,7 @@ function App() {
             </div>
             <Tabs>
               <TabsList>
-                {["Todo", "In Progress", "Rework", "Human Review", "Merging", "Done"].map((state) => (
+                {boardStates.map((state) => (
                   <TabsTrigger key={state} active={selectedState === state} onClick={() => setSelectedState(state)}>
                     {state}
                   </TabsTrigger>
@@ -480,6 +1033,7 @@ function App() {
                   <ExternalLink className="size-4 text-muted-foreground" />
                   <span className="col-span-3 text-xs text-muted-foreground">
                     {issue.state?.name ?? "No state"}{issue.project ? ` · ${issue.project.name}` : ""}
+                    {issue.labels?.nodes?.length ? ` · ${issue.labels.nodes.map((label) => label.name).join(", ")}` : ""}
                   </span>
                 </a>
               ))}

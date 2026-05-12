@@ -43,6 +43,7 @@ describe("Settings: API key endpoints", () => {
     rmSync(homePath, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("GET /api/settings/api-key/status", () => {

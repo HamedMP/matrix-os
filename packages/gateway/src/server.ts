@@ -24,6 +24,8 @@ import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createSymphonyRoutes } from "./symphony-routes.js";
+import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -253,18 +255,81 @@ const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
 
+export function buildAllowedOrigins(options: {
+  shellOrigin?: string;
+  proxyOrigin?: string;
+  symphonyPort?: number;
+  symphonyPorts?: number[];
+}): string[] {
+  const symphonyPorts = Array.from(new Set([
+    options.symphonyPort,
+    ...(options.symphonyPorts ?? []),
+  ].filter((port): port is number => typeof port === "number")));
+  return Array.from(new Set(
+    [
+      options.shellOrigin,
+      options.proxyOrigin,
+      "http://localhost:3000",
+      "http://localhost:4001",
+      "http://localhost:4066",
+      "http://127.0.0.1:4066",
+      ...symphonyPorts.flatMap((port) => [
+        `http://localhost:${port}`,
+        `http://127.0.0.1:${port}`,
+      ]),
+    ].filter((origin): origin is string => Boolean(origin)),
+  ));
+}
+
+export function createAllowedOriginController(options: {
+  shellOrigin?: string;
+  proxyOrigin?: string;
+  symphonyPort?: number;
+}) {
+  const baseOptions = {
+    shellOrigin: options.shellOrigin,
+    proxyOrigin: options.proxyOrigin,
+  };
+  let symphonyPorts = options.symphonyPort ? [options.symphonyPort] : [];
+  let allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
+
+  return {
+    resolve(origin: string | undefined): string | undefined {
+      if (!origin) return undefined;
+      return allowedOrigins.includes(origin) ? origin : undefined;
+    },
+    updateSymphonyPort(port: number, additionalPorts: number[] = []): void {
+      symphonyPorts = Array.from(new Set([port, ...additionalPorts]));
+      allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
+    },
+  };
+}
+
+type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
+
+export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
+  try {
+    return (await runner.getConfig()).port;
+  } catch (err: unknown) {
+    if (err instanceof SymphonyConfigLoadError) {
+      console.warn("[gateway] Ignoring invalid Symphony config while seeding CORS origins");
+      return undefined;
+    }
+    throw err;
+  }
+}
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
-  const allowedOrigins = Array.from(new Set(
-    [
-      process.env.SHELL_ORIGIN,
-      process.env.PROXY_ORIGIN,
-      "http://localhost:3000",
-      "http://localhost:4001",
-    ].filter((origin): origin is string => Boolean(origin)),
-  ));
+  const symphonyRunner = createSymphonyRunner({ homePath });
+  const symphonyPort = await readInitialSymphonyPort(symphonyRunner);
+  const allowedOriginController = createAllowedOriginController({
+    shellOrigin: process.env.SHELL_ORIGIN,
+    proxyOrigin: process.env.PROXY_ORIGIN,
+    symphonyPort,
+  });
 
   const app = new Hono();
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
@@ -298,7 +363,6 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
-
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
     model: config.model,
@@ -1182,10 +1246,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.use("*", cors({
     origin: (origin) => {
-      if (!origin) {
-        return undefined;
-      }
-      return allowedOrigins.includes(origin) ? origin : undefined;
+      return allowedOriginController.resolve(origin);
     },
   }));
   app.use("*", securityHeadersMiddleware());
@@ -2240,6 +2301,14 @@ export async function createGateway(config: GatewayConfig) {
     zellijRuntime: workspaceZellijRuntime,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+  }));
+  app.route("/api/symphony", createSymphonyRoutes({
+    homePath,
+    runner: symphonyRunner,
+    onConfigChange: (nextConfig) => allowedOriginController.updateSymphonyPort(
+      nextConfig.port,
+      nextConfig.runningPort ? [nextConfig.runningPort] : [],
+    ),
   }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
@@ -3628,6 +3697,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
+      await symphonyRunner.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

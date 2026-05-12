@@ -657,7 +657,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             body,
             signal: AbortSignal.timeout(10_000),
             ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
-          } as RequestInit);
+          } as RequestInit & { dispatcher?: import('undici').Dispatcher });
           if (res.ok) {
             results.push({ machineId: machine.machineId, handle: machine.handle, status: 'triggered' });
             triggered++;
