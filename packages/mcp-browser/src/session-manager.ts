@@ -257,7 +257,12 @@ export class SessionManager {
       }
       return await run();
     });
-    const drain = queued.catch(() => undefined).finally(() => {
+    const drain = queued.catch((error: unknown) => {
+      console.warn(
+        "[mcp-browser] Browser action failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }).finally(() => {
       if (this.actionQueue === drain) {
         this.actionQueue = Promise.resolve();
       }
