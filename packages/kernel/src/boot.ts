@@ -53,6 +53,39 @@ export function ensureHome(homePath: string = DEFAULT_HOME): SyncReport & { home
 
 const EXCLUDED_NAMES = new Set([".gitkeep", ".DS_Store", ".template-manifest.json"]);
 const EXCLUDED_DIRS = new Set(["node_modules", ".cache", "tmp"]);
+const USER_OWNED_TEMPLATE_FILES = new Set([
+  "system/activity.log",
+  "system/ai-profile.md",
+  "system/canvas.json",
+  "system/config.json",
+  "system/cron.json",
+  "system/desktop.json",
+  "system/handle.json",
+  "system/identity.md",
+  "system/layout.json",
+  "system/modules.json",
+  "system/profile.md",
+  "system/session.json",
+  "system/social-config.json",
+  "system/state.md",
+  "system/theme.json",
+  "system/user.md",
+]);
+const USER_OWNED_TEMPLATE_PREFIXES = [
+  "system/conversations/",
+  "system/icons/",
+  "system/layouts/",
+  "system/logs/",
+  "system/memory/",
+  "system/voice/",
+  "system/wallpapers/",
+];
+
+function isUserOwnedTemplatePath(relPath: string): boolean {
+  const normalized = relPath.replace(/\\/g, "/");
+  return USER_OWNED_TEMPLATE_FILES.has(normalized)
+    || USER_OWNED_TEMPLATE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
 
 export function generateTemplateManifest(templateDir: string): Record<string, string> {
   const manifest: Record<string, string> = {};
@@ -121,6 +154,12 @@ export function smartSyncTemplate(
   for (const [relPath, templateHash] of Object.entries(templateManifest)) {
     const homeFilePath = join(homePath, relPath);
     const templateFilePath = join(templateDir, relPath);
+
+    if (isUserOwnedTemplatePath(relPath)) {
+      report.skipped.push(relPath);
+      logLines.push(`[${now}] Skipped: ${relPath} (protected user data)`);
+      continue;
+    }
 
     if (!existsSync(homeFilePath)) {
       // File doesn't exist in home -> ADD it

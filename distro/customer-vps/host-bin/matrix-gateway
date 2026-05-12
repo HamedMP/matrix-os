@@ -35,7 +35,12 @@ sync_bundled_home_assets() {
 
   mkdir -p "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
   if [ -d "$bundled_home/system/icons" ]; then
-    find "$bundled_home/system/icons" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \) -exec cp -a {} "$MATRIX_HOME/system/icons/" \;
+    while IFS= read -r icon; do
+      local target
+      target="$MATRIX_HOME/system/icons/$(basename "$icon")"
+      [ -e "$target" ] && continue
+      cp -a "$icon" "$target"
+    done < <(find "$bundled_home/system/icons" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \))
   fi
 
   if [ -d "$bundled_home/apps" ]; then

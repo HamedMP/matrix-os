@@ -150,9 +150,14 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('sync-matrix-agent-skills.sh');
     expect(launcher).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(launcher).toContain('$MATRIX_HOME/system/icons');
+    expect(launcher).toContain('[ -e "$target" ] && continue');
     expect(launcher).toContain('find "$bundled_home/apps" -type f -name matrix.json');
     expect(launcher).toContain('matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp');
     expect(launcher).toContain('cd "$APP_DIR"');
+    expect(launcher).not.toContain('cp -a "$bundled_home/." "$MATRIX_HOME"');
+    expect(launcher).not.toContain('desktop.json');
+    expect(launcher).not.toContain('theme.json');
+    expect(launcher).not.toContain('system/wallpapers');
   });
 
   it('restore script resolves matrixctl from the installed host bin directory', () => {
