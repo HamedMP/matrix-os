@@ -1183,9 +1183,15 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid request' }, 400);
     }
 
-    const release = HOST_BUNDLE_CHANNEL_PATTERN.test(imageVersion)
-      ? await getHostBundleReleaseByChannel(db, imageVersion)
-      : await getHostBundleRelease(db, imageVersion);
+    let release: HostBundleReleaseRecord | undefined;
+    try {
+      release = HOST_BUNDLE_CHANNEL_PATTERN.test(imageVersion)
+        ? await getHostBundleReleaseByChannel(db, imageVersion)
+        : await getHostBundleRelease(db, imageVersion);
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/:imageVersion/:file db', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
     if (!release) {
       return c.json({ error: 'Not found' }, 404);
     }
@@ -1213,10 +1219,15 @@ export function createApp(deps: {
     }
 
     if (file.endsWith('.json')) {
-      const url = await getSignedBundleUrl(release);
-      return c.json(hostBundleReleaseResponse(release, url), 200, {
-        'cache-control': 'private, max-age=30',
-      });
+      try {
+        const url = await getSignedBundleUrl(release);
+        return c.json(hostBundleReleaseResponse(release, url), 200, {
+          'cache-control': 'private, max-age=30',
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('/system-bundles/:imageVersion/:file json', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
     }
 
     try {

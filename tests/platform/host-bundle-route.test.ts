@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../packages/platform/src/main.js';
 import type { CustomerVpsObjectStore } from '../../packages/platform/src/customer-vps-r2.js';
 import {
+  getHostBundleRelease,
   promoteHostBundleChannel,
   type PlatformDB,
   upsertHostBundleRelease,
@@ -90,6 +91,29 @@ describe('platform host bundle route', () => {
       3600,
     );
     expect(getObject).not.toHaveBeenCalled();
+  });
+
+  it('returns JSON 502 when release metadata cannot mint a signed URL', async () => {
+    await seedRelease();
+    const getPresignedGetUrl = vi.fn().mockRejectedValue(new Error('r2 unavailable'));
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/v2026.05.12-1/release.json');
+
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toEqual({ error: 'Host bundle unavailable' });
+    expect(getPresignedGetUrl).toHaveBeenCalledWith(
+      'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
+      3600,
+    );
   });
 
   it('rejects invalid host bundle keys', async () => {
@@ -215,6 +239,42 @@ describe('platform host bundle route', () => {
           bundleKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz',
         },
       ],
+    });
+  });
+
+  it('keeps immutable artifact fields when release metadata is re-registered', async () => {
+    await seedRelease('v2026.05.12-3');
+
+    const updated = await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-3',
+      gitCommit: 'updatedsha',
+      gitRef: 'refs/tags/v2026.05.12-3',
+      buildTime: '2026-05-12T02:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-3/replaced.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-3/replaced.tar.gz.sha256',
+      sha256: 'c'.repeat(64),
+      size: 9999,
+      severity: 'security',
+      updateType: 'auto',
+      changelog: 'metadata only',
+    });
+
+    expect(updated).toMatchObject({
+      version: 'v2026.05.12-3',
+      gitCommit: 'updatedsha',
+      severity: 'security',
+      updateType: 'auto',
+      changelog: 'metadata only',
+      bundleKey: 'system-bundles/v2026.05.12-3/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-3/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+    });
+
+    await expect(getHostBundleRelease(db, 'v2026.05.12-3')).resolves.toMatchObject({
+      bundleKey: 'system-bundles/v2026.05.12-3/matrix-host-bundle.tar.gz',
+      sha256: 'a'.repeat(64),
+      size: 1234,
     });
   });
 });
