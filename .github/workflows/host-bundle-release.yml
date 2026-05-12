@@ -87,6 +87,7 @@ jobs:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.channel.outputs.channel }}
       bundle_path: ${{ steps.build.outputs.bundle_path }}
     steps:
       - uses: actions/checkout@v4
@@ -112,10 +113,26 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Generated version: $VERSION"
 
+      - name: Resolve release channel
+        id: channel
+        run: |
+          set -euo pipefail
+          CHANNEL="${{ inputs.channel || '' }}"
+          if [ -z "$CHANNEL" ]; then
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              CHANNEL="canary"
+            else
+              CHANNEL="dev"
+            fi
+          fi
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Resolved channel: $CHANNEL"
+
       - name: Build host bundle
         id: build
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+          HOST_BUNDLE_CHANNEL: ${{ steps.channel.outputs.channel }}
           MATRIX_BUILD_SHA: ${{ github.sha }}
           MATRIX_BUILD_REF: ${{ github.ref_name }}
           MATRIX_BUILD_DATE: ${{ github.event.head_commit.timestamp }}
@@ -166,25 +183,16 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          CHANNEL="${{ inputs.channel || '' }}"
-          if [ -z "$CHANNEL" ]; then
-            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-              CHANNEL="canary"
-            else
-              CHANNEL="dev"
-            fi
-          fi
           # Default to "normal" for push-triggered runs
           SEVERITY="${{ inputs.severity || 'normal' }}"
           CHANGELOG="${{ inputs.changelog || '' }}"
-          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "severity=$SEVERITY" >> "$GITHUB_OUTPUT"
           echo "changelog=$CHANGELOG" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         env:
           HOST_BUNDLE_DIST_DIR: dist/host-bundle
-          HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}
+          HOST_BUNDLE_CHANNEL: ${{ needs.build.outputs.channel }}
           PUBLISH_VERSION: ${{ needs.build.outputs.version }}
           PUBLISH_SEVERITY: ${{ steps.meta.outputs.severity }}
           PUBLISH_CHANGELOG: ${{ steps.meta.outputs.changelog }}
