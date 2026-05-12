@@ -30,6 +30,7 @@ const SECRET_KEYS = [
   'platformVerificationToken',
   'r2AccessKeyId',
   'r2SecretAccessKey',
+  'browserTurnSecret',
 ] as const;
 const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
 
@@ -46,8 +47,11 @@ export function renderCloudInitTemplate(template: string, input: CustomerHostCon
   assertRenderable(input);
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, rawKey: string) => {
     const key = rawKey as keyof CustomerHostConfig;
-    const value = input[key];
+    let value = input[key];
     if (typeof value !== 'string') return match;
+    if (key === 'browserHandoffPublicKey') {
+      value = value.replace(/\r?\n/g, '\\n');
+    }
     return value;
   });
 }

@@ -24,15 +24,20 @@ export function isGatewayProxyPath(pathname: string): boolean {
   );
 }
 
-export function normalizeBrowserRouteTarget(target: string | string[] | undefined): string {
+export function normalizeBrowserRouteTarget(target: string | string[] | undefined, targetQuery?: URLSearchParams): string {
   const raw = Array.isArray(target) ? target.join("/") : target;
   const trimmed = raw?.trim().replace(/^\/+/, "") ?? "";
   if (!trimmed || trimmed === "about:blank") return "about:blank";
   try {
-    if (/^https?:\/\//i.test(trimmed)) {
-      return new URL(trimmed).toString();
+    const url = /^https?:\/\//i.test(trimmed)
+      ? new URL(trimmed)
+      : new URL(`https://${trimmed}`);
+    if (targetQuery) {
+      for (const [key, value] of targetQuery.entries()) {
+        url.searchParams.append(key, value);
+      }
     }
-    return new URL(`https://${trimmed}`).toString();
+    return url.toString();
   } catch (error: unknown) {
     console.warn(
       "[shell/browser-route] Invalid Browser route target:",
@@ -42,9 +47,13 @@ export function normalizeBrowserRouteTarget(target: string | string[] | undefine
   }
 }
 
-export function buildBrowserStandaloneAppUrl(target: string | string[] | undefined, handoffToken?: string): string {
+export function buildBrowserStandaloneAppUrl(
+  target: string | string[] | undefined,
+  handoffToken?: string,
+  targetQuery?: URLSearchParams,
+): string {
   const url = new URL("/apps/browser/", "https://matrix.local");
-  url.searchParams.set("target", normalizeBrowserRouteTarget(target));
+  url.searchParams.set("target", normalizeBrowserRouteTarget(target, targetQuery));
   url.searchParams.set("surface", "standalone");
   if (handoffToken) {
     url.searchParams.set("handoff", handoffToken);

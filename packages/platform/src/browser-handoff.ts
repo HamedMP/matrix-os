@@ -19,6 +19,15 @@ export function normalizeBrowserHandoffTarget(path: string): string {
   }
 }
 
+export function browserHandoffPathWithTargetQuery(path: string, rawUrl: string): string {
+  const url = new URL(rawUrl);
+  const targetQuery = new URLSearchParams(url.search);
+  targetQuery.delete("deviceId");
+  targetQuery.delete("handoff");
+  const suffix = targetQuery.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+
 export function buildBrowserHandoffRedirectUrl(opts: {
   machine: Pick<UserMachineRecord, "publicIPv4" | "status">;
   targetPath: string;

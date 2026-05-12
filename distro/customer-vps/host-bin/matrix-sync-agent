@@ -185,7 +185,7 @@ apply_update() {
 
   # Stop services, backup, install
   log "Stopping services..."
-  sudo systemctl stop matrix-gateway matrix-shell || true
+  sudo systemctl stop matrix-browser matrix-gateway matrix-shell || true
   sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     sudo mv "$APP_DIR" "$APP_DIR.rollback"
@@ -204,10 +204,16 @@ apply_update() {
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
+  if [ -d "$extract_dir/systemd" ]; then
+    sudo find "$extract_dir/systemd" -maxdepth 1 -name '*.service' -type f -exec cp -a {} /etc/systemd/system/ \;
+    sudo systemctl daemon-reload
+    sudo systemctl enable matrix-browser.service || true
+    log "Updated systemd units"
+  fi
 
   # Start services and health-check
   log "Starting services..."
-  sudo systemctl start matrix-gateway matrix-shell
+  sudo systemctl start matrix-browser matrix-gateway matrix-shell
   log "Running health check..."
   local healthy=false
   for _ in $(seq 1 18); do
@@ -234,7 +240,7 @@ do_rollback() {
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
   log "Rolling back..."
-  sudo systemctl stop matrix-gateway matrix-shell || true
+  sudo systemctl stop matrix-browser matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
     sudo mkdir -p "$STAGING_DIR"
     sudo chown matrix:matrix "$STAGING_DIR"
@@ -242,7 +248,7 @@ do_rollback() {
   fi
   sudo mv "$APP_DIR.rollback" "$APP_DIR"
   sudo chown -R matrix:matrix "$APP_DIR"
-  sudo systemctl start matrix-gateway matrix-shell
+  sudo systemctl start matrix-browser matrix-gateway matrix-shell
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then

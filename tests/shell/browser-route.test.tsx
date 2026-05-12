@@ -13,6 +13,11 @@ describe("standalone Browser route helpers", () => {
     expect(normalizeBrowserRouteTarget(["[::z]"])).toBe("about:blank");
   });
 
+  it("preserves route query params as target query params", () => {
+    const query = new URLSearchParams([["q", "matrix"]]);
+    expect(normalizeBrowserRouteTarget(["example.com", "search"], query)).toBe("https://example.com/search?q=matrix");
+  });
+
   it("builds an owner-hosted Browser app URL without proxying the target site", () => {
     expect(buildBrowserStandaloneAppUrl(["google.com"])).toBe(
       "/apps/browser/?target=https%3A%2F%2Fgoogle.com%2F&surface=standalone",

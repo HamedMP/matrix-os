@@ -645,6 +645,7 @@ write_files:
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       BROWSER_RUNTIME_PORT=4011
+      BROWSER_RUNTIME_URL=http://127.0.0.1:4011
       BROWSER_TURN_URLS={{browserTurnUrls}}
       BROWSER_TURN_SECRET={{browserTurnSecret}}
       BROWSER_HANDOFF_PUBLIC_KEY={{browserHandoffPublicKey}}

@@ -59,6 +59,7 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import {
+  browserHandoffPathWithTargetQuery,
   buildBrowserHandoffRedirectUrl,
   normalizeBrowserHandoffTarget,
   signPlatformBrowserHandoff,
@@ -1454,7 +1455,8 @@ export function createApp(deps: {
         return c.json({ error: 'Browser handoff unavailable' }, 503);
       }
       try {
-        const target = normalizeBrowserHandoffTarget(path);
+        const targetPath = browserHandoffPathWithTargetQuery(path, c.req.url);
+        const target = normalizeBrowserHandoffTarget(targetPath);
         const rawDeviceId = c.req.query('deviceId');
         const deviceId = rawDeviceId && /^[a-zA-Z0-9_-]{1,128}$/.test(rawDeviceId)
           ? rawDeviceId
@@ -1469,7 +1471,7 @@ export function createApp(deps: {
         });
         const redirectUrl = buildBrowserHandoffRedirectUrl({
           machine: runningMachine,
-          targetPath: path,
+          targetPath,
           token,
           ownerHostAllowlist: (process.env.BROWSER_OWNER_HOST_ALLOWLIST ?? '')
             .split(',')

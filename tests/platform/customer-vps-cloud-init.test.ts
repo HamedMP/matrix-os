@@ -27,6 +27,10 @@ describe('platform/customer-vps-cloud-init', () => {
     r2Bucket: 'matrixos-sync',
     r2Prefix: 'matrixos-sync/user_123/',
     postgresPassword: 'postgres-secret',
+    browserTurnUrls: 'turns:turn.example:5349',
+    browserTurnSecret: 'turn-secret',
+    browserHandoffPublicKey: '-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----',
+    browserHandoffJwksUrl: 'https://platform.example/.well-known/browser-jwks.json',
   };
 
   it('renders required host variables into the cloud-init template', () => {
@@ -50,6 +54,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).toContain(
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
+    expect(rendered).toContain('BROWSER_RUNTIME_URL=http://127.0.0.1:4011');
+    expect(rendered).toContain('BROWSER_HANDOFF_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\nabc\\n-----END PUBLIC KEY-----');
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
@@ -216,7 +222,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nr2={{r2SecretAccessKey}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nr2={{r2SecretAccessKey}}\nturn={{browserTurnSecret}}\n',
       input,
     );
 
@@ -226,6 +232,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
     expect(redacted).not.toContain('r2-secret-key');
+    expect(redacted).not.toContain('turn-secret');
     expect(redacted).toContain('[redacted]');
   });
 
