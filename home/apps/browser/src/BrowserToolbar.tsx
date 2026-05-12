@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, RotateCw, Volume2, VolumeX } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 export interface BrowserDownloadItem {
   id: string;
@@ -20,6 +20,10 @@ export function BrowserToolbar(props: {
   onDeleteDownload?: (id: string) => void;
 }) {
   const [draft, setDraft] = useState(props.url === "about:blank" ? "" : props.url);
+
+  useEffect(() => {
+    setDraft(props.url === "about:blank" ? "" : props.url);
+  }, [props.url]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

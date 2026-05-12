@@ -10,6 +10,7 @@ describe("standalone Browser route helpers", () => {
     expect(normalizeBrowserRouteTarget(["example.com", "docs"])).toBe("https://example.com/docs");
     expect(normalizeBrowserRouteTarget(["https://example.com/path"])).toBe("https://example.com/path");
     expect(normalizeBrowserRouteTarget(undefined)).toBe("about:blank");
+    expect(normalizeBrowserRouteTarget(["[::z]"])).toBe("about:blank");
   });
 
   it("builds an owner-hosted Browser app URL without proxying the target site", () => {

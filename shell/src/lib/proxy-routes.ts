@@ -28,10 +28,18 @@ export function normalizeBrowserRouteTarget(target: string | string[] | undefine
   const raw = Array.isArray(target) ? target.join("/") : target;
   const trimmed = raw?.trim().replace(/^\/+/, "") ?? "";
   if (!trimmed || trimmed === "about:blank") return "about:blank";
-  if (/^https?:\/\//i.test(trimmed)) {
-    return new URL(trimmed).toString();
+  try {
+    if (/^https?:\/\//i.test(trimmed)) {
+      return new URL(trimmed).toString();
+    }
+    return new URL(`https://${trimmed}`).toString();
+  } catch (error: unknown) {
+    console.warn(
+      "[shell/browser-route] Invalid Browser route target:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return "about:blank";
   }
-  return new URL(`https://${trimmed}`).toString();
 }
 
 export function buildBrowserStandaloneAppUrl(target: string | string[] | undefined, handoffToken?: string): string {

@@ -223,6 +223,7 @@ describe("Browser app", () => {
         deviceId: "browser-standalone",
       }),
     })));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "URL" }) as HTMLInputElement).value).toBe("https://example.com/docs"));
     await waitFor(() => expect(sockets).toHaveLength(1));
     expect(sockets[0]?.protocols).toEqual(["browser-stream.stream_token"]);
   });

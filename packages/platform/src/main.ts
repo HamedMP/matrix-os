@@ -1455,11 +1455,15 @@ export function createApp(deps: {
       }
       try {
         const target = normalizeBrowserHandoffTarget(path);
+        const rawDeviceId = c.req.query('deviceId');
+        const deviceId = rawDeviceId && /^[a-zA-Z0-9_-]{1,128}$/.test(rawDeviceId)
+          ? rawDeviceId
+          : `browser_${randomBytes(8).toString('hex')}`;
         const token = await signPlatformBrowserHandoff({
           privateKeyPem,
           keyId,
           ownerId: identity.userId,
-          deviceId: c.req.query('deviceId') ?? `browser_${randomBytes(8).toString('hex')}`,
+          deviceId,
           target,
           ttlSeconds: Number(process.env.BROWSER_HANDOFF_TTL_SECONDS ?? 60),
         });
