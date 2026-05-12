@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
-import { useWindowManager, type LayoutWindow, type AppWindow } from "@/hooks/useWindowManager";
+import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
@@ -432,95 +432,20 @@ function AoedeDockButton({
   );
 }
 
-function FullscreenOverlay({
-  win,
-  onExit,
-  chat,
-  onOpenApp,
-}: {
-  win: AppWindow | null;
-  onExit: () => void;
-  chat?: import("@/hooks/useChatState").ChatState;
-  onOpenApp: (name: string, path: string) => void;
-}) {
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
-  const prevWin = useRef<AppWindow | null>(null);
-
-  useEffect(() => {
-    if (win && !prevWin.current) {
-      setMounted(true);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setVisible(true));
-      });
-    } else if (win && prevWin.current && win.id !== prevWin.current.id) {
-      setVisible(true);
-    } else if (!win && prevWin.current) {
-      setVisible(false);
-      const timer = setTimeout(() => {
-        setMounted(false);
-      }, 350);
-      prevWin.current = win;
-      return () => clearTimeout(timer);
-    }
-    prevWin.current = win;
-  }, [win]);
-
-  if (!mounted) return null;
-
-  const target = win ?? prevWin.current;
-  if (!target) return null;
-
+function FullscreenExitPill({ onExit }: { onExit: () => void }) {
   return (
-    <div
-      className="fixed inset-0 z-[100] bg-background"
-      style={{
-        opacity: visible ? 1 : 0,
-        transform: visible ? "scale(1)" : "scale(0.95)",
-        transition: "opacity 300ms cubic-bezier(0.22, 1, 0.36, 1), transform 300ms cubic-bezier(0.22, 1, 0.36, 1)",
-      }}
-    >
-      <div className="h-full w-full relative">
-        {target.path.startsWith("__terminal__") ? (
-          <TerminalApp />
-        ) : target.path === "__workspace__" ? (
-          <WorkspaceApp />
-        ) : target.path === "__file-browser__" ? (
-          <FileBrowser windowId={target.id} />
-        ) : target.path === "__preview-window__" ? (
-          <PreviewWindow />
-        ) : target.path === "__chat__" ? (
-          <div className="h-full overflow-hidden">
-            {chat && (
-              <ChatApp
-                messages={chat.messages}
-                sessionId={chat.sessionId}
-                busy={chat.busy}
-                connected={chat.connected}
-                conversations={chat.conversations}
-                onNewChat={chat.newChat}
-                onSwitchConversation={chat.switchConversation}
-                onSubmit={chat.submitMessage}
-              />
-            )}
-          </div>
-        ) : (
-          <AppViewer path={target.path} onOpenApp={onOpenApp} />
-        )}
-      </div>
-      <div className="group/fsexit fixed top-0 left-0 z-[101] w-14 h-3 hover:h-10 transition-all duration-300">
-        <button
-          onClick={onExit}
-          className="ml-2.5 mt-0.5 group-hover/fsexit:mt-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-foreground/[0.03] group-hover/fsexit:bg-foreground/5 backdrop-blur-md border border-foreground/[0.04] group-hover/fsexit:border-foreground/[0.08] text-foreground/20 group-hover/fsexit:text-foreground/50 hover:!text-foreground/70 hover:!bg-foreground/10 transition-all duration-300 cursor-pointer"
-          aria-label="Exit fullscreen"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="opacity-40 group-hover/fsexit:opacity-100 transition-opacity duration-300">
-            <path d="M1 5h3.5V1.5" />
-            <path d="M11 7H7.5v3.5" />
-          </svg>
-          <span className="text-[10px] font-medium tracking-wide opacity-0 group-hover/fsexit:opacity-100 transition-opacity duration-300">Exit</span>
-        </button>
-      </div>
+    <div className="group/fsexit fixed top-0 left-0 z-[101] w-14 h-3 hover:h-10 transition-all duration-300">
+      <button
+        onClick={onExit}
+        className="ml-2.5 mt-0.5 group-hover/fsexit:mt-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-foreground/[0.03] group-hover/fsexit:bg-foreground/5 backdrop-blur-md border border-foreground/[0.04] group-hover/fsexit:border-foreground/[0.08] text-foreground/20 group-hover/fsexit:text-foreground/50 hover:!text-foreground/70 hover:!bg-foreground/10 transition-all duration-300 cursor-pointer"
+        aria-label="Exit fullscreen"
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="opacity-40 group-hover/fsexit:opacity-100 transition-opacity duration-300">
+          <path d="M1 5h3.5V1.5" />
+          <path d="M11 7H7.5v3.5" />
+        </svg>
+        <span className="text-[10px] font-medium tracking-wide opacity-0 group-hover/fsexit:opacity-100 transition-opacity duration-300">Exit</span>
+      </button>
     </div>
   );
 }
@@ -1341,10 +1266,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
-  const fullscreenWindow = fullscreenWindowId
-    ? windows.find((w) => w.id === fullscreenWindowId)
-    : null;
-
   return (
     <TooltipProvider delayDuration={300}>
       {!showSetup && (
@@ -1786,8 +1707,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               We render minimized windows too (display:none) so iframe state,
               terminal sockets, and React state survive minimize -> restore. */}
           {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => {
+            const isFullscreen = win.id === fullscreenWindowId;
             const isMinimizing = minimizingIds.has(win.id);
-            const isHidden = win.minimized && !isMinimizing;
+            const isHidden = win.minimized && !isMinimizing && !isFullscreen;
 
             // Compute dock target for suck animation
             let dockTargetX = 0;
@@ -1811,8 +1733,14 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               <Card
                 key={win.id}
                 data-window-id={win.id}
-                className="app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl"
-                style={{
+                className={isFullscreen
+                  ? "app-window fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0"
+                  : "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl"
+                }
+                style={isFullscreen ? {
+                  zIndex: 100,
+                  transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
+                } : {
                   "--win-x": `${win.x}px`,
                   "--win-y": `${win.y}px`,
                   "--win-w": `${win.width}px`,
@@ -1834,8 +1762,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   pointerEvents: isMinimizing ? "none" : undefined,
                   display: isHidden ? "none" : undefined,
                 } as React.CSSProperties}
-                onMouseDown={() => wmFocusWindow(win.id)}
+                onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
               >
+                {!isFullscreen && (
                 <CardHeader
                   className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
                   onPointerDown={(e) => onDragStart(win.id, e)}
@@ -1872,6 +1801,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                     />
                   </div>
                 </CardHeader>
+                )}
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
@@ -1905,6 +1835,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   )}
                 </CardContent>
 
+                {!isFullscreen && (
                 <div
                   className="hidden md:block absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
                   onPointerDown={(e) => onResizeStart(win.id, e)}
@@ -1929,6 +1860,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                     />
                   </svg>
                 </div>
+                )}
               </Card>
             );
           })}
@@ -1941,12 +1873,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           isn't unmounted when the viewport flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
 
-      <FullscreenOverlay
-        win={fullscreenWindow ?? null}
-        onExit={wmExitFullscreen}
-        chat={chat}
-        onOpenApp={openWindow}
-      />
+      {fullscreenWindowId && (
+        <FullscreenExitPill onExit={wmExitFullscreen} />
+      )}
     </TooltipProvider>
   );
 }
