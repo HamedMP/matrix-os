@@ -46,6 +46,7 @@ describe("system update checks", () => {
   it("validates explicit update versions for internal deploy triggers", () => {
     expect(parseUpdateVersion("v2026.05.12-42")).toBe("v2026.05.12-42");
     expect(parseUpdateVersion(" v2026.05.12-42 ")).toBe("v2026.05.12-42");
+    expect(parseUpdateVersion("main-969a192-20260512142352")).toBe("main-969a192-20260512142352");
     expect(parseUpdateVersion("../stable")).toBeNull();
     expect(parseUpdateVersion("stable")).toBeNull();
     expect(parseUpdateVersion("")).toBeNull();

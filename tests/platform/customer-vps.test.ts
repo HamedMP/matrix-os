@@ -637,6 +637,32 @@ describe('platform/customer-vps', () => {
     errorSpy.mockRestore();
   });
 
+  it('sends channel deploy targets to running VPS upgrade endpoints', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'stable',
+    });
+
+    try {
+      await expect(service.deploy({ channel: 'dev' })).resolves.toMatchObject({ triggered: 1, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://203.0.113.10:443/api/internal/upgrade',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ channel: 'dev' }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('queues failed delete cleanup and retries it during reconciliation', async () => {
     const deleteServer = vi.fn()
       .mockRejectedValueOnce(new Error('hetzner timeout'))

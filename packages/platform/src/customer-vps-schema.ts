@@ -47,6 +47,9 @@ export const MachineIdParamSchema = z.object({
 
 export const DeployRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
+  channel: z.enum(['stable', 'canary', 'beta', 'dev']).optional(),
+}).refine((value) => !(value.version && value.channel), {
+  message: 'Specify either version or channel',
 });
 
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;

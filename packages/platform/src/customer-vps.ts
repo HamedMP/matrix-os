@@ -89,13 +89,18 @@ export interface DeployResult {
   results: Array<{ machineId: string; handle: string; status: 'triggered' | 'failed'; error?: string }>;
 }
 
+export interface DeployTarget {
+  version?: string;
+  channel?: 'stable' | 'canary' | 'beta' | 'dev';
+}
+
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
-  deploy(version?: string): Promise<DeployResult>;
+  deploy(target?: DeployTarget): Promise<DeployResult>;
   listAllMachines(): Promise<StatusResponse[]>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
@@ -633,7 +638,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return machines.map(statusResponse);
     },
 
-    async deploy(version?: string): Promise<DeployResult> {
+    async deploy(target?: DeployTarget): Promise<DeployResult> {
       const machines = await listRunningUserMachines(deps.db, 500);
       const results: DeployResult['results'] = [];
       let triggered = 0;
@@ -646,7 +651,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           return;
         }
         const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
-        const body = version ? JSON.stringify({ version }) : '{}';
+        const body = target?.version
+          ? JSON.stringify({ version: target.version })
+          : target?.channel
+            ? JSON.stringify({ channel: target.channel })
+            : '{}';
         try {
           const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, {
             method: 'POST',

@@ -134,7 +134,7 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       if (!parsed.success) {
         return c.json({ error: 'Invalid request' }, 400);
       }
-      return c.json(await deps.service.deploy(parsed.data.version), 200);
+      return c.json(await deps.service.deploy(parsed.data), 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/deploy');
     }
