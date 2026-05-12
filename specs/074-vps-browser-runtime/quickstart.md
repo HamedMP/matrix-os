@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 24+, pnpm 10, bun
+- Node.js 24+, pnpm 10.33.4, bun
 - Matrix OS dependencies installed from repo root:
 
 ```bash

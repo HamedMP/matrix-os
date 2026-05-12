@@ -187,6 +187,8 @@ Validation:
 
 Requests takeover of a profile locked by another physical device.
 
+Takeover MUST be atomic at the profile-lock source of truth: the old active session is marked recoverable/closed, `session.taken_over` is audited, and the replacement active session with the new `lockDeviceId` is installed in one repository transaction or equivalent compare-and-swap critical section. Stale, already-closed, or recoverable session ids are rejected.
+
 Request:
 
 ```json

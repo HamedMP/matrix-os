@@ -87,7 +87,7 @@ Fields:
 - `index`: tab order
 - `title`: bounded display title
 - `currentUrl`: normalized URL or redacted unavailable marker
-- `faviconUrl`: optional public URL, bounded
+- `faviconUrl`: optional public URL, bounded. Runtime MUST validate favicons with the same public-address URL policy used for navigation before storing or emitting; invalid, private, loopback, link-local, Matrix-control-plane, or otherwise blocked favicon URLs are stripped and clients render a safe placeholder.
 - `state`: `new` | `loading` | `ready` | `blocked` | `crashed` | `closed`
 - `blockedReason`: nullable bounded category
 - `deferredFeature`: nullable requested deferred feature category
@@ -243,7 +243,7 @@ Validation:
 
 ### BrowserRuntimeHealth
 
-Coarse runtime readiness state surfaced to UI and platform health.
+Runtime-only computed aggregate; not persisted to Postgres and not exported as owner data. Coarse runtime readiness state surfaced to UI and platform health.
 
 Fields:
 - `capabilityAvailable`: boolean
