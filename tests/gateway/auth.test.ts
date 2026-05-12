@@ -188,6 +188,16 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("lets browser session bootstrap reach route-level handoff token verification", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/browser/sessions", undefined, undefined, "10.0.0.4"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("rejects REST endpoint with query token (only WS allowed)", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

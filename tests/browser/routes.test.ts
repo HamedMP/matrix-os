@@ -214,6 +214,48 @@ describe("Browser gateway routes", () => {
     expect((await repo.listSessions("owner_1"))[0]?.state).toBe("closed");
   });
 
+  it("notifies active streams when profile clear closes sessions", async () => {
+    const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({ repo });
+    const streamHub = new BrowserStreamHub();
+    const closed: string[] = [];
+    const sent: string[] = [];
+    const app = createBrowserRoutes({
+      getOwnerId: () => "owner_1",
+      service,
+      streamHub,
+    });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
+    });
+    streamHub.register({
+      id: "stream_1",
+      ownerId: "owner_1",
+      sessionId: session.session.id,
+      sender: {
+        send(message) { sent.push(message); },
+        close() { closed.push("stream_1"); },
+      },
+    });
+
+    const clear = await app.request("/profiles/default/clear", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scopes: ["cookies"] }),
+    });
+
+    expect(clear.status).toBe(200);
+    expect(streamHub.size()).toBe(0);
+    expect(closed).toEqual(["stream_1"]);
+    expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({
+      type: "stream.error",
+      payload: { code: "session_closed" },
+    });
+  });
+
   it("accepts every profile clear scope including browser stores and saved passwords", async () => {
     const service = new BrowserService({ repo: new InMemoryBrowserRepository() });
     const scopes = [
@@ -513,7 +555,6 @@ describe("Browser gateway routes", () => {
     });
     const repo = new InMemoryBrowserRepository();
     const app = createBrowserRoutes({
-      getOwnerId: () => "owner_1",
       handoffPublicKey: publicKeyPem,
       service: new BrowserService({ repo }),
     });

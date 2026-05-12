@@ -3459,7 +3459,20 @@ export async function createGateway(config: GatewayConfig) {
         turnSecret: process.env.BROWSER_TURN_SECRET,
       });
       return {
-        onOpen(_evt, ws) {
+        async onOpen(_evt, ws) {
+          try {
+            const session = await browserService.getSession({ ownerId, sessionId });
+            if (!session || session.state !== "active") {
+              ws.send(JSON.stringify({ type: "stream.error", payload: { code: "session_closed" } }));
+              ws.close();
+              return;
+            }
+          } catch (err: unknown) {
+            console.error("[browser/ws] Session state check failed:", err instanceof Error ? err.message : String(err));
+            ws.send(JSON.stringify({ type: "stream.error", payload: { code: "unauthorized" } }));
+            ws.close();
+            return;
+          }
           ws.send(JSON.stringify({ type: "stream.accepted", payload: { sessionId } }));
           browserStreamHub.register({
             id: connectionId,

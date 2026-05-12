@@ -101,21 +101,31 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
 
   app.post("/sessions", bodyLimit({ maxSize: 16 * 1024 }), async (c) => {
     try {
-      const ownerId = opts.getOwnerId?.(c) ?? "local-owner";
       const input = sessionCreateSchema.parse(await c.req.json());
+      let ownerId = "local-owner";
       let targetUrl = input.targetUrl;
       if (input.handoffToken) {
         const publicKey = opts.handoffPublicKey ?? process.env.BROWSER_HANDOFF_PUBLIC_KEY;
         if (!publicKey) {
           return c.json({ error: { code: "handoff_unavailable", message: "Browser request is invalid." } }, 400);
         }
+        let expectedOwnerId: string | undefined;
+        try {
+          expectedOwnerId = opts.getOwnerId?.(c);
+        } catch (error: unknown) {
+          console.warn("[browser/routes] Handoff bootstrap proceeding without Matrix principal:", error instanceof Error ? error.message : String(error));
+          expectedOwnerId = undefined;
+        }
         const claims = await verifyBrowserHandoffToken({
           token: input.handoffToken,
           publicKey,
-          expectedOwnerId: ownerId,
+          ...(expectedOwnerId ? { expectedOwnerId } : {}),
           replayStore: handoffReplayStore,
         });
+        ownerId = claims.ownerId;
         targetUrl = claims.target;
+      } else {
+        ownerId = opts.getOwnerId?.(c) ?? "local-owner";
       }
       return c.json(await service.createSession({ ownerId, ...input, targetUrl }));
     } catch (error) {
@@ -190,8 +200,15 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
       const ownerId = opts.getOwnerId?.(c) ?? "local-owner";
       const profileName = profileNameSchema.parse(c.req.param("profileName"));
       const input = profileClearSchema.parse(await c.req.json());
+      const activeSessions = (await service.listSessions({ ownerId }))
+        .filter((session) => session.profileName === profileName && session.state === "active")
+        .map((session) => session.id);
+      const profile = await service.clearProfile({ ownerId, profileName, scopes: input.scopes });
+      for (const sessionId of activeSessions) {
+        opts.streamHub?.notifySessionClosed(sessionId, "closed");
+      }
       return c.json({
-        profile: await service.clearProfile({ ownerId, profileName, scopes: input.scopes }),
+        profile,
       });
     } catch (error) {
       const safe = toBrowserSafeError(error);
