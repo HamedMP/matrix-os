@@ -211,6 +211,7 @@ jobs:
       - name: Auto-deploy on security severity
         if: ${{ inputs.severity == 'security' }}
         env:
+          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
           PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
         run: |
           set -euo pipefail
@@ -223,7 +224,7 @@ jobs:
           sleep 60
           echo "Triggering deploy for $VERSION..."
           curl --fail --silent --show-error --max-time 30 \
-            -X POST "https://app.matrix-os.com/vps/deploy" \
+            -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
             -H "Authorization: Bearer ${PLATFORM_SECRET}" \
             -H "Content-Type: application/json" \
             -d "{\"version\":\"$VERSION\"}"

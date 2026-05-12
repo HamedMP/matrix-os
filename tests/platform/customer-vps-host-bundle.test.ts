@@ -81,7 +81,10 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('id: channel');
     expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ steps.channel.outputs.channel }}');
     expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ needs.build.outputs.channel }}');
+    expect(workflow).toContain("PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}");
+    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy"');
     expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
+    expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
   });
 
   it('update launcher triggers the sync agent update and rollback paths', () => {
