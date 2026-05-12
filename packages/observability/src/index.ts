@@ -10,7 +10,8 @@ type HonoHTTPExceptionLike = Error & {
   getResponse(): Response;
 };
 
-export type PostHogCaptureClient = Pick<PostHog, "captureException" | "flush" | "shutdown">;
+export type PostHogCaptureClient = Pick<PostHog, "captureException" | "flush" | "shutdown"> &
+  Partial<Pick<PostHog, "capture">>;
 
 export interface PostHogConfig {
   token: string;
@@ -36,6 +37,7 @@ export interface CaptureExceptionOptions {
 
 export interface PostHogErrorTracker {
   enabled: boolean;
+  captureEvent(event: string, options?: CaptureExceptionOptions): Promise<boolean>;
   captureException(error: unknown, options?: CaptureExceptionOptions): Promise<boolean>;
   captureHonoException(error: unknown, c: Context, properties?: PostHogProperties): Promise<boolean>;
   flush(): Promise<void>;
@@ -139,6 +141,26 @@ export function createPostHogErrorTracker(
 
   return {
     enabled: Boolean(config),
+    async captureEvent(event, captureOptions = {}) {
+      const posthog = getClient();
+      if (!posthog?.capture) return false;
+
+      try {
+        posthog.capture({
+          distinctId: sanitizeDistinctId(captureOptions.distinctId) ?? "matrix-platform",
+          event,
+          properties: sanitizeProperties({
+            service: options.service,
+            ...captureOptions.properties,
+          }),
+        });
+        await withTimeout(posthog.flush(), flushTimeoutMs);
+        return true;
+      } catch (err: unknown) {
+        logger.warn(`[posthog] Failed to capture event for ${options.service}: ${errorKind(err)}`);
+        return false;
+      }
+    },
     captureException,
     captureHonoException(error, c, properties) {
       return captureException(error, {

@@ -43,15 +43,62 @@ describe('customer VPS host bundle', () => {
     expect(releaseScript).toContain('bundleSha256: checksum');
   });
 
+  it('publish script keeps platform secrets out of curl arguments', () => {
+    const root = process.cwd();
+    const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
+
+    expect(publishScript).toContain('AUTH_HEADER_FILE="$(mktemp)"');
+    expect(publishScript).toContain('printf \'Authorization: Bearer %s\\n\' "$PLATFORM_SECRET" > "$AUTH_HEADER_FILE"');
+    expect(publishScript).toContain('-H "@$AUTH_HEADER_FILE"');
+    expect(publishScript).not.toContain('-H "Authorization: Bearer ${PLATFORM_SECRET}"');
+  });
+
+  it('publish script writes immutable R2 objects without overwriting existing keys', () => {
+    const root = process.cwd();
+    const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
+
+    expect(publishScript).toContain('upload_immutable_object()');
+    expect(publishScript).toContain('object_exists()');
+    expect(publishScript).toContain('verify_existing_bundle()');
+    expect(publishScript).toContain('verify_existing_checksum()');
+    expect(publishScript).toContain('object_size "$BUNDLE_KEY"');
+    expect(publishScript).toContain('bundle_object_sha256 "$BUNDLE_KEY"');
+    expect(publishScript).toContain('checksum_object_sha256 "$CHECKSUM_KEY"');
+    expect(publishScript).not.toContain('existing immutable bundle is missing checksum object');
+    expect(publishScript).toContain('aws s3api put-object');
+    expect(publishScript).toContain('--if-none-match');
+    expect(publishScript).toContain('--metadata "sha256=$SHA256"');
+    expect(publishScript).toContain('upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"');
+    expect(publishScript).toContain('upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"');
+    expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
+  });
+
+  it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('channel: ${{ steps.channel.outputs.channel }}');
+    expect(workflow).toContain('id: channel');
+    expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ steps.channel.outputs.channel }}');
+    expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ needs.build.outputs.channel }}');
+    expect(workflow).toContain("PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}");
+    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy"');
+    expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
+    expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
+  });
+
   it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
 
     expect(updater).toContain('/opt/matrix/app/.update-available.json');
+    expect(updater).toContain('/opt/matrix/app/.update-channel');
+    expect(updater).toContain('/opt/matrix/app/.update-version');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
+    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback]');
+    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|<version>]');
   });
 
   it('sync agent replaces the app tree with root permissions', () => {
@@ -64,6 +111,16 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
     expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('prepare_triggered_update');
+    expect(syncAgent).toContain('release_url_for_version');
+    expect(syncAgent).toContain('release_url_for_channel');
+    expect(syncAgent).toContain('url="$(manifest_url)"');
+    expect(syncAgent).toContain('No update available on ${target} — nothing to apply');
+    expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
+    expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
+    expect(syncAgent).toContain('Update failed — will retry on next trigger');
+    expect(syncAgent).toContain('Update (via SIGUSR1) failed — will retry on next trigger');
+    expect(syncAgent).toContain('PLATFORM_INTERNAL_URL:-https://app.matrix-os.com');
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');

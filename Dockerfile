@@ -15,7 +15,7 @@ RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 WORKDIR /app
 
 # Copy only dependency manifests -- changes here bust the install cache
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/observability/package.json packages/observability/

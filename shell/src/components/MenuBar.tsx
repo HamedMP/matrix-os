@@ -224,8 +224,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
     { separator: true },
     { label: "Enter Full Screen", shortcut: "⌃⌘F", action: () => {
       if (!focusedWindow) return;
-      const el = document.querySelector(`[data-window-id="${focusedWindow.id}"]`) as HTMLElement | null;
-      if (el) el.requestFullscreen?.();
+      useWindowManager.getState().toggleFullscreen(focusedWindow.id);
     }},
     { separator: true },
     { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },
