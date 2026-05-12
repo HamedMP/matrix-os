@@ -90,7 +90,7 @@ export default function RuntimeScreen() {
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             <ActivityIndicator color={colors.light.primary} />
           </View>
-        ) : appUrl && sessionReady ? (
+        ) : appUrl ? (
           <AppRuntimeFrame
             url={appUrl}
             title={title}
