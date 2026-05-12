@@ -37,6 +37,7 @@ export type BrowserServerMessage =
       mediaMode: "webrtc";
       audio: { muted: boolean };
       budgets: { maxWidth: number; maxHeight: number; maxFrameRate: number; maxBitrateKbps: number };
+      turnCredentialExpiresAt?: string;
     };
   }
   | BrowserMediaOffer
@@ -236,6 +237,20 @@ export class BrowserStreamController {
     const message = parseBrowserWsMessage(raw);
     if (message.type === "stream.hello") {
       this.focusedSurfaceId ??= message.payload.surfaceId;
+      if (this.opts.turnUrls && this.opts.turnUrls.length > 0 && !this.opts.turnSecret) {
+        return [{
+          type: "stream.error",
+          payload: { code: "media_policy", message: "Browser media relay is unavailable." },
+        }];
+      }
+      const turnCredential = this.opts.turnUrls && this.opts.turnUrls.length > 0
+        ? createEphemeralTurnCredential({
+          ownerId: this.opts.ownerId,
+          sessionId: this.opts.sessionId,
+          urls: this.opts.turnUrls,
+          secret: this.opts.turnSecret as string,
+        })
+        : undefined;
       const messages: BrowserServerMessage[] = [
         {
           type: "stream.ready",
@@ -251,18 +266,14 @@ export class BrowserStreamController {
               maxFrameRate: DEFAULT_BROWSER_MEDIA_BUDGET.maxFrameRate,
               maxBitrateKbps: DEFAULT_BROWSER_MEDIA_BUDGET.maxBitrateKbps,
             },
+            ...(turnCredential ? { turnCredentialExpiresAt: turnCredential.expiresAt } : {}),
           },
         },
       ];
-      if (this.opts.turnUrls && this.opts.turnUrls.length > 0) {
+      if (turnCredential) {
         messages.push(createBrowserMediaOffer({
           sdp: this.opts.createOfferSdp?.() ?? "v=0\r\ns=Matrix Browser\r\nt=0 0\r\n",
-          turn: createEphemeralTurnCredential({
-            ownerId: this.opts.ownerId,
-            sessionId: this.opts.sessionId,
-            urls: this.opts.turnUrls,
-            secret: this.opts.turnSecret,
-          }),
+          turn: turnCredential,
         }));
       }
       messages.push({

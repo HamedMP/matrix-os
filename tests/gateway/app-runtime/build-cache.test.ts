@@ -72,6 +72,15 @@ describe("build-cache", () => {
       expect(after).not.toBe(before);
     });
 
+    it("recurses root-relative double-star globs", async () => {
+      await mkdir(join(tmpDir, "pages"), { recursive: true });
+      await writeFile(join(tmpDir, "pages", "index.ts"), "export const page = 1;");
+      const before = await hashSources(tmpDir, ["**/*.ts"]);
+      await writeFile(join(tmpDir, "pages", "index.ts"), "export const page = 2;");
+      const after = await hashSources(tmpDir, ["**/*.ts"]);
+      expect(after).not.toBe(before);
+    });
+
     it("follows symlinked source directories", async () => {
       await mkdir(join(tmpDir, "real-src"), { recursive: true });
       await writeFile(join(tmpDir, "real-src", "index.ts"), "export const value = 1;");

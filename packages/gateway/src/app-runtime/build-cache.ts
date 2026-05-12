@@ -54,7 +54,7 @@ async function listFilesForPattern(appDir: string, pattern: string): Promise<str
   const staticPrefix = pattern.slice(0, wildcardIndex);
   const slashIndex = staticPrefix.lastIndexOf("/");
   if (slashIndex === -1) {
-    return listFiles(appDir, "", false);
+    return listFiles(appDir, "", pattern.includes("**"));
   }
   const root = staticPrefix.slice(0, slashIndex);
   return listFiles(appDir, root, pattern.includes("**"));

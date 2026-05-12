@@ -3460,13 +3460,13 @@ export async function createGateway(config: GatewayConfig) {
       });
       return {
         onOpen(_evt, ws) {
+          ws.send(JSON.stringify({ type: "stream.accepted", payload: { sessionId } }));
           browserStreamHub.register({
             id: connectionId,
             ownerId,
             sessionId,
             sender: ws,
           });
-          ws.send(JSON.stringify({ type: "stream.accepted", payload: { sessionId } }));
         },
         onMessage(evt, ws) {
           try {

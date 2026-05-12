@@ -446,6 +446,12 @@ describe("Browser gateway routes", () => {
         state: "complete",
         filename: "report.pdf",
       })],
+      nextCursor: null,
+    });
+
+    await expect((await app.request("/downloads?limit=1&cursor=0")).json()).resolves.toEqual({
+      downloads: [expect.objectContaining({ id: download.id })],
+      nextCursor: null,
     });
 
     const audit = await app.request("/audit?limit=2");
@@ -489,7 +495,8 @@ describe("Browser gateway routes", () => {
 
     const deleted = await app.request(`/downloads/${download.id}`, { method: "DELETE" });
     expect(deleted.status).toBe(200);
-    await expect((await app.request("/downloads")).json()).resolves.toEqual({ downloads: [] });
+    await expect((await app.request("/downloads")).json()).resolves.toEqual({ downloads: [], nextCursor: null });
+    expect((await repo.listAuditEvents("owner_1")).map((event) => event.eventType)).toContain("download.deleted");
   });
 
   it("verifies owner VPS handoff tokens before bootstrapping sessions", async () => {

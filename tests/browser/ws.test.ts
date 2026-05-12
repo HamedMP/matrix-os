@@ -73,6 +73,7 @@ describe("Browser stream protocol", () => {
           protocolVersion: BROWSER_STREAM_PROTOCOL_VERSION,
           sessionId: "session_1",
           mediaMode: "webrtc",
+          turnCredentialExpiresAt: expect.any(String),
         }),
       },
       {
@@ -91,6 +92,20 @@ describe("Browser stream protocol", () => {
       {
         type: "surface.focused",
         payload: { surfaceId: "surface_1" },
+      },
+    ]);
+  });
+
+  it("rejects TURN configuration without a relay secret", () => {
+    const controller = new BrowserStreamController({
+      ownerId: "owner_1",
+      sessionId: "session_1",
+      turnUrls: ["turn:turn.matrix.test:3478?transport=udp"],
+    });
+    expect(controller.handleClientMessage(JSON.stringify(hello))).toEqual([
+      {
+        type: "stream.error",
+        payload: { code: "media_policy", message: "Browser media relay is unavailable." },
       },
     ]);
   });

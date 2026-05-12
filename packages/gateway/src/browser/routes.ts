@@ -66,11 +66,17 @@ const auditQuerySchema = z.object({
     "download.started",
     "download.completed",
     "download.failed",
+    "download.deleted",
     "profile.cleared",
     "permission.granted",
     "permission.revoked",
     "agent.access",
   ]).optional(),
+});
+
+const downloadsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().regex(/^\d+$/).transform((value) => Number.parseInt(value, 10)).optional(),
 });
 
 export interface BrowserRoutesOptions {
@@ -194,8 +200,24 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
   });
 
   app.get("/downloads", async (c) => {
-    const ownerId = opts.getOwnerId?.(c) ?? "local-owner";
-    return c.json({ downloads: await service.listDownloads({ ownerId }) });
+    try {
+      const ownerId = opts.getOwnerId?.(c) ?? "local-owner";
+      const input = downloadsQuerySchema.parse({
+        limit: c.req.query("limit"),
+        cursor: c.req.query("cursor"),
+      });
+      const start = input.cursor ?? 0;
+      const downloads = await service.listDownloads({ ownerId });
+      const page = downloads.slice(start, start + input.limit);
+      const nextOffset = start + input.limit;
+      return c.json({
+        downloads: page,
+        nextCursor: nextOffset < downloads.length ? String(nextOffset) : null,
+      });
+    } catch (error) {
+      const safe = toBrowserSafeError(error);
+      return c.json({ error: { code: safe.code, message: safe.message } }, 400);
+    }
   });
 
   app.delete("/downloads/:downloadId", bodyLimit({ maxSize: 1024 }), async (c) => {
