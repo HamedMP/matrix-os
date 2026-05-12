@@ -12,7 +12,7 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@10.6.2",
+  "packageManager": "pnpm@10.33.4",
   "scripts": {
     "postinstall": "node scripts/fix-node-pty-perms.mjs",
     "dev": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && (bun run --filter '@matrix-os/gateway' dev & bun run --filter '@matrix-os/proxy' dev & bun run --filter './shell' dev)",

@@ -5,3 +5,7 @@ packages:
   - "www"
   - "marketing"
   - "marketing/web"
+
+# Delay newly published package versions by 7 days (10,080 minutes) to reduce
+# exposure to short-lived compromised npm releases.
+minimumReleaseAge: 10080
