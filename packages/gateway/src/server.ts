@@ -229,7 +229,8 @@ export type ServerMessage =
   | { type: "sync:peer-join"; peerId: string; hostname: string; platform: string }
   | { type: "sync:peer-leave"; peerId: string }
   | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
-  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
+  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string }
+  | { type: "browser:screenshot"; path: string };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -1234,6 +1235,9 @@ export async function createGateway(config: GatewayConfig) {
 
   watcher.on((change) => {
     broadcast(change);
+    if (change.event === "add" && change.path.startsWith("data/screenshots/") && change.path.endsWith(".png")) {
+      broadcast({ type: "browser:screenshot", path: change.path });
+    }
     if (change.path === "system/setup-plan.json") {
       provisioner.onSetupPlanChange().catch((err: Error) => {
         broadcastError(`Provisioning error: ${err.message}`);

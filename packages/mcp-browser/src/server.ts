@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
 import { createBrowserTool, type BrowserAction } from "./browser-tool.js";
@@ -112,16 +113,29 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
             const parts: string[] = [];
             if (result.title) parts.push(`Title: ${result.title}`);
             if (result.url) parts.push(`URL: ${result.url}`);
-            if (result.screenshotPath) parts.push(`Saved: ${result.screenshotPath}`);
+            if (result.screenshotPath) parts.push(`Screenshot: ${result.screenshotPath}`);
             if (result.content) parts.push(result.content);
             if (result.error) parts.push(`Error: ${result.error}`);
 
-            return {
-              content: [{
-                type: "text" as const,
-                text: parts.length > 0 ? parts.join("\n") : `${result.action}: ${result.success ? "OK" : "FAILED"}`,
-              }],
-            };
+            const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [{
+              type: "text" as const,
+              text: parts.length > 0 ? parts.join("\n") : `${result.action}: ${result.success ? "OK" : "FAILED"}`,
+            }];
+
+            if (result.screenshotPath) {
+              try {
+                const imgBuf = await readFile(result.screenshotPath);
+                content.push({
+                  type: "image" as const,
+                  data: imgBuf.toString("base64"),
+                  mimeType: "image/png",
+                });
+              } catch {
+                // screenshot file unreadable — text fallback is already included
+              }
+            }
+
+            return { content };
           } catch (e) {
             console.warn("[mcp-browser] Browser tool failed:", e instanceof Error ? e.message : String(e));
             return {

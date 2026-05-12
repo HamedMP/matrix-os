@@ -244,11 +244,18 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           const tree = await page.accessibility.snapshot() as AXNode | null;
           const snapshot = formatAccessibilityTree(tree);
 
+          const screenshotDir = join(opts.homePath, "data", "screenshots");
+          await mkdir(screenshotDir, { recursive: true, mode: 0o700 });
+          const ssFilename = `nav-${Date.now()}.png`;
+          const ssPath = join(screenshotDir, ssFilename);
+          await page.screenshot({ fullPage: false, path: ssPath });
+
           return {
             action,
             success: true,
             title,
             url,
+            screenshotPath: ssPath,
             content: wrapBrowserContent(snapshot),
           };
         }

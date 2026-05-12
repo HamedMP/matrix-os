@@ -22,6 +22,7 @@ export type ServerMessage =
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
   | { type: "data:change"; app: string; key: string }
+  | { type: "browser:screenshot"; path: string }
   | { type: "pong" };
 
 type MessageHandler = (msg: ServerMessage) => void;

@@ -505,6 +505,15 @@ const MessageItem = memo(function MessageItem({
             <CheckCircleIcon className="size-2.5 text-emerald-500/70" />
           )}
         </div>
+      ) : msg.role === "system" && msg.metadata?.screenshotPath ? (
+        <div className="rounded-lg overflow-hidden border border-border max-w-[280px] my-1">
+          <img
+            src={`/files/${msg.metadata.screenshotPath}`}
+            alt="Browser screenshot"
+            className="w-full h-auto"
+            loading="lazy"
+          />
+        </div>
       ) : msg.role === "system" ? (
         <div className="py-0.5 text-[10px] text-muted-foreground/60">
           {msg.content}
@@ -554,7 +563,7 @@ function ChatMessages({
   attachScrollRef: (el: HTMLDivElement | null) => void;
 }) {
   const visibleMessages = useMemo(
-    () => messages.filter((m) => m.role !== "system" || m.content.trim()),
+    () => messages.filter((m) => m.role !== "system" || m.content.trim() || m.metadata?.screenshotPath),
     [messages],
   );
 

@@ -167,6 +167,16 @@ export function reduceChat(
       });
       break;
     }
+    case "browser:screenshot": {
+      next.push({
+        id: newMsgId(),
+        role: "system",
+        content: "",
+        metadata: { screenshotPath: event.path },
+        timestamp: Date.now(),
+      });
+      break;
+    }
   }
 
   return next;

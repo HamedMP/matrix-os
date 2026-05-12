@@ -125,6 +125,15 @@ export function ChatPanel({
                       <span className="whitespace-pre-wrap">{msg.content}</span>
                     </MessageContent>
                   </Message>
+                ) : msg.role === "system" && msg.metadata?.screenshotPath ? (
+                  <div className="rounded-lg overflow-hidden border border-border max-w-[360px]">
+                    <img
+                      src={`/files/${msg.metadata.screenshotPath}`}
+                      alt="Browser screenshot"
+                      className="w-full h-auto"
+                      loading="lazy"
+                    />
+                  </div>
                 ) : msg.role === "system" ? (
                   <div className="text-xs px-3 py-1 rounded bg-background text-muted-foreground">
                     {msg.content}

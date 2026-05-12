@@ -30,6 +30,10 @@ const nextConfig: NextConfig = {
         source: "/icons/:path*",
         destination: `${gatewayUrl}/files/system/icons/:path*`,
       },
+      {
+        source: "/files/:path*",
+        destination: `${gatewayUrl}/files/:path*`,
+      },
     ];
   },
 };
