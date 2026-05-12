@@ -49,6 +49,7 @@ import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
+import { BrowserPanel } from "./BrowserPanel";
 import { ChatPopover } from "./ChatPopover";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
@@ -773,6 +774,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       addApp("Workspace", "__workspace__", "code");
       addApp("Files", "__file-browser__", "folder");
       addApp("Chat", "__chat__", "chat");
+      addApp("Browser", "__browser__", "globe");
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -1782,6 +1784,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                         />
                       )}
                     </div>
+                  ) : win.path === "__browser__" ? (
+                    <BrowserPanel />
                   ) : (
                     <AppViewer path={win.path} onOpenApp={openWindow} />
                   )}

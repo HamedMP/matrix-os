@@ -5,6 +5,7 @@ const BUILT_IN_APP_VALUES = [
   "__terminal__",
   "__file-browser__",
   "__chat__",
+  "__browser__",
 ] as const;
 
 export const DEFAULT_PINNED_APPS = Object.freeze([] as string[]);
@@ -23,6 +24,9 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["chat", "__chat__"],
   ["apps/chat/index.html", "__chat__"],
   ["/files/apps/chat/index.html", "__chat__"],
+  ["browser", "__browser__"],
+  ["apps/browser/index.html", "__browser__"],
+  ["/files/apps/browser/index.html", "__browser__"],
 ]);
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
@@ -30,6 +34,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
   ["__chat__", "Chat"],
+  ["__browser__", "Browser"],
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {

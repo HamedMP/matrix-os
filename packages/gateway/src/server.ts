@@ -3335,6 +3335,90 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(report);
   });
 
+  // ── Browser API (shared browser for user + agent) ──────────────────
+  let sharedBrowserContext: Awaited<ReturnType<typeof import("playwright").chromium.launchPersistentContext>> | null = null;
+  let sharedBrowserPage: import("playwright").Page | null = null;
+  const browserProfileDir = join(homePath, "data", "browser-profiles", "default");
+  const browserScreenshotDir = join(homePath, "data", "screenshots");
+
+  async function ensureSharedBrowser() {
+    if (sharedBrowserPage && !sharedBrowserPage.isClosed()) return sharedBrowserPage;
+    try {
+      const pw = await import("playwright");
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(browserProfileDir, { recursive: true });
+      mkdirSync(browserScreenshotDir, { recursive: true });
+      if (sharedBrowserContext) {
+        try { await sharedBrowserContext.close(); } catch {}
+      }
+      sharedBrowserContext = await pw.chromium.launchPersistentContext(browserProfileDir, {
+        headless: true,
+        serviceWorkers: "block",
+      });
+      sharedBrowserPage = sharedBrowserContext.pages()[0] ?? await sharedBrowserContext.newPage();
+      return sharedBrowserPage;
+    } catch (err: unknown) {
+      console.warn("[browser-api] Failed to launch browser:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
+  app.get("/api/browser/status", async (c) => {
+    if (!sharedBrowserPage || sharedBrowserPage.isClosed()) {
+      return c.json({ active: false });
+    }
+    return c.json({ active: true, url: sharedBrowserPage.url(), title: await sharedBrowserPage.title().catch(() => "") });
+  });
+
+  app.post("/api/browser/navigate", async (c) => {
+    const { url } = await c.req.json<{ url: string }>();
+    if (!url) return c.json({ error: "url is required" }, 400);
+    const page = await ensureSharedBrowser();
+    if (!page) return c.json({ error: "Browser unavailable" }, 503);
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+      const ssPath = join(browserScreenshotDir, `user-${Date.now()}.png`);
+      await page.screenshot({ fullPage: false, path: ssPath });
+      const relPath = `data/screenshots/${ssPath.split("/").pop()}`;
+      broadcast({ type: "browser:screenshot", path: relPath });
+      return c.json({ ok: true, url: page.url(), title: await page.title(), screenshotPath: relPath });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : "Navigation failed" }, 500);
+    }
+  });
+
+  app.get("/api/browser/screenshot", async (c) => {
+    const page = sharedBrowserPage;
+    if (!page || page.isClosed()) return c.json({ error: "No active browser" }, 404);
+    try {
+      const buffer = await page.screenshot({ fullPage: false });
+      return new Response(buffer, { headers: { "content-type": "image/png", "cache-control": "no-cache" } });
+    } catch (err: unknown) {
+      return c.json({ error: "Screenshot failed" }, 500);
+    }
+  });
+
+  app.post("/api/browser/click", async (c) => {
+    const { x, y } = await c.req.json<{ x: number; y: number }>();
+    const page = sharedBrowserPage;
+    if (!page || page.isClosed()) return c.json({ error: "No active browser" }, 404);
+    await page.mouse.click(x, y);
+    const ssPath = join(browserScreenshotDir, `click-${Date.now()}.png`);
+    await page.screenshot({ fullPage: false, path: ssPath });
+    const relPath = `data/screenshots/${ssPath.split("/").pop()}`;
+    broadcast({ type: "browser:screenshot", path: relPath });
+    return c.json({ ok: true, url: page.url(), screenshotPath: relPath });
+  });
+
+  app.post("/api/browser/close", async (_c) => {
+    if (sharedBrowserContext) {
+      try { await sharedBrowserContext.close(); } catch {}
+      sharedBrowserContext = null;
+      sharedBrowserPage = null;
+    }
+    return _c.json({ ok: true });
+  });
+
   app.get("/api/system/info", (c) => {
     const info = getSystemInfo(homePath);
     const today = new Date().toISOString().slice(0, 10);

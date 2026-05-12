@@ -10,6 +10,7 @@ import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
+import { BrowserPanel } from "../BrowserPanel";
 import { useChatContext } from "@/stores/chat-context";
 import { Minus, Maximize2, ExternalLink } from "lucide-react";
 import { openAppInStandaloneTab } from "@/lib/open-app-tab";
@@ -469,6 +470,8 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
               />
             )}
           </div>
+        ) : win.path === "__browser__" ? (
+          <BrowserPanel />
         ) : (
           <AppViewer path={win.path} />
         )}

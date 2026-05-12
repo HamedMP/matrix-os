@@ -34,6 +34,10 @@ const nextConfig: NextConfig = {
         source: "/files/:path*",
         destination: `${gatewayUrl}/files/:path*`,
       },
+      {
+        source: "/api/browser/:path*",
+        destination: `${gatewayUrl}/api/browser/:path*`,
+      },
     ];
   },
 };
