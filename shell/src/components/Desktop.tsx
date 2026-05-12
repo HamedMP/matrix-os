@@ -446,21 +446,19 @@ function FullscreenOverlay({
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const prevWin = useRef<AppWindow | null>(null);
-  const exitingRef = useRef(false);
 
   useEffect(() => {
     if (win && !prevWin.current) {
-      exitingRef.current = false;
       setMounted(true);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setVisible(true));
       });
+    } else if (win && prevWin.current && win.id !== prevWin.current.id) {
+      setVisible(true);
     } else if (!win && prevWin.current) {
-      exitingRef.current = true;
       setVisible(false);
       const timer = setTimeout(() => {
         setMounted(false);
-        exitingRef.current = false;
       }, 350);
       prevWin.current = win;
       return () => clearTimeout(timer);
@@ -489,6 +487,8 @@ function FullscreenOverlay({
           <WorkspaceApp />
         ) : target.path === "__file-browser__" ? (
           <FileBrowser windowId={target.id} />
+        ) : target.path === "__preview-window__" ? (
+          <PreviewWindow />
         ) : target.path === "__chat__" ? (
           <div className="h-full overflow-hidden">
             {chat && (

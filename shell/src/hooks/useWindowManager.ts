@@ -246,6 +246,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           closedPaths: newClosed,
           closedLayouts: newLayouts,
           focusedWindowId: state.focusedWindowId === id ? null : state.focusedWindowId,
+          fullscreenWindowId: state.fullscreenWindowId === id ? null : state.fullscreenWindowId,
         };
       });
     },
