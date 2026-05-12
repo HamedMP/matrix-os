@@ -41,4 +41,5 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+const rawArgs = process.argv.slice(2);
+runMain(main, { rawArgs: rawArgs.length === 0 ? ["--help"] : rawArgs });
