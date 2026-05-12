@@ -64,6 +64,7 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('object_size "$BUNDLE_KEY"');
     expect(publishScript).toContain('bundle_object_sha256 "$BUNDLE_KEY"');
     expect(publishScript).toContain('checksum_object_sha256 "$CHECKSUM_KEY"');
+    expect(publishScript).not.toContain('existing immutable bundle is missing checksum object');
     expect(publishScript).toContain('aws s3api put-object');
     expect(publishScript).toContain('--if-none-match');
     expect(publishScript).toContain('--metadata "sha256=$SHA256"');

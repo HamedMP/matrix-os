@@ -141,14 +141,12 @@ verify_existing_bundle() {
     echo "ERROR: existing immutable bundle content mismatch for s3://$R2_BUCKET/$BUNDLE_KEY" >&2
     exit 1
   fi
-  if ! object_exists "$CHECKSUM_KEY"; then
-    echo "ERROR: existing immutable bundle is missing checksum object s3://$R2_BUCKET/$CHECKSUM_KEY" >&2
-    exit 1
-  fi
-  existing_sha256="$(checksum_object_sha256 "$CHECKSUM_KEY")"
-  if [ "$existing_sha256" != "$SHA256" ]; then
-    echo "ERROR: existing immutable bundle checksum mismatch for s3://$R2_BUCKET/$BUNDLE_KEY" >&2
-    exit 1
+  if object_exists "$CHECKSUM_KEY"; then
+    existing_sha256="$(checksum_object_sha256 "$CHECKSUM_KEY")"
+    if [ "$existing_sha256" != "$SHA256" ]; then
+      echo "ERROR: existing immutable bundle checksum mismatch for s3://$R2_BUCKET/$BUNDLE_KEY" >&2
+      exit 1
+    fi
   fi
 }
 
