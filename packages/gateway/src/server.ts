@@ -64,6 +64,8 @@ import {
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
+import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
+import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
@@ -511,6 +513,10 @@ export async function createGateway(config: GatewayConfig) {
   const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
+  const geminiLiveConnection: GeminiLiveConnection =
+    internalPlatformUrl && internalPlatformToken && internalHandle
+      ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
+      : process.env.GEMINI_API_KEY ?? "";
 
   if (((s3AccessKey && s3SecretKey) || (internalPlatformUrl && internalPlatformToken && internalHandle)) && kyselyInstance) {
     try {
@@ -2124,7 +2130,7 @@ export async function createGateway(config: GatewayConfig) {
   // --- Onboarding WebSocket ---
   const onboardingHandler = createOnboardingHandler({
     homePath,
-    geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+    geminiConnection: geminiLiveConnection,
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
   });
 
@@ -2197,7 +2203,7 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => {
       const vocalHandler = createVocalHandler({
         homePath,
-        geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+        geminiConnection: geminiLiveConnection,
         // VOCAL_GEMINI_MODEL keeps Aoede independently configurable from
         // onboarding; fall back to ONBOARDING_GEMINI_MODEL so existing
         // deployments don't regress until operators set the vocal-specific
@@ -3093,29 +3099,10 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(await listApps(homePath));
   });
 
-  function resolveSystemIconUrl(requestedFile: string): string | null {
-    const match = requestedFile.match(/^([a-zA-Z0-9_-]+)\.(png|svg)$/);
-    if (!match) return null;
-    const [, stem, requestedExt] = match;
-    const candidates = [
-      `${stem}.${requestedExt}`,
-      `${stem}.png`,
-      `${stem}.svg`,
-      "game-center.png",
-      "game.svg",
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(join(homePath, "system/icons", candidate))) {
-        return `/files/system/icons/${candidate}`;
-      }
-    }
-    return null;
-  }
-
-  const redirectIconRequest = (c: Context) => {
+  const redirectIconRequest = async (c: Context) => {
     const file = c.req.param("file");
     if (!file) return c.text("Icon not found", 404);
-    const target = resolveSystemIconUrl(file);
+    const target = await resolveSystemIconUrl(homePath, file);
     if (!target) return c.text("Icon not found", 404);
     return c.redirect(target, 307);
   };
@@ -3149,10 +3136,18 @@ export async function createGateway(config: GatewayConfig) {
     if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
       return c.json({ error: "Invalid slug" }, 400);
     }
+    const shippedDefaultIcon = await resolveDefaultAppIconUrl(homePath, slug);
+    if (shippedDefaultIcon) {
+      return c.json({
+        iconUrl: shippedDefaultIcon,
+        generated: false,
+        shipped: true,
+      });
+    }
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
       return c.json({
-        iconUrl: resolveSystemIconUrl(`${slug}.png`) ?? "/files/system/icons/game.svg",
+        iconUrl: (await resolveSystemIconUrl(homePath, `${slug}.png`)) ?? "/files/system/icons/game.svg",
         generated: false,
       });
     }
@@ -3205,52 +3200,9 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.post("/api/icons/regenerate-all", async (c) => {
-    const geminiKey = process.env.GEMINI_API_KEY ?? "";
-    if (!geminiKey) {
-      return c.json({ regenerated: 0, failed: [], generated: false });
-    }
-
-    let iconStyle = "";
-    try {
-      const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
-      iconStyle = desktop.iconStyle ?? "";
-    } catch (err: unknown) {
-      logBestEffortFailure("Failed to read desktop icon style", err);
-    }
-    if (!iconStyle) {
-      iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
-    }
-
-    const iconsDir = join(homePath, "system/icons");
-    if (!existsSync(iconsDir)) {
-      return c.json({ regenerated: 0, failed: [] });
-    }
-
-    const pngFiles = readdirSync(iconsDir).filter((f: string) => f.endsWith(".png"));
-    const client = createImageClient(geminiKey);
-    let regenerated = 0;
-    const failed: string[] = [];
-
-    for (const file of pngFiles) {
-      const slug = file.replace(/\.png$/, "");
-      const name = slug.replace(/-/g, " ").replace(/_/g, " ");
-      const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
-      try {
-        await client.generateImage(prompt, {
-          aspectRatio: "1:1",
-          imageDir: iconsDir,
-          saveAs: `${slug}.png`,
-        });
-        regenerated++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        console.error(`Icon regeneration failed for "${slug}":`, msg);
-        failed.push(slug);
-      }
-    }
-
-    return c.json({ regenerated, failed });
+  app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
+    void c;
+    return c.json({ regenerated: 0, failed: [], generated: false, reason: "default_icons_are_shipped" });
   });
 
   app.get("/api/cron", (c) => {

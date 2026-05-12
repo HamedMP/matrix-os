@@ -58,6 +58,7 @@ import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
+import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -2215,9 +2216,6 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   if (process.env.CLERK_SECRET_KEY) {
     extraEnv.push(`CLERK_SECRET_KEY=${process.env.CLERK_SECRET_KEY}`);
   }
-  if (process.env.GEMINI_API_KEY) {
-    extraEnv.push(`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`);
-  }
   for (const key of [
     'MATRIX_HOME_MIRROR',
     'POSTHOG_TOKEN',
@@ -2535,6 +2533,22 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   // WebSocket upgrade handler
   (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
+    try {
+      const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
+        req,
+        socket: socket as Socket,
+        head,
+        db,
+        platformSecret: PLATFORM_SECRET,
+        geminiApiKey: process.env.GEMINI_API_KEY ?? '',
+      });
+      if (handledInternalGeminiLive) return;
+    } catch (err: unknown) {
+      console.warn('[platform] internal Gemini Live proxy failed:', describeError(err));
+      socket.destroy();
+      return;
+    }
+
     const host = getWebSocketUpgradeHost(req.headers.host, req.headers['x-forwarded-host']);
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
