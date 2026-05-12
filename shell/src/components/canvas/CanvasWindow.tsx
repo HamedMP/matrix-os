@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasSettings } from "@/stores/canvas-settings";
@@ -50,7 +49,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
-  const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
   const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
   const isFocused = focusedWindowId === win.id;
   const isFullscreen = fullscreenWindowId === win.id;
@@ -397,56 +395,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
       {titleBarInner}
     </div>
   );
-
-  if (isFullscreen) {
-    return createPortal(
-      <div
-        className="fixed inset-0 z-[100] bg-background overflow-hidden"
-        style={{ transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)" }}
-      >
-        {win.path.startsWith("__terminal__") ? (
-          <TerminalApp />
-        ) : win.path === "__workspace__" ? (
-          <WorkspaceApp />
-        ) : win.path === "__file-browser__" ? (
-          <FileBrowser windowId={win.id} />
-        ) : win.path === "__preview-window__" ? (
-          <PreviewWindow />
-        ) : win.path === "__chat__" ? (
-          <div className="h-full overflow-hidden">
-            {chatState && (
-              <ChatApp
-                messages={chatState.messages}
-                sessionId={chatState.sessionId}
-                busy={chatState.busy}
-                connected={chatState.connected}
-                conversations={chatState.conversations}
-                onNewChat={chatState.newChat}
-                onSwitchConversation={chatState.switchConversation}
-                onSubmit={chatState.submitMessage}
-              />
-            )}
-          </div>
-        ) : (
-          <AppViewer path={win.path} />
-        )}
-        <div className="group/fsexit fixed top-0 left-0 z-[101] w-14 h-3 hover:h-10 transition-all duration-300">
-          <button
-            onClick={wmExitFullscreen}
-            className="ml-2.5 mt-0.5 group-hover/fsexit:mt-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-foreground/[0.03] group-hover/fsexit:bg-foreground/5 backdrop-blur-md border border-foreground/[0.04] group-hover/fsexit:border-foreground/[0.08] text-foreground/20 group-hover/fsexit:text-foreground/50 hover:!text-foreground/70 hover:!bg-foreground/10 transition-all duration-300 cursor-pointer"
-            aria-label="Exit fullscreen"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="opacity-40 group-hover/fsexit:opacity-100 transition-opacity duration-300">
-              <path d="M1 5h3.5V1.5" />
-              <path d="M11 7H7.5v3.5" />
-            </svg>
-            <span className="text-[10px] font-medium tracking-wide opacity-0 group-hover/fsexit:opacity-100 transition-opacity duration-300">Exit</span>
-          </button>
-        </div>
-      </div>,
-      document.body,
-    );
-  }
 
   // Zoomed-out preview: icon card with title bar above
   if (!isInteractive) {
