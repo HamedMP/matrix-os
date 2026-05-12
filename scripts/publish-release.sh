@@ -104,12 +104,69 @@ print(json.dumps({
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
+object_exists() {
+  local key="$1"
+  aws s3api head-object --bucket "$R2_BUCKET" --key "$key" "${AWS_ARGS[@]}" >/dev/null 2>&1
+}
+
+object_size() {
+  local key="$1"
+  aws s3api head-object \
+    --bucket "$R2_BUCKET" \
+    --key "$key" \
+    --query ContentLength \
+    --output text \
+    "${AWS_ARGS[@]}"
+}
+
+checksum_object_sha256() {
+  local key="$1"
+  aws s3 cp "s3://$R2_BUCKET/$key" - "${AWS_ARGS[@]}" 2>/dev/null | awk '{print $1}'
+}
+
+bundle_object_sha256() {
+  local key="$1"
+  aws s3 cp "s3://$R2_BUCKET/$key" - "${AWS_ARGS[@]}" 2>/dev/null | sha256sum | awk '{print $1}'
+}
+
+verify_existing_bundle() {
+  local existing_size existing_sha256 existing_bundle_sha256
+  existing_size="$(object_size "$BUNDLE_KEY")"
+  if [ "$existing_size" != "$SIZE" ]; then
+    echo "ERROR: existing immutable bundle size mismatch for s3://$R2_BUCKET/$BUNDLE_KEY" >&2
+    exit 1
+  fi
+  existing_bundle_sha256="$(bundle_object_sha256 "$BUNDLE_KEY")"
+  if [ "$existing_bundle_sha256" != "$SHA256" ]; then
+    echo "ERROR: existing immutable bundle content mismatch for s3://$R2_BUCKET/$BUNDLE_KEY" >&2
+    exit 1
+  fi
+  if ! object_exists "$CHECKSUM_KEY"; then
+    echo "ERROR: existing immutable bundle is missing checksum object s3://$R2_BUCKET/$CHECKSUM_KEY" >&2
+    exit 1
+  fi
+  existing_sha256="$(checksum_object_sha256 "$CHECKSUM_KEY")"
+  if [ "$existing_sha256" != "$SHA256" ]; then
+    echo "ERROR: existing immutable bundle checksum mismatch for s3://$R2_BUCKET/$BUNDLE_KEY" >&2
+    exit 1
+  fi
+}
+
+verify_existing_checksum() {
+  local existing_sha256
+  existing_sha256="$(checksum_object_sha256 "$CHECKSUM_KEY")"
+  if [ "$existing_sha256" != "$SHA256" ]; then
+    echo "ERROR: existing immutable checksum mismatch for s3://$R2_BUCKET/$CHECKSUM_KEY" >&2
+    exit 1
+  fi
+}
+
 upload_immutable_object() {
   local source_file="$1"
   local key="$2"
   local content_type="$3"
 
-  if aws s3api head-object --bucket "$R2_BUCKET" --key "$key" "${AWS_ARGS[@]}" >/dev/null 2>&1; then
+  if object_exists "$key"; then
     echo "  Immutable object already exists: s3://$R2_BUCKET/$key"
     return 0
   fi
@@ -119,6 +176,7 @@ upload_immutable_object() {
     --key "$key" \
     --body "$source_file" \
     --content-type "$content_type" \
+    --metadata "sha256=$SHA256" \
     --if-none-match '*' \
     "${AWS_ARGS[@]}" >/dev/null
 }
@@ -151,8 +209,18 @@ trap cleanup_temp_files EXIT
 printf '%s  matrix-host-bundle.tar.gz\n' "$SHA256" > "$CHECKSUM_FILE"
 
 echo "  Uploading versioned archive..."
-upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"
-upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
+if object_exists "$BUNDLE_KEY"; then
+  echo "  Verifying existing immutable archive..."
+  verify_existing_bundle
+else
+  upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"
+fi
+if object_exists "$CHECKSUM_KEY"; then
+  echo "  Verifying existing immutable checksum..."
+  verify_existing_checksum
+else
+  upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
+fi
 
 echo "  Registering release in platform DB..."
 : "${PLATFORM_SECRET:?set PLATFORM_SECRET}"

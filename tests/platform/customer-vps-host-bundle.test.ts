@@ -58,9 +58,15 @@ describe('customer VPS host bundle', () => {
     const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
 
     expect(publishScript).toContain('upload_immutable_object()');
-    expect(publishScript).toContain('aws s3api head-object --bucket "$R2_BUCKET" --key "$key"');
+    expect(publishScript).toContain('object_exists()');
+    expect(publishScript).toContain('verify_existing_bundle()');
+    expect(publishScript).toContain('verify_existing_checksum()');
+    expect(publishScript).toContain('object_size "$BUNDLE_KEY"');
+    expect(publishScript).toContain('bundle_object_sha256 "$BUNDLE_KEY"');
+    expect(publishScript).toContain('checksum_object_sha256 "$CHECKSUM_KEY"');
     expect(publishScript).toContain('aws s3api put-object');
     expect(publishScript).toContain('--if-none-match');
+    expect(publishScript).toContain('--metadata "sha256=$SHA256"');
     expect(publishScript).toContain('upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"');
     expect(publishScript).toContain('upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"');
     expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
@@ -97,6 +103,8 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('No update available on ${target} — nothing to apply');
     expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
     expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
+    expect(syncAgent).toContain('Update failed — will retry on next trigger');
+    expect(syncAgent).toContain('Update (via SIGUSR1) failed — will retry on next trigger');
     expect(syncAgent).toContain('PLATFORM_INTERNAL_URL:-https://app.matrix-os.com');
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
