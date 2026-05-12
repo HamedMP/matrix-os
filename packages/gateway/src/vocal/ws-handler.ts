@@ -1,4 +1,10 @@
-import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "../onboarding/gemini-live.js";
+import {
+  createGeminiLiveClient,
+  hasGeminiLiveConnection,
+  type GeminiLiveClient,
+  type GeminiEvent,
+  type GeminiLiveConnection,
+} from "../onboarding/gemini-live.js";
 import { VOCAL_SYSTEM_INSTRUCTION } from "./prompt.js";
 import { loadProfile, appendFact, renderProfileForPrompt } from "./profile.js";
 import { z } from "zod/v4";
@@ -69,7 +75,8 @@ interface DelegationSnapshot {
 
 export interface VocalDeps {
   homePath: string;
-  geminiApiKey: string;
+  geminiApiKey?: string;
+  geminiConnection?: GeminiLiveConnection;
   geminiModel: string;
 }
 
@@ -400,7 +407,8 @@ export function createVocalHandler(deps: VocalDeps) {
     audioMode = audioFormat === "pcm16";
     audioBytesReceived = 0;
 
-    if (!deps.geminiApiKey) {
+    const geminiConnection = deps.geminiConnection ?? deps.geminiApiKey ?? "";
+    if (!hasGeminiLiveConnection(geminiConnection)) {
       send({ type: "error", message: "Voice unavailable", retryable: false });
       return;
     }
@@ -418,7 +426,7 @@ export function createVocalHandler(deps: VocalDeps) {
     let client: GeminiLiveClient | null = null;
     try {
       closeGemini();
-      client = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel, {
+      client = createGeminiLiveClient(geminiConnection, deps.geminiModel, {
         systemInstruction,
         tools: VOCAL_TOOLS,
       });

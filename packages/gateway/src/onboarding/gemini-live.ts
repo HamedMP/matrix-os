@@ -82,6 +82,15 @@ HARD RULES:
 - Keep every response to 1-2 sentences. This is a conversation, not a monologue.`;
 
 const GEMINI_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+const INTERNAL_GEMINI_LIVE_PROXY_PATH = "/gemini-live";
+
+export interface GeminiLiveProxyConfig {
+  platformUrl: string;
+  handle: string;
+  token: string;
+}
+
+export type GeminiLiveConnection = string | { proxy: GeminiLiveProxyConfig };
 
 export interface GeminiSetupOverrides {
   systemInstruction?: string;
@@ -211,8 +220,36 @@ export interface GeminiLiveClient {
   readonly transcript: string;
 }
 
+export function hasGeminiLiveConnection(connection: GeminiLiveConnection | undefined): boolean {
+  if (!connection) return false;
+  if (typeof connection === "string") return connection.length > 0;
+  return Boolean(connection.proxy.platformUrl && connection.proxy.handle && connection.proxy.token);
+}
+
+export function buildGeminiLiveWebSocketTarget(connection: GeminiLiveConnection): {
+  url: string;
+  headers: Record<string, string>;
+} {
+  if (typeof connection === "string") {
+    return {
+      url: GEMINI_WS_URL,
+      headers: { "x-goog-api-key": connection },
+    };
+  }
+
+  const base = new URL(connection.proxy.platformUrl);
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  const root = base.pathname.endsWith("/") ? base.pathname.slice(0, -1) : base.pathname;
+  base.pathname = `${root}/internal/containers/${encodeURIComponent(connection.proxy.handle)}${INTERNAL_GEMINI_LIVE_PROXY_PATH}`;
+  base.search = "";
+  return {
+    url: base.toString(),
+    headers: { authorization: `Bearer ${connection.proxy.token}` },
+  };
+}
+
 export function createGeminiLiveClient(
-  apiKey: string,
+  connection: GeminiLiveConnection,
   model: string,
   overrides?: GeminiSetupOverrides,
 ): GeminiLiveClient {
@@ -222,12 +259,8 @@ export function createGeminiLiveClient(
 
   function connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Pass the API key via header rather than query string so it doesn't
-      // land in proxy access logs, gateway error traces, or stack dumps
-      // (Google's BidiGenerateContent endpoint accepts both forms).
-      ws = new WebSocket(GEMINI_WS_URL, {
-        headers: { "x-goog-api-key": apiKey },
-      });
+      const target = buildGeminiLiveWebSocketTarget(connection);
+      ws = new WebSocket(target.url, { headers: target.headers });
 
       const timeout = setTimeout(() => {
         ws?.close();

@@ -2,7 +2,13 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createStateMachine, type StateMachineSnapshot } from "./state-machine.js";
-import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "./gemini-live.js";
+import {
+  createGeminiLiveClient,
+  hasGeminiLiveConnection,
+  type GeminiLiveClient,
+  type GeminiEvent,
+  type GeminiLiveConnection,
+} from "./gemini-live.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "./api-key.js";
 import {
   MAX_AUDIO_SESSION_BYTES,
@@ -17,7 +23,8 @@ import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {
   homePath: string;
-  geminiApiKey: string;
+  geminiApiKey?: string;
+  geminiConnection?: GeminiLiveConnection;
   geminiModel: string;
 }
 
@@ -246,14 +253,16 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       });
     }
 
-    console.log("[onboarding] Sending stage:", sm.current, "audioMode:", audioMode, "hasKey:", !!deps.geminiApiKey);
+    const geminiConnection = deps.geminiConnection ?? deps.geminiApiKey ?? "";
+    const hasVoiceConnection = hasGeminiLiveConnection(geminiConnection);
+    console.log("[onboarding] Sending stage:", sm.current, "audioMode:", audioMode, "hasVoiceConnection:", hasVoiceConnection);
     send({ type: "stage", stage: sm.current, audioSource: audioMode ? "gemini_live" : undefined });
 
-    if (audioMode && deps.geminiApiKey) {
+    if (audioMode && hasVoiceConnection) {
       let client: GeminiLiveClient | null = null;
       try {
         console.log("[onboarding] Connecting to Gemini Live...");
-        client = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel);
+        client = createGeminiLiveClient(geminiConnection, deps.geminiModel);
         gemini = client;
         setupGeminiHandlers(client);
         await client.connect();
@@ -272,7 +281,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         audioMode = false;
       }
     } else {
-      console.log("[onboarding] No voice mode — geminiApiKey:", deps.geminiApiKey ? "set" : "MISSING");
+      console.log("[onboarding] No voice mode — Gemini Live connection:", hasVoiceConnection ? "set" : "MISSING");
       audioMode = false;
       send({ type: "mode_change", mode: "text" });
     }
