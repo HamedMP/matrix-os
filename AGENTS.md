@@ -133,6 +133,8 @@ bun run dev          # local source dev only; production runs on per-user VPS ho
 
 Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full guide: `docs/dev/onboarding.md`
 
+If you run `bun run dev:shell` or `bun run dev:www` outside Docker, set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` first. Docker-based dev already has Clerk baked in.
+
 ## Project Structure
 
 | Directory | What it is |
@@ -141,7 +143,9 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 | `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
 | `packages/platform/` | Multi-tenant orchestrator (Clerk auth, per-user VPS provisioning and routing) |
 | `packages/proxy/` | Shared API proxy, usage tracking |
+| `packages/sync-client/` | Published Matrix CLI (`matrix` / `matrixos` / `mos`), sync daemon, and macOS menu bar client |
 | `packages/ui/` | Shared UI components |
+| `apps/` | Additional client shells; Expo mobile app lives in `apps/mobile/` |
 | `shell/` | Next.js 16 desktop shell frontend |
 | `www/` | matrix-os.com website (Vercel) |
 | `home/` | File system template (copied to `~/matrixos/` on first boot) |
@@ -156,6 +160,10 @@ bun run test:watch        # Vitest watch mode
 bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
 bun run test:coverage     # coverage report
 bun run test:e2e          # end-to-end tests
+bun run typecheck         # tsc --noEmit for all packages
+bun run check:patterns:diff # CLAUDE.md pattern scan for changed files
+bun run check:patterns    # full CLAUDE.md pattern scan / baseline audit
+bun run lint              # shell lint
 
 bun run dev               # local dev: gateway + proxy + shell
 bun run dev:gateway       # gateway only
@@ -164,6 +172,16 @@ bun run dev:proxy         # proxy only
 bun run dev:platform      # platform only
 bun run dev:www           # matrix-os.com website only
 bun run dev:kernel        # kernel package only
+
+pnpm --dir apps/mobile start   # Expo mobile dev server
+pnpm --dir apps/mobile android # Expo native Android run (`expo run:android`)
+pnpm --dir apps/mobile ios     # Expo native iOS run (`expo run:ios`)
+pnpm --dir apps/mobile test    # mobile Jest suite
+pnpm --dir apps/mobile lint    # mobile Expo lint
+
+pnpm --dir packages/sync-client test              # sync-client Vitest suite
+pnpm --dir packages/sync-client build             # sync-client TypeScript build
+pnpm --dir packages/sync-client exec matrix --help # in-repo Matrix CLI entrypoint
 
 bun run docker            # Legacy/local Docker dev only; not production customer runtime
 bun run docker:full       # + proxy, platform, conduit
@@ -178,6 +196,7 @@ bun run docker:build      # full rebuild (no cache)
 
 **IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
+**IMPORTANT**: User-facing CLI workflows live in `packages/sync-client/`; use `pnpm --dir packages/sync-client exec matrix ...` for `login`, `sync`, `shell`, `profile`, `status`, and `doctor`.
 
 ## Release Procedure
 
@@ -236,13 +255,15 @@ Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line
 
 ```bash
 bun run typecheck           # tsc --noEmit for all packages
-bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
+bun run check:patterns:diff # CLAUDE.md pattern scanner (changed files only)
+bun run check:patterns      # full scan / baseline audit when needed
 bun run test                # unit tests
+bun run test:e2e            # end-to-end tests
 ```
 
 ### Three Review Passes
 
-1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
+1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns:diff` for PR work or `bun run check:patterns` for a full audit, then fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
 
 2. **Trust-boundary sweep**: For each changed file, classify it (route handler, filesystem, database, WS/IPC) and apply the matching checklist from `docs/dev/review-pipeline.md`. Trace external input from entry to use.
 
@@ -289,6 +310,8 @@ Read these on demand, not every session:
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
+- `docs/dev/sync-testing.md` -- when working on the sync daemon, Matrix CLI login/sync flows, or MinIO/Postgres sync verification
+- `docs/dev/hermes-matrix-skills.md` -- when installing or using the Matrix Hermes skill pack
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
 - `docs/dev/releases.md` -- when tagging a release or managing versions
 - `specs/quality-gates.md` -- when writing a new spec or reviewing a PR
@@ -318,6 +341,10 @@ Read these on demand, not every session:
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 ## Agent skills
+
+### Hermes skill pack
+
+Install the Matrix Hermes skills from the repo root with `./scripts/install-hermes-matrix-skills.sh`. On dev or user VPSes, point Hermes at the local gateway with `hermes config set skills.config.matrix.gateway_url http://localhost:4000`. Reference: `docs/dev/hermes-matrix-skills.md`.
 
 ### Backlog
 
