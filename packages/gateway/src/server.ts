@@ -3343,6 +3343,8 @@ export async function createGateway(config: GatewayConfig) {
   const browserScreenshotDir = join(homePath, "data", "screenshots");
   const browserStreamClients = new Set<{ send: (data: string) => void }>();
 
+  let screencastActive = false;
+
   async function ensureSharedBrowser() {
     if (sharedBrowserPage && !sharedBrowserPage.isClosed()) return sharedBrowserPage;
     try {
@@ -3353,6 +3355,7 @@ export async function createGateway(config: GatewayConfig) {
       if (sharedBrowserContext) {
         try { await sharedBrowserContext.close(); } catch {}
       }
+      screencastActive = false;
       sharedBrowserContext = await pw.chromium.launchPersistentContext(browserProfileDir, {
         headless: true,
         serviceWorkers: "block",
@@ -3360,6 +3363,15 @@ export async function createGateway(config: GatewayConfig) {
       });
       sharedBrowserPage = sharedBrowserContext.pages()[0] ?? await sharedBrowserContext.newPage();
       sharedCdpSession = await sharedBrowserContext.newCDPSession(sharedBrowserPage);
+
+      sharedCdpSession.on("Page.screencastFrame", (frame: { data: string; sessionId: number; metadata: Record<string, unknown> }) => {
+        const msg = JSON.stringify({ type: "frame", data: frame.data, metadata: frame.metadata });
+        for (const client of browserStreamClients) {
+          try { client.send(msg); } catch {}
+        }
+        sharedCdpSession?.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
+      });
+
       return sharedBrowserPage;
     } catch (err: unknown) {
       console.warn("[browser-api] Failed to launch browser:", err instanceof Error ? err.message : String(err));
@@ -3368,25 +3380,26 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   async function startScreencast() {
-    if (!sharedCdpSession) return;
+    if (!sharedCdpSession || screencastActive) return;
     try {
-      sharedCdpSession.on("Page.screencastFrame", (frame: { data: string; sessionId: number; metadata: Record<string, unknown> }) => {
-        const msg = JSON.stringify({ type: "frame", data: frame.data, metadata: frame.metadata });
-        for (const client of browserStreamClients) {
-          try { client.send(msg); } catch {}
-        }
-        sharedCdpSession?.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
-      });
       await sharedCdpSession.send("Page.startScreencast", {
         format: "jpeg",
         quality: 60,
         maxWidth: 1280,
         maxHeight: 800,
-        everyNthFrame: 2,
+        everyNthFrame: 1,
       });
+      screencastActive = true;
     } catch (err: unknown) {
       console.warn("[browser-api] Failed to start screencast:", err instanceof Error ? err.message : String(err));
     }
+  }
+
+  async function triggerRepaint() {
+    if (!sharedCdpSession) return;
+    try {
+      await sharedCdpSession.send("Page.captureScreenshot", { format: "jpeg", quality: 1 }).catch(() => {});
+    } catch {}
   }
 
   app.get("/api/browser/status", async (c) => {
@@ -3478,6 +3491,7 @@ export async function createGateway(config: GatewayConfig) {
                 url: sharedBrowserPage.url(),
                 title: await sharedBrowserPage.title().catch(() => ""),
               }));
+              await triggerRepaint();
             }
           } catch {}
         },
@@ -3486,6 +3500,7 @@ export async function createGateway(config: GatewayConfig) {
           if (client) browserStreamClients.delete(client);
           if (browserStreamClients.size === 0 && sharedCdpSession) {
             sharedCdpSession.send("Page.stopScreencast").catch(() => {});
+            screencastActive = false;
           }
         },
       };
