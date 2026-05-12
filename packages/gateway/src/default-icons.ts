@@ -8,13 +8,15 @@ export async function resolveSystemIconUrl(homePath: string, requestedFile: stri
   const match = requestedFile.match(SAFE_ICON_FILE);
   if (!match) return null;
   const [, stem, requestedExt] = match;
-  const candidates = [
-    `${stem}.${requestedExt}`,
-    `${stem}.png`,
-    `${stem}.svg`,
-    "game-center.png",
-    "game.svg",
-  ];
+  const candidates = Array.from(
+    new Set([
+      `${stem}.${requestedExt}`,
+      `${stem}.png`,
+      `${stem}.svg`,
+      "game-center.png",
+      "game.svg",
+    ]),
+  );
   for (const candidate of candidates) {
     try {
       const iconStat = await lstat(join(homePath, "system/icons", candidate));

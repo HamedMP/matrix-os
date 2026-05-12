@@ -34,6 +34,7 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
   db: PlatformDB;
   platformSecret: string;
   geminiApiKey: string;
+  geminiWsUrl?: string;
 }): Promise<boolean> {
   const parsed = parseInternalGeminiLivePath(opts.req.url ?? "/");
   if (!parsed) return false;
@@ -62,12 +63,12 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
   }
 
   proxyServer.handleUpgrade(opts.req, opts.socket, opts.head, (client) => {
-    const provider = new WebSocket(GEMINI_WS_URL, {
+    const provider = new WebSocket(opts.geminiWsUrl ?? GEMINI_WS_URL, {
       headers: { "x-goog-api-key": opts.geminiApiKey },
       perMessageDeflate: false,
       maxPayload: MAX_GEMINI_LIVE_PAYLOAD_BYTES,
     });
-    const queued: Array<WebSocket.RawData> = [];
+    const queued: Array<{ data: WebSocket.RawData; isBinary: boolean }> = [];
     let providerOpen = false;
 
     const closeBoth = () => {
@@ -75,11 +76,11 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
       provider.close();
     };
 
-    client.on("message", (data) => {
+    client.on("message", (data, isBinary) => {
       if (provider.readyState === WebSocket.OPEN) {
-        provider.send(data);
+        provider.send(data, { binary: isBinary });
       } else if (!providerOpen && queued.length < 16) {
-        queued.push(data);
+        queued.push({ data, isBinary });
       } else {
         closeBoth();
       }
@@ -90,11 +91,12 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
     provider.on("open", () => {
       providerOpen = true;
       while (queued.length > 0 && provider.readyState === WebSocket.OPEN) {
-        provider.send(queued.shift()!);
+        const item = queued.shift()!;
+        provider.send(item.data, { binary: item.isBinary });
       }
     });
-    provider.on("message", (data) => {
-      if (client.readyState === WebSocket.OPEN) client.send(data);
+    provider.on("message", (data, isBinary) => {
+      if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
     });
     provider.on("close", () => client.close());
     provider.on("error", (err) => {
