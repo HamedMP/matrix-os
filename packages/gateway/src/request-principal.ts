@@ -66,7 +66,7 @@ function readClaims(c: PrincipalContextReader): SyncJwtClaims | undefined {
 }
 
 function isLocalDevelopmentEnv(env: NodeJS.ProcessEnv): boolean {
-  const nodeEnv = env.NODE_ENV;
+  const nodeEnv = env.NODE_ENV as string | undefined;
   return nodeEnv === undefined || nodeEnv === "" || nodeEnv === "development" || nodeEnv === "test" || nodeEnv === "local";
 }
 

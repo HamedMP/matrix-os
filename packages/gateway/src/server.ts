@@ -140,6 +140,14 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { createBrowserRoutes } from "./browser/routes.js";
+import {
+  InMemoryBrowserRepository,
+  KyselyBrowserRepository,
+  type BrowserDatabase,
+  type BrowserRepository,
+} from "./browser/repository.js";
+import { BrowserService } from "./browser/service.js";
 import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
@@ -161,6 +169,7 @@ import {
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
+import { BrowserStreamController, BrowserStreamHub } from "./browser/ws.js";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -387,6 +396,9 @@ export async function createGateway(config: GatewayConfig) {
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let browserRepository: BrowserRepository = new InMemoryBrowserRepository();
+  let browserService = new BrowserService({ repo: browserRepository });
+  const browserStreamHub = new BrowserStreamHub({ maxConnections: 256, staleMs: 60_000 });
 
   if (databaseUrl) {
     try {
@@ -399,6 +411,9 @@ export async function createGateway(config: GatewayConfig) {
       appRegistry = createAppRegistry(appDb, kysely);
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
+      browserRepository = new KyselyBrowserRepository(kysely as unknown as Kysely<BrowserDatabase>);
+      await browserRepository.bootstrap?.();
+      browserService = new BrowserService({ repo: browserRepository });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       canvasSubscriptionHub = new CanvasSubscriptionHub({
         authorize: async (subscriber) => {
@@ -3401,6 +3416,80 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
+  app.route("/api/browser", createBrowserRoutes({
+    service: browserService,
+    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+  }));
+  app.get(
+    "/api/browser/sessions/:sessionId/ws",
+    upgradeWebSocket((c) => {
+      let ownerId: string;
+      let sessionId: string;
+      try {
+        sessionId = z.string().min(1).max(128).parse(c.req.param("sessionId"));
+        const token = extractBrowserStreamToken(c);
+        ownerId = browserService.verifyStreamToken({ token, sessionId }).ownerId;
+      } catch (err: unknown) {
+        console.error("[browser/ws] Upgrade rejected:", err instanceof Error ? err.message : String(err));
+        return {
+          onOpen(_evt, ws) {
+            ws.send(JSON.stringify({ type: "stream.error", payload: { code: "unauthorized" } }));
+            ws.close();
+          },
+        };
+      }
+
+      const connectionId = `browser_${randomBytes(12).toString("hex")}`;
+      let surfaceId: string | undefined;
+      const turnUrls = (process.env.BROWSER_TURN_URLS ?? "")
+        .split(",")
+        .map((url) => url.trim())
+        .filter(Boolean);
+      const controller = new BrowserStreamController({
+        ownerId,
+        sessionId,
+        turnUrls,
+        turnSecret: process.env.BROWSER_TURN_SECRET,
+      });
+      return {
+        onOpen(_evt, ws) {
+          browserStreamHub.register({
+            id: connectionId,
+            ownerId,
+            sessionId,
+            sender: ws,
+          });
+          ws.send(JSON.stringify({ type: "stream.accepted", payload: { sessionId } }));
+        },
+        onMessage(evt, ws) {
+          try {
+            browserStreamHub.touch(connectionId, surfaceId);
+            const messages = controller.handleClientMessage(
+              typeof evt.data === "string" ? evt.data : Buffer.from(evt.data as ArrayBuffer),
+              { surfaceId },
+            );
+            for (const message of messages) {
+              if (message.type === "surface.focused") {
+                surfaceId = message.payload.surfaceId;
+                browserStreamHub.touch(connectionId, surfaceId);
+              }
+              ws.send(JSON.stringify(message));
+            }
+          } catch (err: unknown) {
+            ws.send(JSON.stringify({
+              type: "stream.error",
+              payload: {
+                code: err instanceof Error && err.message === "upgrade_required" ? "upgrade_required" : "invalid_message",
+              },
+            }));
+          }
+        },
+        onClose() {
+          browserStreamHub.unregister(connectionId);
+        },
+      };
+    }),
+  );
 
   if (canvasService) {
     // Global authMiddleware is mounted before route registration; routes still resolve user IDs defensively.
@@ -3670,6 +3759,7 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
+      browserStreamHub.closeAll();
       await channelManager.stop();
       await processManager.shutdownAll();
       await symphonyRunner.stop();
@@ -3680,6 +3770,7 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
+      await browserRepository.destroy?.();
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();
@@ -3687,4 +3778,15 @@ export async function createGateway(config: GatewayConfig) {
       server.close();
     },
   };
+}
+
+function extractBrowserStreamToken(c: Context): string | null {
+  const protocolHeader = c.req.header("sec-websocket-protocol");
+  const protocolToken = protocolHeader
+    ?.split(",")
+    .map((value) => value.trim())
+    .find((value) => value.startsWith("browser-stream."))
+    ?.slice("browser-stream.".length);
+  if (protocolToken) return protocolToken;
+  return new URL(c.req.url).searchParams.get("token");
 }

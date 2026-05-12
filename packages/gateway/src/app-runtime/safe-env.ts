@@ -32,10 +32,10 @@ function buildMinimalPath(): string {
 
 const MINIMAL_PATH = buildMinimalPath();
 
-export function safeEnv(opts: SafeEnvOptions): Record<string, string> {
+export function safeEnv(opts: SafeEnvOptions): NodeJS.ProcessEnv {
   const { slug, port, homeDir, databaseUrl } = opts;
 
-  const env: Record<string, string> = {
+  const env: NodeJS.ProcessEnv = {
     PORT: String(port),
     NODE_ENV: "production",
     HOME: join(homeDir, "apps", slug),
@@ -73,15 +73,15 @@ const SECRET_SUFFIX_RE = /(^|_)(SECRET|TOKEN|PASSWORD|PRIVATE_KEY|API_KEY|SECRET
 // Denylist (not allowlist like safeEnv): builds need the surrounding tool
 // ecosystem — XDG dirs, npm_config_*, TMPDIR, locale, proxy config — so we
 // start from process.env and strip known-sensitive keys.
-export function safeBuildEnv(opts: SafeBuildEnvOptions = {}): Record<string, string> {
-  const env: Record<string, string> = {};
+export function safeBuildEnv(opts: SafeBuildEnvOptions = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { NODE_ENV: "production" };
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
+    if (k === "NODE_ENV") continue;
     if (EXPLICIT_BUILD_DENY.has(k)) continue;
     if (SECRET_SUFFIX_RE.test(k)) continue;
     env[k] = v;
   }
-  env.NODE_ENV = "production";
   if (opts.storeDir) {
     env.npm_config_store_dir = opts.storeDir;
   }

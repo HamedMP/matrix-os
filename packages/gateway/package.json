@@ -8,6 +8,8 @@
     "./app-publish": "./src/app-publish.ts",
     "./app-fork": "./src/app-fork.ts",
     "./app-manifest": "./src/app-manifest.ts",
+    "./browser/routes": "./src/browser/routes.ts",
+    "./browser/ws": "./src/browser/ws.ts",
     "./sync/types": "./src/sync/types.ts"
   },
   "scripts": {

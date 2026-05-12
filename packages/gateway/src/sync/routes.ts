@@ -216,7 +216,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
     syncConnectedPeers.set(deps.peerRegistry.getTotalPeerCount());
     syncManifestEntries.set(aggregate?.fileCount ?? 0);
-    syncManifestBytes.set(Number(aggregate?.totalSize ?? 0n));
+    syncManifestBytes.set(Number(aggregate?.totalSize ?? BigInt(0)));
 
     return c.json({
       connectedPeers: peers.map((p) => ({

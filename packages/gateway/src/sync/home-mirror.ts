@@ -956,10 +956,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       // waiting for a `ready` event that will never fire on a closed watcher.
       try {
         await new Promise<void>((resolve, reject) => {
+          const closeAwareWatcher = watcher as typeof watcher & {
+            off(event: "close", listener: () => void): typeof watcher;
+            once(event: "close", listener: () => void): typeof watcher;
+          };
           const cleanup = () => {
             watcher?.off("ready", onReady);
             watcher?.off("error", onError);
-            watcher?.off("close", onClose);
+            closeAwareWatcher?.off("close", onClose);
           };
           const onReady = () => {
             cleanup();
@@ -975,7 +979,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           };
           watcher!.once("ready", onReady);
           watcher!.once("error", onError);
-          watcher!.once("close", onClose);
+          closeAwareWatcher!.once("close", onClose);
         });
       } catch (err: unknown) {
         // Watcher errored before reaching ready -- close it (and any

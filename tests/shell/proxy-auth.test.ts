@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPublicShellPath } from "../../shell/src/lib/proxy-routes";
+import { isGatewayProxyPath, isPublicShellPath } from "../../shell/src/lib/proxy-routes";
 
 /**
  * Unit tests for the proxy.ts auth logic.
@@ -83,6 +83,8 @@ describe("proxy auth: route classification", () => {
     expect(isGatewayProxy("/")).toBe(false);
     expect(isGatewayProxy("/settings")).toBe(false);
     expect(isGatewayProxy("/health")).toBe(false);
+    expect(isGatewayProxyPath("/browser/google.com")).toBe(false);
+    expect(isGatewayProxyPath("/browser/https://example.com")).toBe(false);
   });
 });
 

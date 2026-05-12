@@ -28,7 +28,7 @@ export function createKvStore(kysely: Kysely<any>): KvStore {
       const result = await sql`
         DELETE FROM public._kv WHERE app = ${app} AND key = ${key}
       `.execute(kysely);
-      return (result.numAffectedRows ?? 0n) > 0n;
+      return (result.numAffectedRows ?? BigInt(0)) > BigInt(0);
     },
 
     async list(app) {

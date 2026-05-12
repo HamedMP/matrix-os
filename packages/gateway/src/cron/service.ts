@@ -1,4 +1,5 @@
 import cron from "node-cron";
+import type { ScheduledTask } from "node-cron";
 import type { CronJob } from "./types.js";
 import type { CronStore } from "./store.js";
 
@@ -18,7 +19,7 @@ export interface CronService {
 export function createCronService(config: CronServiceConfig): CronService {
   const { store, onTrigger } = config;
   const timers = new Map<string, ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>>();
-  const cronTasks = new Map<string, cron.ScheduledTask>();
+  const cronTasks = new Map<string, ScheduledTask>();
   let started = false;
 
   function scheduleJob(job: CronJob): void {

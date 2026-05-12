@@ -168,6 +168,26 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("lets browser WebSocket paths reach route-level signed stream-token verification", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/browser/sessions/browser_session_1/ws", undefined, "not-the-global-token", "10.0.0.4"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
+  it("does not require the global query token for browser WebSocket subprotocol auth", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/browser/sessions/browser_session_1/ws", undefined, undefined, "10.0.0.4"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("rejects REST endpoint with query token (only WS allowed)", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

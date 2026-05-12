@@ -1,4 +1,4 @@
-import { readFile, writeFile, glob, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 
@@ -12,13 +12,15 @@ export interface BuildStamp {
 const STAMP_FILE = ".build-stamp";
 
 export async function hashSources(appDir: string, globs: string[]): Promise<string> {
-  const files: string[] = [];
+  const files = new Set<string>();
+  const candidates = await listFiles(appDir);
   for (const pattern of globs) {
-    for await (const match of glob(pattern, { cwd: appDir })) {
+    for (const match of candidates) {
+      if (!matchesGlob(match, pattern)) continue;
       const abs = join(appDir, match);
       try {
-        const st = await stat(abs);
-        if (st.isFile()) files.push(abs);
+        const st = await lstat(abs);
+        if (st.isFile()) files.add(abs);
       } catch (err: unknown) {
         // ENOENT is expected for symlink-to-missing; rethrow anything else
         // (EACCES, EIO, EMFILE) so the build surfaces real filesystem errors
@@ -29,16 +31,50 @@ export async function hashSources(appDir: string, globs: string[]): Promise<stri
   }
 
   // Sort by relative path for determinism regardless of filesystem order
-  files.sort((a, b) => relative(appDir, a).localeCompare(relative(appDir, b)));
+  const sortedFiles = [...files].sort((a, b) => relative(appDir, a).localeCompare(relative(appDir, b)));
 
   const hash = createHash("sha256");
-  for (const file of files) {
+  for (const file of sortedFiles) {
     const relPath = relative(appDir, file);
     hash.update(relPath);
     const content = await readFile(file);
     hash.update(content);
   }
   return hash.digest("hex");
+}
+
+async function listFiles(dir: string, prefix = ""): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(join(dir, prefix), { withFileTypes: true, encoding: "utf8" });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...await listFiles(dir, rel));
+    } else {
+      files.push(rel);
+    }
+  }
+  return files;
+}
+
+function matchesGlob(path: string, pattern: string): boolean {
+  if (pattern === "**/*" || pattern === "**") return true;
+  if (pattern.endsWith("/**")) {
+    const prefix = pattern.slice(0, -3);
+    return path === prefix || path.startsWith(`${prefix}/`);
+  }
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replaceAll("**", "\0")
+    .replaceAll("*", "[^/]*")
+    .replaceAll("\0", ".*");
+  return new RegExp(`^${escaped}$`).test(path);
 }
 
 export async function hashLockfile(appDir: string): Promise<string> {

@@ -588,7 +588,7 @@ async function firstUnavailablePath(
 }
 
 function buildSymphonyEnv(baseEnv: NodeJS.ProcessEnv, homePath: string, runId: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+  const env: NodeJS.ProcessEnv = { NODE_ENV: baseEnv.NODE_ENV ?? "production" };
   for (const key of SYMPHONY_ENV_ALLOWLIST) {
     if (baseEnv[key] !== undefined) env[key] = baseEnv[key];
   }

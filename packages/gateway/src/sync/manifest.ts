@@ -109,7 +109,7 @@ function liveManifestStats(manifest: Manifest): { fileCount: number; totalSize: 
   const liveFiles = Object.values(manifest.files).filter((e) => !e.deleted);
   return {
     fileCount: liveFiles.length,
-    totalSize: liveFiles.reduce((sum, e) => sum + BigInt(e.size), 0n),
+    totalSize: liveFiles.reduce((sum, e) => sum + BigInt(e.size), BigInt(0)),
   };
 }
 

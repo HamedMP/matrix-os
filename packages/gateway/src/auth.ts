@@ -85,7 +85,8 @@ const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/onboarding", "/ws/vocal"];
-const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/];
+const BROWSER_WS_QUERY_TOKEN_PATTERN = /^\/api\/browser\/sessions\/[^/]+\/ws$/;
+const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/, BROWSER_WS_QUERY_TOKEN_PATTERN];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran
 // timingSafeEqual(bufB, bufB) as a dummy call -- but the work done in
@@ -198,6 +199,10 @@ export function authMiddleware(
     }
 
     const authHeader = c.req.header("Authorization");
+    if (BROWSER_WS_QUERY_TOKEN_PATTERN.test(normalizedPath)) {
+      return nextWithReady(c, next);
+    }
+
     const isWsUpgrade =
       WS_QUERY_TOKEN_PATHS.some((p) => normalizedPath === p) ||
       WS_QUERY_TOKEN_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
