@@ -28,6 +28,48 @@ describe("BrowserService", () => {
     expect(locked.wsUrl).toBeNull();
   });
 
+  it("rejects replayed stream tokens", async () => {
+    const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({ repo, streamTokenSecret: "secret".repeat(8) });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_a",
+      surface: "canvas",
+      now: 1_000,
+    });
+
+    expect(service.verifyStreamToken({
+      token: session.streamToken,
+      sessionId: session.session.id,
+      now: 2_000,
+    })).toMatchObject({ ownerId: "owner_1" });
+    expect(() => service.verifyStreamToken({
+      token: session.streamToken,
+      sessionId: session.session.id,
+      now: 2_001,
+    })).toThrow("Browser stream token is invalid.");
+  });
+
+  it("rejects stale session ids during takeover", async () => {
+    const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({ repo, streamTokenSecret: "secret".repeat(8) });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_a",
+      surface: "canvas",
+      now: 1_000,
+    });
+    await service.closeSession({ ownerId: "owner_1", sessionId: session.session.id, state: "recoverable" });
+
+    await expect(service.takeoverSession({
+      ownerId: "owner_1",
+      sessionId: session.session.id,
+      deviceId: "device_b",
+    })).rejects.toMatchObject({ code: "session_not_found" });
+  });
+
   it("clears profiles and closes active sessions in one repository operation", async () => {
     const repo = new InMemoryBrowserRepository();
     const service = new BrowserService({ repo, streamTokenSecret: "secret".repeat(8) });
@@ -94,5 +136,30 @@ describe("BrowserService", () => {
       tabId: tab.id,
       url: "https://example.org/",
     })).rejects.toThrow("tab_session_mismatch");
+  });
+
+  it("does not resurrect deleted downloads on late completion", async () => {
+    const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({ repo, streamTokenSecret: "secret".repeat(8) });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_a",
+      surface: "canvas",
+    });
+    const download = await service.createDownload({
+      ownerId: "owner_1",
+      sessionId: session.session.id,
+      filename: "report.pdf",
+    });
+
+    await service.deleteDownload({ ownerId: "owner_1", downloadId: download.id });
+
+    await expect(service.completeDownload({
+      ownerId: "owner_1",
+      downloadId: download.id,
+      completedPath: "/home/matrix/home/files/downloads/report.pdf",
+    })).resolves.toBeNull();
+    await expect(service.listDownloads({ ownerId: "owner_1" })).resolves.toEqual([]);
   });
 });

@@ -157,6 +157,12 @@ export interface BrowserRepository {
     now?: number;
   }): MaybePromise<BrowserProfileRecord>;
   createOrResumeSession(input: CreateBrowserSessionInput): MaybePromise<BrowserSessionRecord>;
+  takeoverSession(input: {
+    ownerId: string;
+    sessionId: string;
+    deviceId: string;
+    now?: number;
+  }): MaybePromise<BrowserSessionRecord>;
   listSessions(ownerId: string): MaybePromise<BrowserSessionRecord[]>;
   getSession(ownerId: string, sessionId: string): MaybePromise<BrowserSessionRecord | null>;
   closeSession(opts: { ownerId: string; sessionId: string; state?: BrowserSessionRecord["state"]; now?: number }): MaybePromise<BrowserSessionRecord | null>;
@@ -313,6 +319,67 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     return { ...session };
   }
 
+  takeoverSession(input: { ownerId: string; sessionId: string; deviceId: string; now?: number }): BrowserSessionRecord {
+    const current = this.sessions.get(input.sessionId);
+    if (!current || current.ownerId !== input.ownerId || current.state !== "active") {
+      throw new BrowserRepositoryError("session_not_found");
+    }
+    const now = iso(input.now);
+    for (const session of this.sessions.values()) {
+      if (
+        session.ownerId === input.ownerId &&
+        session.profileId === current.profileId &&
+        session.state === "active"
+      ) {
+        session.state = "recoverable";
+        session.takeoverRequired = false;
+        session.updatedAt = now;
+        session.lastActivityAt = now;
+      }
+    }
+    const replacement: BrowserSessionRecord = {
+      id: id("browser_session"),
+      ownerId: input.ownerId,
+      profileId: current.profileId,
+      profileName: current.profileName,
+      state: "active",
+      currentTabId: null,
+      lockDeviceId: input.deviceId,
+      takeoverRequired: false,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+    };
+    this.sessions.set(replacement.id, replacement);
+    evictOldestMapEntries(this.sessions, MAX_IN_MEMORY_SESSIONS);
+    this.addAuditEvent({
+      id: id("audit"),
+      ownerId: input.ownerId,
+      eventType: "session.closed",
+      createdAt: now,
+      metadata: { sessionId: input.sessionId },
+    });
+    this.addAuditEvent({
+      id: id("audit"),
+      ownerId: input.ownerId,
+      eventType: "session.taken_over",
+      createdAt: now,
+      metadata: {
+        sessionId: input.sessionId,
+        replacementSessionId: replacement.id,
+        deviceId: input.deviceId.slice(0, 64),
+      },
+    });
+    this.addAuditEvent({
+      id: id("audit"),
+      ownerId: input.ownerId,
+      eventType: "session.created",
+      createdAt: now,
+      metadata: { sessionId: replacement.id, profileName: replacement.profileName },
+    });
+    return { ...replacement };
+  }
+
   listSessions(ownerId: string): BrowserSessionRecord[] {
     return [...this.sessions.values()]
       .filter((session) => session.ownerId === ownerId)
@@ -407,7 +474,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
 
   completeDownload(opts: { ownerId: string; downloadId: string; completedPath: string; now?: number }): BrowserDownloadRecord | null {
     const download = this.downloads.get(opts.downloadId);
-    if (!download || download.ownerId !== opts.ownerId) return null;
+    if (!download || download.ownerId !== opts.ownerId || download.state !== "staged") return null;
     download.state = "complete";
     download.completedPath = opts.completedPath;
     download.updatedAt = iso(opts.now);
@@ -423,7 +490,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
 
   failDownload(opts: { ownerId: string; downloadId: string; now?: number }): BrowserDownloadRecord | null {
     const download = this.downloads.get(opts.downloadId);
-    if (!download || download.ownerId !== opts.ownerId) return null;
+    if (!download || download.ownerId !== opts.ownerId || download.state !== "staged") return null;
     download.state = "failed";
     download.updatedAt = iso(opts.now);
     this.addAuditEvent({
@@ -882,6 +949,79 @@ export class KyselyBrowserRepository implements BrowserRepository {
     });
   }
 
+  async takeoverSession(input: { ownerId: string; sessionId: string; deviceId: string; now?: number }): Promise<BrowserSessionRecord> {
+    return this.kysely.transaction().execute(async (trx) => {
+      const now = iso(input.now);
+      const current = await trx
+        .selectFrom("browser_sessions")
+        .selectAll()
+        .where("owner_id", "=", input.ownerId)
+        .where("id", "=", input.sessionId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current || current.state !== "active") {
+        throw new BrowserRepositoryError("session_not_found");
+      }
+      await sql`SELECT id FROM browser_profiles WHERE id = ${current.profile_id} FOR UPDATE`.execute(trx);
+      await trx
+        .updateTable("browser_sessions")
+        .set({
+          state: "recoverable",
+          takeover_required: false,
+          updated_at: now,
+          last_activity_at: now,
+        })
+        .where("owner_id", "=", input.ownerId)
+        .where("profile_id", "=", current.profile_id)
+        .where("state", "=", "active")
+        .execute();
+      const sessionId = id("browser_session");
+      const inserted = await trx
+        .insertInto("browser_sessions")
+        .values({
+          id: sessionId,
+          owner_id: input.ownerId,
+          profile_id: current.profile_id,
+          profile_name: current.profile_name,
+          state: "active",
+          current_tab_id: null,
+          lock_device_id: input.deviceId,
+          takeover_required: false,
+          created_at: now,
+          updated_at: now,
+          last_activity_at: now,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await this.addAuditEventIn(trx, {
+        id: id("audit"),
+        ownerId: input.ownerId,
+        eventType: "session.closed",
+        createdAt: now,
+        metadata: { sessionId: input.sessionId },
+      });
+      await this.addAuditEventIn(trx, {
+        id: id("audit"),
+        ownerId: input.ownerId,
+        eventType: "session.taken_over",
+        createdAt: now,
+        metadata: {
+          sessionId: input.sessionId,
+          replacementSessionId: sessionId,
+          deviceId: input.deviceId.slice(0, 64),
+        },
+      });
+      await this.addAuditEventIn(trx, {
+        id: id("audit"),
+        ownerId: input.ownerId,
+        eventType: "session.created",
+        createdAt: now,
+        metadata: { sessionId, profileName: current.profile_name },
+      });
+      return toSessionRecord(inserted);
+    });
+  }
+
   async listSessions(ownerId: string): Promise<BrowserSessionRecord[]> {
     const rows = await this.kysely
       .selectFrom("browser_sessions")
@@ -1034,6 +1174,7 @@ export class KyselyBrowserRepository implements BrowserRepository {
         })
         .where("owner_id", "=", opts.ownerId)
         .where("id", "=", opts.downloadId)
+        .where("state", "=", "staged")
         .returningAll()
         .executeTakeFirst();
       if (!row) return null;
@@ -1059,6 +1200,7 @@ export class KyselyBrowserRepository implements BrowserRepository {
         })
         .where("owner_id", "=", opts.ownerId)
         .where("id", "=", opts.downloadId)
+        .where("state", "=", "staged")
         .returningAll()
         .executeTakeFirst();
       if (!row) return null;

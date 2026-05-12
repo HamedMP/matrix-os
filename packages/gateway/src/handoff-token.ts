@@ -68,7 +68,7 @@ export async function verifyBrowserHandoffToken(opts: {
   now?: Date;
 }): Promise<BrowserHandoffClaims> {
   const key = typeof opts.publicKey === "string"
-    ? await importSPKI(opts.publicKey, "RS256")
+    ? await importSPKI(opts.publicKey.replaceAll("\\n", "\n"), "RS256")
     : opts.publicKey;
   const { payload } = await jwtVerify(opts.token, key, {
     issuer: HANDOFF_ISSUER,

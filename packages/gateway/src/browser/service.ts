@@ -49,10 +49,13 @@ export function toBrowserSafeError(error: unknown): BrowserSafeError {
 export class BrowserService {
   private readonly repo: BrowserRepository;
   private readonly streamTokenSecret: string;
+  private readonly runtimeBaseUrl: string | undefined;
+  private readonly usedStreamNonces = new Map<string, number>();
 
-  constructor(opts: { repo: BrowserRepository; streamTokenSecret?: string }) {
+  constructor(opts: { repo: BrowserRepository; streamTokenSecret?: string; runtimeBaseUrl?: string }) {
     this.repo = opts.repo;
     this.streamTokenSecret = opts.streamTokenSecret ?? createBrowserStreamTokenSecret();
+    this.runtimeBaseUrl = opts.runtimeBaseUrl;
   }
 
   capability() {
@@ -86,6 +89,23 @@ export class BrowserService {
       now: input.now,
     });
     if (input.targetUrl) {
+      if (!session.takeoverRequired) {
+        try {
+          await this.openRuntimeSession({
+            profileName: input.profileName,
+            deviceId: input.deviceId,
+            targetUrl: input.targetUrl,
+          });
+        } catch (error: unknown) {
+          await this.repo.closeSession({
+            ownerId: input.ownerId,
+            sessionId: session.id,
+            state: "closed",
+            now: input.now,
+          });
+          throw error;
+        }
+      }
       await this.repo.addAuditEvent({
         id: `audit_${randomUUID()}`,
         ownerId: input.ownerId,
@@ -112,6 +132,7 @@ export class BrowserService {
           ownerId: input.ownerId,
           sessionId: session.id,
           now: input.now,
+          ttlMs: 60_000,
         }),
       wsUrl: session.takeoverRequired ? null : `/api/browser/sessions/${session.id}/ws`,
     };
@@ -122,12 +143,14 @@ export class BrowserService {
     sessionId: string;
     now?: number;
   }): BrowserStreamTokenClaims {
-    return verifyBrowserStreamToken({
+    const claims = verifyBrowserStreamToken({
       secret: this.streamTokenSecret,
       token: input.token,
       expectedSessionId: input.sessionId,
       now: input.now,
     });
+    this.rememberStreamNonce(claims, input.now ?? Date.now());
+    return claims;
   }
 
   async clearProfile(input: {
@@ -166,27 +189,18 @@ export class BrowserService {
     wsUrl: string;
   }> {
     const current = await this.repo.getSession(input.ownerId, input.sessionId);
-    if (!current) {
+    if (!current || current.state !== "active") {
       throw new BrowserSafeError("session_not_found", "Browser session was not found.");
     }
-    await this.repo.closeSession({
-      ownerId: input.ownerId,
-      sessionId: input.sessionId,
-      state: "recoverable",
-      now: input.now,
-    });
-    await recordTakeover(this.repo, {
+    const session = await this.repo.takeoverSession({
       ownerId: input.ownerId,
       sessionId: input.sessionId,
       deviceId: input.deviceId,
       now: input.now,
     });
-    const session = await this.repo.createOrResumeSession({
-      ownerId: input.ownerId,
-      profileName: current.profileName,
-      deviceId: input.deviceId,
-      now: input.now,
-    });
+    if (session.takeoverRequired) {
+      throw new BrowserSafeError("takeover_required", "Browser is open on another device.");
+    }
     return {
       session: {
         ...session,
@@ -198,6 +212,7 @@ export class BrowserService {
         ownerId: input.ownerId,
         sessionId: session.id,
         now: input.now,
+        ttlMs: 60_000,
       }),
       wsUrl: `/api/browser/sessions/${session.id}/ws`,
     };
@@ -313,6 +328,44 @@ export class BrowserService {
       },
     });
     return grant;
+  }
+
+  private async openRuntimeSession(input: {
+    profileName: string;
+    deviceId: string;
+    targetUrl: string;
+  }): Promise<void> {
+    if (!this.runtimeBaseUrl) return;
+    const res = await fetch(new URL("/sessions", this.runtimeBaseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify(input),
+    }).catch((error: unknown) => {
+      console.warn("[browser/service] Runtime session launch failed:", error instanceof Error ? error.message : String(error));
+      throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
+    });
+    if (!res.ok) {
+      console.warn("[browser/service] Runtime session launch rejected:", res.status);
+      throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
+    }
+  }
+
+  private rememberStreamNonce(claims: BrowserStreamTokenClaims, now: number): void {
+    const cutoff = now - 30_000;
+    for (const [key, expiresAt] of this.usedStreamNonces.entries()) {
+      if (expiresAt <= cutoff) this.usedStreamNonces.delete(key);
+    }
+    const key = `${claims.ownerId}:${claims.sessionId}:${claims.nonce}`;
+    if (this.usedStreamNonces.has(key)) {
+      throw new BrowserSafeError("invalid_stream_token", "Browser stream token is invalid.");
+    }
+    this.usedStreamNonces.set(key, claims.expiresAt);
+    while (this.usedStreamNonces.size > 10_000) {
+      const first = this.usedStreamNonces.keys().next().value as string | undefined;
+      if (!first) break;
+      this.usedStreamNonces.delete(first);
+    }
   }
 }
 

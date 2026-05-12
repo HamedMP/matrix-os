@@ -35,30 +35,48 @@ export function isBrowserRelayCandidate(candidate: string): boolean {
   if (!(lower.includes(" typ relay ") || lower.endsWith(" typ relay"))) {
     return false;
   }
-  if (/\b(?:localhost|::1|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:|fe80:)/i.test(candidate)) {
+  if (/\blocalhost\b/i.test(candidate)) {
     return false;
   }
-  const addresses = candidate.match(/(?:^| )(?:\d{1,3}\.){3}\d{1,3}(?= |$)/g) ?? [];
-  for (const rawAddress of addresses) {
-    const address = rawAddress.trim();
-    if (isIP(address) !== 4) return false;
-    const [a, b] = address.split(".").map((part) => Number.parseInt(part, 10));
-    if (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    ) {
-      return false;
-    }
-  }
-  return true;
+  const parts = candidate.trim().split(/\s+/);
+  const address = parts[4];
+  return Boolean(address && isPublicIceAddress(address));
 }
 
 export function assertBrowserRelayCandidate(candidate: string): void {
   if (!isBrowserRelayCandidate(candidate)) {
     throw new Error("media_policy");
   }
+}
+
+function isPublicIceAddress(address: string): boolean {
+  const mapped = address.toLowerCase().match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mapped) return isPublicIpv4(mapped[1] ?? "");
+  const ipVersion = isIP(address);
+  if (ipVersion === 4) return isPublicIpv4(address);
+  if (ipVersion === 6) {
+    const lower = address.toLowerCase();
+    return !(
+      lower === "::" ||
+      lower === "::1" ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd") ||
+      lower.startsWith("fe80:") ||
+      lower.startsWith("ff")
+    );
+  }
+  return false;
+}
+
+function isPublicIpv4(address: string): boolean {
+  if (isIP(address) !== 4) return false;
+  const [a = -1, b = -1] = address.split(".").map((part) => Number.parseInt(part, 10));
+  return !(
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
 }
