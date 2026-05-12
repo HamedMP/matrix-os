@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserProtocolError, createBrowserSession, normalizeBrowserTarget, type BrowserSessionResponse } from "./browser-protocol";
+import { BrowserProtocolError, browserApiSignal, createBrowserSession, normalizeBrowserTarget, type BrowserSessionResponse } from "./browser-protocol";
 
 export type BrowserConnectionState =
   | "empty"
@@ -31,6 +31,7 @@ export function useBrowserSession() {
 
   useEffect(() => {
     if (!session || typeof WebSocket === "undefined") return undefined;
+    if (!session.wsUrl || !session.streamToken) return undefined;
     const wsUrl = new URL(session.wsUrl, window.location.origin);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(wsUrl.toString(), [`browser-stream.${session.streamToken}`]);
@@ -134,6 +135,7 @@ export function useBrowserSession() {
       const res = await fetch(`/api/browser/sessions/${encodeURIComponent(session.session.id)}/takeover`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: browserApiSignal(),
         body: JSON.stringify({ deviceId, confirm: true }),
       });
       const body = await res.json().catch((error: unknown) => {

@@ -15,6 +15,7 @@ export function BrowserToolbar(props: {
   busy: boolean;
   downloads?: BrowserDownloadItem[];
   onNavigate: (url: string) => void;
+  onReload?: () => void;
   onToggleMute: () => void;
   onDeleteDownload?: (id: string) => void;
 }) {
@@ -34,7 +35,12 @@ export function BrowserToolbar(props: {
         <button type="button" aria-label="Forward" disabled={!props.canGoForward}>
           <ArrowRight size={16} />
         </button>
-        <button type="button" aria-label="Reload" disabled={props.busy || props.url === "about:blank"}>
+        <button
+          type="button"
+          aria-label="Reload"
+          disabled={props.busy || props.url === "about:blank" || !props.onReload}
+          onClick={props.onReload}
+        >
           <RotateCw size={16} />
         </button>
       </div>

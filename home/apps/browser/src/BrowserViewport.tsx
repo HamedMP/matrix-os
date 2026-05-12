@@ -102,7 +102,7 @@ export function BrowserViewport(props: {
             kind: "keydown",
             key: event.key,
             code: event.code,
-            text: event.key.length === 1 ? "" : "",
+            text: event.key.length === 1 ? event.key : "",
           })}
           onKeyUp={(event) => props.onKeyboardInput?.({
             kind: "keyup",

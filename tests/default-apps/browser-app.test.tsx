@@ -71,6 +71,7 @@ describe("Browser app", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/browser/sessions", expect.objectContaining({
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: expect.any(AbortSignal),
       body: JSON.stringify({
         profileName: "default",
         targetUrl: "https://example.com/",
@@ -81,6 +82,7 @@ describe("Browser app", () => {
     fireEvent.click(screen.getByText("Grant agent access"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/browser/grants", expect.objectContaining({
       method: "POST",
+      signal: expect.any(AbortSignal),
       body: JSON.stringify({
         sessionId: "browser_session_owner_default",
         scopes: ["read_dom", "screenshot"],
@@ -170,7 +172,7 @@ describe("Browser app", () => {
       },
       {
         type: "input.keyboard",
-        payload: { kind: "keydown", key: "A", code: "KeyA", text: "", modifiers: [] },
+        payload: { kind: "keydown", key: "A", code: "KeyA", text: "A", modifiers: [] },
       },
       {
         type: "input.paste",
@@ -212,6 +214,7 @@ describe("Browser app", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/browser/sessions", expect.objectContaining({
       method: "POST",
+      signal: expect.any(AbortSignal),
       body: JSON.stringify({
         profileName: "default",
         targetUrl: "https://example.com/docs",
@@ -227,10 +230,10 @@ describe("Browser app", () => {
   it("shows downloads, grants, and clear-data controls", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/browser/downloads" && !init) {
+      if (url === "/api/browser/downloads" && !init?.method) {
         return jsonResponse({ downloads: [{ id: "download_1", filename: "report.pdf", state: "complete" }] });
       }
-      if (url === "/api/browser/grants" && !init) {
+      if (url === "/api/browser/grants" && !init?.method) {
         return jsonResponse({ grants: [{ id: "grant_1", scopes: ["screenshot"], domains: ["example.com"] }] });
       }
       if (url === "/api/browser/profiles/default/clear") {
@@ -259,9 +262,16 @@ describe("Browser app", () => {
     fireEvent.click(screen.getByText("report.pdf"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/browser/profiles/default/clear", expect.objectContaining({
       method: "POST",
+      signal: expect.any(AbortSignal),
     })));
-    expect(fetchMock).toHaveBeenCalledWith("/api/browser/grants/grant_1", { method: "DELETE" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/browser/downloads/download_1", { method: "DELETE" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/browser/grants/grant_1", expect.objectContaining({
+      method: "DELETE",
+      signal: expect.any(AbortSignal),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/browser/downloads/download_1", expect.objectContaining({
+      method: "DELETE",
+      signal: expect.any(AbortSignal),
+    }));
   });
 
   it("renders takeover and recoverable runtime states", async () => {
@@ -297,8 +307,8 @@ describe("Browser app", () => {
           mediaMode: "webrtc",
           protocolVersion: 1,
         },
-        streamToken: "stream_token",
-        wsUrl: "/api/browser/sessions/session_locked/ws",
+        streamToken: null,
+        wsUrl: null,
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -314,6 +324,7 @@ describe("Browser app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Take over" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/browser/sessions/session_locked/takeover", expect.objectContaining({
       method: "POST",
+      signal: expect.any(AbortSignal),
       body: JSON.stringify({ deviceId: "browser-canvas", confirm: true }),
     })));
     await waitFor(() => expect(screen.getByText("WebRTC stream pending")).toBeTruthy());

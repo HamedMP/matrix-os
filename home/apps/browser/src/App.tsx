@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BrowserViewport } from "./BrowserViewport";
+import { browserApiSignal } from "./browser-protocol";
 import { useBrowserSession } from "./useBrowserSession";
 
 interface BrowserGrantItem {
@@ -25,8 +26,8 @@ export default function App() {
 
   async function refreshOwnerData() {
     const [downloadsRes, grantsRes] = await Promise.all([
-      fetch("/api/browser/downloads"),
-      fetch("/api/browser/grants"),
+      fetch("/api/browser/downloads", { signal: browserApiSignal() }),
+      fetch("/api/browser/grants", { signal: browserApiSignal() }),
     ]);
     if (downloadsRes.ok) {
       const body = await downloadsRes.json() as { downloads?: BrowserDownloadItem[] };
@@ -43,6 +44,7 @@ export default function App() {
     const res = await fetch("/api/browser/profiles/default/clear", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: browserApiSignal(),
       body: JSON.stringify({ scopes: ["cookies", "localStorage", "cache", "savedPasswords", "downloads"] }),
     });
     setSettingsMessage(res.ok ? "Browser data cleared" : "Browser request is invalid.");
@@ -50,7 +52,7 @@ export default function App() {
   }
 
   async function revokeGrant(id: string) {
-    await fetch(`/api/browser/grants/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await fetch(`/api/browser/grants/${encodeURIComponent(id)}`, { method: "DELETE", signal: browserApiSignal() });
     await refreshOwnerData();
   }
 
@@ -68,6 +70,7 @@ export default function App() {
     const res = await fetch("/api/browser/grants", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: browserApiSignal(),
       body: JSON.stringify({
         sessionId: browser.session.session.id,
         scopes: ["read_dom", "screenshot"],
@@ -79,7 +82,7 @@ export default function App() {
   }
 
   async function deleteDownload(id: string) {
-    await fetch(`/api/browser/downloads/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await fetch(`/api/browser/downloads/${encodeURIComponent(id)}`, { method: "DELETE", signal: browserApiSignal() });
     await refreshOwnerData();
   }
 
@@ -107,6 +110,7 @@ export default function App() {
         busy={browser.state === "starting"}
         downloads={downloads}
         onNavigate={browser.navigate}
+        onReload={() => browser.navigate(browser.url, browser.surface)}
         onToggleMute={() => setMuted((value) => !value)}
         onDeleteDownload={deleteDownload}
       />

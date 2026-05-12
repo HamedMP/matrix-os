@@ -15,15 +15,15 @@
 
 **Purpose**: Prepare package, app, VPS, and test scaffolding for Browser implementation.
 
-- [ ] T001 Update Browser package exports and dependency metadata in packages/mcp-browser/package.json
-- [ ] T002 Add gateway Browser dependency metadata and scripts in packages/gateway/package.json
-- [ ] T003 Update root workspace lockfile after dependency changes in pnpm-lock.yaml
-- [ ] T004 [P] Create first-party Browser app scaffold in home/apps/browser/package.json, home/apps/browser/vite.config.ts, home/apps/browser/tsconfig.json, home/apps/browser/index.html, home/apps/browser/src/main.tsx, and home/apps/browser/src/App.tsx
-- [ ] T005 [P] Create Browser app manifest in home/apps/browser/matrix.json
-- [ ] T006 [P] Add shipped Browser icon asset in home/system/icons/browser.svg
-- [ ] T007 [P] Create Browser service unit scaffold in distro/customer-vps/systemd/matrix-browser.service
-- [ ] T008 [P] Create browser test directory placeholder in tests/browser/.gitkeep
-- [ ] T009 [P] Create Browser E2E spec placeholder in shell/e2e/browser-app.spec.ts
+- [X] T001 Update Browser package exports and dependency metadata in packages/mcp-browser/package.json
+- [X] T002 Add gateway Browser dependency metadata and scripts in packages/gateway/package.json
+- [X] T003 Update root workspace lockfile after dependency changes in pnpm-lock.yaml
+- [X] T004 [P] Create first-party Browser app scaffold in home/apps/browser/package.json, home/apps/browser/vite.config.ts, home/apps/browser/tsconfig.json, home/apps/browser/index.html, home/apps/browser/src/main.tsx, and home/apps/browser/src/App.tsx
+- [X] T005 [P] Create Browser app manifest in home/apps/browser/matrix.json
+- [X] T006 [P] Add shipped Browser icon asset in home/system/icons/browser.svg
+- [X] T007 [P] Create Browser service unit scaffold in distro/customer-vps/systemd/matrix-browser.service
+- [X] T008 [P] Create browser test directory placeholder in tests/browser/.gitkeep
+- [X] T009 [P] Create Browser E2E spec placeholder in shell/e2e/browser-app.spec.ts
 
 ---
 
@@ -35,40 +35,40 @@
 
 ### Tests First
 
-- [ ] T010 [P] Add URL policy tests for IPv4, IPv6, private ranges, Matrix hosts, redirects, DNS rebinding, and WebSocket URLs in tests/browser/url-policy.test.ts
-- [ ] T011 [P] Add shared runtime, profile lock, focus lease, takeover, and action-queue tests in tests/browser/session-manager.test.ts
-- [ ] T012 [P] Add standalone focus-lease stale-input tests in tests/browser/focus-lease.test.ts
-- [ ] T013 [P] Add stream protocol validation tests for versioning, message caps, safe errors, and fallback frames in tests/browser/ws.test.ts
-- [ ] T014 [P] Add WebRTC media-plane tests for server-offer/client-answer, relay-only ICE, TURN expiry, and fallback-frame policy in tests/browser/media-plane.test.ts
-- [ ] T015 [P] Add TURN candidate filtering and short-lived credential tests in tests/browser/turn-policy.test.ts
-- [ ] T016 [P] Add asymmetric handoff token verification tests in tests/browser/handoff-token.test.ts
-- [ ] T017 [P] Add deterministic Chromium password-store launch tests in tests/browser/password-store.test.ts
-- [ ] T018 [P] Add gateway Browser route auth, bodyLimit, Zod, safe-error, and owner-isolation tests in tests/browser/routes.test.ts
-- [ ] T019 [P] Add Browser download staging, atomic publish, and cleanup tests in tests/browser/downloads.test.ts
-- [ ] T020 [P] Add customer VPS Browser capability hardening tests in tests/customer-vps/browser-capability.test.ts
+- [X] T010 [P] Add URL policy tests for IPv4, IPv6, private ranges, Matrix hosts, redirects, DNS rebinding, and WebSocket URLs in tests/browser/url-policy.test.ts
+- [X] T011 [P] Add shared runtime, profile lock, focus lease, takeover, and action-queue tests in tests/browser/session-manager.test.ts
+- [X] T012 [P] Add standalone focus-lease stale-input tests in tests/browser/focus-lease.test.ts
+- [X] T013 [P] Add stream protocol validation tests for versioning, message caps, safe errors, and fallback frames in tests/browser/ws.test.ts
+- [X] T014 [P] Add WebRTC media-plane tests for server-offer/client-answer, relay-only ICE, TURN expiry, and fallback-frame policy in tests/browser/media-plane.test.ts
+- [X] T015 [P] Add TURN candidate filtering and short-lived credential tests in tests/browser/turn-policy.test.ts
+- [X] T016 [P] Add asymmetric handoff token verification tests in tests/browser/handoff-token.test.ts
+- [X] T017 [P] Add deterministic Chromium password-store launch tests in tests/browser/password-store.test.ts
+- [X] T018 [P] Add gateway Browser route auth, bodyLimit, Zod, safe-error, and owner-isolation tests in tests/browser/routes.test.ts
+- [X] T019 [P] Add Browser download staging, atomic publish, and cleanup tests in tests/browser/downloads.test.ts
+- [X] T020 [P] Add customer VPS Browser capability hardening tests in tests/customer-vps/browser-capability.test.ts
 
 ### Core Implementation
 
-- [ ] T021 Implement Browser stream protocol Zod schemas and bounded message constants in packages/mcp-browser/src/stream-protocol.ts
-- [ ] T022 Implement hardened URL, redirect, DNS binding, WebSocket, profile, artifact, and password-store guards in packages/mcp-browser/src/security.ts
-- [ ] T023 Refactor shared Browser runtime, profile locks, same-device multiplexing, takeover, focus lease, idle timeout, and serialized action queue in packages/mcp-browser/src/session-manager.ts
-- [ ] T024 Implement Browser runtime session/tab/download/control service in packages/mcp-browser/src/runtime-service.ts
-- [ ] T025 Implement WebRTC media service, relay-only ICE filtering, TURN credential expiry handling, audio mute state, and fallback frame caps in packages/mcp-browser/src/media-service.ts
-- [ ] T026 Update existing MCP Browser tool to use shared runtime service, URL guards, and permission-aware action serialization in packages/mcp-browser/src/browser-tool.ts
-- [ ] T027 Add owner-scoped Browser database repository for profiles, sessions, tabs, streams, downloads, grants, and audit in packages/gateway/src/browser/repository.ts
-- [ ] T028 Add owner filesystem profile, staging-download, completed-download, screenshot, thumbnail, crash-artifact, symlink-safe cleanup helpers in packages/gateway/src/browser/profile-store.ts
-- [ ] T029 Add Browser gateway URL preflight, navigation binding, redirect revalidation, runtime revalidation, and safe error mapping in packages/gateway/src/browser/url-policy.ts
-- [ ] T030 Add platform-signed Browser handoff token verifier using pinned public key/JWKS material in packages/gateway/src/handoff-token.ts
-- [ ] T031 Add short-lived owner/session-bound TURN credential minting and relay-only policy helpers in packages/gateway/src/turn-credentials.ts
-- [ ] T032 Add Browser orchestration service for capability checks, sessions, tabs, profile clearing, downloads, grants, audit, shutdown drains, and safe errors in packages/gateway/src/browser/service.ts
-- [ ] T033 Add Browser REST routes with auth, bodyLimit, Zod boundary validation, and safe-error mapper in packages/gateway/src/browser/routes.ts
-- [ ] T034 Add Browser WebSocket route with subprotocol token auth, protocol negotiation, focus messages, WebRTC signaling, stale eviction, and shutdown drain in packages/gateway/src/browser/ws.ts
-- [ ] T035 Register Browser REST and WebSocket routes plus shutdown drains in packages/gateway/src/server.ts
-- [ ] T036 Add Browser route auth allowlist and subprotocol validation integration in packages/gateway/src/auth.ts
-- [ ] T037 Add Browser capability version and TURN/public-key environment plumbing in packages/platform/src/customer-vps-config.ts
-- [ ] T038 Add Browser service provisioning, Chromium installation, password-store flag, TURN/JWKS env, and service enablement to distro/customer-vps/cloud-init.yaml
-- [ ] T039 Harden matrix-browser.service with non-root user, NoNewPrivileges, PrivateTmp, restricted writes, resource limits, restart policy, and shutdown drain in distro/customer-vps/systemd/matrix-browser.service
-- [ ] T040 Include Browser app, runtime artifacts, service unit, public key/JWKS metadata, and Chromium provisioning in scripts/build-host-bundle.sh
+- [X] T021 Implement Browser stream protocol Zod schemas and bounded message constants in packages/mcp-browser/src/stream-protocol.ts
+- [X] T022 Implement hardened URL, redirect, DNS binding, WebSocket, profile, artifact, and password-store guards in packages/mcp-browser/src/security.ts
+- [X] T023 Refactor shared Browser runtime, profile locks, same-device multiplexing, takeover, focus lease, idle timeout, and serialized action queue in packages/mcp-browser/src/session-manager.ts
+- [X] T024 Implement Browser runtime session/tab/download/control service in packages/mcp-browser/src/runtime-service.ts
+- [X] T025 Implement WebRTC media service, relay-only ICE filtering, TURN credential expiry handling, audio mute state, and fallback frame caps in packages/mcp-browser/src/media-service.ts
+- [X] T026 Update existing MCP Browser tool to use shared runtime service, URL guards, and permission-aware action serialization in packages/mcp-browser/src/browser-tool.ts
+- [X] T027 Add owner-scoped Browser database repository for profiles, sessions, tabs, streams, downloads, grants, and audit in packages/gateway/src/browser/repository.ts
+- [X] T028 Add owner filesystem profile, staging-download, completed-download, screenshot, thumbnail, crash-artifact, symlink-safe cleanup helpers in packages/gateway/src/browser/profile-store.ts
+- [X] T029 Add Browser gateway URL preflight, navigation binding, redirect revalidation, runtime revalidation, and safe error mapping in packages/gateway/src/browser/url-policy.ts
+- [X] T030 Add platform-signed Browser handoff token verifier using pinned public key/JWKS material in packages/gateway/src/handoff-token.ts
+- [X] T031 Add short-lived owner/session-bound TURN credential minting and relay-only policy helpers in packages/gateway/src/turn-credentials.ts
+- [X] T032 Add Browser orchestration service for capability checks, sessions, tabs, profile clearing, downloads, grants, audit, shutdown drains, and safe errors in packages/gateway/src/browser/service.ts
+- [X] T033 Add Browser REST routes with auth, bodyLimit, Zod boundary validation, and safe-error mapper in packages/gateway/src/browser/routes.ts
+- [X] T034 Add Browser WebSocket route with subprotocol token auth, protocol negotiation, focus messages, WebRTC signaling, stale eviction, and shutdown drain in packages/gateway/src/browser/ws.ts
+- [X] T035 Register Browser REST and WebSocket routes plus shutdown drains in packages/gateway/src/server.ts
+- [X] T036 Add Browser route auth allowlist and subprotocol validation integration in packages/gateway/src/auth.ts
+- [X] T037 Add Browser capability version and TURN/public-key environment plumbing in packages/platform/src/customer-vps-config.ts
+- [X] T038 Add Browser service provisioning, Chromium installation, password-store flag, TURN/JWKS env, and service enablement to distro/customer-vps/cloud-init.yaml
+- [X] T039 Harden matrix-browser.service with non-root user, NoNewPrivileges, PrivateTmp, restricted writes, resource limits, restart policy, and shutdown drain in distro/customer-vps/systemd/matrix-browser.service
+- [X] T040 Include Browser app, runtime artifacts, service unit, public key/JWKS metadata, and Chromium provisioning in scripts/build-host-bundle.sh
 
 **Checkpoint**: Browser foundation ready. URL policy, shared runtime, auth, protocol, persistence, media, handoff, TURN, password-store, service hardening, and cleanup contracts have failing-then-passing tests.
 
@@ -81,24 +81,24 @@
 
 ### Tests for User Story 1
 
-- [ ] T041 [P] [US1] Add Browser Canvas app unit tests for toolbar, viewport states, focus, audio mute, and safe error states in tests/default-apps/browser-app.test.tsx
-- [ ] T042 [P] [US1] Add gateway session create/resume contract tests for Canvas surface in tests/browser/routes.test.ts
-- [ ] T043 [P] [US1] Add WebSocket Canvas stream contract tests for stream.hello, stream.ready, media.offer, surface.focused, input, and stale_focus in tests/browser/ws.test.ts
-- [ ] T044 [P] [US1] Add Canvas E2E smoke for opening Browser, navigating, focusing, and reconnecting in shell/e2e/browser-app.spec.ts
+- [X] T041 [P] [US1] Add Browser Canvas app unit tests for toolbar, viewport states, focus, audio mute, and safe error states in tests/default-apps/browser-app.test.tsx
+- [X] T042 [P] [US1] Add gateway session create/resume contract tests for Canvas surface in tests/browser/routes.test.ts
+- [X] T043 [P] [US1] Add WebSocket Canvas stream contract tests for stream.hello, stream.ready, media.offer, surface.focused, input, and stale_focus in tests/browser/ws.test.ts
+- [X] T044 [P] [US1] Add Canvas E2E smoke for opening Browser, navigating, focusing, and reconnecting in shell/e2e/browser-app.spec.ts
 
 ### Implementation for User Story 1
 
-- [ ] T045 [P] [US1] Implement shared Browser app protocol client in home/apps/browser/src/browser-protocol.ts
-- [ ] T046 [P] [US1] Implement Browser session React hook with REST session create/resume, stream token handling, WebSocket reconnect, and safe error state in home/apps/browser/src/useBrowserSession.ts
-- [ ] T047 [P] [US1] Implement Browser toolbar for URL entry, back, forward, refresh, tabs, audio mute, and status in home/apps/browser/src/BrowserToolbar.tsx
-- [ ] T048 [P] [US1] Implement Browser WebRTC viewport, fallback frame rendering, resize, focus, pointer, wheel, keyboard, IME, paste, and disconnected states in home/apps/browser/src/BrowserViewport.tsx
-- [ ] T049 [US1] Compose Canvas Browser app UX with empty, loading, browsing, blocked, unavailable, profile-locked, deferred-feature, and startup-failure states in home/apps/browser/src/App.tsx
-- [ ] T050 [US1] Add Browser app styling consistent with Matrix app conventions in home/apps/browser/src/styles.css
-- [ ] T051 [US1] Wire Browser app entry and runtime type in home/apps/browser/src/main.tsx
-- [ ] T052 [US1] Ensure Browser manifest uses Vite runtime and shipped icon in home/apps/browser/matrix.json
-- [ ] T053 [US1] Register Browser as a deterministic default app/icon in packages/gateway/src/apps.ts
-- [ ] T054 [US1] Update default app/icon determinism tests for Browser in tests/gateway/apps.test.ts
-- [ ] T055 [US1] Build Browser app through default app builder in scripts/build-default-apps.mjs
+- [X] T045 [P] [US1] Implement shared Browser app protocol client in home/apps/browser/src/browser-protocol.ts
+- [X] T046 [P] [US1] Implement Browser session React hook with REST session create/resume, stream token handling, WebSocket reconnect, and safe error state in home/apps/browser/src/useBrowserSession.ts
+- [X] T047 [P] [US1] Implement Browser toolbar for URL entry, back, forward, refresh, tabs, audio mute, and status in home/apps/browser/src/BrowserToolbar.tsx
+- [X] T048 [P] [US1] Implement Browser WebRTC viewport, fallback frame rendering, resize, focus, pointer, wheel, keyboard, IME, paste, and disconnected states in home/apps/browser/src/BrowserViewport.tsx
+- [X] T049 [US1] Compose Canvas Browser app UX with empty, loading, browsing, blocked, unavailable, profile-locked, deferred-feature, and startup-failure states in home/apps/browser/src/App.tsx
+- [X] T050 [US1] Add Browser app styling consistent with Matrix app conventions in home/apps/browser/src/styles.css
+- [X] T051 [US1] Wire Browser app entry and runtime type in home/apps/browser/src/main.tsx
+- [X] T052 [US1] Ensure Browser manifest uses Vite runtime and shipped icon in home/apps/browser/matrix.json
+- [X] T053 [US1] Register Browser as a deterministic default app/icon in packages/gateway/src/apps.ts
+- [X] T054 [US1] Update default app/icon determinism tests for Browser in tests/gateway/apps.test.ts
+- [X] T055 [US1] Build Browser app through default app builder in scripts/build-default-apps.mjs
 
 **Checkpoint**: User Story 1 is independently functional in Canvas.
 
@@ -111,20 +111,20 @@
 
 ### Tests for User Story 2
 
-- [ ] T056 [P] [US2] Add shell standalone route tests for `/browser/[...target]` auth and target normalization in tests/shell/browser-route.test.tsx
-- [ ] T057 [P] [US2] Add platform redirect-only handoff tests for owner VPS resolution and no proxying in tests/browser/handoff-token.test.ts
-- [ ] T058 [P] [US2] Add standalone route E2E smoke for `/browser/google.com` and Canvas session sharing in shell/e2e/browser-app.spec.ts
-- [ ] T059 [P] [US2] Add proxy route regression tests to ensure Browser standalone path is owner-hosted, not proxied as target-site content, in tests/shell/proxy-auth.test.ts
+- [X] T056 [P] [US2] Add shell standalone route tests for `/browser/[...target]` auth and target normalization in tests/shell/browser-route.test.tsx
+- [X] T057 [P] [US2] Add platform redirect-only handoff tests for owner VPS resolution and no proxying in tests/browser/handoff-token.test.ts
+- [X] T058 [P] [US2] Add standalone route E2E smoke for `/browser/google.com` and Canvas session sharing in shell/e2e/browser-app.spec.ts
+- [X] T059 [P] [US2] Add proxy route regression tests to ensure Browser standalone path is owner-hosted, not proxied as target-site content, in tests/shell/proxy-auth.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T060 [US2] Add standalone Browser route page that hosts Browser app without Canvas chrome in shell/src/app/browser/[...target]/page.tsx
-- [ ] T061 [US2] Add Browser standalone route helper for target extraction and owner-host app URL construction in shell/src/lib/proxy-routes.ts
-- [ ] T062 [US2] Reuse standalone app opening behavior for Browser full-tab launches in shell/src/lib/open-app-tab.ts
-- [ ] T063 [US2] Add platform `/browser/*` redirect-only route with Matrix auth, owner VPS lookup, asymmetric handoff signing, one-use nonce, and generic errors in packages/platform/src/main.ts
-- [ ] T064 [US2] Add owner VPS Browser handoff verification and session bootstrap integration in packages/gateway/src/browser/routes.ts
-- [ ] T065 [US2] Add platform Browser handoff config for public key/JWKS, token expiry, target binding, and owner host allowlist in packages/platform/src/customer-vps-config.ts
-- [ ] T066 [US2] Add standalone Browser route docs to www/content/docs/browser.mdx
+- [X] T060 [US2] Add standalone Browser route page that hosts Browser app without Canvas chrome in shell/src/app/browser/[...target]/page.tsx
+- [X] T061 [US2] Add Browser standalone route helper for target extraction and owner-host app URL construction in shell/src/lib/proxy-routes.ts
+- [X] T062 [US2] Reuse standalone app opening behavior for Browser full-tab launches in shell/src/lib/open-app-tab.ts
+- [X] T063 [US2] Add platform `/browser/*` redirect-only route with Matrix auth, owner VPS lookup, asymmetric handoff signing, one-use nonce, and generic errors in packages/platform/src/main.ts
+- [X] T064 [US2] Add owner VPS Browser handoff verification and session bootstrap integration in packages/gateway/src/browser/routes.ts
+- [X] T065 [US2] Add platform Browser handoff config for public key/JWKS, token expiry, target binding, and owner host allowlist in packages/platform/src/customer-vps-config.ts
+- [X] T066 [US2] Add standalone Browser route docs to www/content/docs/browser.mdx
 
 **Checkpoint**: User Story 2 is independently functional as an authenticated standalone Browser route.
 
@@ -137,23 +137,23 @@
 
 ### Tests for User Story 3
 
-- [ ] T067 [P] [US3] Add owner isolation repository tests for profiles, sessions, tabs, downloads, grants, and audit in tests/browser/routes.test.ts
-- [ ] T068 [P] [US3] Add profile clear tests for cookies, IndexedDB, local/session storage, cache/service workers, site permissions, saved form data, saved passwords, history, and downloads in tests/browser/routes.test.ts
-- [ ] T069 [P] [US3] Add download staging, atomic publish, failed-download cleanup, safe filename, and owner file-surface tests in tests/browser/downloads.test.ts
-- [ ] T070 [P] [US3] Add audit retention, redaction, `session.taken_over`, and owner-visible cursor tests in tests/browser/routes.test.ts
-- [ ] T071 [P] [US3] Add owner export/delete Browser data integration tests in tests/gateway/files-tree.test.ts
+- [X] T067 [P] [US3] Add owner isolation repository tests for profiles, sessions, tabs, downloads, grants, and audit in tests/browser/routes.test.ts
+- [X] T068 [P] [US3] Add profile clear tests for cookies, IndexedDB, local/session storage, cache/service workers, site permissions, saved form data, saved passwords, history, and downloads in tests/browser/routes.test.ts
+- [X] T069 [P] [US3] Add download staging, atomic publish, failed-download cleanup, safe filename, and owner file-surface tests in tests/browser/downloads.test.ts
+- [X] T070 [P] [US3] Add audit retention, redaction, `session.taken_over`, and owner-visible cursor tests in tests/browser/routes.test.ts
+- [X] T071 [P] [US3] Add owner export/delete Browser data integration tests in tests/gateway/files-tree.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T072 [US3] Add Browser owner Postgres schema and migration for profiles, sessions, tabs, streams, downloads, grants, audit, and unique live-session constraints in packages/gateway/src/browser/repository.ts
-- [ ] T073 [US3] Implement transactional profile/session/tab/download/grant/audit repository methods with owner filters in packages/gateway/src/browser/repository.ts
-- [ ] T074 [US3] Implement profile clear orchestration, active-session close, deterministic saved-password clearing, and per-scope safe errors in packages/gateway/src/browser/service.ts
-- [ ] T075 [US3] Implement download staging, Chromium download hooks, atomic publish, Matrix files indexing, failed cleanup, and delete behavior in packages/gateway/src/browser/profile-store.ts
-- [ ] T076 [US3] Implement audit event creation, redaction, cursor pagination, 180-day retention pruning, and `session.taken_over` event writing in packages/gateway/src/browser/repository.ts
-- [ ] T077 [US3] Implement export/delete integration for Browser profiles, downloads, and metadata in packages/gateway/src/files-tree.ts
-- [ ] T078 [US3] Add Browser profile/download settings and clear-data UI to home/apps/browser/src/App.tsx
-- [ ] T079 [US3] Add Browser downloads list and file-open/delete UI to home/apps/browser/src/BrowserToolbar.tsx
-- [ ] T080 [US3] Update Browser data ownership, clearing, downloads, audit, export, and recovery docs in www/content/docs/browser.mdx
+- [X] T072 [US3] Add Browser owner Postgres schema and migration for profiles, sessions, tabs, streams, downloads, grants, audit, and unique live-session constraints in packages/gateway/src/browser/repository.ts
+- [X] T073 [US3] Implement transactional profile/session/tab/download/grant/audit repository methods with owner filters in packages/gateway/src/browser/repository.ts
+- [X] T074 [US3] Implement profile clear orchestration, active-session close, deterministic saved-password clearing, and per-scope safe errors in packages/gateway/src/browser/service.ts
+- [X] T075 [US3] Implement download staging, Chromium download hooks, atomic publish, Matrix files indexing, failed cleanup, and delete behavior in packages/gateway/src/browser/profile-store.ts
+- [X] T076 [US3] Implement audit event creation, redaction, cursor pagination, 180-day retention pruning, and `session.taken_over` event writing in packages/gateway/src/browser/repository.ts
+- [X] T077 [US3] Implement export/delete integration for Browser profiles, downloads, and metadata in packages/gateway/src/files-tree.ts
+- [X] T078 [US3] Add Browser profile/download settings and clear-data UI to home/apps/browser/src/App.tsx
+- [X] T079 [US3] Add Browser downloads list and file-open/delete UI to home/apps/browser/src/BrowserToolbar.tsx
+- [X] T080 [US3] Update Browser data ownership, clearing, downloads, audit, export, and recovery docs in www/content/docs/browser.mdx
 
 **Checkpoint**: User Story 3 is independently functional for owner-scoped persistence, downloads, clearing, export, and audit.
 
@@ -166,21 +166,21 @@
 
 ### Tests for User Story 4
 
-- [ ] T081 [P] [US4] Add session limit, tab limit, stream limit, memory/disk limit, idle hibernation, and recoverable restart tests in tests/browser/session-manager.test.ts
-- [ ] T082 [P] [US4] Add second-device takeover, `stream.taken_over`, lock release, and audit tests in tests/browser/focus-lease.test.ts
-- [ ] T083 [P] [US4] Add stale stream eviction, failed broadcast eviction, shutdown drain, and recoverable session tests in tests/browser/ws.test.ts
-- [ ] T084 [P] [US4] Add service hardening and restart behavior tests for matrix-browser.service in tests/customer-vps/browser-capability.test.ts
+- [X] T081 [P] [US4] Add session limit, tab limit, stream limit, memory/disk limit, idle hibernation, and recoverable restart tests in tests/browser/session-manager.test.ts
+- [X] T082 [P] [US4] Add second-device takeover, `stream.taken_over`, lock release, and audit tests in tests/browser/focus-lease.test.ts
+- [X] T083 [P] [US4] Add stale stream eviction, failed broadcast eviction, shutdown drain, and recoverable session tests in tests/browser/ws.test.ts
+- [X] T084 [P] [US4] Add service hardening and restart behavior tests for matrix-browser.service in tests/customer-vps/browser-capability.test.ts
 
 ### Implementation for User Story 4
 
-- [ ] T085 [US4] Implement owner caps for sessions, tabs, streams, memory, disk, downloads, and idle duration in packages/mcp-browser/src/runtime-service.ts
-- [ ] T086 [US4] Implement idle hibernation, durable tab URL/order restore, recoverable session marking, and no transient-state preservation in packages/mcp-browser/src/runtime-service.ts
-- [ ] T087 [US4] Implement second-device takeover prompt state, `stream.taken_over`, lock release, old-session recovery/close, and audit emission in packages/gateway/src/browser/service.ts
-- [ ] T088 [US4] Implement stale stream sweeps, heartbeat timeout, failed-send eviction, and shutdown drains in packages/gateway/src/browser/ws.ts
-- [ ] T089 [US4] Implement Browser runtime health and coarse capability endpoint in packages/gateway/src/browser/routes.ts
-- [ ] T090 [US4] Add Browser UI states for limits, idle hibernation, recoverable sessions, profile locks, and takeover prompts in home/apps/browser/src/App.tsx
-- [ ] T091 [US4] Update VPS service restart, health, and recovery behavior in distro/customer-vps/systemd/matrix-browser.service
-- [ ] T092 [US4] Document session limits, hibernation reload behavior, recovery, and takeover in www/content/docs/browser.mdx
+- [X] T085 [US4] Implement owner caps for sessions, tabs, streams, memory, disk, downloads, and idle duration in packages/mcp-browser/src/runtime-service.ts
+- [X] T086 [US4] Implement idle hibernation, durable tab URL/order restore, recoverable session marking, and no transient-state preservation in packages/mcp-browser/src/runtime-service.ts
+- [X] T087 [US4] Implement second-device takeover prompt state, `stream.taken_over`, lock release, old-session recovery/close, and audit emission in packages/gateway/src/browser/service.ts
+- [X] T088 [US4] Implement stale stream sweeps, heartbeat timeout, failed-send eviction, and shutdown drains in packages/gateway/src/browser/ws.ts
+- [X] T089 [US4] Implement Browser runtime health and coarse capability endpoint in packages/gateway/src/browser/routes.ts
+- [X] T090 [US4] Add Browser UI states for limits, idle hibernation, recoverable sessions, profile locks, and takeover prompts in home/apps/browser/src/App.tsx
+- [X] T091 [US4] Update VPS service restart, health, and recovery behavior in distro/customer-vps/systemd/matrix-browser.service
+- [X] T092 [US4] Document session limits, hibernation reload behavior, recovery, and takeover in www/content/docs/browser.mdx
 
 **Checkpoint**: User Story 4 is independently functional for resource-safe sessions and recovery.
 
@@ -193,20 +193,20 @@
 
 ### Tests for User Story 5
 
-- [ ] T093 [P] [US5] Add Browser Permission Grant create/list/revoke/expiry/domain/scope tests in tests/browser/routes.test.ts
-- [ ] T094 [P] [US5] Add agent access denial, read_dom, screenshot, navigate, download, and automate_input grant enforcement tests in tests/browser/routes.test.ts
-- [ ] T095 [P] [US5] Add agent automate_input serialization without UI focus takeover tests in tests/browser/focus-lease.test.ts
-- [ ] T096 [P] [US5] Add audit redaction tests for agent.access with no cookies, auth headers, credentials, screenshots, HTML, or raw paths in tests/browser/routes.test.ts
+- [X] T093 [P] [US5] Add Browser Permission Grant create/list/revoke/expiry/domain/scope tests in tests/browser/routes.test.ts
+- [X] T094 [P] [US5] Add agent access denial, read_dom, screenshot, navigate, download, and automate_input grant enforcement tests in tests/browser/routes.test.ts
+- [X] T095 [P] [US5] Add agent automate_input serialization without UI focus takeover tests in tests/browser/focus-lease.test.ts
+- [X] T096 [P] [US5] Add audit redaction tests for agent.access with no cookies, auth headers, credentials, screenshots, HTML, or raw paths in tests/browser/routes.test.ts
 
 ### Implementation for User Story 5
 
-- [ ] T097 [US5] Implement Browser Permission Grant repository methods with domain-set validation, default expiry, revocation, and per-action lookup in packages/gateway/src/browser/repository.ts
-- [ ] T098 [US5] Implement grant creation/list/revoke REST routes and safe errors in packages/gateway/src/browser/routes.ts
-- [ ] T099 [US5] Implement agent Browser action authorization for read_dom, screenshot, download, navigate, and automate_input in packages/gateway/src/browser/service.ts
-- [ ] T100 [US5] Route existing MCP Browser tool actions through Browser Permission Grants and action serialization in packages/mcp-browser/src/browser-tool.ts
-- [ ] T101 [US5] Add permission request, grant, revoke, and active-grants UI to home/apps/browser/src/App.tsx
-- [ ] T102 [US5] Emit `agent.access`, `permission.granted`, and `permission.revoked` audit events with redacted metadata in packages/gateway/src/browser/repository.ts
-- [ ] T103 [US5] Document agent access boundaries, grant scopes, default expiry, revocation, and audit behavior in www/content/docs/browser.mdx
+- [X] T097 [US5] Implement Browser Permission Grant repository methods with domain-set validation, default expiry, revocation, and per-action lookup in packages/gateway/src/browser/repository.ts
+- [X] T098 [US5] Implement grant creation/list/revoke REST routes and safe errors in packages/gateway/src/browser/routes.ts
+- [X] T099 [US5] Implement agent Browser action authorization for read_dom, screenshot, download, navigate, and automate_input in packages/gateway/src/browser/service.ts
+- [X] T100 [US5] Route existing MCP Browser tool actions through Browser Permission Grants and action serialization in packages/mcp-browser/src/browser-tool.ts
+- [X] T101 [US5] Add permission request, grant, revoke, and active-grants UI to home/apps/browser/src/App.tsx
+- [X] T102 [US5] Emit `agent.access`, `permission.granted`, and `permission.revoked` audit events with redacted metadata in packages/gateway/src/browser/repository.ts
+- [X] T103 [US5] Document agent access boundaries, grant scopes, default expiry, revocation, and audit behavior in www/content/docs/browser.mdx
 
 **Checkpoint**: User Story 5 is independently functional for explicit, auditable agent-assisted Browser use.
 
@@ -216,18 +216,18 @@
 
 **Purpose**: Final docs, validation, review gates, and rollout checks across all stories.
 
-- [ ] T104 [P] Add public Browser user docs covering ownership, Browser route behavior, persistence, downloads, clearing, limits, deferred features, audio, and agent access in www/content/docs/browser.mdx
-- [ ] T105 [P] Add developer Browser architecture docs covering shared runtime, WebRTC/TURN, URL policy, handoff tokens, service hardening, and rollout in docs/dev/browser-runtime.md
-- [ ] T106 [P] Update review checklist references for Browser auth, SSRF, WebRTC, TURN, handoff, bodyLimit, cleanup, and safe errors in docs/dev/review-pipeline.md
-- [ ] T107 [P] Add Browser host-bundle rollout notes and env source map for TURN, JWKS/public key, Chromium, and service units in docs/dev/vps-deployment.md
-- [ ] T108 Run default Browser app build and verify dist output in home/apps/browser/dist/index.html
-- [ ] T109 Run focused Browser test suite with `bun run test -- tests/browser/url-policy.test.ts tests/browser/session-manager.test.ts tests/browser/focus-lease.test.ts tests/browser/media-plane.test.ts tests/browser/turn-policy.test.ts tests/browser/handoff-token.test.ts tests/browser/password-store.test.ts tests/browser/routes.test.ts tests/browser/ws.test.ts tests/browser/downloads.test.ts`
-- [ ] T110 Run default app/icon test with `bun run test -- tests/gateway/apps.test.ts`
-- [ ] T111 Run shell Browser E2E smoke and screenshot verification with `bun run test:e2e -- shell/e2e/browser-app.spec.ts`
-- [ ] T112 Run customer VPS Browser capability tests with `bun run test -- tests/customer-vps/browser-capability.test.ts`
-- [ ] T113 Run full pattern and type gates against package.json, tsconfig.json, and scripts/review/check-patterns.sh with `bun run check:patterns` and `bun run typecheck`
-- [ ] T114 Run customer VPS host-bundle build and health smoke per quickstart in scripts/build-host-bundle.sh and specs/074-vps-browser-runtime/quickstart.md
-- [ ] T115 Perform three-pass review against docs/dev/review-pipeline.md and record Browser invariants in specs/074-vps-browser-runtime/tasks.md for the pull request body
+- [X] T104 [P] Add public Browser user docs covering ownership, Browser route behavior, persistence, downloads, clearing, limits, deferred features, audio, and agent access in www/content/docs/browser.mdx
+- [X] T105 [P] Add developer Browser architecture docs covering shared runtime, WebRTC/TURN, URL policy, handoff tokens, service hardening, and rollout in docs/dev/browser-runtime.md
+- [X] T106 [P] Update review checklist references for Browser auth, SSRF, WebRTC, TURN, handoff, bodyLimit, cleanup, and safe errors in docs/dev/review-pipeline.md
+- [X] T107 [P] Add Browser host-bundle rollout notes and env source map for TURN, JWKS/public key, Chromium, and service units in docs/dev/vps-deployment.md
+- [X] T108 Run default Browser app build and verify dist output in home/apps/browser/dist/index.html
+- [X] T109 Run focused Browser test suite with `bun run test -- tests/browser/url-policy.test.ts tests/browser/session-manager.test.ts tests/browser/focus-lease.test.ts tests/browser/media-plane.test.ts tests/browser/turn-policy.test.ts tests/browser/handoff-token.test.ts tests/browser/password-store.test.ts tests/browser/routes.test.ts tests/browser/ws.test.ts tests/browser/downloads.test.ts`
+- [X] T110 Run default app/icon test with `bun run test -- tests/gateway/apps.test.ts`
+- [X] T111 Run shell Browser E2E smoke and screenshot verification with `bun run test:e2e -- shell/e2e/browser-app.spec.ts`
+- [X] T112 Run customer VPS Browser capability tests with `bun run test -- tests/customer-vps/browser-capability.test.ts`
+- [X] T113 Run full pattern and type gates against package.json, tsconfig.json, and scripts/review/check-patterns.sh with `bun run check:patterns` and `bun run typecheck`
+- [X] T114 Run customer VPS host-bundle build and health smoke per quickstart in scripts/build-host-bundle.sh and specs/074-vps-browser-runtime/quickstart.md
+- [X] T115 Perform three-pass review against docs/dev/review-pipeline.md and record Browser invariants in specs/074-vps-browser-runtime/tasks.md for the pull request body
 
 ### Browser PR Invariants
 

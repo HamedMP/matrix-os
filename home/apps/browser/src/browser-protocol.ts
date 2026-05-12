@@ -9,8 +9,14 @@ export interface BrowserSessionResponse {
     mediaMode: "webrtc" | "fallback_frame";
     protocolVersion: number;
   };
-  streamToken: string;
-  wsUrl: string;
+  streamToken: string | null;
+  wsUrl: string | null;
+}
+
+export const BROWSER_API_TIMEOUT_MS = 10_000;
+
+export function browserApiSignal(): AbortSignal {
+  return AbortSignal.timeout(BROWSER_API_TIMEOUT_MS);
 }
 
 export class BrowserProtocolError extends Error {
@@ -40,6 +46,7 @@ export async function createBrowserSession(opts: {
   const res = await fetch("/api/browser/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
+    signal: browserApiSignal(),
     body: JSON.stringify({
       profileName: opts.profileName ?? "default",
       targetUrl: normalizeBrowserTarget(opts.targetUrl),
