@@ -112,7 +112,7 @@ Expected result:
 
 ## Customer VPS Rollout Check
 
-For production-facing Browser changes, use the customer VPS host-bundle path:
+For production-facing Browser changes, use the customer VPS host-bundle release path from `docs/dev/releases.md`. A merge to `main` builds and publishes the host bundle through `.github/workflows/host-bundle-release.yml`; local builds are for validation or break-glass release preparation.
 
 ```bash
 set -a
@@ -122,24 +122,30 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish:
+Expected immutable objects after the release workflow or `./scripts/publish-release.sh <version> --channel <channel>`:
 
 ```text
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
 
-Refresh an existing VPS in place and restart host services:
+Platform Postgres is the release source of truth. Trigger existing VPS updates after the release is registered:
 
 ```bash
-sudo systemctl restart matrix-browser.service matrix-gateway.service matrix-shell.service
+curl --fail --silent --show-error \
+  -X POST https://app.matrix-os.com/vps/deploy \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"version":"<version>"}'
 ```
 
 Health checks:
 
 ```bash
-curl -fsS http://localhost:9000/health
-systemctl status matrix-browser.service matrix-gateway.service matrix-shell.service --no-pager
+ssh root@<vps-ip> 'cat /opt/matrix/release.json'
+ssh root@<vps-ip> 'systemctl is-active matrix-browser matrix-gateway matrix-shell matrix-sync-agent'
+ssh root@<vps-ip> 'curl -fsS http://127.0.0.1:4000/health'
+ssh root@<vps-ip> 'curl -fsS http://127.0.0.1:4000/api/browser/capability'
 ```
 
 Service hardening checks:
