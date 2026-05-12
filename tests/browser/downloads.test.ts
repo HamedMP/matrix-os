@@ -30,6 +30,21 @@ describe("Browser download profile store", () => {
     await expect(readFile(paths.finalPath, "utf8")).resolves.toBe("ok");
   });
 
+  it("chooses no-clobber completed download paths", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-browser-downloads-"));
+    const first = await createBrowserDownloadPaths(home, "report.txt");
+    await writeFile(first.stagingPath, "first");
+    await publishBrowserDownload(first.stagingPath, first.finalPath);
+
+    const second = await createBrowserDownloadPaths(home, "report.txt");
+    expect(second.finalPath).toBe(join(home, "files", "downloads", "report (1).txt"));
+    await writeFile(second.stagingPath, "second");
+    await publishBrowserDownload(second.stagingPath, second.finalPath);
+
+    await expect(readFile(first.finalPath, "utf8")).resolves.toBe("first");
+    await expect(readFile(second.finalPath, "utf8")).resolves.toBe("second");
+  });
+
   it("deletes staged and completed artifacts without leaving owner home", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-browser-delete-"));
     const paths = await createBrowserDownloadPaths(home, "report.txt");

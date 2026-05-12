@@ -1,5 +1,5 @@
-import { mkdir, rename, rm, lstat, readdir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve, relative } from "node:path";
+import { mkdir, rm, lstat, readdir, link } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, resolve, relative } from "node:path";
 
 export function resolveWithinHome(homePath: string, ...segments: string[]): string {
   const base = resolve(homePath);
@@ -30,13 +30,14 @@ export async function createBrowserDownloadPaths(homePath: string, filename: str
   await mkdir(finalDir, { recursive: true, mode: 0o755 });
   return {
     stagingPath: join(stagingDir, `${Date.now()}-${safeName}.part`),
-    finalPath: join(finalDir, safeName),
+    finalPath: await uniqueBrowserDownloadPath(finalDir, safeName),
   };
 }
 
 export async function publishBrowserDownload(stagingPath: string, finalPath: string): Promise<void> {
   await mkdir(dirname(finalPath), { recursive: true });
-  await rename(stagingPath, finalPath);
+  await link(stagingPath, finalPath);
+  await rm(stagingPath, { force: true });
 }
 
 export async function deleteBrowserDownloadArtifacts(homePath: string, paths: {
@@ -65,7 +66,14 @@ export async function sweepBrowserTempFiles(dir: string, opts: { maxAgeMs: numbe
   }
   for (const entry of entries) {
     const path = join(dir, entry);
-    const stat = await lstat(path);
+    let stat: Awaited<ReturnType<typeof lstat>>;
+    try {
+      stat = await lstat(path);
+    } catch (error: unknown) {
+      if (isNodeErrorCode(error, "ENOENT")) continue;
+      console.warn("[browser/profile-store] temp sweep failed to stat entry:", error instanceof Error ? error.message : String(error));
+      continue;
+    }
     if (stat.isSymbolicLink()) continue;
     if (now - stat.mtimeMs > opts.maxAgeMs) {
       await rm(path, { recursive: true, force: true });
@@ -73,6 +81,26 @@ export async function sweepBrowserTempFiles(dir: string, opts: { maxAgeMs: numbe
     }
   }
   return removed;
+}
+
+async function uniqueBrowserDownloadPath(finalDir: string, safeName: string): Promise<string> {
+  const extension = extname(safeName);
+  const stem = extension ? safeName.slice(0, -extension.length) : safeName;
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    const name = attempt === 0 ? safeName : `${stem} (${attempt})${extension}`;
+    const candidate = join(finalDir, name);
+    try {
+      await lstat(candidate);
+    } catch (error: unknown) {
+      if (isNodeErrorCode(error, "ENOENT")) return candidate;
+      throw error;
+    }
+  }
+  throw new Error("download_path_exhausted");
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
 export interface BrowserDownloadLike {

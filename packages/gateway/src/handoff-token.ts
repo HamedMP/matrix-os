@@ -11,6 +11,15 @@ export interface BrowserHandoffClaims extends JWTPayload {
   nonce: string;
 }
 
+/**
+ * Bounded replay cache for one-use platform handoff tokens.
+ *
+ * The default instance is process-local by design: token TTL is 60 seconds and
+ * production callers should keep the store at gateway singleton scope. A
+ * restart inside that short TTL can allow a captured token to be retried, so
+ * routes must pair this with TLS, short expiry, owner binding, and generic
+ * rejection handling.
+ */
 export class BrowserHandoffReplayStore {
   private readonly used = new Map<string, number>();
 

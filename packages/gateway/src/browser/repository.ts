@@ -178,6 +178,10 @@ export interface BrowserRepository {
 
 const MAX_AUDIT_EVENTS = 10_000;
 const MAX_GRANTS = 5_000;
+const MAX_IN_MEMORY_PROFILES = 2_000;
+const MAX_IN_MEMORY_SESSIONS = 2_000;
+const MAX_IN_MEMORY_TABS = 10_000;
+const MAX_IN_MEMORY_DOWNLOADS = 10_000;
 const SAFE_DOMAIN = /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 
 export class BrowserRepositoryError extends Error {
@@ -197,6 +201,14 @@ function iso(now = Date.now()): string {
 
 function profileKey(ownerId: string, profileName: string): string {
   return `${ownerId}:${profileName}`;
+}
+
+function evictOldestMapEntries<K, V>(map: Map<K, V>, maxEntries: number): void {
+  while (map.size > maxEntries) {
+    const first = map.keys().next().value as K | undefined;
+    if (first === undefined) break;
+    map.delete(first);
+  }
 }
 
 export class InMemoryBrowserRepository implements BrowserRepository {
@@ -221,6 +233,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
       clearedScopes: [],
     };
     this.profiles.set(key, profile);
+    evictOldestMapEntries(this.profiles, MAX_IN_MEMORY_PROFILES);
     return profile;
   }
 
@@ -235,6 +248,17 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     now?: number;
   }): BrowserProfileRecord {
     const profile = this.upsertProfile(opts.ownerId, opts.profileName, opts.now);
+    for (const session of this.sessions.values()) {
+      if (
+        session.ownerId === opts.ownerId &&
+        session.profileId === profile.id &&
+        session.state === "active"
+      ) {
+        session.state = "closed";
+        session.updatedAt = iso(opts.now);
+        session.lastActivityAt = iso(opts.now);
+      }
+    }
     profile.clearedScopes = [...opts.scopes];
     profile.updatedAt = iso(opts.now);
     this.addAuditEvent({
@@ -278,6 +302,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
       lastActivityAt: now,
     };
     this.sessions.set(session.id, session);
+    evictOldestMapEntries(this.sessions, MAX_IN_MEMORY_SESSIONS);
     this.addAuditEvent({
       id: id("audit"),
       ownerId: input.ownerId,
@@ -324,6 +349,9 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     const now = iso(input.now);
     const tabId = input.tabId ?? id("browser_tab");
     const existing = this.tabs.get(tabId);
+    if (existing && (existing.ownerId !== input.ownerId || existing.sessionId !== input.sessionId)) {
+      throw new BrowserRepositoryError("tab_session_mismatch");
+    }
     const tab: BrowserTabRecord = {
       id: tabId,
       ownerId: input.ownerId,
@@ -335,6 +363,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
       updatedAt: now,
     };
     this.tabs.set(tab.id, tab);
+    evictOldestMapEntries(this.tabs, MAX_IN_MEMORY_TABS);
     const session = this.sessions.get(input.sessionId);
     if (session?.ownerId === input.ownerId) {
       session.currentTabId ??= tab.id;
@@ -365,6 +394,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
       updatedAt: now,
     };
     this.downloads.set(download.id, download);
+    evictOldestMapEntries(this.downloads, MAX_IN_MEMORY_DOWNLOADS);
     this.addAuditEvent({
       id: id("audit"),
       ownerId: input.ownerId,
@@ -762,6 +792,17 @@ export class KyselyBrowserRepository implements BrowserRepository {
   }): Promise<BrowserProfileRecord> {
     return this.kysely.transaction().execute(async (trx) => {
       const profile = await this.upsertProfileIn(trx, opts.ownerId, opts.profileName, opts.now);
+      await trx
+        .updateTable("browser_sessions")
+        .set({
+          state: "closed",
+          updated_at: iso(opts.now),
+          last_activity_at: iso(opts.now),
+        })
+        .where("owner_id", "=", opts.ownerId)
+        .where("profile_id", "=", profile.id)
+        .where("state", "=", "active")
+        .execute();
       const updated = await trx
         .updateTable("browser_profiles")
         .set({
@@ -914,9 +955,14 @@ export class KyselyBrowserRepository implements BrowserRepository {
           title: input.title ?? null,
           tab_order: input.order ?? 0,
           updated_at: now,
-        }))
+        })
+          .where("browser_tabs.owner_id", "=", input.ownerId)
+          .where("browser_tabs.session_id", "=", input.sessionId))
         .returningAll()
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+      if (!row) {
+        throw new BrowserRepositoryError("tab_session_mismatch");
+      }
       await trx
         .updateTable("browser_sessions")
         .set({

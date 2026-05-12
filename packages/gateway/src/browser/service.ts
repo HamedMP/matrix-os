@@ -76,8 +76,8 @@ export class BrowserService {
       mediaMode: "webrtc";
       protocolVersion: 1;
     };
-    streamToken: string;
-    wsUrl: string;
+    streamToken: string | null;
+    wsUrl: string | null;
   }> {
     const session = await this.repo.createOrResumeSession({
       ownerId: input.ownerId,
@@ -105,13 +105,15 @@ export class BrowserService {
         mediaMode: "webrtc",
         protocolVersion: 1,
       },
-      streamToken: signBrowserStreamToken({
-        secret: this.streamTokenSecret,
-        ownerId: input.ownerId,
-        sessionId: session.id,
-        now: input.now,
-      }),
-      wsUrl: `/api/browser/sessions/${session.id}/ws`,
+      streamToken: session.takeoverRequired
+        ? null
+        : signBrowserStreamToken({
+          secret: this.streamTokenSecret,
+          ownerId: input.ownerId,
+          sessionId: session.id,
+          now: input.now,
+        }),
+      wsUrl: session.takeoverRequired ? null : `/api/browser/sessions/${session.id}/ws`,
     };
   }
 
@@ -134,17 +136,6 @@ export class BrowserService {
     scopes: BrowserProfileClearScope[];
     now?: number;
   }): Promise<BrowserProfileRecord> {
-    const sessions = await this.repo.listSessions(input.ownerId);
-    for (const session of sessions) {
-      if (session.profileName === input.profileName && session.state === "active") {
-        await this.repo.closeSession({
-          ownerId: input.ownerId,
-          sessionId: session.id,
-          state: "closed",
-          now: input.now,
-        });
-      }
-    }
     return this.repo.clearProfile(input);
   }
 
@@ -290,7 +281,14 @@ export class BrowserService {
     url?: string;
     now?: number;
   }): Promise<BrowserGrantRecord> {
-    const hostname = input.url ? new URL(input.url).hostname.toLowerCase() : null;
+    let hostname: string | null = null;
+    if (input.url) {
+      try {
+        hostname = new URL(input.url).hostname.toLowerCase();
+      } catch {
+        throw new BrowserSafeError("invalid_url", "Browser URL is invalid.");
+      }
+    }
     const grant = (await this.repo.listActiveGrants(input.ownerId, input.now)).find((candidate) =>
       candidate.sessionId === input.sessionId &&
       candidate.scopes.includes(input.action) &&
