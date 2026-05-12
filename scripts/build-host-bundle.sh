@@ -41,6 +41,9 @@ if [ "${HOST_BUNDLE_SKIP_SHELL_BUILD:-false}" = "true" ]; then
   }
 else
   pnpm --filter './shell' exec next build --webpack
+  if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$ROOT_DIR" restore -- shell/next-env.d.ts 2>/dev/null || true
+  fi
 fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
