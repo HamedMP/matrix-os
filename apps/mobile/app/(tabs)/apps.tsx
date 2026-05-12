@@ -16,10 +16,11 @@ import * as Haptics from "expo-haptics";
 import { useGateway } from "../_layout";
 import {
   appRuntimeHref,
-  buildGatewayAppUrl,
   getAppIconName,
+  getGatewayAppUrlLabel,
   getAppSlug,
   getNativeAppRoute,
+  mergeNativeAndRemoteApps,
   type MatrixAppEntry,
 } from "@/lib/apps";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
@@ -51,6 +52,10 @@ function AppGlyph({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: strin
 function AppCard({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: string }) {
   const slug = getAppSlug(app);
   const nativeRoute = getNativeAppRoute(app);
+  const runtimeLabel = useMemo(
+    () => (gatewayUrl ? getGatewayAppUrlLabel(gatewayUrl, app) : slug),
+    [app, gatewayUrl, slug],
+  );
 
   return (
     <Link href={(nativeRoute ?? appRuntimeHref(slug)) as any} asChild>
@@ -133,7 +138,7 @@ function AppCard({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: string
                 color: colors.light.mutedForeground,
               }}
             >
-              {new URL(buildGatewayAppUrl(gatewayUrl, app)).pathname.split("/").at(-2) ?? slug}
+              {runtimeLabel}
             </Text>
           ) : null}
         </View>
@@ -151,17 +156,17 @@ export default function AppsScreen() {
 
   const fetchApps = useCallback(async () => {
     if (!client) {
-      setApps([]);
+      setApps(mergeNativeAndRemoteApps([]));
       setLoading(false);
       return;
     }
 
     try {
       const nextApps = await client.getApps();
-      setApps(nextApps);
+      setApps(mergeNativeAndRemoteApps(nextApps));
     } catch (err) {
       console.warn("[mobile] failed to fetch apps", err instanceof Error ? err.message : String(err));
-      setApps([]);
+      setApps(mergeNativeAndRemoteApps([]));
     } finally {
       setLoading(false);
     }
@@ -239,7 +244,7 @@ export default function AppsScreen() {
         <FlatList
           data={filteredApps}
           renderItem={renderItem}
-          keyExtractor={(item) => item.file}
+          keyExtractor={(item) => getAppSlug(item)}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 112, gap: spacing.md }}
           refreshControl={

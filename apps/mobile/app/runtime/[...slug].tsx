@@ -1,16 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
 import { useGateway } from "../_layout";
-import { buildGatewayAppUrl, getAppSlug, getRuntimeSlug, type MatrixAppEntry } from "@/lib/apps";
+import { getAppSlug, getRuntimeSlug, slugFromParam, type MatrixAppEntry } from "@/lib/apps";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
 
-function slugFromParam(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value.join("/");
-  return value ?? "";
-}
+const SESSION_REFRESH_SKEW_MS = 60_000;
+const SESSION_REFRESH_MIN_INTERVAL_MS = 30_000;
+const MAX_SHORT_SESSION_REFRESHES = 3;
 
 export default function RuntimeScreen() {
   const router = useRouter();
@@ -21,9 +20,15 @@ export default function RuntimeScreen() {
   const [launchUrl, setLaunchUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionReady, setSessionReady] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
+  const shortSessionRefreshCountRef = useRef(0);
 
   const fetchApp = useCallback(async () => {
     if (!client || !slug) {
+      setApp(null);
+      setLaunchUrl(null);
+      setSessionReady(false);
+      setSessionExpiresAt(null);
       setLoading(false);
       return;
     }
@@ -31,6 +36,7 @@ export default function RuntimeScreen() {
     setLoading(true);
     setSessionReady(false);
     setLaunchUrl(null);
+    setSessionExpiresAt(null);
     try {
       const apps = await client.getApps();
       const nextApp = apps.find((entry) => getAppSlug(entry) === slug || getRuntimeSlug(entry) === slug) ?? null;
@@ -44,6 +50,7 @@ export default function RuntimeScreen() {
               ? session.launchUrl
               : `${base}${session.launchUrl.startsWith("/") ? "" : "/"}${session.launchUrl}`,
           );
+          setSessionExpiresAt(session.expiresAt);
           setSessionReady(true);
         }
       }
@@ -58,9 +65,32 @@ export default function RuntimeScreen() {
     fetchApp();
   }, [fetchApp]);
 
+  useEffect(() => {
+    if (!sessionReady || !sessionExpiresAt) return;
+    const refreshInMsBeforeFloor = sessionExpiresAt - Date.now() - SESSION_REFRESH_SKEW_MS;
+    const usesFloor = refreshInMsBeforeFloor < SESSION_REFRESH_MIN_INTERVAL_MS;
+    if (usesFloor && shortSessionRefreshCountRef.current >= MAX_SHORT_SESSION_REFRESHES) {
+      console.warn("[mobile] app session refresh paused after repeated short-lived tokens");
+      return;
+    }
+
+    if (!usesFloor) {
+      shortSessionRefreshCountRef.current = 0;
+    }
+
+    const refreshInMs = Math.max(SESSION_REFRESH_MIN_INTERVAL_MS, refreshInMsBeforeFloor);
+    const timer = setTimeout(() => {
+      if (usesFloor) {
+        shortSessionRefreshCountRef.current += 1;
+      }
+      fetchApp();
+    }, refreshInMs);
+    return () => clearTimeout(timer);
+  }, [fetchApp, sessionExpiresAt, sessionReady]);
+
   const appUrl = useMemo(
-    () => launchUrl ?? (client && app ? buildGatewayAppUrl(client.httpUrl, app) : null),
-    [client, app, launchUrl],
+    () => (sessionReady ? launchUrl : null),
+    [launchUrl, sessionReady],
   );
   const title = app?.name ?? slug;
 
@@ -90,7 +120,7 @@ export default function RuntimeScreen() {
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             <ActivityIndicator color={colors.light.primary} />
           </View>
-        ) : appUrl && sessionReady ? (
+        ) : appUrl ? (
           <AppRuntimeFrame
             url={appUrl}
             title={title}

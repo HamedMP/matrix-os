@@ -1,10 +1,13 @@
 import {
   buildGatewayAppUrl,
   appRuntimeHref,
+  encodeAppSlugPath,
   getAppIconName,
+  getGatewayAppUrlLabel,
   getAppSlug,
   getNativeAppRoute,
   getRuntimeSlug,
+  slugFromParam,
   mergeNativeAndRemoteApps,
   type MatrixAppEntry,
 } from "../lib/apps";
@@ -56,10 +59,43 @@ describe("mobile app helpers", () => {
     );
   });
 
+  it("preserves nested runtime slugs when the gateway omits explicit slugs", () => {
+    const snake = app({
+      name: "Snake",
+      file: "games/snake/index.html",
+      path: "/files/apps/games/snake/index.html",
+    });
+
+    expect(getRuntimeSlug(snake)).toBe("games/snake");
+    expect(buildGatewayAppUrl("https://app.matrix-os.com", snake)).toBe(
+      "https://app.matrix-os.com/apps/games/snake/",
+    );
+  });
+
+  it("encodes nested runtime slug path segments without escaping separators", () => {
+    expect(encodeAppSlugPath("games/snake board")).toBe("games/snake%20board");
+  });
+
+  it("normalizes route slug params from Expo Router catch-all params", () => {
+    expect(slugFromParam(["games", "snake"])).toBe("games/snake");
+    expect(slugFromParam("notes")).toBe("notes");
+    expect(slugFromParam(undefined)).toBe("");
+  });
+
   it("uses backend launch URLs when provided", () => {
     expect(
       buildGatewayAppUrl("https://app.matrix-os.com", app({ slug: "notes", launchUrl: "/apps/notes/" })),
     ).toBe("https://app.matrix-os.com/apps/notes/");
+  });
+
+  it("falls back to the app slug when a backend launch URL is malformed", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      getGatewayAppUrlLabel("https://app.matrix-os.com", app({ slug: "notes", launchUrl: "https://" })),
+    ).toBe("notes");
+
+    warn.mockRestore();
   });
 
   it("builds runtime hrefs for generated apps", () => {

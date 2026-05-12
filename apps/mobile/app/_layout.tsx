@@ -184,7 +184,7 @@ function GatewayShell() {
       connectionKeyRef.current = nextKey;
 
       clientRef.current?.disconnect();
-      const nextClient = new GatewayClient(hostedGateway.url, hostedGateway.token);
+      const nextClient = new GatewayClient(hostedGateway.url, () => getTokenRef.current());
       clientRef.current = nextClient;
       setClient(nextClient);
       setGatewayState(hostedGateway);
@@ -194,7 +194,8 @@ function GatewayShell() {
       const wsToken = await nextClient.getWsToken();
       if (cancelled || clientRef.current !== nextClient) return;
       if (!wsToken) {
-        setConnectionState("error");
+        console.warn("[mobile] ws-token unavailable, connecting without upgrade token");
+        nextClient.connect();
         return;
       }
       nextClient.setWebSocketToken(wsToken);

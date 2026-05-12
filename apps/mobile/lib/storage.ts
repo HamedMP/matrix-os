@@ -68,7 +68,7 @@ export async function setActiveGatewayId(id: string): Promise<void> {
   await SecureStore.setItemAsync(ACTIVE_GATEWAY_KEY, id);
 }
 
-export async function getActiveGateway(): Promise<GatewayConnection | null> {
+export async function getActiveGateway(): Promise<GatewayConnection> {
   const id = await getActiveGatewayId();
   if (!id) return HOSTED_GATEWAY;
   const gateways = await getGateways();

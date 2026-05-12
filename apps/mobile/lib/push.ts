@@ -23,15 +23,15 @@ Notifications.setNotificationHandler({
 });
 
 export async function registerPushNotifications(client: GatewayClient): Promise<string | null> {
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  const existingPermission = await Notifications.getPermissionsAsync();
+  let granted = existingPermission.granted;
 
-  if (existingStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+  if (!granted) {
+    const requestedPermission = await Notifications.requestPermissionsAsync();
+    granted = requestedPermission.granted;
   }
 
-  if (finalStatus !== "granted") {
+  if (!granted) {
     return null;
   }
 

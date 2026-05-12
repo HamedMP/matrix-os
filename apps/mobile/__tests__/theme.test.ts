@@ -11,7 +11,7 @@ describe("theme", () => {
     expect(light.background).toBe("#FAFAF9");
     expect(light.foreground).toBe("#1c1917");
     expect(light.primary).toBe("#8CC7BE");
-    expect(light.card).toBe("#ffffff");
+    expect(light.card).toBe("#FFFFFF");
     expect(light.border).toBe("#E5E5E4");
   });
 

@@ -1,4 +1,5 @@
-import { ActivityIndicator, Text, View } from "react-native";
+import { useCallback, useMemo } from "react";
+import { ActivityIndicator, Linking, Text, View } from "react-native";
 import WebView from "react-native-webview";
 
 import { colors, fonts, spacing } from "@/lib/theme";
@@ -10,9 +11,36 @@ interface AppRuntimeFrameProps {
 }
 
 export default function AppRuntimeFrame({ url, title, headers }: AppRuntimeFrameProps) {
+  const runtimeOrigin = useMemo(() => {
+    try {
+      return new URL(url).origin;
+    } catch (_err: unknown) {
+      return "https://app.matrix-os.com";
+    }
+  }, [url]);
+
+  const shouldStartLoad = useCallback(
+    (request: { url?: string }) => {
+      if (!request.url || request.url === "about:blank") return true;
+      try {
+        const target = new URL(request.url);
+        if (target.origin === runtimeOrigin) return true;
+      } catch (_err: unknown) {
+        return false;
+      }
+      void Linking.openURL(request.url).catch((err: unknown) => {
+        console.warn("[mobile] failed to open external app link", err instanceof Error ? err.message : String(err));
+      });
+      return false;
+    },
+    [runtimeOrigin],
+  );
+
   return (
     <WebView
       source={{ uri: url, headers }}
+      originWhitelist={[runtimeOrigin, "about:*"]}
+      onShouldStartLoadWithRequest={shouldStartLoad}
       style={{ flex: 1, backgroundColor: colors.light.background }}
       containerStyle={{ flex: 1, backgroundColor: colors.light.background }}
       sharedCookiesEnabled

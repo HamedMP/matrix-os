@@ -12,15 +12,12 @@ import {
   getAppIconName,
   getAppSlug,
   getNativeAppRoute,
+  getRuntimeSlug,
+  slugFromParam,
   type MatrixAppEntry,
   type MatrixAppManifestResponse,
 } from "@/lib/apps";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
-
-function slugFromParam(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value.join("/");
-  return value ?? "";
-}
 
 function PrimaryAction({
   icon,
@@ -114,12 +111,12 @@ export default function AppDetailScreen() {
       return;
     }
 
+    setLoading(true);
     try {
-      const [apps, manifestData] = await Promise.all([
-        client.getApps(),
-        client.getAppManifest(slug),
-      ]);
-      setApp(apps.find((entry) => getAppSlug(entry) === slug) ?? null);
+      const apps = await client.getApps();
+      const nextApp = apps.find((entry) => getAppSlug(entry) === slug || getRuntimeSlug(entry) === slug) ?? null;
+      const manifestData = nextApp ? await client.getAppManifest(getRuntimeSlug(nextApp)) : null;
+      setApp(nextApp);
       setManifest(manifestData);
     } catch (err) {
       console.warn("[mobile] failed to load app detail", err instanceof Error ? err.message : String(err));

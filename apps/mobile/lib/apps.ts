@@ -1,7 +1,9 @@
 import type { Href } from "expo-router";
 import type { MatrixAppEntry, MatrixAppManifestResponse } from "@/lib/gateway-client";
+import { encodeAppSlugPath } from "@/lib/app-slugs";
 
 export type { MatrixAppEntry, MatrixAppManifestResponse };
+export { encodeAppSlugPath };
 
 export type NativeAppRoute =
   | "/(tabs)/chat"
@@ -61,9 +63,12 @@ export function getAppSlug(app: Pick<MatrixAppEntry, "file" | "path" | "name" | 
 
 export function getRuntimeSlug(app: Pick<MatrixAppEntry, "file" | "path" | "name" | "slug">): string {
   if (app.slug) return app.slug;
-  const slug = getAppSlug(app);
-  const parts = slug.split("/").filter(Boolean);
-  return parts.at(-1) ?? slug;
+  return getAppSlug(app);
+}
+
+export function slugFromParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value.join("/");
+  return value ?? "";
 }
 
 export function getNativeAppRoute(app: Pick<MatrixAppEntry, "file" | "path" | "name" | "slug">): NativeAppRoute | null {
@@ -94,7 +99,21 @@ export function buildGatewayAppUrl(
       : `${base}${app.launchUrl.startsWith("/") ? "" : "/"}${app.launchUrl}`;
   }
   const runtimeSlug = getRuntimeSlug(app);
-  return `${base}/apps/${encodeURIComponent(runtimeSlug)}/`;
+  return `${base}/apps/${encodeAppSlugPath(runtimeSlug)}/`;
+}
+
+export function getGatewayAppUrlLabel(
+  baseHttpUrl: string,
+  app: Pick<MatrixAppEntry, "file" | "path" | "name" | "slug" | "launchUrl">,
+): string {
+  const slug = getAppSlug(app);
+  try {
+    const pathname = new URL(buildGatewayAppUrl(baseHttpUrl, app)).pathname;
+    return pathname.split("/").filter(Boolean).at(-1) ?? slug;
+  } catch (err: unknown) {
+    console.warn("[mobile] malformed app launch URL", err instanceof Error ? err.message : String(err));
+    return slug;
+  }
 }
 
 export function getAppIconName(app: Pick<MatrixAppEntry, "category" | "name">): string {
