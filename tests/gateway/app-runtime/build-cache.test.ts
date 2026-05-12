@@ -62,6 +62,21 @@ describe("build-cache", () => {
       expect(h.length).toBeGreaterThan(0);
     });
 
+    it("ignores dependency and output trees outside source glob roots", async () => {
+      await mkdir(join(tmpDir, "src"), { recursive: true });
+      await mkdir(join(tmpDir, "node_modules", "pkg"), { recursive: true });
+      await mkdir(join(tmpDir, "dist"), { recursive: true });
+      await writeFile(join(tmpDir, "src", "index.ts"), "export const value = 1;");
+      await writeFile(join(tmpDir, "node_modules", "pkg", "index.ts"), "ignored");
+      await writeFile(join(tmpDir, "dist", "bundle.js"), "ignored");
+
+      const before = await hashSources(tmpDir, ["src/**", "public/**", "*.config.*", "index.html", "matrix.json"]);
+      await writeFile(join(tmpDir, "node_modules", "pkg", "index.ts"), "ignored changed");
+      await writeFile(join(tmpDir, "dist", "bundle.js"), "ignored changed");
+
+      expect(await hashSources(tmpDir, ["src/**", "public/**", "*.config.*", "index.html", "matrix.json"])).toBe(before);
+    });
+
     it("returns empty hash when no files match", async () => {
       const h = await hashSources(tmpDir, ["*.nonexistent"]);
       expect(typeof h).toBe("string");

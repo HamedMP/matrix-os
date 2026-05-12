@@ -5,6 +5,7 @@ import { bodyLimit } from "hono/body-limit";
 import { BrowserService, toBrowserSafeError } from "./service.js";
 import { InMemoryBrowserRepository, type BrowserAuditEventType } from "./repository.js";
 import { BrowserHandoffReplayStore, verifyBrowserHandoffToken } from "../handoff-token.js";
+import type { BrowserStreamHub } from "./ws.js";
 
 const profileNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/);
 
@@ -77,6 +78,7 @@ export interface BrowserRoutesOptions {
   service?: BrowserService;
   handoffPublicKey?: string;
   handoffReplayStore?: BrowserHandoffReplayStore;
+  streamHub?: BrowserStreamHub;
 }
 
 export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
@@ -137,7 +139,9 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
       const ownerId = opts.getOwnerId?.(c) ?? "local-owner";
       const sessionId = z.string().min(1).max(128).parse(c.req.param("sessionId"));
       const input = takeoverSessionSchema.parse(await c.req.json());
-      return c.json(await service.takeoverSession({ ownerId, sessionId, deviceId: input.deviceId }));
+      const result = await service.takeoverSession({ ownerId, sessionId, deviceId: input.deviceId });
+      opts.streamHub?.notifySessionTakenOver(sessionId);
+      return c.json(result);
     } catch (error) {
       const safe = toBrowserSafeError(error);
       return c.json({ error: { code: safe.code, message: safe.message } }, safe.code === "payload_too_large" ? 413 : 400);

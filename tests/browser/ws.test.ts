@@ -180,6 +180,30 @@ describe("Browser stream protocol", () => {
     expect(JSON.parse(delivered[0] ?? "{}")).toEqual(browserTakenOverMessage());
   });
 
+  it("notifies and closes old streams after takeover", () => {
+    const delivered: string[] = [];
+    const closed: string[] = [];
+    const hub = new BrowserStreamHub();
+    hub.register({
+      id: "old",
+      ownerId: "owner_1",
+      sessionId: "session_1",
+      sender: {
+        send(message) {
+          delivered.push(message);
+        },
+        close() {
+          closed.push("old");
+        },
+      },
+    });
+
+    expect(hub.notifySessionTakenOver("session_1")).toBe(1);
+    expect(hub.size()).toBe(0);
+    expect(closed).toEqual(["old"]);
+    expect(JSON.parse(delivered[0] ?? "{}")).toEqual(browserTakenOverMessage());
+  });
+
   it("drains all browser streams on shutdown", () => {
     const sent: string[] = [];
     const closed: string[] = [];

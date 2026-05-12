@@ -902,22 +902,33 @@ export class KyselyBrowserRepository implements BrowserRepository {
   }): Promise<BrowserProfileClearResult> {
     return this.kysely.transaction().execute(async (trx) => {
       const profile = await this.upsertProfileIn(trx, opts.ownerId, opts.profileName, opts.now);
-      await trx
+      const timestamp = iso(opts.now);
+      const closedSessions = await trx
         .updateTable("browser_sessions")
         .set({
           state: "closed",
-          updated_at: iso(opts.now),
-          last_activity_at: iso(opts.now),
+          updated_at: timestamp,
+          last_activity_at: timestamp,
         })
         .where("owner_id", "=", opts.ownerId)
         .where("profile_id", "=", profile.id)
         .where("state", "=", "active")
+        .returning(["id"])
         .execute();
+      for (const session of closedSessions) {
+        await this.addAuditEventIn(trx, {
+          id: id("audit"),
+          ownerId: opts.ownerId,
+          eventType: "session.closed",
+          createdAt: timestamp,
+          metadata: { sessionId: session.id },
+        });
+      }
       const updated = await trx
         .updateTable("browser_profiles")
         .set({
           cleared_scopes: jsonb(opts.scopes),
-          updated_at: iso(opts.now),
+          updated_at: timestamp,
         })
         .where("id", "=", profile.id)
         .returningAll()
@@ -926,7 +937,7 @@ export class KyselyBrowserRepository implements BrowserRepository {
         id: id("audit"),
         ownerId: opts.ownerId,
         eventType: "profile.cleared",
-        createdAt: iso(opts.now),
+        createdAt: timestamp,
         metadata: {
           profileName: opts.profileName,
           scopes: [...opts.scopes],

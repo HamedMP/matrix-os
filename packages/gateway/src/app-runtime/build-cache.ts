@@ -13,8 +13,8 @@ const STAMP_FILE = ".build-stamp";
 
 export async function hashSources(appDir: string, globs: string[]): Promise<string> {
   const files = new Set<string>();
-  const candidates = await listFiles(appDir);
   for (const pattern of globs) {
+    const candidates = await listFilesForPattern(appDir, pattern);
     for (const match of candidates) {
       if (!matchesGlob(match, pattern)) continue;
       const abs = join(appDir, match);
@@ -43,7 +43,24 @@ export async function hashSources(appDir: string, globs: string[]): Promise<stri
   return hash.digest("hex");
 }
 
-async function listFiles(dir: string, prefix = ""): Promise<string[]> {
+async function listFilesForPattern(appDir: string, pattern: string): Promise<string[]> {
+  if (pattern === "**/*" || pattern === "**") {
+    return listFiles(appDir, "", true);
+  }
+  const wildcardIndex = pattern.search(/[*?]/);
+  if (wildcardIndex === -1) {
+    return [pattern];
+  }
+  const staticPrefix = pattern.slice(0, wildcardIndex);
+  const slashIndex = staticPrefix.lastIndexOf("/");
+  if (slashIndex === -1) {
+    return listFiles(appDir, "", false);
+  }
+  const root = staticPrefix.slice(0, slashIndex);
+  return listFiles(appDir, root, pattern.includes("**"));
+}
+
+async function listFiles(dir: string, prefix = "", recursive = true): Promise<string[]> {
   let entries;
   try {
     entries = await readdir(join(dir, prefix), { withFileTypes: true, encoding: "utf8" });
@@ -55,7 +72,9 @@ async function listFiles(dir: string, prefix = ""): Promise<string[]> {
   for (const entry of entries) {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      files.push(...await listFiles(dir, rel));
+      if (recursive) {
+        files.push(...await listFiles(dir, rel, true));
+      }
     } else {
       files.push(rel);
     }

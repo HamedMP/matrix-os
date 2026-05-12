@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { InMemoryBrowserRepository } from "../../packages/gateway/src/browser/repository.js";
 import { createBrowserRoutes } from "../../packages/gateway/src/browser/routes.js";
 import { BrowserService } from "../../packages/gateway/src/browser/service.js";
+import { BrowserStreamHub, browserTakenOverMessage } from "../../packages/gateway/src/browser/ws.js";
 import { signBrowserHandoffToken } from "../../packages/gateway/src/handoff-token.js";
 
 const generateRsa = promisify(generateKeyPair);
@@ -119,14 +120,20 @@ describe("Browser gateway routes", () => {
 
     expect(second.session.takeoverRequired).toBe(true);
     expect(second.session.lockDeviceId).toBe("device_1");
+    expect(second.streamToken).toBeNull();
+    expect(second.wsUrl).toBeNull();
   });
 
   it("takes over a locked session, marks the old session recoverable, and audits", async () => {
     const repo = new InMemoryBrowserRepository();
     const service = new BrowserService({ repo, streamTokenSecret: "test-stream-secret" });
+    const delivered: string[] = [];
+    const closed: string[] = [];
+    const streamHub = new BrowserStreamHub();
     const app = createBrowserRoutes({
       getOwnerId: () => "owner_1",
       service,
+      streamHub,
     });
     const first = await service.createSession({
       ownerId: "owner_1",
@@ -134,6 +141,19 @@ describe("Browser gateway routes", () => {
       deviceId: "device_1",
       surface: "canvas",
       now: 1_000,
+    });
+    streamHub.register({
+      id: "old_stream",
+      ownerId: "owner_1",
+      sessionId: first.session.id,
+      sender: {
+        send(message) {
+          delivered.push(message);
+        },
+        close() {
+          closed.push("old_stream");
+        },
+      },
     });
 
     const takeover = await app.request(`/sessions/${first.session.id}/takeover`, {
@@ -150,6 +170,9 @@ describe("Browser gateway routes", () => {
       ownerId: "owner_1",
       sessionId: body.session.id,
     });
+    expect(streamHub.size()).toBe(0);
+    expect(closed).toEqual(["old_stream"]);
+    expect(JSON.parse(delivered[0] ?? "{}")).toEqual(browserTakenOverMessage());
     expect(await repo.getSession("owner_1", first.session.id)).toMatchObject({ state: "recoverable" });
     expect((await repo.listAuditEvents("owner_1")).map((event) => event.eventType)).toEqual([
       "session.created",
