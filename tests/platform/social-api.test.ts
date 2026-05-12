@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { type PlatformDB } from '../../packages/platform/src/db.js';
 import { createSocialFeedApi } from '../../packages/platform/src/social-api.js';
 import { insertPost, followUser, likePost, addComment } from '../../packages/platform/src/social-feed.js';
@@ -22,6 +23,20 @@ describe('platform/social-api', () => {
   function req(path: string, init?: RequestInit) {
     return app.request(`http://localhost/api/social${path}`, init);
   }
+
+  it('preserves HTTPException responses from the social error handler', async () => {
+    const social = createSocialFeedApi(db);
+    app = new Hono();
+    social.get('/http-exception', () => {
+      throw new HTTPException(403, { message: 'forbidden' });
+    });
+    app.route('/api/social', social);
+
+    const res = await req('/http-exception');
+
+    expect(res.status).toBe(403);
+    await expect(res.text()).resolves.toBe('forbidden');
+  });
 
   describe('GET /feed', () => {
     it('returns paginated feed for given user', async () => {

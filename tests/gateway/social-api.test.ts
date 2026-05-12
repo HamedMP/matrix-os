@@ -4,6 +4,7 @@ import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js
 import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
 import { KyselyPGlite } from "kysely-pglite";
 import { createSocialRoutes, insertPost, followUser } from "../../packages/gateway/src/social.js";
+import { HTTPException } from "hono/http-exception";
 
 const SOCIAL_TABLES = {
   posts: {
@@ -63,6 +64,17 @@ describe("T2051: Social API routes (Postgres)", () => {
   }
 
   // --- Posts ---
+
+  it("preserves HTTPException responses from the social error handler", async () => {
+    app.get("/http-exception", () => {
+      throw new HTTPException(403, { message: "forbidden" });
+    });
+
+    const res = await req("GET", "/http-exception");
+
+    expect(res.status).toBe(403);
+    await expect(res.text()).resolves.toBe("forbidden");
+  });
 
   describe("POST /posts", () => {
     it("creates a post", async () => {

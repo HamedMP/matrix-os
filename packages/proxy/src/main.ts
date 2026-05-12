@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
+import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
 import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMetricsSeed } from './db.js';
 import { calculateCost } from './cost.js';
 import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
@@ -10,6 +11,9 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
 
 const app = new Hono();
+const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
+  service: 'matrix-proxy',
+});
 
 // Instance registry (in-memory -- instances register on startup)
 interface Instance {
@@ -282,6 +286,31 @@ for (const row of getMetricsSeed()) {
   }
 }
 
-serve({ fetch: app.fetch, port: PORT }, () => {
+const server = serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`Proxy listening on :${PORT} -> ${ANTHROPIC_API}`);
+});
+
+let isShuttingDown = false;
+
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`[proxy] Received ${signal}, shutting down`);
+  server.close();
+  const forceExit = setTimeout(() => process.exit(1), 6_000);
+  try {
+    await posthogErrorTracker.shutdown();
+  } catch (err: unknown) {
+    console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(forceExit);
+    process.exit(0);
+  }
+}
+
+process.once('SIGTERM', () => {
+  void shutdown('SIGTERM');
+});
+process.once('SIGINT', () => {
+  void shutdown('SIGINT');
 });

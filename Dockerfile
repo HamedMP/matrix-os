@@ -18,6 +18,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
+COPY packages/observability/package.json packages/observability/
 COPY packages/platform/package.json packages/platform/
 COPY packages/proxy/package.json packages/proxy/
 COPY shell/package.json shell/
@@ -45,7 +46,16 @@ RUN node scripts/build-default-apps.mjs home/apps
 
 # Build shell (Next.js) -- Clerk key is baked in at build time (NEXT_PUBLIC_*)
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_POSTHOG_KEY
+ARG NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+ARG NEXT_PUBLIC_POSTHOG_HOST
+ARG NEXT_PUBLIC_POSTHOG_API_HOST
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
+ENV NEXT_PUBLIC_POSTHOG_API_HOST=$NEXT_PUBLIC_POSTHOG_API_HOST
+RUN pnpm --filter '@matrix-os/observability' build
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------

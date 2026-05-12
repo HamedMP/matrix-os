@@ -24,11 +24,16 @@ mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime"
 
 pnpm install --frozen-lockfile
 pnpm rebuild node-pty
+pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/gateway' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
+export NEXT_PUBLIC_POSTHOG_KEY="${NEXT_PUBLIC_POSTHOG_KEY:-}"
+export NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN="${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}"
+export NEXT_PUBLIC_POSTHOG_HOST="${NEXT_PUBLIC_POSTHOG_HOST:-}"
+export NEXT_PUBLIC_POSTHOG_API_HOST="${NEXT_PUBLIC_POSTHOG_API_HOST:-}"
 if [ "${HOST_BUNDLE_SKIP_SHELL_BUILD:-false}" = "true" ]; then
   test -d "$ROOT_DIR/shell/.next" || {
     echo "HOST_BUNDLE_SKIP_SHELL_BUILD=true but shell/.next is missing" >&2

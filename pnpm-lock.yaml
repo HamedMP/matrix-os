@@ -226,6 +226,9 @@ importers:
       '@matrix-os/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@matrix-os/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@pipedream/sdk':
         specifier: ^2.4.3
         version: 2.4.3
@@ -381,11 +384,30 @@ importers:
         specifier: ^1.52.0
         version: 1.58.2
 
+  packages/observability:
+    dependencies:
+      hono:
+        specifier: ^4.11.9
+        version: 4.12.8
+      posthog-node:
+        specifier: ^5.24.15
+        version: 5.28.4
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.5.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/platform:
     dependencies:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.11(hono@4.12.8)
+      '@matrix-os/observability':
+        specifier: workspace:*
+        version: link:../observability
       dockerode:
         specifier: ^4.0.7
         version: 4.0.9
@@ -432,6 +454,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.11(hono@4.12.8)
+      '@matrix-os/observability':
+        specifier: workspace:*
+        version: link:../observability
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.8.0
@@ -561,6 +586,9 @@ importers:
       '@fontsource/jetbrains-mono':
         specifier: ^5.2.8
         version: 5.2.8
+      '@matrix-os/observability':
+        specifier: workspace:*
+        version: link:../packages/observability
       '@react-three/drei':
         specifier: ^10.7.7
         version: 10.7.7(@react-three/fiber@9.5.0(@types/react@19.2.14)(expo-asset@55.0.10(expo@55.0.8)(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@5.9.3))(expo-file-system@55.0.11(expo@55.0.8)(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@55.0.8)(react-dom@19.2.3(react@19.2.3))(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(three@0.183.2))(@types/react@19.2.14)(@types/three@0.183.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(three@0.183.2)
@@ -621,6 +649,9 @@ importers:
       next:
         specifier: 16.2.3
         version: 16.2.3(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(babel-plugin-macros@3.1.0)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(sass@1.51.0)
+      posthog-js:
+        specifier: ^1.347.2
+        version: 1.362.0
       radix-ui:
         specifier: ^1.4.3
         version: 1.4.3(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -724,6 +755,9 @@ importers:
       '@clerk/nextjs':
         specifier: ^6.12.0
         version: 6.39.0(next@16.1.6(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(sass@1.51.0))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@matrix-os/observability':
+        specifier: workspace:*
+        version: link:../packages/observability
       '@radix-ui/react-collapsible':
         specifier: ^1.1.12
         version: 1.1.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

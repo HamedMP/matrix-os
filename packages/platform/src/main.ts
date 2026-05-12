@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
+import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -896,6 +897,17 @@ export function checkHomeMirrorS3Env(
   return missing;
 }
 
+export type PlatformApp = Hono<{
+  Variables: {
+    platformUserId: string;
+    platformHandle: string;
+    internalContainerHandle: string;
+    internalContainerClerkUserId: string;
+  };
+}> & {
+  shutdownPostHog(): Promise<void>;
+};
+
 export function createApp(deps: {
   db: PlatformDB;
   docker?: Dockerode;
@@ -918,7 +930,11 @@ export function createApp(deps: {
       internalContainerHandle: string;
       internalContainerClerkUserId: string;
     };
-  }>();
+  }>() as PlatformApp;
+  const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
+    service: 'matrix-platform',
+  });
+  const posthogShutdowns: Array<() => Promise<void>> = [() => posthogErrorTracker.shutdown()];
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -1829,7 +1845,9 @@ export function createApp(deps: {
 
   // --- Social Feed API (public) ---
 
-  app.route('/api/social', createSocialFeedApi(db));
+  const socialFeedApi = createSocialFeedApi(db);
+  posthogShutdowns.push(() => socialFeedApi.shutdownPostHog());
+  app.route('/api/social', socialFeedApi);
 
   // --- Social API (legacy: container-level profiles/messaging) ---
 
@@ -1965,6 +1983,10 @@ export function createApp(deps: {
     }
   });
 
+  app.shutdownPostHog = async () => {
+    await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()));
+  };
+
   return app;
 }
 
@@ -1987,6 +2009,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
   for (const key of [
     'MATRIX_HOME_MIRROR',
+    'POSTHOG_TOKEN',
+    'POSTHOG_PROJECT_TOKEN',
+    'POSTHOG_HOST',
+    'NEXT_PUBLIC_POSTHOG_KEY',
+    'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN',
+    'NEXT_PUBLIC_POSTHOG_HOST',
+    'NEXT_PUBLIC_POSTHOG_API_HOST',
   ]) {
     if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
   }
@@ -2274,6 +2303,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
         ]);
+        await app.shutdownPostHog();
         await db.destroy();
       })()
         .catch((destroyErr: unknown) => {

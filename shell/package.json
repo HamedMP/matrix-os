@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm --dir .. --filter '@matrix-os/observability' build && next build",
     "start": "next start",
     "lint": "eslint",
     "test:screenshots": "playwright test"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.0",
+    "@matrix-os/observability": "workspace:*",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
@@ -44,6 +45,7 @@
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.563.0",
     "next": "16.2.3",
+    "posthog-js": "^1.347.2",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",

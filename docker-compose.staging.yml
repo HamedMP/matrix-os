@@ -46,6 +46,12 @@ services:
       - NEXT_PUBLIC_GATEWAY_WS=wss://api-staging.matrix-os.com/ws
       - NEXT_PUBLIC_GATEWAY_URL=https://api-staging.matrix-os.com
       - GATEWAY_URL=http://localhost:4000
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
       # Reuse platform postgres on matrixos-net. Keep the password in a local
       # .env file, not in git.
       - DATABASE_URL=${STAGING_DATABASE_URL:-postgresql://${STAGING_DB_USER:-matrixos}:${STAGING_DB_PASSWORD:?set STAGING_DB_PASSWORD in .env}@postgres:5432/${STAGING_DB_NAME:-matrixos_staging}}

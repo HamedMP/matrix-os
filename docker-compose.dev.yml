@@ -110,6 +110,12 @@ services:
       - NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
       - NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
       - GATEWAY_URL=http://localhost:4000
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
       - PLATFORM_DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_platform
       # S3-compatible storage (MinIO).
@@ -159,6 +165,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PROXY_PORT=8080
       - PROXY_DB_PATH=/data/proxy.db
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
     healthcheck:
       test: wget -qO- http://localhost:8080/health || exit 1
       interval: 10s
@@ -197,6 +205,12 @@ services:
       # Single-tenant dev: every issued JWT points at the local gateway.
       - GATEWAY_URL_TEMPLATE=${GATEWAY_URL_TEMPLATE:-http://localhost:4000}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
     healthcheck:
       test: wget -qO- http://localhost:9000/health || exit 1
       interval: 10s
@@ -309,6 +323,12 @@ services:
       - MATRIX_HANDLE=alice
       - PORT=4000
       - ANTHROPIC_BASE_URL=http://proxy:8080
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_alice
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1
@@ -351,6 +371,12 @@ services:
       - MATRIX_HANDLE=bob
       - PORT=4000
       - ANTHROPIC_BASE_URL=http://proxy:8080
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_bob
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1
