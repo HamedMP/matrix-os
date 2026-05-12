@@ -228,6 +228,11 @@ function ipv4MappedAddress(address: string): string | null {
   return ipv4FromLastHextets(hextets);
 }
 
+function isTeredoAddress(address: string): boolean {
+  const hextets = expandIpv6(address);
+  return Boolean(hextets && hextets[0] === 0x2001 && hextets[1] === 0);
+}
+
 function isBlockedIpv6(address: string): boolean {
   const lower = address.toLowerCase();
   const mappedIpv4 = ipv4MappedAddress(lower);
@@ -240,6 +245,9 @@ function isBlockedIpv6(address: string): boolean {
   const compatibleIpv4 = ipv4CompatibleAddress(lower);
   if (compatibleIpv4) {
     return isBlockedIpv4(compatibleIpv4);
+  }
+  if (isTeredoAddress(lower)) {
+    return true;
   }
 
   return (

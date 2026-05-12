@@ -83,9 +83,9 @@ describe("BrowserRuntimeService", () => {
       resolveHostname: async () => ["93.184.216.34"],
     });
 
-    runtime.assertOwnerLimits({ sessions: 0, streams: 2, memoryBytes: 1024, profileBytes: 2048 });
+    runtime.assertOwnerLimits({ sessions: 0, streams: 1, memoryBytes: 1024, profileBytes: 2048 });
     expect(() => runtime.assertOwnerLimits({ sessions: 1 })).toThrow("browser_session_limit_reached");
-    expect(() => runtime.assertOwnerLimits({ streams: 3 })).toThrow("browser_stream_limit_reached");
+    expect(() => runtime.assertOwnerLimits({ streams: 2 })).toThrow("browser_stream_limit_reached");
     expect(() => runtime.assertOwnerLimits({ memoryBytes: 1025 })).toThrow("browser_memory_limit_reached");
     expect(() => runtime.assertOwnerLimits({ profileBytes: 2049 })).toThrow("browser_disk_limit_reached");
 

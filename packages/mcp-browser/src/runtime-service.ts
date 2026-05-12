@@ -200,7 +200,7 @@ export class BrowserRuntimeService {
     if ((usage.sessions ?? 0) >= this.maxSessions) {
       throw new Error("browser_session_limit_reached");
     }
-    if ((usage.streams ?? 0) > this.maxStreams) {
+    if ((usage.streams ?? 0) >= this.maxStreams) {
       throw new Error("browser_stream_limit_reached");
     }
     if ((usage.downloads ?? 0) >= this.maxDownloads) {

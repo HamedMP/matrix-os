@@ -84,16 +84,19 @@ export function createEphemeralTurnCredential(opts: {
   ownerId: string;
   sessionId: string;
   urls: string[];
-  secret?: string;
+  secret: string;
   now?: number;
   ttlMs?: number;
 }): TurnCredential {
+  if (opts.secret.length === 0) {
+    throw new Error("turn_secret_required");
+  }
   const now = opts.now ?? Date.now();
   const ttlMs = opts.ttlMs ?? 5 * 60 * 1000;
   return {
     urls: opts.urls,
     username: `${opts.ownerId}:${opts.sessionId}:${randomUUID()}`,
-    credential: opts.secret ?? randomUUID(),
+    credential: opts.secret,
     expiresAt: new Date(now + ttlMs).toISOString(),
   };
 }

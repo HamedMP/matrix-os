@@ -63,6 +63,15 @@ describe("Browser media plane", () => {
     expect(credential.expiresAt).toBe(new Date(301_000).toISOString());
   });
 
+  it("requires an explicit TURN secret", () => {
+    expect(() => createEphemeralTurnCredential({
+      ownerId: "owner_1",
+      sessionId: "session_1",
+      urls: ["turns:turn.matrix-os.com:5349"],
+      secret: "",
+    })).toThrow("turn_secret_required");
+  });
+
   it("accepts relay candidates and rejects host/private candidates", () => {
     expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 203.0.113.20 3478 typ relay")).not.toThrow();
     expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 10.0.0.4 5353 typ host")).toThrow("media_policy");

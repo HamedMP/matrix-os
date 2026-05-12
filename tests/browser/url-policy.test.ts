@@ -23,7 +23,7 @@ describe("Browser URL policy", () => {
   });
 
   it("rejects IPv6 loopback, unique-local, link-local, documentation, multicast, and mapped private ranges", async () => {
-    for (const address of ["[::1]", "[fc00::1]", "[fd00::1]", "[fe80::1]", "[2001:db8::1]", "[ff02::1]", "[::ffff:127.0.0.1]"]) {
+    for (const address of ["[::1]", "[fc00::1]", "[fd00::1]", "[fe80::1]", "[2001:db8::1]", "[ff02::1]", "[::ffff:127.0.0.1]", "[2001:0000:c000:0204:0000:0000:3f57:fefe]"]) {
       await expect(assertSafeBrowserUrl(`http://${address}/`)).rejects.toThrow("not allowed");
     }
   });
