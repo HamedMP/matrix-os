@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -7,7 +7,10 @@ import {
   compareHostBundleVersions,
   isAutoApplyUpdate,
   parseUpdateChannel,
+  parseInternalUpgradeTarget,
+  parseUpdateVersion,
   startSystemUpdate,
+  writeInternalUpgradeTrigger,
 } from "../../packages/gateway/src/system-update.js";
 
 describe("system update checks", () => {
@@ -25,8 +28,84 @@ describe("system update checks", () => {
   it("rejects unsupported update channels", () => {
     expect(parseUpdateChannel("stable")).toBe("stable");
     expect(parseUpdateChannel("canary")).toBe("canary");
+    expect(parseUpdateChannel("beta")).toBe("beta");
+    expect(parseUpdateChannel("dev")).toBe("dev");
     expect(parseUpdateChannel("../stable")).toBeNull();
     expect(parseUpdateChannel("nightly")).toBeNull();
+  });
+
+  it("validates explicit update versions for internal deploy triggers", () => {
+    expect(parseUpdateVersion("v2026.05.12-42")).toBe("v2026.05.12-42");
+    expect(parseUpdateVersion(" v2026.05.12-42 ")).toBe("v2026.05.12-42");
+    expect(parseUpdateVersion("../stable")).toBeNull();
+    expect(parseUpdateVersion("stable")).toBeNull();
+    expect(parseUpdateVersion("")).toBeNull();
+  });
+
+  it("parses internal deploy targets without allowing ambiguous requests", () => {
+    expect(parseInternalUpgradeTarget({ version: "v2026.05.12-42" })).toEqual({
+      ok: true,
+      target: { type: "version", value: "v2026.05.12-42" },
+    });
+    expect(parseInternalUpgradeTarget({ channel: "beta" })).toEqual({
+      ok: true,
+      target: { type: "channel", value: "beta" },
+    });
+    expect(parseInternalUpgradeTarget({})).toEqual({ ok: true, target: null });
+    expect(parseInternalUpgradeTarget({ version: "v2026.05.12-42", channel: "stable" })).toEqual({
+      ok: false,
+      error: "Specify either version or channel",
+    });
+    expect(parseInternalUpgradeTarget({ version: "../stable" })).toEqual({
+      ok: false,
+      error: "Invalid update version",
+    });
+    expect(parseInternalUpgradeTarget({ channel: "nightly" })).toEqual({
+      ok: false,
+      error: "Invalid update channel",
+    });
+  });
+
+  it("writes requested versions before triggering an internal upgrade", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "matrix-upgrade-"));
+    try {
+      writeFileSync(join(appDir, ".update-channel"), "stable");
+      const result = await writeInternalUpgradeTrigger({
+        appDir,
+        body: { version: "v2026.05.12-42" },
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        target: { type: "version", value: "v2026.05.12-42" },
+      });
+      expect(readFileSync(join(appDir, ".update-version"), "utf8")).toBe("v2026.05.12-42");
+      expect(existsSync(join(appDir, ".update-channel"))).toBe(false);
+      expect(readFileSync(join(appDir, ".update-now"), "utf8")).toBe("");
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes requested channels before triggering an internal upgrade", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "matrix-upgrade-"));
+    try {
+      writeFileSync(join(appDir, ".update-version"), "v2026.05.12-41");
+      const result = await writeInternalUpgradeTrigger({
+        appDir,
+        body: { channel: "canary" },
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        target: { type: "channel", value: "canary" },
+      });
+      expect(readFileSync(join(appDir, ".update-channel"), "utf8")).toBe("canary");
+      expect(existsSync(join(appDir, ".update-version"))).toBe(false);
+      expect(readFileSync(join(appDir, ".update-now"), "utf8")).toBe("");
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
   });
 
   it("fetches the configured channel manifest from the platform", async () => {

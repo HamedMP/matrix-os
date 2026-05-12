@@ -6,6 +6,7 @@ import {
   containerMemoryUsage,
   containerMemoryLimit,
   provisionDuration,
+  refreshVpsMetrics,
 } from '../../packages/platform/src/metrics.js';
 
 describe('platform/metrics', () => {
@@ -56,5 +57,26 @@ describe('platform/metrics', () => {
     const output = await metricsRegistry.metrics();
     expect(output).toContain('platform_provision_duration_seconds_bucket');
     expect(output).toContain('platform_provision_duration_seconds_count 2');
+  });
+
+  it('refreshes VPS version labels for Grafana scraping', async () => {
+    refreshVpsMetrics([
+      {
+        machineId: 'machine-1',
+        handle: 'alice',
+        imageVersion: 'v2026.05.12-1',
+        status: 'running',
+      },
+      {
+        machineId: 'machine-2',
+        handle: 'bob',
+        imageVersion: null,
+        status: 'provisioning',
+      },
+    ]);
+
+    const output = await metricsRegistry.metrics();
+    expect(output).toContain('matrix_vps_info{handle="alice",machine_id="machine-1",version="v2026.05.12-1",status="running"} 1');
+    expect(output).toContain('matrix_vps_info{handle="bob",machine_id="machine-2",version="unknown",status="provisioning"} 1');
   });
 });

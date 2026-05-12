@@ -70,6 +70,7 @@ import {
   checkForSystemUpdate,
   parseUpdateChannel,
   startSystemUpdate,
+  writeInternalUpgradeTrigger,
   type UpdateChannel,
 } from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -3392,6 +3393,16 @@ export async function createGateway(config: GatewayConfig) {
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
+    void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
+      distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
+      properties: {
+        channel,
+        handle: process.env.MATRIX_HANDLE,
+      },
+    }).catch((err: unknown) => {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[posthog] Failed to queue system update event: ${kind}`);
+    });
     return c.json({ ok: true, status: result.status, channel }, 202);
   }
 
@@ -3607,14 +3618,28 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
 
-  app.post("/api/internal/upgrade", async (c) => {
+  app.post("/api/internal/upgrade", upgradeBodyLimit, async (c) => {
     const upgradeToken = process.env.UPGRADE_TOKEN;
     if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
     const auth = c.req.header("authorization");
     const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
     if (!timingSafeStringEquals(token, upgradeToken)) return c.json({ error: "Unauthorized" }, 401);
-    await writeFileAsync("/opt/matrix/app/.update-now", "");
-    return c.json({ status: "upgrading" }, 202);
+
+    let body: unknown = {};
+    const raw = await c.req.text();
+    if (raw.trim()) {
+      try {
+        body = JSON.parse(raw);
+      } catch (err: unknown) {
+        logUnexpectedJsonParseFailure("Failed to parse internal upgrade payload", err);
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+    }
+
+    const result = await writeInternalUpgradeTrigger({ body });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+
+    return c.json({ status: "upgrading", target: result.target }, 202);
   });
 
   // Load plugins and mount their HTTP routes

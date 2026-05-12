@@ -19,9 +19,17 @@ import {
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   listUserMachines,
+  listAllUserMachines,
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  getHostBundleRelease,
+  getHostBundleReleaseByChannel,
+  HostBundleReleaseConflictError,
+  listHostBundleReleases,
+  promoteHostBundleChannel,
+  upsertHostBundleRelease,
+  type HostBundleReleaseRecord,
   type UserMachineRecord,
 } from './db.js';
 import type { Orchestrator } from './orchestrator.js';
@@ -76,8 +84,8 @@ const HOST_BUNDLE_FILES = new Set([
   'manifest.json',
   'release.json',
 ]);
-const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev)$/;
-const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev)\.json$/;
+const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev|beta)$/;
+const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev|beta)\.json$/;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -114,6 +122,25 @@ const DECODED_FETCH_RESPONSE_HEADERS = new Set([
   'content-encoding',
   'content-length',
 ]);
+
+const HostBundleReleaseBodySchema = z.object({
+  version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
+  gitCommit: z.string().min(7).max(64),
+  gitRef: z.string().max(256).nullable().optional(),
+  buildTime: z.string().min(1).max(128),
+  bundleKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz$/),
+  checksumKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz\.sha256$/).nullable().optional(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  size: z.number().int().positive(),
+  severity: z.enum(['normal', 'security']).optional(),
+  updateType: z.enum(['manual', 'auto']).optional(),
+  changelog: z.string().max(32_000).nullable().optional(),
+  channel: z.string().regex(HOST_BUNDLE_CHANNEL_PATTERN).optional(),
+});
+
+const HostBundleChannelBodySchema = z.object({
+  version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
+});
 
 function sanitizeProxyResponseHeaders(headers: Headers): Headers {
   const sanitized = new Headers(headers);
@@ -239,6 +266,28 @@ function isObjectNotFoundError(err: unknown): boolean {
   return candidate.name === 'NoSuchKey' ||
     candidate.name === 'NotFound' ||
     candidate.$metadata?.httpStatusCode === 404;
+}
+
+function hostBundleReleaseResponse(
+  release: HostBundleReleaseRecord,
+  url?: string,
+): Record<string, unknown> {
+  return {
+    version: release.version,
+    gitCommit: release.gitCommit,
+    gitRef: release.gitRef,
+    buildTime: release.buildTime,
+    bundleKey: release.bundleKey,
+    checksumKey: release.checksumKey,
+    sha256: release.sha256,
+    bundleSha256: release.sha256,
+    size: release.size,
+    severity: release.severity,
+    updateType: release.updateType,
+    changelog: release.changelog,
+    createdAt: release.createdAt,
+    ...(url ? { url } : {}),
+  };
 }
 
 function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {
@@ -935,6 +984,18 @@ export function createApp(deps: {
     service: 'matrix-platform',
   });
   const posthogShutdowns: Array<() => Promise<void>> = [() => posthogErrorTracker.shutdown()];
+  function capturePlatformEvent(
+    event: string,
+    properties: Record<string, string | number | boolean | null | undefined>,
+  ): void {
+    void posthogErrorTracker.captureEvent(event, {
+      distinctId: 'matrix-platform',
+      properties,
+    }).catch((err: unknown) => {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[posthog] Failed to queue platform event ${event}: ${kind}`);
+    });
+  }
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -952,16 +1013,149 @@ export function createApp(deps: {
 
   // Prometheus metrics (unauthenticated for scraping)
   app.get('/metrics', async (c) => {
-    const { metricsRegistry } = await import('./metrics.js');
+    const { metricsRegistry, refreshVpsMetrics } = await import('./metrics.js');
+    try {
+      refreshVpsMetrics(await listAllUserMachines(db, 500));
+    } catch (err: unknown) {
+      logPlatformRouteError('/metrics vps refresh', err);
+    }
     const metrics = await metricsRegistry.metrics();
     return c.text(metrics, 200, {
       'Content-Type': metricsRegistry.contentType,
     });
   });
 
+  async function getSignedBundleUrl(release: HostBundleReleaseRecord): Promise<string> {
+    if (!deps.customerVpsObjectStore) {
+      throw new Error('Host bundle storage unavailable');
+    }
+    if (!deps.customerVpsObjectStore.getPresignedGetUrl) {
+      throw new Error('Host bundle storage cannot create signed URLs');
+    }
+    return deps.customerVpsObjectStore.getPresignedGetUrl(release.bundleKey, 3600);
+  }
+
+  function requireHostBundleAdmin(c: Context): Response | null {
+    if (!platformSecret) {
+      return c.json({ error: 'Platform admin not configured' }, 503);
+    }
+    if (!bearerTokenEquals(c.req.header('authorization'), platformSecret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    return null;
+  }
+
+  app.get('/system-bundles/releases', async (c) => {
+    try {
+      const releases = await listHostBundleReleases(db, 100);
+      return c.json({ releases: releases.map((release) => hostBundleReleaseResponse(release)) });
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/releases', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
+  app.get('/system-bundles/releases/:versionJson', async (c) => {
+    const versionJson = c.req.param('versionJson');
+    const version = versionJson.endsWith('.json') ? versionJson.slice(0, -5) : versionJson;
+    if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(version)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    try {
+      const release = await getHostBundleRelease(db, version);
+      if (!release) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      const url = await getSignedBundleUrl(release);
+      return c.json(hostBundleReleaseResponse(release, url), 200, {
+        'cache-control': 'private, max-age=30',
+      });
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/releases/:version', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
+  app.post('/system-bundles/releases', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    const authError = requireHostBundleAdmin(c);
+    if (authError) return authError;
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/releases parse', err);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = HostBundleReleaseBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    try {
+      const release = await upsertHostBundleRelease(db, parsed.data);
+      let channel;
+      if (parsed.data.channel) {
+        channel = await promoteHostBundleChannel(db, parsed.data.channel, release.version);
+        capturePlatformEvent('host_bundle_channel_promoted', {
+          channel: parsed.data.channel,
+          version: release.version,
+          gitCommit: release.gitCommit,
+        });
+      }
+      capturePlatformEvent('host_bundle_release_registered', {
+        version: release.version,
+        gitCommit: release.gitCommit,
+        gitRef: release.gitRef,
+        bundleKey: release.bundleKey,
+        size: release.size,
+        severity: release.severity,
+        updateType: release.updateType,
+      });
+      return c.json({
+        release: hostBundleReleaseResponse(release),
+        ...(channel ? { channel } : {}),
+      });
+    } catch (err: unknown) {
+      if (err instanceof HostBundleReleaseConflictError) {
+        return c.json({ error: 'Release already exists with different artifact metadata' }, 409);
+      }
+      logPlatformRouteError('/system-bundles/releases', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
+  app.post('/system-bundles/channels/:channel', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    const authError = requireHostBundleAdmin(c);
+    if (authError) return authError;
+    const channel = c.req.param('channel');
+    if (!HOST_BUNDLE_CHANNEL_PATTERN.test(channel)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/channels parse', err);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = HostBundleChannelBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    try {
+      const promoted = await promoteHostBundleChannel(db, channel, parsed.data.version);
+      capturePlatformEvent('host_bundle_channel_promoted', {
+        channel,
+        version: promoted.version,
+      });
+      return c.json(promoted);
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/channels/:channel promote', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
   // Public, immutable host-service bundles used by customer VPS cloud-init.
-  // The platform serves these from private R2 through the existing Cloudflare
-  // tunnel, so bootstrapping does not require making the whole bucket public.
+  // Metadata comes from Postgres; R2 only stores the bytes.
   app.get('/system-bundles/:imageVersion/:file', async (c) => {
     if (!deps.customerVpsObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
@@ -974,28 +1168,16 @@ export function createApp(deps: {
         return c.json({ error: 'Invalid request' }, 400);
       }
       try {
-        const object = await deps.customerVpsObjectStore.getObject(
-          `system-bundles/channels/${file}`,
-          { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
-        );
-        if (!object.body) {
+        const channel = file.slice(0, -5);
+        const release = await getHostBundleReleaseByChannel(db, channel);
+        if (!release) {
           return c.json({ error: 'Not found' }, 404);
         }
-        const headers = new Headers({
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'public, max-age=60',
-          'cdn-cache-control': 'public, max-age=60',
-          'cloudflare-cdn-cache-control': 'public, max-age=60',
+        const url = await getSignedBundleUrl(release);
+        return c.json(hostBundleReleaseResponse(release, url), 200, {
+          'cache-control': 'private, max-age=30',
         });
-        if (object.etag) headers.set('etag', object.etag);
-        if (typeof object.contentLength === 'number') {
-          headers.set('content-length', String(object.contentLength));
-        }
-        return new Response(object.body, { status: 200, headers });
       } catch (err: unknown) {
-        if (isObjectNotFoundError(err)) {
-          return c.json({ error: 'Not found' }, 404);
-        }
         logPlatformRouteError('/system-bundles/channels/:channel', err);
         return c.json({ error: 'Host bundle unavailable' }, 502);
       }
@@ -1005,11 +1187,23 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid request' }, 400);
     }
 
-    const r2Key = `system-bundles/${imageVersion}/${file}`;
+    const isChannelAlias = HOST_BUNDLE_CHANNEL_PATTERN.test(imageVersion);
+    let release: HostBundleReleaseRecord | undefined;
+    try {
+      release = isChannelAlias
+        ? await getHostBundleReleaseByChannel(db, imageVersion)
+        : await getHostBundleRelease(db, imageVersion);
+    } catch (err: unknown) {
+      logPlatformRouteError('/system-bundles/:imageVersion/:file db', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+    if (!release) {
+      return c.json({ error: 'Not found' }, 404);
+    }
 
     if (file.endsWith('.tar.gz') && deps.customerVpsObjectStore.getPresignedGetUrl) {
       try {
-        const url = await deps.customerVpsObjectStore.getPresignedGetUrl(r2Key, 3600);
+        const url = await getSignedBundleUrl(release);
         return c.redirect(url, 302);
       } catch (err: unknown) {
         if (isObjectNotFoundError(err)) {
@@ -1020,9 +1214,39 @@ export function createApp(deps: {
       }
     }
 
+    if (file.endsWith('.sha256')) {
+      const cacheHeaders = isChannelAlias
+        ? {
+          'cache-control': 'private, max-age=30',
+          'cdn-cache-control': 'private, max-age=30',
+          'cloudflare-cdn-cache-control': 'private, max-age=30',
+        }
+        : {
+          'cache-control': 'public, max-age=31536000, immutable',
+          'cdn-cache-control': 'public, max-age=31536000, immutable',
+          'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
+        };
+      return c.text(`${release.sha256}  matrix-host-bundle.tar.gz\n`, 200, {
+        'content-type': 'text/plain; charset=utf-8',
+        ...cacheHeaders,
+      });
+    }
+
+    if (file.endsWith('.json')) {
+      try {
+        const url = await getSignedBundleUrl(release);
+        return c.json(hostBundleReleaseResponse(release, url), 200, {
+          'cache-control': 'private, max-age=30',
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('/system-bundles/:imageVersion/:file json', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
+    }
+
     try {
       const object = await deps.customerVpsObjectStore.getObject(
-        r2Key,
+        release.bundleKey,
         { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
       );
       if (!object.body) {
@@ -1063,28 +1287,15 @@ export function createApp(deps: {
     }
 
     try {
-      const object = await deps.customerVpsObjectStore.getObject(
-        `system-bundles/channels/${channel}`,
-        { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
-      );
-      if (!object.body) {
+      const release = await getHostBundleReleaseByChannel(db, channel);
+      if (!release) {
         return c.json({ error: 'Not found' }, 404);
       }
-      const headers = new Headers({
-        'content-type': 'application/json; charset=utf-8',
-        'cache-control': 'public, max-age=60',
-        'cdn-cache-control': 'public, max-age=60',
-        'cloudflare-cdn-cache-control': 'public, max-age=60',
+      const url = await getSignedBundleUrl(release);
+      return c.json(hostBundleReleaseResponse(release, url), 200, {
+        'cache-control': 'private, max-age=30',
       });
-      if (object.etag) headers.set('etag', object.etag);
-      if (typeof object.contentLength === 'number') {
-        headers.set('content-length', String(object.contentLength));
-      }
-      return new Response(object.body, { status: 200, headers });
     } catch (err: unknown) {
-      if (isObjectNotFoundError(err)) {
-        return c.json({ error: 'Not found' }, 404);
-      }
       logPlatformRouteError('/system-bundles/channels/:channel', err);
       return c.json({ error: 'Host bundle unavailable' }, 502);
     }

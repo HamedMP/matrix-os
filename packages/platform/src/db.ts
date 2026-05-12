@@ -36,6 +36,27 @@ interface UserMachinesTable {
   failure_at: string | null;
 }
 
+interface HostBundleReleasesTable {
+  version: string;
+  git_commit: string;
+  git_ref: string | null;
+  build_time: string;
+  bundle_key: string;
+  checksum_key: string | null;
+  sha256: string;
+  size: number;
+  severity: string;
+  update_type: string;
+  changelog: string | null;
+  created_at: string;
+}
+
+interface HostBundleChannelsTable {
+  channel: string;
+  version: string;
+  updated_at: string;
+}
+
 interface ProviderDeletionQueueTable {
   id: string;
   provider_server_id: number;
@@ -143,6 +164,8 @@ interface SocialFollowsTable {
 export interface PlatformDatabase {
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  host_bundle_releases: HostBundleReleasesTable;
+  host_bundle_channels: HostBundleChannelsTable;
   provider_deletion_queue: ProviderDeletionQueueTable;
   port_assignments: PortAssignmentsTable;
   device_codes: DeviceCodesTable;
@@ -202,6 +225,49 @@ export interface UserMachineRecord {
   deletedAt: string | null;
   failureCode: string | null;
   failureAt: string | null;
+}
+
+export interface HostBundleReleaseRecord {
+  version: string;
+  gitCommit: string;
+  gitRef: string | null;
+  buildTime: string;
+  bundleKey: string;
+  checksumKey: string | null;
+  sha256: string;
+  size: number;
+  severity: string;
+  updateType: string;
+  changelog: string | null;
+  createdAt: string;
+}
+
+export interface NewHostBundleRelease {
+  version: string;
+  gitCommit: string;
+  gitRef?: string | null;
+  buildTime: string;
+  bundleKey: string;
+  checksumKey?: string | null;
+  sha256: string;
+  size: number;
+  severity?: string;
+  updateType?: string;
+  changelog?: string | null;
+  createdAt?: string;
+}
+
+export class HostBundleReleaseConflictError extends Error {
+  constructor(version: string) {
+    super(`Host bundle release already exists with different artifact fields: ${version}`);
+    this.name = 'HostBundleReleaseConflictError';
+  }
+}
+
+export interface HostBundleChannelRecord {
+  channel: string;
+  version: string;
+  updatedAt: string;
 }
 
 export interface ProviderDeletionQueueRecord {
@@ -312,6 +378,33 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     WHERE deleted_at IS NULL
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS host_bundle_releases (
+      version TEXT PRIMARY KEY,
+      git_commit TEXT NOT NULL,
+      git_ref TEXT,
+      build_time TEXT NOT NULL,
+      bundle_key TEXT NOT NULL,
+      checksum_key TEXT,
+      sha256 TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'normal',
+      update_type TEXT NOT NULL DEFAULT 'manual',
+      changelog TEXT,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_created_at ON host_bundle_releases(created_at)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS host_bundle_channels (
+      channel TEXT PRIMARY KEY,
+      version TEXT NOT NULL REFERENCES host_bundle_releases(version),
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_channels_version ON host_bundle_channels(version)`.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provider_deletion_queue (
@@ -595,6 +688,49 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.failureCode !== undefined) update.failure_code = values.failureCode;
   if (values.failureAt !== undefined) update.failure_at = values.failureAt;
   return update;
+}
+
+function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRecord {
+  return {
+    version: row.version,
+    gitCommit: row.git_commit,
+    gitRef: row.git_ref,
+    buildTime: row.build_time,
+    bundleKey: row.bundle_key,
+    checksumKey: row.checksum_key,
+    sha256: row.sha256,
+    size: row.size,
+    severity: row.severity,
+    updateType: row.update_type,
+    changelog: row.changelog,
+    createdAt: row.created_at,
+  };
+}
+
+function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleReleasesTable {
+  const now = new Date().toISOString();
+  return {
+    version: record.version,
+    git_commit: record.gitCommit,
+    git_ref: record.gitRef ?? null,
+    build_time: record.buildTime,
+    bundle_key: record.bundleKey,
+    checksum_key: record.checksumKey ?? null,
+    sha256: record.sha256,
+    size: record.size,
+    severity: record.severity ?? 'normal',
+    update_type: record.updateType ?? 'manual',
+    changelog: record.changelog ?? null,
+    created_at: record.createdAt ?? now,
+  };
+}
+
+function mapHostBundleChannel(row: HostBundleChannelsTable): HostBundleChannelRecord {
+  return {
+    channel: row.channel,
+    version: row.version,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
@@ -910,6 +1046,116 @@ export async function listAllUserMachines(
     .limit(limit)
     .execute();
   return rows.map(mapUserMachine);
+}
+
+export async function upsertHostBundleRelease(
+  db: PlatformDB,
+  record: NewHostBundleRelease,
+): Promise<HostBundleReleaseRecord> {
+  await db.ready;
+  const row = toHostBundleReleaseRow(record);
+  const saved = await db.executor
+    .insertInto('host_bundle_releases')
+    .values(row)
+    .onConflict((oc) =>
+      oc.column('version').doUpdateSet({
+        git_commit: row.git_commit,
+        git_ref: row.git_ref,
+        build_time: row.build_time,
+        severity: row.severity,
+        update_type: row.update_type,
+        changelog: row.changelog,
+      })
+        .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
+        .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
+        .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
+        .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
+    )
+    .returningAll()
+    .executeTakeFirst();
+  if (!saved) {
+    throw new HostBundleReleaseConflictError(row.version);
+  }
+  return mapHostBundleRelease(saved);
+}
+
+export async function getHostBundleRelease(
+  db: PlatformDB,
+  version: string,
+): Promise<HostBundleReleaseRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_releases')
+    .selectAll()
+    .where('version', '=', version)
+    .executeTakeFirst();
+  return row ? mapHostBundleRelease(row) : undefined;
+}
+
+export async function listHostBundleReleases(
+  db: PlatformDB,
+  limit = 50,
+): Promise<HostBundleReleaseRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('host_bundle_releases')
+    .selectAll()
+    .orderBy('created_at', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapHostBundleRelease);
+}
+
+export async function promoteHostBundleChannel(
+  db: PlatformDB,
+  channel: string,
+  version: string,
+  updatedAt = new Date().toISOString(),
+): Promise<HostBundleChannelRecord> {
+  await db.ready;
+  const release = await getHostBundleRelease(db, version);
+  if (!release) {
+    throw new Error('Cannot promote unknown host bundle release');
+  }
+  const row = await db.executor
+    .insertInto('host_bundle_channels')
+    .values({ channel, version, updated_at: updatedAt })
+    .onConflict((oc) =>
+      oc.column('channel').doUpdateSet({
+        version,
+        updated_at: updatedAt,
+      }),
+    )
+    .returningAll()
+    .executeTakeFirstOrThrow();
+  return mapHostBundleChannel(row);
+}
+
+export async function getHostBundleChannel(
+  db: PlatformDB,
+  channel: string,
+): Promise<HostBundleChannelRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_channels')
+    .selectAll()
+    .where('channel', '=', channel)
+    .executeTakeFirst();
+  return row ? mapHostBundleChannel(row) : undefined;
+}
+
+export async function getHostBundleReleaseByChannel(
+  db: PlatformDB,
+  channel: string,
+): Promise<HostBundleReleaseRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_channels')
+    .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_channels.version')
+    .selectAll('host_bundle_releases')
+    .where('host_bundle_channels.channel', '=', channel)
+    .executeTakeFirst();
+  return row ? mapHostBundleRelease(row) : undefined;
 }
 
 export async function markProviderDeletionCompleted(
