@@ -179,6 +179,21 @@ bun run docker:build      # full rebuild (no cache)
 **IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
 
+## Release Procedure
+
+Production customer runtime ships as VPS-native host bundles. R2 stores immutable tarball bytes, platform Postgres stores release metadata and channel pointers, and each VPS keeps the installed release at `/opt/matrix/release.json`.
+
+- **Package safety**: pnpm is pinned to 10.33.4 and `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` (7 days). Keep `pnpm install --frozen-lockfile` in CI/release paths; do not bypass the lockfile or downgrade pnpm below 10.16.
+- **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
+- **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
+- **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
+- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. EU PostHog uses `https://eu.i.posthog.com`.
+- **Local emergency build**: `set -a; source .env; set +a; HOST_BUNDLE_VERSION=<version> HOST_BUNDLE_CHANNEL=<channel> MATRIX_BUILD_SHA=$(git rev-parse HEAD) MATRIX_BUILD_REF=main ./scripts/build-host-bundle.sh`.
+- **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
+- **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
+- **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
+- **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
+
 ## Shell Gotchas
 
 - **Canvas mode is the primary shell experience**: users may only see Canvas in the sidebar. Build and verify new shell features in Canvas first, then Desktop. Desktop compatibility still matters, but Canvas is the main product surface.

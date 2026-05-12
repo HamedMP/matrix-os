@@ -4,12 +4,12 @@ Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social +
 
 ## Constitution
 
-Read `.specify/memory/constitution.md`: the 8 non-negotiable principles. Re-read after compaction.
+Read `.specify/memory/constitution.md`: the 9 core principles. Re-read after compaction.
 
 Key principles:
 
-1. **Everything Is a File**: filesystem is the single source of truth
-2. **Agent Is the Kernel**: Agent SDK V1 `query()` with `resume`
+1. **Data Belongs to Its Owner**: files hold identity/config/export state; user/org app data lives in owner-controlled Postgres
+2. **AI Is the Kernel**: Agent SDK V1 `query()` with `resume`, model-agnostic routing over time
 3. **Headless Core, Multi-Shell**: core works without UI, shell is one renderer
 4. **Defense in Depth (NON-NEGOTIABLE)**: auth matrix, input validation, resource limits, timeouts
 5. **TDD (NON-NEGOTIABLE)**: tests first, 99-100% coverage target
@@ -39,12 +39,11 @@ Key principles:
 ## Development Rules
 
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
-- **Conventional Commits**: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
+- **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
-- **Verify Before Done**: always check for lint errors and build errors after making changes. Run `bun run lint` and `bun run build` (or check the dev server output) before considering a change complete. Never leave broken references, unused imports, or type errors.
 - After major features: run `/update-docs` to sync all documentation
 
 ## Mandatory Code Patterns
@@ -88,15 +87,48 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 ## Running
 
 ```bash
-pnpm install              # install deps
 bun run test              # unit tests
-bun run dev               # gateway (:4000) + shell (:3000)
-bun run docker            # Docker dev (primary, requires OrbStack on macOS)
+bun run test:watch        # Vitest watch mode
+bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
+bun run test:coverage     # coverage report
+bun run test:e2e          # end-to-end tests
+
+bun run dev               # local dev: gateway + proxy + shell
+bun run dev:gateway       # gateway only
+bun run dev:shell         # shell only
+bun run dev:proxy         # proxy only
+bun run dev:platform      # platform only
+bun run dev:www           # matrix-os.com website only
+bun run dev:kernel        # kernel package only
+
+bun run docker            # Legacy/local Docker dev only; not production customer runtime
 bun run docker:full       # + proxy, platform, conduit
+bun run docker:all        # + observability stack
+bun run docker:multi      # + alice & bob multi-user
+bun run docker:stop       # stop containers, preserve volumes
+bun run docker:restart    # restart dev container
+bun run docker:logs       # tail dev container logs
+bun run docker:shell      # shell into container as matrixos user
+bun run docker:build      # full rebuild (no cache)
 ```
 
-**IMPORTANT**: Never `docker compose down -v` unless explicitly resetting. Volumes hold OS state, node_modules, and .next cache.
+**IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
+
+## Release Procedure
+
+Production customer runtime ships as VPS-native host bundles. R2 stores immutable tarball bytes, platform Postgres stores release metadata and channel pointers, and each VPS keeps the installed release at `/opt/matrix/release.json`.
+
+- **Package safety**: pnpm is pinned to 10.33.4 and `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` (7 days). Keep `pnpm install --frozen-lockfile` in CI/release paths; do not bypass the lockfile or downgrade pnpm below 10.16.
+- **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
+- **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
+- **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
+- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. EU PostHog uses `https://eu.i.posthog.com`.
+- **Local emergency build**: `set -a; source .env; set +a; HOST_BUNDLE_VERSION=<version> HOST_BUNDLE_CHANNEL=<channel> MATRIX_BUILD_SHA=$(git rev-parse HEAD) MATRIX_BUILD_REF=main ./scripts/build-host-bundle.sh`.
+- **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
+- **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
+- **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
+- **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
 
 ## Shell Gotchas
 
@@ -109,8 +141,8 @@ bun run docker:full       # + proxy, platform, conduit
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
 - **Reset `imgFailed` when `iconUrl` changes**: track prev URL with `useRef`, reset on differ
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
-- **Shell changes need Docker rebuild**: shell is built into the image. `docker compose up --build` only rebuilds platform/proxy.
-- **`docker build` needs `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...`**
+- **Production is VPS-native only**: user-facing Matrix OS runs on one VPS per user with host systemd services. Do not use Docker image rebuilds, `docker compose`, or rolling container restarts as the production rollout path for customer runtime.
+- **Customer VPS shell/gateway changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes through platform deploy.
 - **Pipedream stays platform-owned**: never put `PIPEDREAM_*` secrets on customer VPSes. VPS gateways need `PLATFORM_INTERNAL_URL` plus their existing `UPGRADE_TOKEN`/`MATRIX_HANDLE` so `/api/integrations*` proxies to platform-owned routes.
 
 ## UX Guide
