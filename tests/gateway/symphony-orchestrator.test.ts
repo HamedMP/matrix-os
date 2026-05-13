@@ -13,6 +13,7 @@ function memoryRepo(snapshot: SymphonySnapshot): SymphonyRepository {
   return {
     bootstrap: vi.fn(async () => undefined),
     resolveOwnerIdForOperator: vi.fn(async (userId) => userId),
+    listEnabledOwnerIds: vi.fn(async () => snapshot.installation?.enabled ? [snapshot.installation.ownerId] : []),
     getSnapshot: vi.fn(async () => ({ ...snapshot, runs: Array.from(runs.values()) })),
     saveConfig: vi.fn(),
     setCredentialConfigured: vi.fn(),
@@ -132,6 +133,125 @@ describe("Matrix Symphony orchestrator", () => {
 
     expect(worktreeManager.createWorktree).toHaveBeenCalledTimes(1);
     expect(agentSessionManager.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches queued retry claims instead of leaving them inert", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "retrying",
+      attempt: 2,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      lastEvent: "Agent session could not be started",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 200 as const, worktree: { id: "wt_retry", path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const agentSessionManager = {
+      startSession: vi.fn(async () => ({ ok: true as const, status: 201 as const, session: { id: "sess_retry", runtime: { status: "running" } } })),
+      killSession: vi.fn(),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager,
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(worktreeManager.createWorktree).toHaveBeenCalledTimes(1);
+    expect(agentSessionManager.startSession).toHaveBeenCalledTimes(1);
+    await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
+      status: "running",
+      sessionId: "sess_retry",
+      attempt: 2,
+    });
+  });
+
+  it("keeps recurring poll timers isolated per owner", async () => {
+    vi.useFakeTimers();
+    try {
+      const snapshots = new Map<string, SymphonySnapshot>([
+        ["owner_1", { ...structuredClone(baseSnapshot), installation: { ...baseSnapshot.installation!, ownerId: "owner_1", id: "sym_owner_1", enabled: false } }],
+        ["owner_2", { ...structuredClone(baseSnapshot), installation: { ...baseSnapshot.installation!, ownerId: "owner_2", id: "sym_owner_2", enabled: false } }],
+      ]);
+      const repository = {
+        ...memoryRepo(structuredClone(baseSnapshot)),
+        getSnapshot: vi.fn(async (ownerId: string) => structuredClone(snapshots.get(ownerId)!)),
+        setEnabled: vi.fn(async (ownerId: string, enabled: boolean) => {
+          const snapshot = snapshots.get(ownerId)!;
+          snapshot.installation = { ...snapshot.installation!, enabled, pollIntervalMs: 1_000 };
+          return snapshot.installation;
+        }),
+        recordPoll: vi.fn(async () => undefined),
+        listRuns: vi.fn(async () => []),
+        findActiveRunByClaim: vi.fn(async () => null),
+      } as unknown as SymphonyRepository;
+      const linearSource = { previewTickets: vi.fn(async () => ({ truncated: false, tickets: [] })) };
+      const orchestrator = createMatrixSymphonyOrchestrator({
+        homePath,
+        repository,
+        credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+        linearSource,
+        worktreeManager: { createWorktree: vi.fn() },
+        agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+      });
+
+      await orchestrator.start("owner_1", "owner_1");
+      await orchestrator.start("owner_2", "owner_2");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(linearSource.previewTickets).toHaveBeenCalledTimes(2);
+
+      await orchestrator.stop("owner_1", "owner_1");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(linearSource.previewTickets).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes polling for persisted enabled installations", async () => {
+    vi.useFakeTimers();
+    try {
+      const snapshot = structuredClone(baseSnapshot);
+      snapshot.installation = { ...snapshot.installation!, enabled: true, pollIntervalMs: 1_000 };
+      const repository = {
+        ...memoryRepo(snapshot),
+        listEnabledOwnerIds: vi.fn(async () => ["user_123"]),
+      } as unknown as SymphonyRepository;
+      const linearSource = { previewTickets: vi.fn(async () => ({ truncated: false, tickets: [] })) };
+      const orchestrator = createMatrixSymphonyOrchestrator({
+        homePath,
+        repository,
+        credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+        linearSource,
+        worktreeManager: { createWorktree: vi.fn() },
+        agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+      });
+
+      await expect(orchestrator.resumeEnabledInstallations()).resolves.toEqual(["user_123"]);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(linearSource.previewTickets).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks workflow failures as blocked attention states", async () => {

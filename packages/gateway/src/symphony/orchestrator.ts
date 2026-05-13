@@ -49,7 +49,7 @@ export function createMatrixSymphonyOrchestrator(options: {
   agentSessionManager: AgentSessionManager;
   statusHub?: SymphonyStatusHub;
 }) {
-  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   async function append(ownerId: string, event: Parameters<SymphonyRepository["appendEvent"]>[1]) {
     const record = await options.repository.appendEvent(ownerId, event);
@@ -59,10 +59,10 @@ export function createMatrixSymphonyOrchestrator(options: {
 
   async function dispatchTicket(ownerId: string, installation: SymphonyInstallation, rule: TicketSourceRule, ticket: TrackedTicket): Promise<SymphonyRun> {
     const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
-    if (existing) return existing;
-
     const timestamp = nowIso();
-    const run: SymphonyRun = {
+    if (existing && existing.status !== "queued" && existing.status !== "retrying") return existing;
+
+    const run: SymphonyRun = existing ?? {
       id: runIdFor(ticket),
       installationId: installation.id,
       ticketExternalId: ticket.externalId,
@@ -77,7 +77,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       lastEvent: "Queued for Matrix agent dispatch",
       updatedAt: timestamp,
     };
-    await options.repository.upsertRun(ownerId, run);
+    if (!existing) await options.repository.upsertRun(ownerId, run);
     try {
       const workflow = await loadWorkflowContract({ homePath: options.homePath, projectSlug: installation.projectSlug });
       const worktreeResult = await options.worktreeManager.createWorktree({
@@ -157,7 +157,7 @@ export function createMatrixSymphonyOrchestrator(options: {
     }
     const preview = await options.linearSource.previewTickets(snapshot.rule, credential, { limit: 100 });
     const activeRuns = (await options.repository.listRuns(ownerId, { limit: 100 }))
-      .filter((run) => run.status === "running" || run.status === "queued" || run.status === "retrying");
+      .filter((run) => run.status === "running");
     const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - activeRuns.length);
     let dispatched = 0;
     for (const ticket of preview.tickets) {
@@ -178,23 +178,48 @@ export function createMatrixSymphonyOrchestrator(options: {
     return { matchedTickets: preview.tickets.length, dispatched, skipped: Math.max(0, preview.tickets.length - dispatched) };
   }
 
+  function clearPoll(ownerId: string): void {
+    const timer = pollTimers.get(ownerId);
+    if (timer) clearTimeout(timer);
+    pollTimers.delete(ownerId);
+  }
+
+  function schedulePoll(ownerId: string, pollIntervalMs: number): void {
+    clearPoll(ownerId);
+    const timer = setTimeout(() => {
+      pollTimers.delete(ownerId);
+      void poll(ownerId)
+        .then(async () => {
+          const snapshot = await options.repository.getSnapshot(ownerId);
+          if (snapshot.installation?.enabled) schedulePoll(ownerId, snapshot.installation.pollIntervalMs);
+        })
+        .catch((err: unknown) => {
+          console.warn("[symphony] Scheduled poll failed:", err instanceof Error ? err.message : String(err));
+          void options.repository.getSnapshot(ownerId)
+            .then((snapshot) => {
+              if (snapshot.installation?.enabled) schedulePoll(ownerId, snapshot.installation.pollIntervalMs);
+            })
+            .catch((snapshotErr: unknown) => {
+              console.warn("[symphony] Poll reschedule check failed:", snapshotErr instanceof Error ? snapshotErr.message : String(snapshotErr));
+            });
+        });
+    }, pollIntervalMs);
+    pollTimers.set(ownerId, timer);
+  }
+
+  function ensurePolling(ownerId: string, pollIntervalMs: number): void {
+    if (!pollTimers.has(ownerId)) schedulePoll(ownerId, pollIntervalMs);
+  }
+
   return {
     async start(ownerId: string, actorId: string) {
       const installation = await options.repository.setEnabled(ownerId, true, actorId);
-      if (!pollTimer) {
-        const schedule = () => {
-          pollTimer = setTimeout(() => {
-            void poll(ownerId).finally(schedule);
-          }, installation.pollIntervalMs);
-        };
-        schedule();
-      }
+      ensurePolling(ownerId, installation.pollIntervalMs);
       return installation;
     },
 
     async stop(ownerId: string, actorId: string) {
-      if (pollTimer) clearTimeout(pollTimer);
-      pollTimer = null;
+      clearPoll(ownerId);
       return options.repository.setEnabled(ownerId, false, actorId);
     },
 
@@ -248,9 +273,17 @@ export function createMatrixSymphonyOrchestrator(options: {
     },
 
     async shutdown() {
-      if (pollTimer) clearTimeout(pollTimer);
-      pollTimer = null;
+      for (const ownerId of Array.from(pollTimers.keys())) clearPoll(ownerId);
       await options.statusHub?.close();
+    },
+
+    async resumeEnabledInstallations() {
+      const ownerIds = await options.repository.listEnabledOwnerIds();
+      for (const ownerId of ownerIds) {
+        const snapshot = await options.repository.getSnapshot(ownerId);
+        if (snapshot.installation?.enabled) ensurePolling(ownerId, snapshot.installation.pollIntervalMs);
+      }
+      return ownerIds;
     },
 
     idForNewRun: () => `run_${randomUUID()}`,

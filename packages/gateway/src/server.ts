@@ -2343,6 +2343,7 @@ export async function createGateway(config: GatewayConfig) {
       agentSessionManager,
       statusHub: matrixSymphonyStatusHub,
     });
+    await matrixSymphonyOrchestrator.resumeEnabledInstallations();
     app.route("/api/symphony", createSymphonyRoutes({
       repository,
       credentialStore,

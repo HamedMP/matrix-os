@@ -27,6 +27,7 @@ function deps(snapshot: SymphonySnapshot, principal: RequestPrincipal = { userId
       if (snapshot.installation?.authorizedOperators.includes(userId)) return snapshot.installation.ownerId;
       return null;
     }),
+    listEnabledOwnerIds: vi.fn(async () => snapshot.installation?.enabled ? [snapshot.installation.ownerId] : []),
     getSnapshot: vi.fn(async () => ({ ...snapshot, runs: Array.from(runs.values()) })),
     saveConfig: vi.fn(async (ownerId, input, _actorId, credentialConfigured) => {
       const installation: SymphonyInstallation = {
@@ -73,6 +74,7 @@ function deps(snapshot: SymphonySnapshot, principal: RequestPrincipal = { userId
     stopRun: vi.fn(async (_ownerId: string, runId: string) => repository.updateRun("user_123", runId, { status: "stopped" })),
     retryRun: vi.fn(async (_ownerId: string, runId: string) => repository.updateRun("user_123", runId, { status: "queued" })),
     shutdown: vi.fn(),
+    resumeEnabledInstallations: vi.fn(async () => []),
     idForNewRun: vi.fn(),
   };
   const linearSource = {

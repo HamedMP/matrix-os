@@ -72,4 +72,46 @@ describe("Symphony repository", () => {
     await repository.updateRun("user_123", "run_1", { status: "completed" });
     await expect(repository.upsertRun("user_123", { ...run, id: "run_2" })).resolves.toMatchObject({ id: "run_2" });
   });
+
+  it("resolves authorized operators from the indexed operator table", async () => {
+    await repository.saveConfig("user_123", {
+      installation: {
+        projectSlug: "matrix-os",
+        pollIntervalMs: 30_000,
+        maxConcurrentAgents: 3,
+        defaultAgent: "codex",
+        authorizedOperators: ["user_456"],
+      },
+      rule: {
+        teamId: "team_123",
+        teamKey: "MAT",
+        requiredLabels: ["symphony"],
+        activeStates: ["Todo"],
+        terminalStates: ["Done"],
+        assigneeIds: [],
+      },
+    }, "user_123", false);
+
+    await expect(repository.resolveOwnerIdForOperator("user_456")).resolves.toBe("user_123");
+
+    await repository.saveConfig("user_123", {
+      installation: {
+        projectSlug: "matrix-os",
+        pollIntervalMs: 30_000,
+        maxConcurrentAgents: 3,
+        defaultAgent: "codex",
+        authorizedOperators: [],
+      },
+      rule: {
+        teamId: "team_123",
+        teamKey: "MAT",
+        requiredLabels: ["symphony"],
+        activeStates: ["Todo"],
+        terminalStates: ["Done"],
+        assigneeIds: [],
+      },
+    }, "user_123", false);
+
+    await expect(repository.resolveOwnerIdForOperator("user_456")).resolves.toBeNull();
+  });
 });

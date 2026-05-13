@@ -14,6 +14,7 @@
 
    ```bash
    bun run test \
+     tests/gateway/symphony-auth.test.ts \
      tests/gateway/symphony-repository.test.ts \
      tests/gateway/symphony-credential-store.test.ts \
      tests/gateway/symphony-status-hub.test.ts \

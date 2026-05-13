@@ -16,6 +16,7 @@ import {
 export interface SymphonyRepository {
   bootstrap(): Promise<void>;
   resolveOwnerIdForOperator(principalUserId: string): Promise<string | null>;
+  listEnabledOwnerIds(): Promise<string[]>;
   getSnapshot(ownerId: string): Promise<SymphonySnapshot>;
   saveConfig(ownerId: string, input: SaveSymphonyConfigInput, actorId: string, credentialConfigured: boolean): Promise<{ installation: SymphonyInstallation; rule: TicketSourceRule }>;
   setCredentialConfigured(ownerId: string, configured: boolean, actorId: string): Promise<void>;
@@ -64,6 +65,23 @@ function rowJson<T>(row: Record<string, unknown>, key: string): T {
   return value as T;
 }
 
+async function getInstallationRecord(
+  executor: Pick<Kysely<any>, "selectFrom">,
+  ownerId: string,
+): Promise<InstallationRecord | null> {
+  const row = await executor
+    .selectFrom("symphony_installations")
+    .selectAll()
+    .where("owner_id", "=", ownerId)
+    .executeTakeFirst() as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    installation: rowJson<SymphonyInstallation>(row, "installation"),
+    rule: row.rule ? rowJson<TicketSourceRule>(row, "rule") : null,
+    lastPollAt: row.last_poll_at as string | null ?? null,
+  };
+}
+
 export class KyselySymphonyRepository implements SymphonyRepository {
   constructor(private readonly db: Kysely<any>) {}
 
@@ -110,14 +128,21 @@ export class KyselySymphonyRepository implements SymphonyRepository {
       CREATE INDEX IF NOT EXISTS idx_symphony_events_owner_created
       ON symphony_events (owner_id, created_at DESC)
     `.execute(this.db);
+    await sql`
+      CREATE TABLE IF NOT EXISTS symphony_operators (
+        owner_id text NOT NULL,
+        operator_user_id text NOT NULL,
+        PRIMARY KEY (owner_id, operator_user_id)
+      )
+    `.execute(this.db);
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_symphony_operators_operator
+      ON symphony_operators (operator_user_id)
+    `.execute(this.db);
   }
 
   async getSnapshot(ownerId: string): Promise<SymphonySnapshot> {
-    const installationRow = await this.db
-      .selectFrom("symphony_installations")
-      .selectAll()
-      .where("owner_id", "=", ownerId)
-      .executeTakeFirst() as Record<string, unknown> | undefined;
+    const record = await getInstallationRecord(this.db, ownerId);
     const runs = await this.listRuns(ownerId, { limit: 100 });
     const eventRows = await this.db
       .selectFrom("symphony_events")
@@ -127,11 +152,11 @@ export class KyselySymphonyRepository implements SymphonyRepository {
       .limit(MAX_EVENTS)
       .execute() as Record<string, unknown>[];
     return {
-      installation: installationRow ? rowJson<SymphonyInstallation>(installationRow, "installation") : null,
-      rule: installationRow && installationRow.rule ? rowJson<TicketSourceRule>(installationRow, "rule") : null,
+      installation: record?.installation ?? null,
+      rule: record?.rule ?? null,
       runs,
       events: eventRows.map((row) => rowJson<OperatorEvent>(row, "event")).reverse(),
-      lastPollAt: installationRow?.last_poll_at as string | null ?? null,
+      lastPollAt: record?.lastPollAt ?? null,
     };
   }
 
@@ -142,15 +167,23 @@ export class KyselySymphonyRepository implements SymphonyRepository {
       .where("owner_id", "=", principalUserId)
       .executeTakeFirst() as Record<string, unknown> | undefined;
     if (direct) return principalUserId;
+    const operator = await this.db
+      .selectFrom("symphony_operators")
+      .select(["owner_id"])
+      .where("operator_user_id", "=", principalUserId)
+      .orderBy("owner_id", "asc")
+      .executeTakeFirst() as Record<string, unknown> | undefined;
+    return operator ? String(operator.owner_id) : null;
+  }
+
+  async listEnabledOwnerIds(): Promise<string[]> {
     const rows = await this.db
       .selectFrom("symphony_installations")
       .select(["owner_id", "installation"])
       .execute() as Record<string, unknown>[];
-    for (const row of rows) {
-      const installation = rowJson<SymphonyInstallation>(row, "installation");
-      if (installation.authorizedOperators.includes(principalUserId)) return String(row.owner_id);
-    }
-    return null;
+    return rows
+      .filter((row) => rowJson<SymphonyInstallation>(row, "installation").enabled)
+      .map((row) => String(row.owner_id));
   }
 
   async saveConfig(ownerId: string, input: SaveSymphonyConfigInput, actorId: string, credentialConfigured: boolean): Promise<{ installation: SymphonyInstallation; rule: TicketSourceRule }> {
@@ -191,6 +224,7 @@ export class KyselySymphonyRepository implements SymphonyRepository {
           updated_at: sql`now()`,
         }))
         .execute();
+      await this.replaceOperators(trx, ownerId, installation.authorizedOperators);
       await this.insertEvent(trx, ownerId, {
         installationId: installation.id,
         type: "symphony.config.updated",
@@ -204,9 +238,9 @@ export class KyselySymphonyRepository implements SymphonyRepository {
 
   async setCredentialConfigured(ownerId: string, configured: boolean, actorId: string): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
-      const snapshot = await this.getSnapshot(ownerId);
+      const record = await getInstallationRecord(trx, ownerId);
       const installation = {
-        ...(snapshot.installation ?? defaultInstallation(ownerId, configured)),
+        ...(record?.installation ?? defaultInstallation(ownerId, configured)),
         credentialConfigured: configured,
         updatedAt: nowIso(),
       };
@@ -215,8 +249,8 @@ export class KyselySymphonyRepository implements SymphonyRepository {
         .values({
           owner_id: ownerId,
           installation: JSON.stringify(installation),
-          rule: snapshot.rule ? JSON.stringify(snapshot.rule) : null,
-          last_poll_at: snapshot.lastPollAt,
+          rule: record?.rule ? JSON.stringify(record.rule) : null,
+          last_poll_at: record?.lastPollAt ?? null,
         })
         .onConflict((oc) => oc.column("owner_id").doUpdateSet({
           installation: JSON.stringify(installation),
@@ -235,9 +269,9 @@ export class KyselySymphonyRepository implements SymphonyRepository {
 
   async setEnabled(ownerId: string, enabled: boolean, actorId: string): Promise<SymphonyInstallation> {
     return this.db.transaction().execute(async (trx) => {
-      const snapshot = await this.getSnapshot(ownerId);
+      const record = await getInstallationRecord(trx, ownerId);
       const installation = {
-        ...(snapshot.installation ?? defaultInstallation(ownerId, false)),
+        ...(record?.installation ?? defaultInstallation(ownerId, false)),
         enabled,
         updatedAt: nowIso(),
       };
@@ -246,8 +280,8 @@ export class KyselySymphonyRepository implements SymphonyRepository {
         .values({
           owner_id: ownerId,
           installation: JSON.stringify(installation),
-          rule: snapshot.rule ? JSON.stringify(snapshot.rule) : null,
-          last_poll_at: snapshot.lastPollAt,
+          rule: record?.rule ? JSON.stringify(record.rule) : null,
+          last_poll_at: record?.lastPollAt ?? null,
         })
         .onConflict((oc) => oc.column("owner_id").doUpdateSet({
           installation: JSON.stringify(installation),
@@ -359,5 +393,26 @@ export class KyselySymphonyRepository implements SymphonyRepository {
       })
       .execute();
     return record;
+  }
+
+  private async replaceOperators(
+    executor: Pick<Kysely<any>, "deleteFrom" | "insertInto">,
+    ownerId: string,
+    operatorIds: string[],
+  ): Promise<void> {
+    await executor
+      .deleteFrom("symphony_operators")
+      .where("owner_id", "=", ownerId)
+      .execute();
+    const uniqueOperators = Array.from(new Set(operatorIds)).filter((operatorId) => operatorId !== ownerId);
+    if (uniqueOperators.length === 0) return;
+    await executor
+      .insertInto("symphony_operators")
+      .values(uniqueOperators.map((operatorId) => ({
+        owner_id: ownerId,
+        operator_user_id: operatorId,
+      })))
+      .onConflict((oc) => oc.columns(["owner_id", "operator_user_id"]).doNothing())
+      .execute();
   }
 }

@@ -6,10 +6,10 @@ export type SymphonyRole = "owner" | "operator";
 export function resolveSymphonyRole(
   principal: RequestPrincipal,
   installation: Pick<SymphonyInstallation, "ownerId" | "authorizedOperators"> | null,
-): SymphonyRole {
+): SymphonyRole | null {
   if (!installation || installation.ownerId === principal.userId) return "owner";
   if (installation.authorizedOperators.includes(principal.userId)) return "operator";
-  return "operator";
+  return null;
 }
 
 export function isAuthorizedSymphonyOperator(
