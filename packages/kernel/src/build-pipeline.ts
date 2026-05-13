@@ -167,24 +167,33 @@ createRoot(document.getElementById("root")!).render(
 
   writeTextFile(
     join(modulePath, "src", "App.css"),
-    `:root {
-  --bg: #0a0a0a;
-  --fg: #ededed;
-  --accent: #6c5ce7;
-  --surface: #1a1a2e;
-  --border: #2a2a3a;
+    `@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg: #FAFAF5;
+  --fg: #32352E;
+  --primary: #434E3F;
+  --primary-fg: #FAFAF5;
+  --accent: #D06F25;
+  --accent-fg: #FFFFFF;
+  --secondary: #E0E1CA;
+  --muted: #F0EDE4;
+  --muted-fg: #7A7768;
+  --card: #FFFFFF;
+  --border: #D6D3C8;
+  --sand-light: #F7F1E7;
+  --sand-mid: #F3EAE0;
+  --sand-warm: #D6AB8B;
+  --radius: 22px;
+  --shadow: 0 2px 4px rgba(50, 53, 46, 0.06);
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  background: var(--bg);
+  background: linear-gradient(170deg, var(--sand-light) 0%, var(--sand-mid) 30%, #F7F3ED 60%, var(--sand-light) 100%);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   min-height: 100vh;
 }
 
@@ -194,30 +203,52 @@ body {
   padding: 2rem;
 }
 
-h1 {
-  margin-bottom: 1rem;
+h1, h2 {
+  font-family: 'Orbitron', system-ui, sans-serif;
+  color: var(--fg);
 }
 
+h3, h4, h5, h6 {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+h1 { margin-bottom: 1rem; }
+
 button {
-  background: var(--accent);
-  color: white;
+  background: var(--primary);
+  color: var(--primary-fg);
   border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
+  padding: 10px 24px;
+  border-radius: 50px;
   cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s;
 }
 
 button:hover {
-  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.1);
 }
 
-input, textarea {
-  background: var(--surface);
+input, textarea, select {
+  background: var(--card);
   color: var(--fg);
-  border: 1px solid var(--border);
-  padding: 8px;
-  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  padding: 12px 20px;
+  border-radius: 50px;
+  font-family: 'Inter', system-ui, sans-serif;
   width: 100%;
+  outline: none;
+  transition: all 0.2s;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(67, 78, 63, 0.08);
 }
 `,
   );
