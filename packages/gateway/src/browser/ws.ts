@@ -43,6 +43,7 @@ export type BrowserServerMessage =
   | BrowserMediaOffer
   | { type: "media.ready"; payload: { sessionId: string } }
   | { type: "media.ice.accepted"; payload: { candidate: string } }
+  | { type: "navigation.committed"; payload: { url: string } }
   | { type: "surface.focused"; payload: { surfaceId: string } }
   | { type: "stream.error"; payload: { code: string; message: string } };
 

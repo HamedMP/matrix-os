@@ -47,6 +47,16 @@ describe("Browser stream protocol", () => {
     }))).toThrow();
   });
 
+  it("accepts bounded browser navigation commands on the authenticated stream", () => {
+    expect(parseBrowserClientMessage({
+      type: "browser.navigate",
+      payload: { targetUrl: "https://example.com/docs", surface: "standalone" },
+    })).toEqual({
+      type: "browser.navigate",
+      payload: { targetUrl: "https://example.com/docs", surface: "standalone" },
+    });
+  });
+
   it("documents the bounded fallback-frame queue contract", () => {
     expect(MAX_FALLBACK_FRAME_QUEUE).toBe(3);
   });
@@ -115,11 +125,11 @@ describe("Browser stream protocol", () => {
     const controller = new BrowserStreamController({ ownerId: "owner_1", sessionId: "session_1" });
     expect(controller.handleClientMessage(JSON.stringify({
       type: "media.ice",
-      payload: { candidate: "candidate:1 1 udp 1 203.0.113.10 5000 typ relay" },
+      payload: { candidate: "candidate:1 1 udp 1 93.184.216.34 5000 typ relay" },
     }))).toEqual([
       {
         type: "media.ice.accepted",
-        payload: { candidate: "candidate:1 1 udp 1 203.0.113.10 5000 typ relay" },
+        payload: { candidate: "candidate:1 1 udp 1 93.184.216.34 5000 typ relay" },
       },
     ]);
     expect(() => controller.handleClientMessage(JSON.stringify({
