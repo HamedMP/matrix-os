@@ -54,6 +54,11 @@ export interface BrowserProfileRecord {
   clearedScopes: BrowserProfileClearScope[];
 }
 
+export interface BrowserProfileClearResult {
+  profile: BrowserProfileRecord;
+  closedSessionIds: string[];
+}
+
 export interface BrowserSessionRecord {
   id: string;
   ownerId: string;
@@ -156,7 +161,7 @@ export interface BrowserRepository {
     profileName: string;
     scopes: BrowserProfileClearScope[];
     now?: number;
-  }): MaybePromise<BrowserProfileRecord>;
+  }): MaybePromise<BrowserProfileClearResult>;
   createOrResumeSession(input: CreateBrowserSessionInput): MaybePromise<BrowserSessionRecord>;
   takeoverSession(input: {
     ownerId: string;
@@ -189,6 +194,7 @@ const MAX_IN_MEMORY_PROFILES = 2_000;
 const MAX_IN_MEMORY_SESSIONS = 2_000;
 const MAX_IN_MEMORY_TABS = 10_000;
 const MAX_IN_MEMORY_DOWNLOADS = 10_000;
+const MAX_GRANT_TTL_MS = 8 * 60 * 60 * 1000;
 const SAFE_DOMAIN = /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 
 export class BrowserRepositoryError extends Error {
@@ -204,6 +210,16 @@ function id(prefix: string): string {
 
 function iso(now = Date.now()): string {
   return new Date(now).toISOString();
+}
+
+function grantExpiresAt(input: CreateBrowserGrantInput, now: number): string {
+  const maxExpiresAt = now + MAX_GRANT_TTL_MS;
+  if (!input.expiresAt) return iso(maxExpiresAt);
+  const requested = Date.parse(input.expiresAt);
+  if (!Number.isFinite(requested) || requested <= now || requested > maxExpiresAt) {
+    throw new BrowserRepositoryError("invalid_grant_expiry");
+  }
+  return new Date(requested).toISOString();
 }
 
 function profileKey(ownerId: string, profileName: string): string {
@@ -253,8 +269,10 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     profileName: string;
     scopes: BrowserProfileClearScope[];
     now?: number;
-  }): BrowserProfileRecord {
+  }): BrowserProfileClearResult {
     const profile = this.upsertProfile(opts.ownerId, opts.profileName, opts.now);
+    const timestamp = iso(opts.now);
+    const closedSessionIds: string[] = [];
     for (const session of this.sessions.values()) {
       if (
         session.ownerId === opts.ownerId &&
@@ -262,23 +280,34 @@ export class InMemoryBrowserRepository implements BrowserRepository {
         session.state === "active"
       ) {
         session.state = "closed";
-        session.updatedAt = iso(opts.now);
-        session.lastActivityAt = iso(opts.now);
+        session.updatedAt = timestamp;
+        session.lastActivityAt = timestamp;
+        this.addAuditEvent({
+          id: id("audit"),
+          ownerId: opts.ownerId,
+          eventType: "session.closed",
+          createdAt: timestamp,
+          metadata: { sessionId: session.id },
+        });
+        closedSessionIds.push(session.id);
       }
     }
     profile.clearedScopes = [...opts.scopes];
-    profile.updatedAt = iso(opts.now);
+    profile.updatedAt = timestamp;
     this.addAuditEvent({
       id: id("audit"),
       ownerId: opts.ownerId,
       eventType: "profile.cleared",
-      createdAt: iso(opts.now),
+      createdAt: timestamp,
       metadata: {
         profileName: opts.profileName,
         scopes: [...opts.scopes],
       },
     });
-    return { ...profile, clearedScopes: [...profile.clearedScopes] };
+    return {
+      profile: { ...profile, clearedScopes: [...profile.clearedScopes] },
+      closedSessionIds,
+    };
   }
 
   createOrResumeSession(input: CreateBrowserSessionInput): BrowserSessionRecord {
@@ -416,6 +445,10 @@ export class InMemoryBrowserRepository implements BrowserRepository {
   upsertTab(input: UpsertBrowserTabInput): BrowserTabRecord {
     const now = iso(input.now);
     const tabId = input.tabId ?? id("browser_tab");
+    const session = this.sessions.get(input.sessionId);
+    if (!session || session.ownerId !== input.ownerId) {
+      throw new BrowserRepositoryError("session_not_found");
+    }
     const existing = this.tabs.get(tabId);
     if (existing && (existing.ownerId !== input.ownerId || existing.sessionId !== input.sessionId)) {
       throw new BrowserRepositoryError("tab_session_mismatch");
@@ -432,12 +465,9 @@ export class InMemoryBrowserRepository implements BrowserRepository {
     };
     this.tabs.set(tab.id, tab);
     evictOldestMapEntries(this.tabs, MAX_IN_MEMORY_TABS);
-    const session = this.sessions.get(input.sessionId);
-    if (session?.ownerId === input.ownerId) {
-      session.currentTabId ??= tab.id;
-      session.updatedAt = now;
-      session.lastActivityAt = now;
-    }
+    session.currentTabId ??= tab.id;
+    session.updatedAt = now;
+    session.lastActivityAt = now;
     return { ...tab };
   }
 
@@ -533,6 +563,10 @@ export class InMemoryBrowserRepository implements BrowserRepository {
         throw new BrowserRepositoryError("invalid_grant_domain");
       }
     }
+    const session = this.sessions.get(input.sessionId);
+    if (!session || session.ownerId !== input.ownerId || session.state !== "active") {
+      throw new BrowserRepositoryError("session_not_found");
+    }
     while (this.grants.size >= MAX_GRANTS) {
       const first = this.grants.keys().next().value as string | undefined;
       if (!first) break;
@@ -546,7 +580,7 @@ export class InMemoryBrowserRepository implements BrowserRepository {
       scopes: [...input.scopes],
       domains: [...input.domains],
       createdAt: iso(now),
-      expiresAt: input.expiresAt ?? iso(now + 8 * 60 * 60 * 1000),
+      expiresAt: grantExpiresAt(input, now),
       revokedAt: null,
       expiresReason: "ttl",
     };
@@ -865,7 +899,7 @@ export class KyselyBrowserRepository implements BrowserRepository {
     profileName: string;
     scopes: BrowserProfileClearScope[];
     now?: number;
-  }): Promise<BrowserProfileRecord> {
+  }): Promise<BrowserProfileClearResult> {
     return this.kysely.transaction().execute(async (trx) => {
       const profile = await this.upsertProfileIn(trx, opts.ownerId, opts.profileName, opts.now);
       await trx
@@ -898,7 +932,10 @@ export class KyselyBrowserRepository implements BrowserRepository {
           scopes: [...opts.scopes],
         },
       });
-      return toProfileRecord(updated);
+      return {
+        profile: toProfileRecord(updated),
+        closedSessionIds: closedSessions.map((session) => session.id),
+      };
     });
   }
 
@@ -1087,6 +1124,15 @@ export class KyselyBrowserRepository implements BrowserRepository {
     return this.kysely.transaction().execute(async (trx) => {
       const now = iso(input.now);
       const tabId = input.tabId ?? id("browser_tab");
+      const session = await trx
+        .selectFrom("browser_sessions")
+        .select("id")
+        .where("owner_id", "=", input.ownerId)
+        .where("id", "=", input.sessionId)
+        .executeTakeFirst();
+      if (!session) {
+        throw new BrowserRepositoryError("session_not_found");
+      }
       const row = await trx
         .insertInto("browser_tabs")
         .values({
@@ -1265,6 +1311,16 @@ export class KyselyBrowserRepository implements BrowserRepository {
     validateGrantDomains(input.domains);
     return this.kysely.transaction().execute(async (trx) => {
       const now = input.now ?? Date.now();
+      const session = await trx
+        .selectFrom("browser_sessions")
+        .select("id")
+        .where("owner_id", "=", input.ownerId)
+        .where("id", "=", input.sessionId)
+        .where("state", "=", "active")
+        .executeTakeFirst();
+      if (!session) {
+        throw new BrowserRepositoryError("session_not_found");
+      }
       const grant: BrowserGrantRecord = {
         id: id("browser_grant"),
         ownerId: input.ownerId,
@@ -1272,7 +1328,7 @@ export class KyselyBrowserRepository implements BrowserRepository {
         scopes: [...input.scopes],
         domains: [...input.domains],
         createdAt: iso(now),
-        expiresAt: input.expiresAt ?? iso(now + 8 * 60 * 60 * 1000),
+        expiresAt: grantExpiresAt(input, now),
         revokedAt: null,
         expiresReason: "ttl",
       };

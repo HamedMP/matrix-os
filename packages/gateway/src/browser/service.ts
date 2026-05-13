@@ -10,6 +10,7 @@ import {
   type BrowserGrantRecord,
   type BrowserGrantScope,
   type BrowserProfileClearScope,
+  type BrowserProfileClearResult,
   type BrowserProfileRecord,
   type BrowserRepository,
   type BrowserSessionRecord,
@@ -110,7 +111,7 @@ export class BrowserService {
       await this.repo.addAuditEvent({
         id: `audit_${randomUUID()}`,
         ownerId: input.ownerId,
-        eventType: "navigation.attempted",
+        eventType: session.takeoverRequired ? "navigation.blocked" : "navigation.attempted",
         createdAt: new Date(input.now ?? Date.now()).toISOString(),
         metadata: {
           sessionId: session.id,
@@ -160,6 +161,15 @@ export class BrowserService {
     scopes: BrowserProfileClearScope[];
     now?: number;
   }): Promise<BrowserProfileRecord> {
+    return (await this.repo.clearProfile(input)).profile;
+  }
+
+  async clearProfileWithClosedSessions(input: {
+    ownerId: string;
+    profileName: string;
+    scopes: BrowserProfileClearScope[];
+    now?: number;
+  }): Promise<BrowserProfileClearResult> {
     return this.repo.clearProfile(input);
   }
 
@@ -348,6 +358,10 @@ export class BrowserService {
         throw new BrowserSafeError("invalid_url", "Browser URL is invalid.");
       }
     }
+    const session = await this.repo.getSession(input.ownerId, input.sessionId);
+    if (!session || session.state !== "active" || session.takeoverRequired) {
+      throw new BrowserSafeError("session_not_found", "Browser session was not found.");
+    }
     const grant = (await this.repo.listActiveGrants(input.ownerId, input.now)).find((candidate) =>
       candidate.sessionId === input.sessionId &&
       candidate.scopes.includes(input.action) &&
@@ -413,20 +427,17 @@ export class BrowserService {
   }
 
   private rememberStreamNonce(claims: BrowserStreamTokenClaims, now: number): void {
-    const cutoff = now - 30_000;
     for (const [key, expiresAt] of this.usedStreamNonces.entries()) {
-      if (expiresAt <= cutoff) this.usedStreamNonces.delete(key);
+      if (expiresAt <= now) this.usedStreamNonces.delete(key);
     }
     const key = `${claims.ownerId}:${claims.sessionId}:${claims.nonce}`;
     if (this.usedStreamNonces.has(key)) {
       throw new BrowserSafeError("invalid_stream_token", "Browser stream token is invalid.");
     }
-    this.usedStreamNonces.set(key, claims.expiresAt);
-    while (this.usedStreamNonces.size > 10_000) {
-      const first = this.usedStreamNonces.keys().next().value as string | undefined;
-      if (!first) break;
-      this.usedStreamNonces.delete(first);
+    if (this.usedStreamNonces.size >= 10_000) {
+      throw new BrowserSafeError("invalid_stream_token", "Browser stream token is invalid.");
     }
+    this.usedStreamNonces.set(key, claims.expiresAt);
   }
 }
 

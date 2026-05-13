@@ -79,6 +79,16 @@ describe("Browser platform handoff tokens", () => {
     })).rejects.toThrow("invalid_handoff_replay");
   });
 
+  it("keeps live handoff nonces until expiry and fails closed when full", () => {
+    const replayStore = new BrowserHandoffReplayStore();
+    for (let index = 0; index < 10_000; index += 1) {
+      expect(replayStore.seen(`nonce_${index}`, 60_000, 1_000)).toBe(false);
+    }
+
+    expect(() => replayStore.seen("nonce_overflow", 60_000, 1_000)).toThrow("invalid_handoff_replay");
+    expect(replayStore.seen("nonce_after_expiry", 120_000, 61_000)).toBe(false);
+  });
+
   it("rejects shared-secret HS256 tokens", async () => {
     const { publicKey } = await keys();
     const token = await new SignJWT({

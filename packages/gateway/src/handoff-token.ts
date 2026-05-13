@@ -23,14 +23,15 @@ export interface BrowserHandoffClaims extends JWTPayload {
 export class BrowserHandoffReplayStore {
   private readonly used = new Map<string, number>();
 
-  seen(nonce: string, now = Date.now()): boolean {
-    if (this.used.has(nonce)) return true;
-    this.used.set(nonce, now);
-    while (this.used.size > MAX_USED_NONCES) {
-      const first = this.used.keys().next().value as string | undefined;
-      if (!first) break;
-      this.used.delete(first);
+  seen(nonce: string, expiresAt: number, now = Date.now()): boolean {
+    for (const [key, cachedExpiresAt] of this.used.entries()) {
+      if (cachedExpiresAt <= now) this.used.delete(key);
     }
+    if (this.used.has(nonce)) return true;
+    if (this.used.size >= MAX_USED_NONCES) {
+      throw new Error("invalid_handoff_replay");
+    }
+    this.used.set(nonce, expiresAt);
     return false;
   }
 }
@@ -85,7 +86,10 @@ export async function verifyBrowserHandoffToken(opts: {
   ) {
     throw new Error("invalid_handoff");
   }
-  if (opts.replayStore?.seen(payload.nonce)) {
+  const expiresAt = typeof payload.exp === "number"
+    ? payload.exp * 1000
+    : (opts.now?.getTime() ?? Date.now()) + 60_000;
+  if (opts.replayStore?.seen(payload.nonce, expiresAt, opts.now?.getTime())) {
     throw new Error("invalid_handoff_replay");
   }
   return payload as BrowserHandoffClaims;

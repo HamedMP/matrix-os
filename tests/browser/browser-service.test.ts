@@ -142,6 +142,24 @@ describe("BrowserService", () => {
     })).rejects.toThrow("tab_session_mismatch");
   });
 
+  it("rejects new tabs for sessions owned by another owner", async () => {
+    const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({ repo, streamTokenSecret: "secret".repeat(8) });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_a",
+      surface: "canvas",
+      now: 1_000,
+    });
+
+    await expect(service.upsertTab({
+      ownerId: "owner_2",
+      sessionId: session.session.id,
+      url: "https://example.org/",
+    })).rejects.toThrow("session_not_found");
+  });
+
   it("uses the gateway session id for runtime launch and follow-up navigation", async () => {
     const calls: Array<{ url: string; body: unknown }> = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
