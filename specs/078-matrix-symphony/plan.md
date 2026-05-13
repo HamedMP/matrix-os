@@ -5,7 +5,7 @@
 
 ## Summary
 
-Make Symphony a Matrix-native coding-agent orchestrator. The current app is a setup-heavy wrapper around an external local runner; this plan replaces the normal path with gateway-owned orchestration that uses Matrix Linear integrations/secrets, Matrix project/worktree/session primitives, owner-controlled Postgres state, and a simplified first-party dashboard. The upstream Symphony contract remains the product reference: poll tracker, claim eligible issues, create isolated workspaces, run coding agents, reconcile/retry, and expose operator status.
+Make Symphony a Matrix-native coding-agent orchestrator. The current app is a setup-heavy wrapper around an external local runner; this plan consolidates Symphony into one gateway-owned Matrix product path that uses Matrix Linear integrations/secrets, Matrix project/worktree/session primitives, owner-controlled Postgres state, and a simplified first-party dashboard. The upstream Symphony contract remains the product reference: poll tracker, claim eligible issues, create isolated workspaces, run coding agents, reconcile/retry, and expose operator status.
 
 ## Technical Context
 
@@ -52,6 +52,7 @@ specs/078-matrix-symphony/
 ```text
 packages/gateway/src/
 ├── symphony/
+│   ├── auth.ts
 │   ├── contracts.ts
 │   ├── credential-store.ts
 │   ├── repository.ts
@@ -75,6 +76,7 @@ tests/gateway/
 ├── symphony-linear-source.test.ts
 ├── symphony-orchestrator.test.ts
 ├── symphony-routes.test.ts
+├── symphony-status-hub.test.ts
 └── symphony-restart-recovery.test.ts
 
 tests/integrations/
@@ -90,7 +92,7 @@ docs/dev/
 └── symphony.md
 ```
 
-**Structure Decision**: Add a `packages/gateway/src/symphony/` module for the new Matrix-native orchestrator while preserving the legacy `symphony-runner.ts` as compatibility-only until it can be removed. Reuse existing workspace/project/worktree/session managers through dependency injection. Keep the first-party app under `home/apps/symphony/`.
+**Structure Decision**: Add a `packages/gateway/src/symphony/` module for the single Matrix-native orchestrator and migrate existing `symphony-runner.ts` / `symphony-routes.ts` behavior into that path. Keep temporary compatibility exports only if needed for downstream imports during this PR, with tests moved to the Matrix-native contracts. Reuse existing workspace/project/worktree/session managers through dependency injection. Keep the first-party app under `home/apps/symphony/`.
 
 ## Security Architecture
 
@@ -116,10 +118,10 @@ Credential policy: browser-visible app config stores only credential references/
 ## Integration Wiring
 
 1. Gateway boot creates the Symphony repository when app DB/Kysely is available.
-2. Gateway creates the server-side credential store under the owner Matrix home for API-key compatibility, with browser responses exposing only credential presence.
+2. Gateway creates the server-side credential store under the owner Matrix home for API-key compatibility, using atomic writes and owner-only permissions, with browser responses exposing only credential presence.
 3. Gateway creates the Linear source adapter using the existing integration registry plus the server-side Linear credential resolver.
 4. Gateway creates the Symphony orchestrator with injected repository, Linear source, project manager, worktree manager, agent session manager, workspace event publisher, and clock/timer dependencies.
-5. `server.ts` mounts `createMatrixSymphonyRoutes()` at `/api/symphony` and keeps the existing `createSymphonyRoutes()` compatibility mount only until the app migrates.
+5. `server.ts` mounts the consolidated Matrix-native Symphony routes at `/api/symphony`; the old external runner routes are removed or become thin aliases to the new route factory.
 6. Shutdown order stops the Symphony orchestrator before destroying workspace/session/app DB dependencies.
 7. The first-party Symphony app uses only `/api/symphony/*` for normal setup/dashboard flows and keeps `/api/integrations/*` only for account connection affordances.
 
@@ -128,6 +130,7 @@ Credential policy: browser-visible app config stores only credential references/
 - Linear unavailable: keep poller alive, mark source degraded, do not dispatch new work, retry next poll.
 - Credential missing/invalid: stop dispatch, show setup attention state, keep run history visible.
 - Config invalid: reject save at boundary; if persisted config cannot load, return 503 generic error and block start.
+- Credential write/delete partial failure: leave prior credential reference active until the atomic replace/delete succeeds; record a server-side audit event and return a generic setup failure.
 - Worktree creation failure: create a failed/retry run event; do not claim indefinitely.
 - Agent session startup failure after lease: release lease in `finally`, record retryable failure.
 - Ticket becomes terminal/ineligible: stop/release active run and record reconciliation reason.

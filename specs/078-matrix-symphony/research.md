@@ -2,12 +2,13 @@
 
 ## Decision 1: Matrix-native orchestrator replaces the normal external runner path
 
-**Decision**: Implement a gateway-owned Symphony orchestrator that directly uses Matrix project, worktree, and agent-session managers. Keep the existing external runner wrapper as compatibility-only during migration.
+**Decision**: Implement one gateway-owned Symphony orchestrator that directly uses Matrix project, worktree, and agent-session managers. Consolidate the existing external runner wrapper into the Matrix-native path instead of keeping a second normal product surface.
 
 **Rationale**: The user wants coding agents and worktrees to run inside Matrix and a Matrix dashboard to show their status. The current external runner can poll Linear, but it requires a gateway environment `LINEAR_API_KEY`, separate dashboard URL, and runner path/binary configuration. That keeps the hard parts outside Matrix.
 
 **Alternatives considered**:
 - Keep the Elixir runner and wrap it in a nicer UI: rejected because credentials, run state, and worktree/session control remain split.
+- Ship both a Matrix runner and an external runner dashboard: rejected because Matrix users need one world-class Symphony app and runner, not two competing setup paths.
 - Vendor the upstream runner: rejected because it duplicates Matrix workspace/session primitives and complicates ownership/runtime.
 
 ## Decision 2: Store durable Symphony state in owner Postgres through Kysely
