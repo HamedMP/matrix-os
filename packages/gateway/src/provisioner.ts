@@ -5,7 +5,12 @@ import {
   claimTask,
   completeTask,
   failTask,
+  createImageClient,
+  loadIconStyle,
+  buildIconPrompt,
 } from "@matrix-os/kernel";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Dispatcher, BatchEntry, BatchResult } from "./dispatcher.js";
 import type { ServerMessage } from "./server.js";
 
@@ -86,7 +91,35 @@ export function createProvisioner(config: ProvisionerConfig) {
       succeeded,
       failed,
     });
+
+    const geminiKey = process.env.GEMINI_API_KEY ?? "";
+    if (geminiKey && built.length > 0) {
+      generateIconsForApps(homePath, geminiKey, built).catch((err) =>
+        console.warn("[provisioner] Icon generation failed:", err instanceof Error ? err.message : String(err)),
+      );
+    }
   }
 
   return { onSetupPlanChange };
+}
+
+async function generateIconsForApps(homePath: string, apiKey: string, appNames: string[]) {
+  const iconStyle = loadIconStyle(homePath);
+  const client = createImageClient(apiKey);
+  const iconsDir = join(homePath, "system/icons");
+
+  for (const appName of appNames) {
+    const slug = appName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    if (existsSync(join(iconsDir, `${slug}.png`))) continue;
+    try {
+      await client.generateImage(buildIconPrompt(slug, iconStyle), {
+        aspectRatio: "1:1",
+        imageDir: iconsDir,
+        saveAs: `${slug}.png`,
+      });
+      console.log(`[provisioner] Generated icon for "${slug}"`);
+    } catch (err) {
+      console.warn(`[provisioner] Icon generation failed for "${slug}":`, err instanceof Error ? err.message : String(err));
+    }
+  }
 }

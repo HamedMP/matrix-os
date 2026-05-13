@@ -48,10 +48,10 @@ const REQUIRED_LABELS_MISSING_MESSAGE = "One or more required labels could not b
 const BOARD_INCOMPLETE_ERROR_PREFIX = "Board is incomplete:";
 type SymphonyStateTemplate = { name: string; color: string; type: "backlog" | "unstarted" | "started" | "completed" | "canceled" };
 const SYMPHONY_STATES: SymphonyStateTemplate[] = [
-  { name: "Todo", color: "#6b7280", type: "unstarted" },
-  { name: "In Progress", color: "#2563eb", type: "started" },
-  { name: "Rework", color: "#db6e1f", type: "started" },
-  { name: "Merging", color: "#0f783c", type: "started" },
+  { name: "Todo", color: "#7A7768", type: "unstarted" },
+  { name: "In Progress", color: "#434E3F", type: "started" },
+  { name: "Rework", color: "#D06F25", type: "started" },
+  { name: "Merging", color: "#3A7D44", type: "started" },
 ];
 const DEFAULT_ACTIVE_STATES = SYMPHONY_STATES.map((state) => state.name);
 const REQUIRED_LABELS = ["symphony"];
@@ -359,7 +359,7 @@ function normalizeNameList(values: string[]): string[] {
 
 function templateForActiveState(name: string): SymphonyStateTemplate {
   const builtIn = SYMPHONY_STATES.find((state) => state.name.toLowerCase() === name.toLowerCase());
-  return builtIn ? { ...builtIn, name } : { name, color: "#2563eb", type: "started" };
+  return builtIn ? { ...builtIn, name } : { name, color: "#434E3F", type: "started" };
 }
 
 function templatesForActiveStates(activeStates: string[]): SymphonyStateTemplate[] {

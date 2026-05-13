@@ -290,6 +290,17 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
     sections.push("No knowledge files yet.");
   }
 
+  // Design System (always injected — apps must follow the Matrix OS brand)
+  sections.push(`\n## Design System (ALWAYS apply when building apps)\n
+Palette: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (accent CTA — one per view), Deep #32352E (text). Sand shades: #F7F1E7, #F3EAE0, #D6AB8B.
+Background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%) — NEVER flat colors.
+Typography: Orbitron for H1/H2 display only. Inter for everything else (subtitles, body, buttons, labels). JetBrains Mono for code.
+Shapes: buttons/inputs border-radius: 50px (capsule). Cards: 22px. Glass cards: rgba(255,255,255,0.55) + backdrop-filter blur(12px).
+Icons: load Iconify CDN, use lucide: prefix for UI, meteocons: for weather, svg-spinners: for loading. NEVER text characters (+, ×, →).
+Animation: stagger fade-up on mount (60ms between siblings). Hover lift on cards/buttons.
+Shadows: rgba(50,53,46,X) — never pure black. Never use #000000.
+Full reference: ~/agents/knowledge/matrix-design-system.md`);
+
   // Skills TOC
   const skills = loadSkills(homePath);
   if (skills.length > 0) {

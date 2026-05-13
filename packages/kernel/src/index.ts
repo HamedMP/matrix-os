@@ -61,7 +61,7 @@ export { loadHandle, saveIdentity, deriveAiHandle } from "./identity.js";
 export type { Identity } from "./identity.js";
 export { createMemoryStore, extractMemories } from "./memory.js";
 export type { MemoryStore, MemoryEntry, MemoryCandidate } from "./memory.js";
-export { createImageClient } from "./image-gen.js";
+export { createImageClient, DEFAULT_ICON_STYLE, loadIconStyle, buildIconPrompt } from "./image-gen.js";
 export type { ImageClient, ImageResult } from "./image-gen.js";
 export { createUsageTracker } from "./usage.js";
 export type { UsageTracker, UsageEntry, UsageSummary } from "./usage.js";

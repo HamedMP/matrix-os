@@ -30,7 +30,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   "2048": {
     title: "2048",
     subtitle: "Merge matching tiles and keep the board open.",
-    accent: "#f97316",
+    accent: "#D06F25",
     metrics: [
       { label: "Score", value: "2,048" },
       { label: "Best", value: "8,192" },
@@ -39,7 +39,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   backgammon: {
     title: "Backgammon",
     subtitle: "A clean board for fast tactical play.",
-    accent: "#06b6d4",
+    accent: "#434E3F",
     metrics: [
       { label: "Match", value: "7 pt" },
       { label: "Pip lead", value: "+18" },
@@ -48,12 +48,12 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   calculator: {
     title: "Calculator",
     subtitle: "Scientific keypad with a compact history rail.",
-    accent: "#22c55e",
+    accent: "#434E3F",
   },
   chess: {
     title: "Chess",
     subtitle: "Classic board, clear coordinates, fast analysis.",
-    accent: "#a855f7",
+    accent: "#32352E",
     metrics: [
       { label: "Turn", value: "White" },
       { label: "Eval", value: "+0.4" },
@@ -62,7 +62,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   clock: {
     title: "Clock",
     subtitle: "World clock, timer, and focus-friendly timekeeping.",
-    accent: "#38bdf8",
+    accent: "#434E3F",
     metrics: [
       { label: "Local", value: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
       { label: "Focus", value: "25:00" },
@@ -71,7 +71,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   "expense-tracker": {
     title: "Expense Tracker",
     subtitle: "Track spend by category with budget pressure visible.",
-    accent: "#14b8a6",
+    accent: "#434E3F",
     metrics: [
       { label: "May spend", value: "$1,284" },
       { label: "Budget left", value: "$716" },
@@ -80,7 +80,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   games: {
     title: "Game Center",
     subtitle: "A focused arcade shelf for built-in Matrix games.",
-    accent: "#f43f5e",
+    accent: "#D06F25",
     metrics: [
       { label: "Games", value: "7" },
       { label: "Streak", value: "12" },
@@ -89,7 +89,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   minesweeper: {
     title: "Minesweeper",
     subtitle: "A crisp puzzle grid with instant scanning.",
-    accent: "#eab308",
+    accent: "#D06F25",
     metrics: [
       { label: "Mines", value: "10" },
       { label: "Time", value: "00:37" },
@@ -98,7 +98,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   pomodoro: {
     title: "Pomodoro",
     subtitle: "Focus cycles with simple session intent.",
-    accent: "#ef4444",
+    accent: "#D06F25",
     metrics: [
       { label: "Today", value: "5" },
       { label: "Cycle", value: "Focus" },
@@ -107,7 +107,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   profile: {
     title: "Profile",
     subtitle: "Your public Matrix identity and presence.",
-    accent: "#8b5cf6",
+    accent: "#434E3F",
     metrics: [
       { label: "Posts", value: "24" },
       { label: "Following", value: "128" },
@@ -116,7 +116,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   snake: {
     title: "Snake",
     subtitle: "Arrow-key arcade with a compact board.",
-    accent: "#84cc16",
+    accent: "#434E3F",
     metrics: [
       { label: "Length", value: "18" },
       { label: "Speed", value: "7" },
@@ -125,7 +125,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   social: {
     title: "Social",
     subtitle: "Feed, follows, and posts inside your own workspace.",
-    accent: "#ec4899",
+    accent: "#D06F25",
     metrics: [
       { label: "Unread", value: "9" },
       { label: "Reach", value: "2.4K" },
@@ -134,7 +134,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   solitaire: {
     title: "Solitaire",
     subtitle: "A calm Klondike table for quick breaks.",
-    accent: "#dc2626",
+    accent: "#32352E",
     metrics: [
       { label: "Moves", value: "38" },
       { label: "Stock", value: "17" },
@@ -143,7 +143,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   tetris: {
     title: "Tetris",
     subtitle: "Clean stack, visible queue, no visual noise.",
-    accent: "#0ea5e9",
+    accent: "#434E3F",
     metrics: [
       { label: "Lines", value: "42" },
       { label: "Level", value: "6" },
@@ -152,7 +152,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   todo: {
     title: "Todo",
     subtitle: "A minimal task board with priority and dates.",
-    accent: "#10b981",
+    accent: "#434E3F",
     metrics: [
       { label: "Open", value: "7" },
       { label: "Due today", value: "3" },
@@ -161,7 +161,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   weather: {
     title: "Weather",
     subtitle: "Current conditions and a readable daily forecast.",
-    accent: "#0ea5e9",
+    accent: "#434E3F",
     metrics: [
       { label: "Now", value: "72°F" },
       { label: "Wind", value: "8 mph" },
@@ -277,9 +277,9 @@ function ExpensesApp() {
       <section className="card chart-card">
         <span className="eyebrow">Budget pressure</span>
         <div className="bar-stack">
-          <span style={{ width: "48%", background: "#14b8a6" }} />
-          <span style={{ width: "28%", background: "#6366f1" }} />
-          <span style={{ width: "18%", background: "#f59e0b" }} />
+          <span style={{ width: "48%", background: "#434E3F" }} />
+          <span style={{ width: "28%", background: "#D06F25" }} />
+          <span style={{ width: "18%", background: "#D6AB8B" }} />
         </div>
         <p>Most spend is concentrated in tools and workspace operations.</p>
       </section>
