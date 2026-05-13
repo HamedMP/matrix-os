@@ -161,6 +161,25 @@ describe("BrowserRuntimeService", () => {
     );
   });
 
+  it("binds the runtime session id to the gateway session id", async () => {
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowser(),
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await expect(runtime.open({
+      profile: "default",
+      deviceId: "device_1",
+      sessionId: "browser_session_1",
+    })).resolves.toMatchObject({
+      id: "browser_session_1",
+    });
+    await expect(runtime.navigateSession("browser_session_1", "https://example.com/docs")).resolves.toMatchObject({
+      currentUrl: "https://example.com/docs",
+    });
+  });
+
   it("hibernates idle sessions and restores saved tab URLs on reopen", async () => {
     const runtime = new BrowserRuntimeService({
       launcher: async () => fakeBrowser(),

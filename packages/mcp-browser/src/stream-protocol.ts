@@ -92,6 +92,14 @@ export const mediaIceSchema = z.object({
   }),
 });
 
+export const browserNavigateSchema = z.object({
+  type: z.literal("browser.navigate"),
+  payload: z.object({
+    targetUrl: z.string().min(1).max(2048),
+    surface: surfaceSchema,
+  }),
+});
+
 export const browserClientMessageSchema = z.discriminatedUnion("type", [
   streamHelloSchema,
   pointerInputSchema,
@@ -101,6 +109,7 @@ export const browserClientMessageSchema = z.discriminatedUnion("type", [
   surfaceFocusSchema,
   mediaAnswerSchema,
   mediaIceSchema,
+  browserNavigateSchema,
   z.object({
     type: z.literal("viewport.resize"),
     payload: streamHelloSchema.shape.payload.shape.viewport,

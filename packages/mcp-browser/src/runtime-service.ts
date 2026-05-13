@@ -97,7 +97,7 @@ export class BrowserRuntimeService {
     });
   }
 
-  async open(opts: { profile?: string; deviceId?: string }): Promise<BrowserRuntimeSessionState> {
+  async open(opts: { profile?: string; deviceId?: string; sessionId?: string }): Promise<BrowserRuntimeSessionState> {
     const active = this.manager.getActive();
     if (!active) {
       this.assertOwnerLimits({ sessions: 0 });
@@ -274,9 +274,7 @@ export class BrowserRuntimeService {
         return;
       }
       try {
-        await assertRuntimeRequestMatchesPolicy(route.request().url(), currentPolicy, {
-          ...(this.resolveHostname ? { resolveHostname: this.resolveHostname } : {}),
-        });
+        await this.assertOrRefreshRuntimePolicy(route.request().url(), currentPolicy);
         await route.continue();
       } catch (error: unknown) {
         console.warn(
@@ -287,6 +285,21 @@ export class BrowserRuntimeService {
       }
     });
     this.requestPolicyInstalled = true;
+  }
+
+  private async assertOrRefreshRuntimePolicy(rawUrl: string, policy: BrowserNavigationPolicyBinding): Promise<void> {
+    const opts = {
+      ...(this.resolveHostname ? { resolveHostname: this.resolveHostname } : {}),
+    };
+    if (Date.now() <= Date.parse(policy.expiresAt)) {
+      await assertRuntimeRequestMatchesPolicy(rawUrl, policy, opts);
+      return;
+    }
+    const refreshed = await createBrowserNavigationPolicy(rawUrl, opts);
+    if (refreshed.hostname !== policy.hostname) {
+      throw new Error("browser_navigation_policy_mismatch");
+    }
+    this.activePolicy = refreshed;
   }
 
   private upsertRuntimeTab(tab: BrowserRuntimeTabState): void {
@@ -355,8 +368,9 @@ async function handleBrowserRuntimeRequest(
     const body = await readJsonBody(req);
     const profileName = typeof body.profileName === "string" ? body.profileName : "default";
     const deviceId = typeof body.deviceId === "string" ? body.deviceId : undefined;
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
     const targetUrl = typeof body.targetUrl === "string" ? body.targetUrl : undefined;
-    let state = await runtime.open({ profile: profileName, deviceId });
+    let state = await runtime.open({ profile: profileName, deviceId, sessionId });
     if (targetUrl && targetUrl !== "about:blank") {
       state = await runtime.navigate(targetUrl);
     }

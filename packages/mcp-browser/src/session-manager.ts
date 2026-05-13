@@ -103,7 +103,7 @@ export interface SessionManagerOptions {
 export class SessionManager {
   private session: BrowserSession | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
-  private launching: { profile: string; deviceId?: string; promise: Promise<BrowserSession> } | undefined;
+  private launching: { profile: string; deviceId?: string; sessionId?: string; promise: Promise<BrowserSession> } | undefined;
   private launcher: Launcher;
   private headless: boolean;
   private idleTimeoutMs: number;
@@ -125,7 +125,7 @@ export class SessionManager {
     this.maxSurfaces = opts.maxSurfaces ?? 3;
   }
 
-  async launch(opts: { profile?: string; deviceId?: string } = {}): Promise<BrowserSession> {
+  async launch(opts: { profile?: string; deviceId?: string; sessionId?: string } = {}): Promise<BrowserSession> {
     const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
     if (this.launching) {
       if (this.launching.profile === profile) {
@@ -154,18 +154,21 @@ export class SessionManager {
       }
       return this.session;
     }
+    if (this.session?.lockDeviceId && opts.deviceId && this.session.lockDeviceId !== opts.deviceId) {
+      throw new BrowserProfileLockedError("Browser profile is open on another device");
+    }
 
-    const promise = this.openSession(profile, opts.deviceId).finally(() => {
+    const promise = this.openSession(profile, opts.deviceId, opts.sessionId).finally(() => {
       if (this.launching?.promise === promise) {
         this.launching = undefined;
       }
     });
-    this.launching = { profile, deviceId: opts.deviceId, promise };
+    this.launching = { profile, deviceId: opts.deviceId, sessionId: opts.sessionId, promise };
 
     return promise;
   }
 
-  private async openSession(profile: string, deviceId?: string): Promise<BrowserSession> {
+  private async openSession(profile: string, deviceId?: string, sessionId?: string): Promise<BrowserSession> {
     if (this.session) {
       await this.close();
     }
@@ -185,7 +188,7 @@ export class SessionManager {
     this.preparePage(page);
 
     const session: BrowserSession = {
-      id: `session_${randomUUID()}`,
+      id: sessionId ?? `session_${randomUUID()}`,
       browser,
       page,
       profile,
