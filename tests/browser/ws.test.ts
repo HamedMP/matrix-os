@@ -84,7 +84,8 @@ describe("Browser stream protocol", () => {
           iceServers: [
             expect.objectContaining({
               urls: ["turn:turn.matrix.test:3478?transport=udp"],
-              credential: "turn-secret",
+              username: expect.stringContaining(":owner_1:session_1:"),
+              credential: expect.not.stringMatching(/^turn-secret$/),
             }),
           ],
         }),
