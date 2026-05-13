@@ -104,6 +104,9 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
       const input = sessionCreateSchema.parse(await c.req.json());
       let ownerId = "local-owner";
       let targetUrl = input.targetUrl;
+      if (c.req.header("x-browser-handoff") === "1" && !input.handoffToken) {
+        return c.json({ error: { code: "invalid_handoff", message: "Browser request is invalid." } }, 401);
+      }
       if (input.handoffToken) {
         const publicKey = opts.handoffPublicKey ?? process.env.BROWSER_HANDOFF_PUBLIC_KEY;
         if (!publicKey) {
@@ -200,11 +203,8 @@ export function createBrowserRoutes(opts: BrowserRoutesOptions = {}) {
       const ownerId = opts.getOwnerId?.(c) ?? "local-owner";
       const profileName = profileNameSchema.parse(c.req.param("profileName"));
       const input = profileClearSchema.parse(await c.req.json());
-      const activeSessions = (await service.listSessions({ ownerId }))
-        .filter((session) => session.profileName === profileName && session.state === "active")
-        .map((session) => session.id);
-      const profile = await service.clearProfile({ ownerId, profileName, scopes: input.scopes });
-      for (const sessionId of activeSessions) {
+      const { profile, closedSessionIds } = await service.clearProfileWithClosedSessions({ ownerId, profileName, scopes: input.scopes });
+      for (const sessionId of closedSessionIds) {
         opts.streamHub?.notifySessionClosed(sessionId, "closed");
       }
       return c.json({

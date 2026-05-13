@@ -3434,6 +3434,9 @@ export async function createGateway(config: GatewayConfig) {
       let sessionId: string;
       try {
         sessionId = z.string().min(1).max(128).parse(c.req.param("sessionId"));
+        if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+          throw new Error("not_websocket_upgrade");
+        }
         const token = extractBrowserStreamToken(c);
         ownerId = browserService.verifyStreamToken({ token, sessionId }).ownerId;
       } catch (err: unknown) {

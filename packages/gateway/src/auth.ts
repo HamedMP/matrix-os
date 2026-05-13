@@ -201,6 +201,10 @@ export function authMiddleware(
 
     const authHeader = c.req.header("Authorization");
     if (BROWSER_WS_QUERY_TOKEN_PATTERN.test(normalizedPath)) {
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
       return nextWithReady(c, next);
     }
     if (

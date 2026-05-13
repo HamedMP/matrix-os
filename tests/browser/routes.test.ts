@@ -68,6 +68,20 @@ describe("Browser gateway routes", () => {
     })).toThrow("invalid_browser_stream_token");
   });
 
+  it("rejects handoff-marked session bootstrap without a handoff token", async () => {
+    const app = createBrowserRoutes({ getOwnerId: () => "owner_1" });
+    const res = await app.request("/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-browser-handoff": "1" },
+      body: JSON.stringify({ profileName: "default", surface: "standalone", deviceId: "device_1" }),
+    });
+
+    await expect(res.json()).resolves.toEqual({
+      error: { code: "invalid_handoff", message: "Browser request is invalid." },
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("applies body limits before mutating session routes", async () => {
     const app = createBrowserRoutes();
     const body = JSON.stringify({ profileName: "x".repeat(20_000), surface: "canvas", deviceId: "device" });
@@ -285,9 +299,16 @@ describe("Browser gateway routes", () => {
     const repo = new InMemoryBrowserRepository();
     const service = new BrowserService({ repo });
     const now = 1_000;
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
+      now,
+    });
     const grant = await service.createGrant({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       scopes: ["read_dom", "automate_input"],
       domains: ["example.com"],
       now,
@@ -311,11 +332,38 @@ describe("Browser gateway routes", () => {
     })).rejects.toThrow("invalid_grant_domain");
   });
 
+  it("rejects grant expiry beyond the session-bound maximum", async () => {
+    const service = new BrowserService({ repo: new InMemoryBrowserRepository() });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
+      now: 1_000,
+    });
+
+    await expect(service.createGrant({
+      ownerId: "owner_1",
+      sessionId: session.session.id,
+      scopes: ["read_dom"],
+      domains: ["example.com"],
+      now: 1_000,
+      expiresAt: new Date(1_000 + 8 * 60 * 60 * 1000 + 1).toISOString(),
+    })).rejects.toThrow("invalid_grant_expiry");
+  });
+
   it("enforces agent action grants by scope and domain", async () => {
     const service = new BrowserService({ repo: new InMemoryBrowserRepository() });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
+      now: 1_000,
+    });
     await service.createGrant({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       scopes: ["navigate"],
       domains: ["example.com"],
       now: 1_000,
@@ -323,34 +371,49 @@ describe("Browser gateway routes", () => {
 
     await expect(service.authorizeAgentAction({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       action: "navigate",
       url: "https://example.com/page",
       now: 2_000,
     })).resolves.toBeDefined();
     await expect(service.authorizeAgentAction({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       action: "read_dom",
       url: "https://example.com/page",
       now: 2_000,
     })).rejects.toThrow("Browser permission is required");
     await expect(service.authorizeAgentAction({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       action: "navigate",
       url: "https://evil.example.net/",
       now: 2_000,
     })).rejects.toThrow("Browser permission is required");
+    await service.closeSession({ ownerId: "owner_1", sessionId: session.session.id, state: "closed", now: 3_000 });
+    await expect(service.authorizeAgentAction({
+      ownerId: "owner_1",
+      sessionId: session.session.id,
+      action: "navigate",
+      url: "https://example.com/page",
+      now: 4_000,
+    })).rejects.toThrow("Browser session was not found");
   });
 
   it("enforces every agent browser grant scope and emits redacted access audit", async () => {
     const repo = new InMemoryBrowserRepository();
     const service = new BrowserService({ repo });
     const scopes = ["read_dom", "screenshot", "navigate", "download", "automate_input"] as const;
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
+      now: 1_000,
+    });
     await service.createGrant({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       scopes: [...scopes],
       domains: ["*.example.com"],
       now: 1_000,
@@ -359,7 +422,7 @@ describe("Browser gateway routes", () => {
     for (const action of scopes) {
       await expect(service.authorizeAgentAction({
         ownerId: "owner_1",
-        sessionId: "session_1",
+        sessionId: session.session.id,
         action,
         url: "https://docs.example.com/page?token=secret",
         now: 2_000,
@@ -368,25 +431,32 @@ describe("Browser gateway routes", () => {
 
     await expect(service.authorizeAgentAction({
       ownerId: "owner_1",
-      sessionId: "session_1",
+      sessionId: session.session.id,
       action: "screenshot",
       url: "https://example.net/",
       now: 2_000,
     })).rejects.toThrow("Browser permission is required");
     expect((await repo.listAuditEvents("owner_1")).filter((event) => event.eventType === "agent.access")).toEqual([
-      expect.objectContaining({ metadata: { sessionId: "session_1", action: "read_dom", host: "docs.example.com" } }),
-      expect.objectContaining({ metadata: { sessionId: "session_1", action: "screenshot", host: "docs.example.com" } }),
-      expect.objectContaining({ metadata: { sessionId: "session_1", action: "navigate", host: "docs.example.com" } }),
-      expect.objectContaining({ metadata: { sessionId: "session_1", action: "download", host: "docs.example.com" } }),
-      expect.objectContaining({ metadata: { sessionId: "session_1", action: "automate_input", host: "docs.example.com" } }),
+      expect.objectContaining({ metadata: { sessionId: session.session.id, action: "read_dom", host: "docs.example.com" } }),
+      expect.objectContaining({ metadata: { sessionId: session.session.id, action: "screenshot", host: "docs.example.com" } }),
+      expect.objectContaining({ metadata: { sessionId: session.session.id, action: "navigate", host: "docs.example.com" } }),
+      expect.objectContaining({ metadata: { sessionId: session.session.id, action: "download", host: "docs.example.com" } }),
+      expect.objectContaining({ metadata: { sessionId: session.session.id, action: "automate_input", host: "docs.example.com" } }),
     ]);
   });
 
   it("exposes profile clear and grant routes with owner isolation", async () => {
     const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({ repo });
     const app = createBrowserRoutes({
       getOwnerId: () => "owner_1",
-      service: new BrowserService({ repo }),
+      service,
+    });
+    await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
     });
 
     const clear = await app.request("/profiles/default/clear", {
@@ -402,12 +472,18 @@ describe("Browser gateway routes", () => {
         clearedScopes: ["cookies", "savedPasswords"],
       }),
     });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_1",
+      surface: "canvas",
+    });
 
     const grantRes = await app.request("/grants", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        sessionId: "session_1",
+        sessionId: session.session.id,
         scopes: ["read_dom"],
         domains: ["example.com"],
       }),
