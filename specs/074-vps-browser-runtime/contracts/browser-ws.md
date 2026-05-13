@@ -12,7 +12,7 @@ Authentication:
 - `Sec-WebSocket-Protocol` includes a short-lived signed Browser stream token.
 - Token is bound to owner id, session id, profile id, surface, device id, issue time, expiry, and nonce.
 - Unauthenticated, expired, wrong-origin, wrong-session, or replayed upgrades are rejected.
-- Replay rejection uses a server-side nonce store scoped to the owner VPS gateway process. The store keeps used nonces until token expiry plus 30 seconds, caps entries at 10,000, and evicts oldest entries first. Token TTL MUST NOT exceed 60 seconds.
+- Replay rejection uses a server-side nonce store scoped to the owner VPS gateway process. The store keeps used nonces until token expiry plus 30 seconds, caps entries at 10,000, prunes expired entries first, and fails closed instead of evicting unexpired nonces when the cap is full. Token TTL MUST NOT exceed 60 seconds.
 
 Transport split:
 - WebSocket is the authenticated control, input, status, and WebRTC signaling channel.
