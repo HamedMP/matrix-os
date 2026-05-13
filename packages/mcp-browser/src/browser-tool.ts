@@ -394,14 +394,24 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "tabs": {
           const session = await ensureSession(input.profile);
-          await authorizeAgentAction(input, session, session.page.url());
           const ctx = session.page.context();
           const pages = ctx.pages();
-          const tabInfo = pages.map((p, i) => `${i}: ${p.url()}`);
+          const tabInfo: string[] = [];
+          for (const [index, page] of pages.entries()) {
+            try {
+              await authorizeAgentAction(input, session, page.url());
+              tabInfo.push(`${index}: ${page.url()}`);
+            } catch (error: unknown) {
+              console.warn(
+                "[mcp-browser] Skipping unauthorized tab listing:",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+          }
           return {
             action,
             success: true,
-            content: tabInfo.length > 0 ? tabInfo.join("\n") : "No tabs",
+            content: tabInfo.length > 0 ? tabInfo.join("\n") : "No authorized tabs",
           };
         }
 

@@ -112,16 +112,51 @@ export function assertRelayIceCandidate(candidate: string): void {
   if (!isRelayIceCandidate(candidate)) {
     throw new Error("media_policy");
   }
-  const addresses = candidate.match(/(?:^| )(?:\d{1,3}\.){3}\d{1,3}(?= |$)/g) ?? [];
-  for (const raw of addresses) {
-    const address = raw.trim();
-    if (isIP(address) === 4 && PRIVATE_IPV4.some((pattern) => pattern.test(address))) {
-      throw new Error("media_policy");
-    }
-  }
-  if (/\b(?:localhost|::1|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:|fe80:)/i.test(candidate)) {
+  const parts = candidate.trim().split(/\s+/);
+  const address = parts[4];
+  if (!address || !isPublicIceAddress(address) || /\blocalhost\b/i.test(candidate)) {
     throw new Error("media_policy");
   }
+}
+
+function isPublicIceAddress(address: string): boolean {
+  const mapped = address.toLowerCase().match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mapped) return isPublicIpv4(mapped[1] ?? "");
+  const ipVersion = isIP(address);
+  if (ipVersion === 4) return isPublicIpv4(address);
+  if (ipVersion === 6) {
+    const lower = address.toLowerCase();
+    const firstHextet = firstIpv6Hextet(lower);
+    return !(
+      lower === "::" ||
+      lower === "::1" ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd") ||
+      (firstHextet !== null && firstHextet >= 0xfe80 && firstHextet <= 0xfebf) ||
+      lower.startsWith("ff")
+    );
+  }
+  return false;
+}
+
+function isPublicIpv4(address: string): boolean {
+  if (isIP(address) !== 4) return false;
+  const [a = -1, b = -1, c = -1] = address.split(".").map((part) => Number.parseInt(part, 10));
+  return !(
+    PRIVATE_IPV4.some((pattern) => pattern.test(address)) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224
+  );
+}
+
+function firstIpv6Hextet(address: string): number | null {
+  const match = address.match(/^([0-9a-f]{1,4})(?=:|$)/);
+  if (!match?.[1]) return null;
+  return Number.parseInt(match[1], 16);
 }
 
 export function chromiumBrowserLaunchArgs(): string[] {
