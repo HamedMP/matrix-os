@@ -56,12 +56,13 @@ function isPublicIceAddress(address: string): boolean {
   if (ipVersion === 4) return isPublicIpv4(address);
   if (ipVersion === 6) {
     const lower = address.toLowerCase();
+    const firstHextet = firstIpv6Hextet(lower);
     return !(
       lower === "::" ||
       lower === "::1" ||
       lower.startsWith("fc") ||
       lower.startsWith("fd") ||
-      lower.startsWith("fe80:") ||
+      (firstHextet !== null && firstHextet >= 0xfe80 && firstHextet <= 0xfebf) ||
       lower.startsWith("ff")
     );
   }
@@ -70,7 +71,7 @@ function isPublicIceAddress(address: string): boolean {
 
 function isPublicIpv4(address: string): boolean {
   if (isIP(address) !== 4) return false;
-  const [a = -1, b = -1] = address.split(".").map((part) => Number.parseInt(part, 10));
+  const [a = -1, b = -1, c = -1] = address.split(".").map((part) => Number.parseInt(part, 10));
   return !(
     a === 0 ||
     a === 10 ||
@@ -79,10 +80,16 @@ function isPublicIpv4(address: string): boolean {
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168) ||
-    (a === 192 && b === 0) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
     (a === 198 && (b === 18 || b === 19)) ||
-    (a === 198 && b === 51) ||
-    (a === 203 && b === 0) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
     a >= 224
   );
+}
+
+function firstIpv6Hextet(address: string): number | null {
+  const match = address.match(/^([0-9a-f]{1,4})(?=:|$)/);
+  if (!match?.[1]) return null;
+  return Number.parseInt(match[1], 16);
 }

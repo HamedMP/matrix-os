@@ -26,7 +26,7 @@ describe("Browser download profile store", () => {
     expect(paths.finalPath).toBe(join(home, "files", "downloads", "report.txt"));
 
     await writeFile(paths.stagingPath, "ok");
-    await publishBrowserDownload(paths.stagingPath, paths.finalPath);
+    await expect(publishBrowserDownload(paths.stagingPath, paths.finalPath)).resolves.toBe(paths.finalPath);
     await expect(readFile(paths.finalPath, "utf8")).resolves.toBe("ok");
   });
 
@@ -43,6 +43,19 @@ describe("Browser download profile store", () => {
 
     await expect(readFile(first.finalPath, "utf8")).resolves.toBe("first");
     await expect(readFile(second.finalPath, "utf8")).resolves.toBe("second");
+  });
+
+  it("re-reserves the completed download path if another publish wins the race", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-browser-downloads-"));
+    const paths = await createBrowserDownloadPaths(home, "report.txt");
+    await writeFile(paths.finalPath, "winner");
+    await writeFile(paths.stagingPath, "later");
+
+    const completedPath = await publishBrowserDownload(paths.stagingPath, paths.finalPath);
+
+    expect(completedPath).toBe(join(home, "files", "downloads", "report (1).txt"));
+    await expect(readFile(paths.finalPath, "utf8")).resolves.toBe("winner");
+    await expect(readFile(completedPath, "utf8")).resolves.toBe("later");
   });
 
   it("deletes staged and completed artifacts without leaving owner home", async () => {

@@ -31,6 +31,11 @@ describe("Browser TURN policy", () => {
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 ::ffff:192.168.1.10 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 100.64.0.1 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 224.0.0.1 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 198.51.100.1 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 203.0.113.1 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 198.51.1.1 3478 typ relay")).toBe(true);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 203.0.1.1 3478 typ relay")).toBe(true);
     expect(() => assertBrowserRelayCandidate("candidate:1 1 udp 1 fe80::1 3478 typ relay")).toThrow("media_policy");
+    expect(() => assertBrowserRelayCandidate("candidate:1 1 udp 1 fe90::1 3478 typ relay")).toThrow("media_policy");
   });
 });

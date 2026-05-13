@@ -92,6 +92,7 @@ export class BrowserService {
       if (!session.takeoverRequired) {
         try {
           await this.openRuntimeSession({
+            sessionId: session.id,
             profileName: input.profileName,
             deviceId: input.deviceId,
             targetUrl: input.targetUrl,
@@ -234,6 +235,41 @@ export class BrowserService {
     return this.repo.upsertTab(input);
   }
 
+  async navigateSession(input: {
+    ownerId: string;
+    sessionId: string;
+    targetUrl: string;
+    surface: "canvas" | "standalone";
+    now?: number;
+  }): Promise<BrowserTabRecord> {
+    const session = await this.repo.getSession(input.ownerId, input.sessionId);
+    if (!session || session.state !== "active" || session.takeoverRequired) {
+      throw new BrowserSafeError("session_not_found", "Browser session was not found.");
+    }
+    await this.navigateRuntimeSession({
+      sessionId: input.sessionId,
+      targetUrl: input.targetUrl,
+    });
+    const tab = await this.repo.upsertTab({
+      ownerId: input.ownerId,
+      sessionId: input.sessionId,
+      url: input.targetUrl,
+      now: input.now,
+    });
+    await this.repo.addAuditEvent({
+      id: `audit_${randomUUID()}`,
+      ownerId: input.ownerId,
+      eventType: "navigation.attempted",
+      createdAt: new Date(input.now ?? Date.now()).toISOString(),
+      metadata: {
+        sessionId: input.sessionId,
+        surface: input.surface,
+        url: input.targetUrl,
+      },
+    });
+    return tab;
+  }
+
   async listTabs(input: { ownerId: string; sessionId: string }): Promise<BrowserTabRecord[]> {
     return this.repo.listTabs(input.ownerId, input.sessionId);
   }
@@ -335,6 +371,7 @@ export class BrowserService {
   }
 
   private async openRuntimeSession(input: {
+    sessionId: string;
     profileName: string;
     deviceId: string;
     targetUrl: string;
@@ -351,6 +388,26 @@ export class BrowserService {
     });
     if (!res.ok) {
       console.warn("[browser/service] Runtime session launch rejected:", res.status);
+      throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
+    }
+  }
+
+  private async navigateRuntimeSession(input: {
+    sessionId: string;
+    targetUrl: string;
+  }): Promise<void> {
+    if (!this.runtimeBaseUrl) return;
+    const res = await fetch(new URL(`/sessions/${encodeURIComponent(input.sessionId)}/navigate`, this.runtimeBaseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ targetUrl: input.targetUrl }),
+    }).catch((error: unknown) => {
+      console.warn("[browser/service] Runtime navigation failed:", error instanceof Error ? error.message : String(error));
+      throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
+    });
+    if (!res.ok) {
+      console.warn("[browser/service] Runtime navigation rejected:", res.status);
       throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
     }
   }

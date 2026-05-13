@@ -36,10 +36,22 @@ export async function createBrowserDownloadPaths(homePath: string, filename: str
   };
 }
 
-export async function publishBrowserDownload(stagingPath: string, finalPath: string): Promise<void> {
-  await mkdir(dirname(finalPath), { recursive: true });
-  await link(stagingPath, finalPath);
-  await rm(stagingPath, { force: true });
+export async function publishBrowserDownload(stagingPath: string, finalPath: string): Promise<string> {
+  const finalDir = dirname(finalPath);
+  const safeName = basename(finalPath);
+  await mkdir(finalDir, { recursive: true });
+  let candidate = finalPath;
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    try {
+      await link(stagingPath, candidate);
+      await rm(stagingPath, { force: true });
+      return candidate;
+    } catch (error: unknown) {
+      if (!isNodeErrorCode(error, "EEXIST")) throw error;
+      candidate = await uniqueBrowserDownloadPath(finalDir, safeName);
+    }
+  }
+  throw new Error("download_path_exhausted");
 }
 
 export async function deleteBrowserDownloadArtifacts(homePath: string, paths: {
@@ -166,8 +178,8 @@ async function handleBrowserDownload(
       await opts.callbacks.fail({ id: record.id });
       return;
     }
-    await publishBrowserDownload(paths.stagingPath, paths.finalPath);
-    await opts.callbacks.complete({ id: record.id, completedPath: paths.finalPath });
+    const completedPath = await publishBrowserDownload(paths.stagingPath, paths.finalPath);
+    await opts.callbacks.complete({ id: record.id, completedPath });
   } catch (error: unknown) {
     await rm(paths.stagingPath, { force: true }).catch((rmError: unknown) => {
       console.warn(

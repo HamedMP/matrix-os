@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryBrowserRepository } from "../../packages/gateway/src/browser/repository.js";
 import { BrowserService } from "../../packages/gateway/src/browser/service.js";
 
 describe("BrowserService", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("withholds stream credentials until second-device takeover is confirmed", async () => {
     const repo = new InMemoryBrowserRepository();
     const service = new BrowserService({ repo, streamTokenSecret: "secret".repeat(8) });
@@ -136,6 +140,53 @@ describe("BrowserService", () => {
       tabId: tab.id,
       url: "https://example.org/",
     })).rejects.toThrow("tab_session_mismatch");
+  });
+
+  it("uses the gateway session id for runtime launch and follow-up navigation", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }));
+    const repo = new InMemoryBrowserRepository();
+    const service = new BrowserService({
+      repo,
+      streamTokenSecret: "secret".repeat(8),
+      runtimeBaseUrl: "http://127.0.0.1:4011",
+    });
+    const session = await service.createSession({
+      ownerId: "owner_1",
+      profileName: "default",
+      deviceId: "device_a",
+      surface: "standalone",
+      targetUrl: "https://example.com/",
+      now: 1_000,
+    });
+
+    await service.navigateSession({
+      ownerId: "owner_1",
+      sessionId: session.session.id,
+      targetUrl: "https://example.com/docs",
+      surface: "standalone",
+      now: 2_000,
+    });
+
+    expect(calls).toEqual([
+      {
+        url: "http://127.0.0.1:4011/sessions",
+        body: expect.objectContaining({ sessionId: session.session.id, targetUrl: "https://example.com/" }),
+      },
+      {
+        url: `http://127.0.0.1:4011/sessions/${session.session.id}/navigate`,
+        body: { targetUrl: "https://example.com/docs" },
+      },
+    ]);
+    expect(repo.listTabs("owner_1", session.session.id)).toContainEqual(
+      expect.objectContaining({ url: "https://example.com/docs" }),
+    );
   });
 
   it("does not resurrect deleted downloads on late completion", async () => {
