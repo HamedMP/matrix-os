@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="${MATRIX_MESSAGING_ROOT:-/mnt/HC_Volume_104683898/matrix-messaging}"
+
+service_state() {
+  systemctl is-active "$1" 2>/dev/null || true
+}
+
+printf '{"root":"%s","homeserver":"%s","telegram":"%s","whatsapp":"%s"}\n' \
+  "$ROOT" \
+  "$(service_state matrix-homeserver.service)" \
+  "$(service_state matrix-bridge-telegram.service)" \
+  "$(service_state matrix-bridge-whatsapp.service)"

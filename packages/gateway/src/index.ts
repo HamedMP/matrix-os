@@ -103,6 +103,8 @@ export { createHermesCapabilityToken, verifyHermesCapabilityToken } from "./mess
 export { HermesDeliveryRegistry } from "./messages/hermes-delivery.js";
 export { evaluateAutomationRules } from "./messages/automation-evaluator.js";
 export { createAutomationActionRunner } from "./messages/automation-actions.js";
+export { createMessagingBridgeHealthService } from "./messages/bridge-health.js";
+export type { MessagingBridgeHealthService, MessagingHealthSummary } from "./messages/bridge-health.js";
 export type {
   MessagingRepository,
   MessagingOwnerScope,

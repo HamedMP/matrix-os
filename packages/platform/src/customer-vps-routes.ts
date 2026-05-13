@@ -15,6 +15,25 @@ import { refreshVpsMetrics, vpsHealthy } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
 
+export interface MessagingResourceShape {
+  vcpu: number;
+  memoryGiB: number;
+  diskGiB: number;
+}
+
+const MESSAGING_RESOURCE_FLOOR = {
+  default: { vcpu: 2, memoryGiB: 4, diskGiB: 40 },
+  synapse: { vcpu: 2, memoryGiB: 6, diskGiB: 60 },
+} as const;
+
+export function meetsMessagingResourceFloor(
+  resources: MessagingResourceShape,
+  profile: keyof typeof MESSAGING_RESOURCE_FLOOR = 'synapse',
+): boolean {
+  const floor = MESSAGING_RESOURCE_FLOOR[profile];
+  return resources.vcpu >= floor.vcpu && resources.memoryGiB >= floor.memoryGiB && resources.diskGiB >= floor.diskGiB;
+}
+
 export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;

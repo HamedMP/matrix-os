@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="${MATRIX_MESSAGING_ROOT:-/mnt/HC_Volume_104683898/matrix-messaging}"
+BACKUP_ROOT="${MATRIX_MESSAGING_BACKUP_ROOT:-/home/matrix/backups/messaging}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+DEST="$BACKUP_ROOT/$STAMP"
+
+mkdir -p "$DEST"
+
+for name in synapse mautrix-telegram mautrix-whatsapp; do
+  if [ -d "$ROOT/$name" ]; then
+    tar -C "$ROOT" -czf "$DEST/$name.tar.gz" "$name"
+  fi
+done
+
+if command -v pg_dump >/dev/null 2>&1 && [ -n "${DATABASE_URL:-}" ]; then
+  pg_dump "$DATABASE_URL" \
+    --table=messaging_accounts \
+    --table=messaging_conversations \
+    --table=messaging_conversation_mappings \
+    --table=messaging_permissions \
+    --table=messaging_outgoing_replies \
+    --table=messaging_automation_rules \
+    --file="$DEST/matrix-os-messaging.sql"
+fi
+
+printf '{"backup":"%s","rpo_minutes":60,"includes":["synapse","mautrix-telegram","mautrix-whatsapp","messaging_permissions","messaging_conversation_mappings"]}\n' "$DEST"

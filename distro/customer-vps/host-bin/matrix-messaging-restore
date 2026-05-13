@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+set -eu
+
+WHATSAPP_RELINK_AFTER_HOURS=24
+RTO_MINUTES=15
+BACKUP_DIR="${1:-}"
+
+if [ -z "$BACKUP_DIR" ] || [ ! -d "$BACKUP_DIR" ]; then
+  echo "usage: matrix-messaging-restore <backup-dir>" >&2
+  exit 2
+fi
+
+if [ -f "$BACKUP_DIR/matrix-os-messaging.sql" ] && command -v psql >/dev/null 2>&1 && [ -n "${DATABASE_URL:-}" ]; then
+  psql "$DATABASE_URL" < "$BACKUP_DIR/matrix-os-messaging.sql"
+fi
+
+now="$(date +%s)"
+mtime="$(stat -c %Y "$BACKUP_DIR")"
+age_hours=$(( (now - mtime) / 3600 ))
+whatsapp_status="ok"
+if [ "$age_hours" -ge "$WHATSAPP_RELINK_AFTER_HOURS" ]; then
+  whatsapp_status="relink_required"
+fi
+
+printf '{"restore":"started","rto_minutes":%s,"whatsapp":"%s","backup_age_hours":%s}\n' "$RTO_MINUTES" "$whatsapp_status" "$age_hours"

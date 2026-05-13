@@ -322,6 +322,11 @@ export const AutomationRuleCreateRequestSchema = z.object({
 });
 export type AutomationRuleCreateRequest = z.infer<typeof AutomationRuleCreateRequestSchema>;
 
+export const RecoveryRequestSchema = z.object({
+  action: z.enum(["recheck", "restart_bridge", "relink"]),
+});
+export type RecoveryRequest = z.infer<typeof RecoveryRequestSchema>;
+
 export const AccountSetupRequestSchema = z.object({
   networkSlug: MessagingNetworkSlugSchema,
 });
