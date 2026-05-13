@@ -175,6 +175,34 @@ describe("Matrix Symphony routes", () => {
     expect(JSON.stringify(await res.json())).not.toContain("lin_api");
   });
 
+  it("lets delegated operators create their own owner config", async () => {
+    const { app, repository } = deps(structuredClone(baseSnapshot), { userId: "user_456", source: "dev-default" });
+    vi.mocked(repository.getSnapshot).mockImplementation(async (ownerId: string) => ownerId === "user_456"
+      ? { installation: null, rule: null, runs: [], events: [], lastPollAt: null }
+      : structuredClone(baseSnapshot));
+
+    const res = await app.request(jsonRequest("/config", "POST", {
+      installation: {
+        projectSlug: "matrix-os",
+        pollIntervalMs: 30000,
+        maxConcurrentAgents: 3,
+        defaultAgent: "codex",
+        authorizedOperators: [],
+      },
+      rule: {
+        teamId: "team_2",
+        teamKey: "OWN",
+        requiredLabels: ["symphony"],
+        activeStates: ["Todo"],
+        terminalStates: ["Done"],
+        assigneeIds: [],
+      },
+    }));
+
+    expect(res.status).toBe(200);
+    expect(repository.saveConfig).toHaveBeenCalledWith("user_456", expect.any(Object), "user_456", expect.any(Boolean));
+  });
+
   it("stores Linear credentials server-side and returns only presence", async () => {
     const { app, credentialStore } = deps(structuredClone(baseSnapshot));
 

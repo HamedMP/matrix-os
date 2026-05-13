@@ -127,8 +127,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
   }));
 
   app.post("/config", limited, (c) => withPrincipal(c, deps, async (principal) => {
-    const ownerId = await resolveOwnerId(deps, principal);
-    const snapshot = await deps.repository.getSnapshot(ownerId ?? principal.userId);
+    const snapshot = await deps.repository.getSnapshot(principal.userId);
     if (!isSymphonyOwner(principal, snapshot.installation)) return unauthorized(c);
     const parsed = await parseJson(c, SaveSymphonyConfigSchema);
     if (!parsed.ok) return parsed.response;
@@ -138,8 +137,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
   }));
 
   app.post("/credentials/linear", limited, (c) => withPrincipal(c, deps, async (principal) => {
-    const ownerId = await resolveOwnerId(deps, principal);
-    const snapshot = await deps.repository.getSnapshot(ownerId ?? principal.userId);
+    const snapshot = await deps.repository.getSnapshot(principal.userId);
     if (!isSymphonyOwner(principal, snapshot.installation)) return unauthorized(c);
     const parsed = await parseJson(c, LinearCredentialSchema);
     if (!parsed.ok) return parsed.response;
@@ -154,8 +152,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
   }));
 
   app.delete("/credentials/linear", emptyLimited, (c) => withPrincipal(c, deps, async (principal) => {
-    const ownerId = await resolveOwnerId(deps, principal);
-    const snapshot = await deps.repository.getSnapshot(ownerId ?? principal.userId);
+    const snapshot = await deps.repository.getSnapshot(principal.userId);
     if (!isSymphonyOwner(principal, snapshot.installation)) return unauthorized(c);
     const parsed = await parseJson(c, EmptyBodySchema);
     if (!parsed.ok) return parsed.response;

@@ -22,7 +22,7 @@ export interface SymphonyRepository {
   setCredentialConfigured(ownerId: string, configured: boolean, actorId: string): Promise<void>;
   setEnabled(ownerId: string, enabled: boolean, actorId: string): Promise<SymphonyInstallation>;
   upsertRun(ownerId: string, run: SymphonyRun): Promise<SymphonyRun>;
-  updateRun(ownerId: string, runId: string, patch: Partial<SymphonyRun>): Promise<SymphonyRun | null>;
+  updateRun(ownerId: string, runId: string, patch: Partial<SymphonyRun>, options?: { allowedStatuses?: SymphonyRunStatus[] }): Promise<SymphonyRun | null>;
   getRun(ownerId: string, runId: string): Promise<SymphonyRun | null>;
   findActiveRunByClaim(ownerId: string, claimKey: string): Promise<SymphonyRun | null>;
   listRuns(ownerId: string, input?: { status?: SymphonyRunStatus; limit?: number }): Promise<SymphonyRun[]>;
@@ -319,11 +319,24 @@ export class KyselySymphonyRepository implements SymphonyRepository {
     return run;
   }
 
-  async updateRun(ownerId: string, runId: string, patch: Partial<SymphonyRun>): Promise<SymphonyRun | null> {
+  async updateRun(ownerId: string, runId: string, patch: Partial<SymphonyRun>, options: { allowedStatuses?: SymphonyRunStatus[] } = {}): Promise<SymphonyRun | null> {
     const current = await this.getRun(ownerId, runId);
     if (!current) return null;
     const updated = { ...current, ...patch, updatedAt: patch.updatedAt ?? nowIso() };
-    return this.upsertRun(ownerId, updated);
+    let query = this.db
+      .updateTable("symphony_runs")
+      .set({
+        status: updated.status,
+        run: JSON.stringify(updated),
+        updated_at: sql`now()`,
+      })
+      .where("owner_id", "=", ownerId)
+      .where("id", "=", runId);
+    if (options.allowedStatuses && options.allowedStatuses.length > 0) {
+      query = query.where("status", "in", options.allowedStatuses);
+    }
+    const result = await query.executeTakeFirst();
+    return Number(result.numUpdatedRows) > 0 ? updated : null;
   }
 
   async getRun(ownerId: string, runId: string): Promise<SymphonyRun | null> {

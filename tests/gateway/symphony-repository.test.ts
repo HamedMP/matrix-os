@@ -73,6 +73,35 @@ describe("Symphony repository", () => {
     await expect(repository.upsertRun("user_123", { ...run, id: "run_2" })).resolves.toMatchObject({ id: "run_2" });
   });
 
+  it("keeps stale status transitions from overwriting newer run state", async () => {
+    const run = {
+      id: "run_1",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "Build Symphony",
+      status: "queued" as const,
+      attempt: 1,
+      agent: "codex" as const,
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      lastEvent: "queued",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    };
+
+    await repository.upsertRun("user_123", run);
+    await repository.updateRun("user_123", "run_1", { status: "stopped" });
+
+    await expect(repository.updateRun("user_123", "run_1", {
+      status: "running",
+      sessionId: "sess_1",
+      lastEvent: "Agent session started",
+    }, { allowedStatuses: ["queued", "retrying"] })).resolves.toBeNull();
+    await expect(repository.getRun("user_123", "run_1")).resolves.toMatchObject({
+      status: "stopped",
+    });
+  });
+
   it("resolves authorized operators from the indexed operator table", async () => {
     await repository.saveConfig("user_123", {
       installation: {

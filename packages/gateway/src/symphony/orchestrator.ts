@@ -106,7 +106,7 @@ export function createMatrixSymphonyOrchestrator(options: {
           lastErrorCode: worktreeResult.error.code,
           lastEvent: "Worktree could not be created",
           nextRetryAt: new Date(Date.now() + 60_000).toISOString(),
-        }) ?? run;
+        }, { allowedStatuses: ["queued", "retrying"] }) ?? run;
       }
       const prompt = composeSymphonyPrompt({ workflow, ticket, attempt: run.attempt });
       const sessionResult = await options.agentSessionManager.startSession({
@@ -127,7 +127,7 @@ export function createMatrixSymphonyOrchestrator(options: {
           lastErrorCode: sessionResult.error.code,
           lastEvent: "Agent session could not be started",
           nextRetryAt: new Date(Date.now() + 60_000).toISOString(),
-        }) ?? run;
+        }, { allowedStatuses: ["queued", "retrying"] }) ?? run;
       }
       const running = await options.repository.updateRun(ownerId, run.id, {
         status: "running",
@@ -136,7 +136,13 @@ export function createMatrixSymphonyOrchestrator(options: {
         sessionId: sessionResult.session.id,
         lastEvent: "Agent session started",
         startedAt: timestamp,
-      }) ?? run;
+      }, { allowedStatuses: ["queued", "retrying"] });
+      if (!running) {
+        await options.agentSessionManager.killSession(sessionResult.session.id).catch((err: unknown) => {
+          console.warn("[symphony] Stale start session cleanup failed:", err instanceof Error ? err.message : String(err));
+        });
+        return await options.repository.getRun(ownerId, run.id) ?? run;
+      }
       await append(ownerId, {
         installationId: installation.id,
         runId: running.id,
@@ -268,7 +274,7 @@ export function createMatrixSymphonyOrchestrator(options: {
         status: "stopped",
         lastEvent: "Run stopped",
         finishedAt: nowIso(),
-      });
+      }, { allowedStatuses: ["queued", "running", "retrying", "blocked"] });
       await append(ownerId, {
         installationId: run.installationId,
         runId,
