@@ -682,7 +682,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   }, [wmSetWindows]);
 
   const addApp = useCallback((name: string, path: string, iconSlug?: string) => {
-    const slug = nameToSlug(name);
     const iconUrl = iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;

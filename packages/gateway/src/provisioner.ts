@@ -9,6 +9,7 @@ import {
   loadIconStyle,
   buildIconPrompt,
 } from "@matrix-os/kernel";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Dispatcher, BatchEntry, BatchResult } from "./dispatcher.js";
 import type { ServerMessage } from "./server.js";
@@ -109,6 +110,7 @@ async function generateIconsForApps(homePath: string, apiKey: string, appNames: 
 
   for (const appName of appNames) {
     const slug = appName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    if (existsSync(join(iconsDir, `${slug}.png`))) continue;
     try {
       await client.generateImage(buildIconPrompt(slug, iconStyle), {
         aspectRatio: "1:1",

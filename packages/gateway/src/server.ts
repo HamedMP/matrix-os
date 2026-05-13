@@ -3195,34 +3195,45 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ regenerated: 0, failed: [], generated: false });
     }
 
-    const iconStyle = loadIconStyle(homePath);
     const iconsDir = join(homePath, "system/icons");
     if (!existsSync(iconsDir)) {
       return c.json({ regenerated: 0, failed: [] });
     }
 
-    const pngFiles = readdirSync(iconsDir).filter((f: string) => f.endsWith(".png"));
-    const client = createImageClient(geminiKey);
-    let regenerated = 0;
-    const failed: string[] = [];
+    const apps = await listApps(homePath);
+    const appSlugs = new Set(apps.map((a) => a.slug).filter(Boolean));
+    const pngFiles = readdirSync(iconsDir)
+      .filter((f: string) => f.endsWith(".png"))
+      .filter((f: string) => appSlugs.has(f.replace(/\.png$/, "")));
 
-    for (const file of pngFiles) {
-      const slug = file.replace(/\.png$/, "");
-      try {
-        await client.generateImage(buildIconPrompt(slug, iconStyle), {
-          aspectRatio: "1:1",
-          imageDir: iconsDir,
-          saveAs: `${slug}.png`,
-        });
-        regenerated++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        console.error(`Icon regeneration failed for "${slug}":`, msg);
-        failed.push(slug);
+    const iconStyle = loadIconStyle(homePath);
+    const total = pngFiles.length;
+
+    // Return 202 immediately, regenerate in background
+    const regeneration = (async () => {
+      const client = createImageClient(geminiKey);
+      let regenerated = 0;
+      const failed: string[] = [];
+      for (const file of pngFiles) {
+        const slug = file.replace(/\.png$/, "");
+        try {
+          await client.generateImage(buildIconPrompt(slug, iconStyle), {
+            aspectRatio: "1:1",
+            imageDir: iconsDir,
+            saveAs: `${slug}.png`,
+          });
+          regenerated++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          console.error(`Icon regeneration failed for "${slug}":`, msg);
+          failed.push(slug);
+        }
       }
-    }
+      console.log(`[icons] Regeneration complete: ${regenerated}/${total} succeeded, ${failed.length} failed`);
+    })();
+    regeneration.catch((err) => console.error("[icons] Regeneration error:", err));
 
-    return c.json({ regenerated, failed });
+    return c.json({ accepted: true, total }, 202);
   });
 
   app.get("/api/cron", (c) => {
