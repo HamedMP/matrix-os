@@ -240,10 +240,11 @@ Candidates that expose local, loopback, link-local, private, multicast, or direc
 }
 ```
 
-Clients MUST reconnect media before `turnCredentialExpiresAt`. The server sends a fresh `media.offer`
-with new TURN credentials when the client reconnects or when the current credentials are within the
-`turnRefreshAt` window. If refresh cannot complete, the server falls back to the bounded WS frame
-transport or sends `stream.error` with `media_policy`.
+Clients MUST keep TURN credentials fresh before `turnCredentialExpiresAt`. The server uses
+`media.turn_refresh` as the proactive refresh path before `turnRefreshAt`; clients apply the new
+ICE server configuration and perform an ICE restart if needed. `media.offer` is only for initial
+setup, reconnect, renegotiation, or fallback recovery. If refresh cannot complete, the server falls
+back to the bounded WS frame transport or sends `stream.error` with `media_policy`.
 
 ### `media.offer`
 

@@ -18,7 +18,7 @@ The shared-runtime contract must be covered by tests before implementation:
 - Only the focused surface can send pointer, wheel, keyboard, IME, and paste input.
 - Agent actions and user input share one bounded action queue with permission checks at execution time.
 - Second-device attach returns takeover-required without launching Chromium.
-- Confirmed takeover notifies existing streams before closing them, releases the old lock, and creates a new runtime session.
+- Confirmed takeover notifies existing streams before closing them and atomically replaces the old lock/session with the new runtime session in one transaction or compare-and-swap operation; there must be no gap where two writers can launch against the same profile.
 
 **Alternatives considered**:
 - Keep `SessionManager` single-owner and create a separate Browser runtime: rejected because agent and user Browser would diverge on profile/security behavior.
