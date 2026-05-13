@@ -136,24 +136,64 @@ createRoot(document.getElementById("root")!).render(
 }
 ```
 
-### Theme Integration
-Apply theme via CSS custom properties in App.css:
+### Theme Integration — Matrix OS Design System
+ALWAYS use the Matrix OS brand palette. Load fonts and use gradient backgrounds:
 ```css
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
 :root {
-  --bg: #0a0a0a;
-  --fg: #ededed;
-  --accent: #6c5ce7;
-  --surface: #1a1a2e;
-  --border: #2a2a3a;
+  --bg: #FAFAF5;
+  --fg: #32352E;
+  --primary: #434E3F;
+  --primary-fg: #FAFAF5;
+  --accent: #D06F25;
+  --accent-fg: #fff;
+  --secondary: #E0E1CA;
+  --muted: #F0EDE4;
+  --muted-fg: #7A7768;
+  --card: #fff;
+  --border: #D6D3C8;
+  --sand-light: #F7F1E7;
+  --sand-mid: #F3EAE0;
+  --sand-warm: #D6AB8B;
 }
 
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
 body {
-  margin: 0;
-  background: var(--bg);
+  background: linear-gradient(170deg, var(--sand-light) 0%, var(--sand-mid) 30%, #F7F3ED 60%, var(--sand-light) 100%);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+h1, h2 { font-family: 'Orbitron', system-ui, sans-serif; }
+h3, h4, h5, h6 { font-family: 'Inter', system-ui, sans-serif; font-weight: 600; }
+
+button {
+  background: var(--primary);
+  color: var(--primary-fg);
+  border: none;
+  padding: 10px 24px;
+  border-radius: 50px;
+  font-family: 'Inter';
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+input, textarea, select {
+  background: rgba(255,255,255,0.8);
+  color: var(--fg);
+  border: 1.5px solid var(--border);
+  padding: 12px 20px;
+  border-radius: 50px;
+  font-family: 'Inter';
 }
 ```
+
+Icons: load Iconify CDN (`<script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>`) and use `<iconify-icon icon="lucide:plus">` — NEVER text characters as icons.
+
+For the full design system reference, read `~/agents/knowledge/matrix-design-system.md`.
 
 ### Build and Verify
 ```bash
