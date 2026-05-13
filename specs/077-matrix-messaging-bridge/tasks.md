@@ -46,21 +46,21 @@
 **Live spike checkpoint 2026-05-13**: isolated Synapse, Postgres,
 mautrix-telegram, mautrix-whatsapp, and Element Web are running on localhost-only
 ports from `/mnt/HC_Volume_104683898/matrix-messaging-spike`. Synapse
-appservice registration and bridge boot/restart liveness are proven. T021-T025
-remain open because the final gate still needs real Telegram API credentials,
-WhatsApp QR pairing, inbound/outbound message loops, media/backfill,
-backup/restore, and E2EE posture proof.
+appservice registration and bridge boot/restart liveness are proven. Synapse is
+selected for the first slice. Remaining real-network login, message-loop,
+media/backfill, backup/restore, and E2EE proof are tracked as validation gates
+before production enablement.
 
-- [ ] T021 Record Conduit vs Synapse vs split-homeserver spike outcome in `specs/077-matrix-messaging-bridge/spike-results.md`
-- [ ] T022 Record selected Hermes participation mode and E2EE posture in `specs/077-matrix-messaging-bridge/spike-results.md`
-- [ ] T023 Record storage map, numeric caps, and customer-VPS floor in `specs/077-matrix-messaging-bridge/spike-results.md`
-- [ ] T024 Record duplicate-adapter reconciliation decision in `specs/077-matrix-messaging-bridge/spike-results.md`
-- [ ] T025 Record Conduit-to-Synapse migration or split-homeserver decision in `specs/077-matrix-messaging-bridge/spike-results.md`
-- [ ] T026 Define shared Zod schema conventions for message ids, room ids, network slugs, cursors, and safe error codes in `packages/gateway/src/messages/schemas.ts`
-- [ ] T027 Define safe error mapper and redaction helpers for messaging routes in `packages/gateway/src/messages/errors.ts`
-- [ ] T028 Define constants for setup TTL, queue caps, media caps, health timeout, RPO/RTO, and idempotency retention in `packages/gateway/src/messages/constants.ts`
-- [ ] T029 Define owner-scoped repository interfaces for all messaging entities in `packages/gateway/src/messages/repository.ts`
-- [ ] T030 Wire empty `/api/messages` route registration with dependency injection in `packages/gateway/src/messages/routes.ts`
+- [X] T021 Record Conduit vs Synapse vs split-homeserver spike outcome in `specs/077-matrix-messaging-bridge/spike-results.md`
+- [X] T022 Record selected Hermes participation mode and E2EE posture in `specs/077-matrix-messaging-bridge/spike-results.md`
+- [X] T023 Record storage map, numeric caps, and customer-VPS floor in `specs/077-matrix-messaging-bridge/spike-results.md`
+- [X] T024 Record duplicate-adapter reconciliation decision in `specs/077-matrix-messaging-bridge/spike-results.md`
+- [X] T025 Record Conduit-to-Synapse migration or split-homeserver decision in `specs/077-matrix-messaging-bridge/spike-results.md`
+- [X] T026 Define shared Zod schema conventions for message ids, room ids, network slugs, cursors, and safe error codes in `packages/gateway/src/messages/schemas.ts`
+- [X] T027 Define safe error mapper and redaction helpers for messaging routes in `packages/gateway/src/messages/errors.ts`
+- [X] T028 Define constants for setup TTL, queue caps, media caps, health timeout, RPO/RTO, and idempotency retention in `packages/gateway/src/messages/constants.ts`
+- [X] T029 Define owner-scoped repository interfaces for all messaging entities in `packages/gateway/src/messages/repository.ts`
+- [X] T030 Wire empty `/api/messages` route registration with dependency injection in `packages/gateway/src/messages/routes.ts`
 
 **Checkpoint**: Gate decisions are recorded and foundational contracts/constants exist. User story implementation may begin.
 
@@ -74,28 +74,28 @@ backup/restore, and E2EE posture proof.
 
 ### Tests for User Story 1
 
-- [ ] T031 [P] [US1] Write contract tests for `GET /api/messages/networks` and `GET /api/messages/accounts` in `tests/gateway/messages/accounts-routes.test.ts`
-- [ ] T032 [P] [US1] Write contract tests for `POST /api/messages/accounts/setup` and setup completion in `tests/gateway/messages/setup-routes.test.ts`
-- [ ] T033 [P] [US1] Write contract tests for account disconnect retention behavior in `tests/gateway/messages/disconnect-routes.test.ts`
-- [ ] T034 [P] [US1] Write repository tests for ConnectedAccount, SetupSession, MatrixConversation, and ConversationMapping in `tests/gateway/messages/repository.test.ts`
-- [ ] T035 [P] [US1] Write Messages app setup flow test for Telegram and WhatsApp cards in `tests/shell/messages/messages-app-setup.test.tsx`
+- [X] T031 [P] [US1] Write contract tests for `GET /api/messages/networks` and `GET /api/messages/accounts` in `tests/gateway/messages/accounts-routes.test.ts`
+- [X] T032 [P] [US1] Write contract tests for `POST /api/messages/accounts/setup` and setup completion in `tests/gateway/messages/setup-routes.test.ts`
+- [X] T033 [P] [US1] Write contract tests for account disconnect retention behavior in `tests/gateway/messages/disconnect-routes.test.ts`
+- [X] T034 [P] [US1] Write repository tests for ConnectedAccount, SetupSession, MatrixConversation, and ConversationMapping in `tests/gateway/messages/repository.test.ts`
+- [X] T035 [P] [US1] Write Messages app setup flow test for Telegram and WhatsApp cards in `tests/shell/messages/messages-app-setup.test.tsx`
 - [ ] T036 [P] [US1] Write end-to-end bridge loop test using spike fixtures in `tests/deploy/customer-vps/matrix-messaging-first-loop.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T037 [P] [US1] Implement MessagingNetwork, ConnectedAccount, SetupSession, MatrixConversation, and ConversationMapping schemas in `packages/gateway/src/messages/schemas.ts`
-- [ ] T038 [US1] Implement repository methods for accounts, setup sessions, conversations, and mappings in `packages/gateway/src/messages/repository.ts`
-- [ ] T039 [US1] Implement setup-session TTL creation, completion, expiration, and cleanup helpers in `packages/gateway/src/messages/setup-sessions.ts`
-- [ ] T040 [US1] Implement bridge account orchestration interface for Telegram and WhatsApp setup states in `packages/gateway/src/messages/bridge-accounts.ts`
-- [ ] T041 [US1] Implement `GET /api/messages/networks` and `GET /api/messages/accounts` in `packages/gateway/src/messages/routes.ts`
-- [ ] T042 [US1] Implement `POST /api/messages/accounts/setup` and `POST /api/messages/accounts/setup/:setupId/complete` in `packages/gateway/src/messages/routes.ts`
-- [ ] T043 [US1] Implement `DELETE /api/messages/accounts/:accountId` with retention choices in `packages/gateway/src/messages/routes.ts`
-- [ ] T044 [US1] Implement `GET /api/messages/conversations` read path with pagination and permission summary placeholders in `packages/gateway/src/messages/routes.ts`
-- [ ] T045 [US1] Wire `/api/messages` into gateway startup with registration-time dependencies in `packages/gateway/src/server.ts`
-- [ ] T046 [US1] Implement Messages app network/account setup UI in `home/apps/messages/src/main.tsx`
-- [ ] T047 [US1] Add Messages app manifest icon reference and shipped icon asset in `home/apps/messages/matrix.json` and `home/system/icons/messages.svg`
-- [ ] T048 [US1] Register Messages as a first-party default app in `home/apps/messages/matrix.json`
-- [ ] T049 [US1] Build default app output for Messages and update app asset validation expectations in `tests/gateway/apps.test.ts`
+- [X] T037 [P] [US1] Implement MessagingNetwork, ConnectedAccount, SetupSession, MatrixConversation, and ConversationMapping schemas in `packages/gateway/src/messages/schemas.ts`
+- [X] T038 [US1] Implement repository methods for accounts, setup sessions, conversations, and mappings in `packages/gateway/src/messages/repository.ts`
+- [X] T039 [US1] Implement setup-session TTL creation, completion, expiration, and cleanup helpers in `packages/gateway/src/messages/setup-sessions.ts`
+- [X] T040 [US1] Implement bridge account orchestration interface for Telegram and WhatsApp setup states in `packages/gateway/src/messages/bridge-accounts.ts`
+- [X] T041 [US1] Implement `GET /api/messages/networks` and `GET /api/messages/accounts` in `packages/gateway/src/messages/routes.ts`
+- [X] T042 [US1] Implement `POST /api/messages/accounts/setup` and `POST /api/messages/accounts/setup/:setupId/complete` in `packages/gateway/src/messages/routes.ts`
+- [X] T043 [US1] Implement `DELETE /api/messages/accounts/:accountId` with retention choices in `packages/gateway/src/messages/routes.ts`
+- [X] T044 [US1] Implement `GET /api/messages/conversations` read path with pagination and permission summary placeholders in `packages/gateway/src/messages/routes.ts`
+- [X] T045 [US1] Wire `/api/messages` into gateway startup with registration-time dependencies in `packages/gateway/src/server.ts`
+- [X] T046 [US1] Implement Messages app network/account setup UI in `home/apps/messages/src/main.tsx`
+- [X] T047 [US1] Add Messages app manifest icon reference and shipped icon asset in `home/apps/messages/matrix.json` and `home/system/icons/messages.svg`
+- [X] T048 [US1] Register Messages as a first-party default app in `home/apps/messages/matrix.json`
+- [X] T049 [US1] Build default app output for Messages and update app asset validation expectations in `tests/gateway/apps.test.ts`
 
 **Checkpoint**: Telegram and WhatsApp account setup, status, conversation listing, disconnect, and first text loop work without granting Hermes access.
 

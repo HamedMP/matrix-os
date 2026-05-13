@@ -95,6 +95,15 @@ export { createCanvasRoutes } from "./canvas/routes.js";
 export type { CanvasRouteDeps, CanvasRouteService } from "./canvas/routes.js";
 export { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 export type { CanvasSubscriber, CanvasSubscriptionHubOptions } from "./canvas/subscriptions.js";
+export { createMessagingRoutes } from "./messages/routes.js";
+export { MessagingError, mapMessagingError } from "./messages/errors.js";
+export { MessagingKyselyRepository } from "./messages/repository.js";
+export type {
+  MessagingRepository,
+  MessagingOwnerScope,
+  MessagingListResult,
+  MessagingBridgeAccountProvider,
+} from "./messages/repository.js";
 export { createSymphonyRunner, SymphonyConfigSchema, SymphonyConfigUpdateSchema, SymphonyTrackerConfigSchema, SymphonyTrackerConfigUpdateSchema } from "./symphony-runner.js";
 export type { SymphonyConfig, SymphonyConfigUpdate, SymphonyStatus, SymphonyStartResult } from "./symphony-runner.js";
 export { createSymphonyRoutes } from "./symphony-routes.js";
