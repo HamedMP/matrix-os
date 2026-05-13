@@ -107,6 +107,25 @@ describe("BrowserRuntimeService", () => {
     expect(outcomes).toEqual(["continue", "abort"]);
   });
 
+  it("pins Chromium DNS resolution to the active navigation policy", async () => {
+    const launchArgs: string[][] = [];
+    const runtime = new BrowserRuntimeService({
+      launcher: async (opts) => {
+        launchArgs.push(opts?.args ?? []);
+        return fakeBrowser();
+      },
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async (hostname) => hostname === "example.com" ? ["93.184.216.34"] : ["93.184.216.35"],
+    });
+
+    await runtime.open({ profile: "default", deviceId: "device_1" });
+    await runtime.navigate("https://example.com/docs");
+    await runtime.navigate("https://other.example/docs");
+
+    expect(launchArgs[1]).toContain("--host-resolver-rules=MAP example.com 93.184.216.34");
+    expect(launchArgs[2]).toContain("--host-resolver-rules=MAP other.example 93.184.216.35");
+  });
+
   it("enforces session, stream, memory, disk, and download limits", async () => {
     const runtime = new BrowserRuntimeService({
       launcher: async () => fakeBrowser(),

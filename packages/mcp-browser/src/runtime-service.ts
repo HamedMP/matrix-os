@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import {
   assertRuntimeRequestMatchesPolicy,
   createBrowserNavigationPolicy,
+  createChromiumHostResolverRules,
   type BrowserNavigationPolicyBinding,
   type ResolveHostname,
 } from "./security.js";
@@ -74,6 +75,7 @@ export class BrowserRuntimeService {
   private recoverableTabs: BrowserRuntimeTabState[] = [];
   private activeTabId: string | undefined;
   private activePolicy: BrowserNavigationPolicyBinding | undefined;
+  private launchHostResolverRules: string[] = [];
   private requestPolicyInstalled = false;
 
   constructor(opts: BrowserRuntimeServiceOptions) {
@@ -88,7 +90,10 @@ export class BrowserRuntimeService {
     this.manager = new SessionManager({
       launcher: async (launchOpts) => opts.launcher({
         ...launchOpts,
-        args: chromiumBrowserLaunchArgs(),
+        args: [
+          ...chromiumBrowserLaunchArgs(),
+          ...hostResolverLaunchArgs(this.launchHostResolverRules),
+        ],
       }),
       profileRoot: opts.profileRoot,
       defaultProfile: opts.defaultProfile,
@@ -97,10 +102,18 @@ export class BrowserRuntimeService {
     });
   }
 
-  async open(opts: { profile?: string; deviceId?: string; sessionId?: string }): Promise<BrowserRuntimeSessionState> {
+  async open(opts: {
+    profile?: string;
+    deviceId?: string;
+    sessionId?: string;
+    navigationPolicy?: BrowserNavigationPolicyBinding;
+  }): Promise<BrowserRuntimeSessionState> {
     const active = this.manager.getActive();
     if (!active) {
       this.assertOwnerLimits({ sessions: 0 });
+      this.launchHostResolverRules = opts.navigationPolicy
+        ? createChromiumHostResolverRules(opts.navigationPolicy)
+        : [];
     }
     const session = await this.manager.launch(opts);
     if (this.tabs.size === 0 && this.recoverableTabs.length > 0) {
@@ -131,9 +144,21 @@ export class BrowserRuntimeService {
     const policy = await createBrowserNavigationPolicy(url, {
       ...(this.resolveHostname ? { resolveHostname: this.resolveHostname } : {}),
     });
-    const session = this.manager.getActive();
+    let session = this.manager.getActive();
     if (!session) {
       throw new Error("browser_session_not_open");
+    }
+    const nextRules = createChromiumHostResolverRules(policy);
+    if (!sameStringList(nextRules, this.launchHostResolverRules)) {
+      const { id, profile, lockDeviceId } = session;
+      await this.manager.close();
+      this.launchHostResolverRules = nextRules;
+      session = await this.manager.launch({
+        sessionId: id,
+        profile,
+        ...(lockDeviceId ? { deviceId: lockDeviceId } : {}),
+      });
+      this.requestPolicyInstalled = false;
     }
     await this.installRequestPolicy(session, policy);
     await session.page.goto(policy.normalizedUrl, { waitUntil: "domcontentloaded" });
@@ -331,6 +356,14 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+function hostResolverLaunchArgs(rules: string[]): string[] {
+  return rules.length > 0 ? [`--host-resolver-rules=${rules.join(",")}`] : [];
+}
+
+function sameStringList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
 export function startBrowserRuntimeDaemon(opts: { port?: number } = {}) {
   const port = opts.port ?? Number(process.env.BROWSER_RUNTIME_PORT ?? 4011);
   const runtimePromise = createDefaultBrowserRuntimeService().catch((error: unknown) => {
@@ -370,7 +403,15 @@ async function handleBrowserRuntimeRequest(
     const deviceId = typeof body.deviceId === "string" ? body.deviceId : undefined;
     const sessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
     const targetUrl = typeof body.targetUrl === "string" ? body.targetUrl : undefined;
-    let state = await runtime.open({ profile: profileName, deviceId, sessionId });
+    const navigationPolicy = targetUrl && targetUrl !== "about:blank"
+      ? await runtime.prepareNavigation(targetUrl)
+      : undefined;
+    let state = await runtime.open({
+      profile: profileName,
+      deviceId,
+      sessionId,
+      ...(navigationPolicy ? { navigationPolicy } : {}),
+    });
     if (targetUrl && targetUrl !== "about:blank") {
       state = await runtime.navigate(targetUrl);
     }
