@@ -91,6 +91,16 @@ describe("build-cache", () => {
       expect(after).not.toBe(before);
     });
 
+    it("hashes symlinked source files matched by app source globs", async () => {
+      await mkdir(join(tmpDir, "src"), { recursive: true });
+      await writeFile(join(tmpDir, "shared.ts"), "export const value = 1;");
+      await symlink(join(tmpDir, "shared.ts"), join(tmpDir, "src", "linked.ts"));
+      const before = await hashSources(tmpDir, ["src/**/*.ts"]);
+      await writeFile(join(tmpDir, "shared.ts"), "export const value = 2;");
+      const after = await hashSources(tmpDir, ["src/**/*.ts"]);
+      expect(after).not.toBe(before);
+    });
+
     it("ignores dependency and output trees outside source glob roots", async () => {
       await mkdir(join(tmpDir, "src"), { recursive: true });
       await mkdir(join(tmpDir, "node_modules", "pkg"), { recursive: true });

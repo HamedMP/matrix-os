@@ -169,7 +169,7 @@ import {
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
-import { BrowserStreamController, BrowserStreamHub } from "./browser/ws.js";
+import { BrowserStreamController, BrowserStreamHub, parseBrowserWsMessage } from "./browser/ws.js";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -3481,11 +3481,26 @@ export async function createGateway(config: GatewayConfig) {
             sender: ws,
           });
         },
-        onMessage(evt, ws) {
+        async onMessage(evt, ws) {
           try {
+            const raw = typeof evt.data === "string" ? evt.data : Buffer.from(evt.data as ArrayBuffer);
+            const parsed = parseBrowserWsMessage(raw);
+            if (parsed.type === "browser.navigate") {
+              await browserService.navigateSession({
+                ownerId,
+                sessionId,
+                targetUrl: parsed.payload.targetUrl,
+                surface: parsed.payload.surface,
+              });
+              ws.send(JSON.stringify({
+                type: "navigation.committed",
+                payload: { url: parsed.payload.targetUrl },
+              }));
+              return;
+            }
             browserStreamHub.touch(connectionId, surfaceId);
             const messages = controller.handleClientMessage(
-              typeof evt.data === "string" ? evt.data : Buffer.from(evt.data as ArrayBuffer),
+              raw,
               { surfaceId },
             );
             for (const message of messages) {

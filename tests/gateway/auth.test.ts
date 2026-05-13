@@ -6,16 +6,26 @@ import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalEr
 const WEBHOOK_PROVIDERS = new Set(["twilio", "mock"]);
 const TEST_TOKEN = "test-bearer-token-for-auth-tests";
 
-function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string) {
+function mockContext(
+  path: string,
+  authHeader?: string,
+  queryToken?: string,
+  ip?: string,
+  opts: { method?: string; headers?: Record<string, string> } = {},
+) {
   const url = queryToken
     ? `http://localhost:4000${path}?token=${queryToken}`
     : `http://localhost:4000${path}`;
+  const headers = new Map(Object.entries(opts.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value]));
   return {
     req: {
       path,
       url,
+      method: opts.method ?? "GET",
       header: (name: string) => {
         const lower = name.toLowerCase();
+        const custom = headers.get(lower);
+        if (custom) return custom;
         if (name === "Authorization") return authHeader;
         if ((name === "X-Forwarded-For" || lower === "x-forwarded-for") && ip) return ip;
         return undefined;
@@ -192,10 +202,38 @@ describe("T133: Auth token middleware", () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
     await mw(
-      mockContext("/api/browser/sessions", undefined, undefined, "10.0.0.4"),
+      mockContext("/api/browser/sessions", undefined, undefined, "10.0.0.4", {
+        method: "POST",
+        headers: { "x-browser-handoff": "1" },
+      }),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);
+  });
+
+  it("rejects non-POST browser handoff bootstrap without bearer auth", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/api/browser/sessions", undefined, undefined, "10.0.0.5", {
+        method: "GET",
+        headers: { "x-browser-handoff": "1" },
+      }),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
+  it("rejects browser session POST bootstrap without the handoff marker", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/api/browser/sessions", undefined, undefined, "10.0.0.6", { method: "POST" }),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
   });
 
   it("rejects REST endpoint with query token (only WS allowed)", async () => {

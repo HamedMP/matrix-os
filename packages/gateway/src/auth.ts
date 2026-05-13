@@ -203,7 +203,11 @@ export function authMiddleware(
     if (BROWSER_WS_QUERY_TOKEN_PATTERN.test(normalizedPath)) {
       return nextWithReady(c, next);
     }
-    if (BROWSER_HANDOFF_REST_PATHS.includes(normalizedPath)) {
+    if (
+      c.req.method === "POST" &&
+      BROWSER_HANDOFF_REST_PATHS.includes(normalizedPath) &&
+      c.req.header("x-browser-handoff") === "1"
+    ) {
       return nextWithReady(c, next);
     }
 

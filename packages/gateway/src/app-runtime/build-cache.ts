@@ -20,7 +20,12 @@ export async function hashSources(appDir: string, globs: string[]): Promise<stri
       const abs = join(appDir, match);
       try {
         const st = await lstat(abs);
-        if (st.isFile()) files.add(abs);
+        if (st.isFile()) {
+          files.add(abs);
+        } else if (st.isSymbolicLink()) {
+          const target = await stat(abs);
+          if (target.isFile()) files.add(abs);
+        }
       } catch (err: unknown) {
         // ENOENT is expected for symlink-to-missing; rethrow anything else
         // (EACCES, EIO, EMFILE) so the build surfaces real filesystem errors
