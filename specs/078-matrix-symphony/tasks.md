@@ -135,7 +135,7 @@
 - [x] T044 Run focused tests from `specs/078-matrix-symphony/quickstart.md`
 - [x] T045 Run `bun run typecheck` from repo root `/home/deploy/matrix-os.worktrees/078-matrix-symphony`
 - [x] T046 Run `bun run check:patterns` from repo root `/home/deploy/matrix-os.worktrees/078-matrix-symphony`
-- [ ] T047 Run `bun run test` from repo root `/home/deploy/matrix-os.worktrees/078-matrix-symphony`
+- [x] T047 Run `bun run test` from repo root `/home/deploy/matrix-os.worktrees/078-matrix-symphony`
 - [x] T048 Review changed files with `docs/dev/review-pipeline.md` trust-boundary and atomicity passes
 - [x] T049 Commit implementation with Conventional Commit messages
 - [x] T050 Push `078-matrix-symphony` and open PR with backend invariants

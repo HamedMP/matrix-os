@@ -180,6 +180,7 @@ createRoot(document.getElementById("root")!).render(
   --muted: #F0EDE4;
   --muted-fg: #7A7768;
   --card: #FFFFFF;
+  --surface: #FFFFFF;
   --border: #D6D3C8;
   --sand-light: #F7F1E7;
   --sand-mid: #F3EAE0;
