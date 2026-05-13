@@ -42,6 +42,15 @@
 - [X] T018 Implement reusable spike fixture helpers for homeserver candidates in `tests/deploy/customer-vps/helpers/matrix-homeserver-fixtures.ts`
 - [X] T019 Implement reusable spike fixture helpers for Telegram and WhatsApp bridge lifecycle in `tests/deploy/customer-vps/helpers/matrix-bridge-fixtures.ts`
 - [X] T020 Implement resource-floor detector helper for messaging-enabled VPSes in `tests/deploy/customer-vps/helpers/messaging-resource-floor.ts`
+
+**Live spike checkpoint 2026-05-13**: isolated Synapse, Postgres,
+mautrix-telegram, mautrix-whatsapp, and Element Web are running on localhost-only
+ports from `/mnt/HC_Volume_104683898/matrix-messaging-spike`. Synapse
+appservice registration and bridge boot/restart liveness are proven. T021-T025
+remain open because the final gate still needs real Telegram API credentials,
+WhatsApp QR pairing, inbound/outbound message loops, media/backfill,
+backup/restore, and E2EE posture proof.
+
 - [ ] T021 Record Conduit vs Synapse vs split-homeserver spike outcome in `specs/077-matrix-messaging-bridge/spike-results.md`
 - [ ] T022 Record selected Hermes participation mode and E2EE posture in `specs/077-matrix-messaging-bridge/spike-results.md`
 - [ ] T023 Record storage map, numeric caps, and customer-VPS floor in `specs/077-matrix-messaging-bridge/spike-results.md`

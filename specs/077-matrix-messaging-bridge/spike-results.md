@@ -15,6 +15,7 @@ against real homeserver and bridge services.
   attached Hetzner volume for Docker/containerd storage
 - Spike runtime paths:
   - Data root: `/mnt/HC_Volume_104683898/matrix-messaging-spike`
+  - Element Web client: `127.0.0.1:8625`
   - Synapse client API: `127.0.0.1:8618`
   - Telegram bridge appservice: `127.0.0.1:8620`
   - WhatsApp bridge appservice: `127.0.0.1:8621`
@@ -44,6 +45,8 @@ against real homeserver and bridge services.
   - Restart recovery for `matrix-spike-postgres`, `matrix-spike-synapse`,
     `matrix-spike-telegram`, and `matrix-spike-whatsapp` passed at the service
     liveness layer.
+  - Element Web boots at `http://127.0.0.1:8625` and is configured to use the
+    spike Synapse homeserver at `http://127.0.0.1:8618`.
   - Docker/containerd storage was moved to `/mnt/HC_Volume_104683898` before
     this spike so root disk pressure does not affect image pulls or bridge
     state.
