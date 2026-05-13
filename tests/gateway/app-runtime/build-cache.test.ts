@@ -91,6 +91,16 @@ describe("build-cache", () => {
       expect(after).not.toBe(before);
     });
 
+    it("does not recurse forever through symlinked source directory cycles", async () => {
+      await mkdir(join(tmpDir, "src"), { recursive: true });
+      await writeFile(join(tmpDir, "src", "index.ts"), "export const value = 1;");
+      await symlink(tmpDir, join(tmpDir, "src", "loop"));
+
+      const hash = await hashSources(tmpDir, ["src/**/*.ts"]);
+
+      expect(hash.length).toBeGreaterThan(0);
+    });
+
     it("hashes symlinked source files matched by app source globs", async () => {
       await mkdir(join(tmpDir, "src"), { recursive: true });
       await writeFile(join(tmpDir, "shared.ts"), "export const value = 1;");

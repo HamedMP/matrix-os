@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 
@@ -65,10 +65,20 @@ async function listFilesForPattern(appDir: string, pattern: string): Promise<str
   return listFiles(appDir, root, pattern.includes("**"));
 }
 
-async function listFiles(dir: string, prefix = "", recursive = true): Promise<string[]> {
+async function listFiles(dir: string, prefix = "", recursive = true, visited = new Set<string>()): Promise<string[]> {
+  const currentDir = join(dir, prefix);
+  let currentRealPath: string;
+  try {
+    currentRealPath = await realpath(currentDir);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  if (visited.has(currentRealPath)) return [];
+  visited.add(currentRealPath);
   let entries;
   try {
-    entries = await readdir(join(dir, prefix), { withFileTypes: true, encoding: "utf8" });
+    entries = await readdir(currentDir, { withFileTypes: true, encoding: "utf8" });
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
@@ -78,13 +88,13 @@ async function listFiles(dir: string, prefix = "", recursive = true): Promise<st
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       if (recursive) {
-        files.push(...await listFiles(dir, rel, true));
+        files.push(...await listFiles(dir, rel, true, visited));
       }
     } else if (entry.isSymbolicLink()) {
       try {
         const target = await stat(join(dir, rel));
         if (target.isDirectory()) {
-          if (recursive) files.push(...await listFiles(dir, rel, true));
+          if (recursive) files.push(...await listFiles(dir, rel, true, visited));
         } else if (target.isFile()) {
           files.push(rel);
         }
