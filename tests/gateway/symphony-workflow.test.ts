@@ -1,11 +1,70 @@
-import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { composeSymphonyPrompt, loadWorkflowContract, SymphonyWorkflowError } from "../../packages/gateway/src/symphony/prompt.js";
 
 describe("Symphony workflow", () => {
-  it("does not configure Codex agents to inherit the full runner environment", async () => {
-    const workflow = await readFile("WORKFLOW.md", "utf8");
+  let homePath: string;
+  let repoPath: string;
 
-    expect(workflow).not.toContain("shell_environment_policy.inherit=all");
-    expect(workflow).toContain("shell_environment_policy.inherit=core");
+  beforeEach(async () => {
+    homePath = await mkdtemp(join(tmpdir(), "matrix-symphony-workflow-"));
+    repoPath = join(homePath, "projects", "matrix-os", "repo");
+    await mkdir(repoPath, { recursive: true });
+    await atomicWriteJson(join(homePath, "projects", "matrix-os", "config.json"), {
+      id: "proj_matrix",
+      slug: "matrix-os",
+      name: "Matrix OS",
+      localPath: repoPath,
+      addedAt: "2026-05-13T00:00:00.000Z",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+  });
+
+  afterEach(() => {
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("loads workflow policy inside the selected Matrix project", async () => {
+    await writeFile(join(repoPath, "WORKFLOW.md"), "Run tests before handoff.");
+
+    await expect(loadWorkflowContract({ homePath, projectSlug: "matrix-os" })).resolves.toMatchObject({
+      projectSlug: "matrix-os",
+      body: "Run tests before handoff.",
+    });
+  });
+
+  it("rejects workflow paths outside the Matrix project", async () => {
+    await expect(loadWorkflowContract({ homePath, projectSlug: "matrix-os", workflowPath: "../secret.md" }))
+      .rejects.toBeInstanceOf(SymphonyWorkflowError);
+  });
+
+  it("composes prompt from workflow and ticket context without secrets", () => {
+    const prompt = composeSymphonyPrompt({
+      workflow: {
+        projectSlug: "matrix-os",
+        path: "/repo/WORKFLOW.md",
+        body: "Follow WORKFLOW.md.",
+        lastLoadedAt: "2026-05-13T00:00:00.000Z",
+      },
+      ticket: {
+        externalId: "issue_1",
+        identifier: "MAT-1",
+        title: "Build Matrix Symphony",
+        stateName: "Todo",
+        assigneeName: "Hamed",
+        labels: ["symphony"],
+      },
+      attempt: 1,
+    });
+
+    expect(prompt).toContain("Follow WORKFLOW.md.");
+    expect(prompt).toContain("MAT-1");
+    expect(prompt).toContain("Build Matrix Symphony");
+    expect(prompt).not.toContain("lin_api");
   });
 });

@@ -13,11 +13,14 @@
 3. Run focused tests while implementing:
 
    ```bash
-   pnpm exec vitest run \
+   bun run test \
      tests/gateway/symphony-repository.test.ts \
+     tests/gateway/symphony-credential-store.test.ts \
+     tests/gateway/symphony-status-hub.test.ts \
      tests/gateway/symphony-linear-source.test.ts \
      tests/gateway/symphony-orchestrator.test.ts \
      tests/gateway/symphony-routes.test.ts \
+     tests/gateway/symphony-workflow.test.ts \
      tests/gateway/symphony-restart-recovery.test.ts \
      tests/default-apps/symphony-app.test.tsx
    ```
