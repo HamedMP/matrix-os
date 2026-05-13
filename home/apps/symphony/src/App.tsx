@@ -182,7 +182,7 @@ export default function App() {
             pollIntervalMs: 30_000,
             maxConcurrentAgents: Number(form.maxConcurrentAgents),
             defaultAgent: form.defaultAgent,
-            authorizedOperators: [],
+            authorizedOperators: config?.installation?.authorizedOperators ?? [],
           },
           rule: {
             teamId: form.teamId,

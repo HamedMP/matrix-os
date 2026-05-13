@@ -53,7 +53,7 @@ describe("Symphony app", () => {
             pollIntervalMs: 30000,
             maxConcurrentAgents: 3,
             defaultAgent: "codex",
-            authorizedOperators: [],
+            authorizedOperators: ["user_456"],
           },
           rule: {
             teamId: "team_1",
@@ -142,6 +142,9 @@ describe("Symphony app", () => {
     const configCall = calls.find((call) => call.url === "/api/symphony/config" && call.init?.method === "POST");
     expect(configCall).toBeTruthy();
     expect(String(configCall?.init?.body)).not.toContain("lin_api_secret");
+    expect(JSON.parse(String(configCall?.init?.body))).toMatchObject({
+      installation: { authorizedOperators: ["user_456"] },
+    });
   });
 
   it("runs dashboard actions without shell commands or raw GraphQL", async () => {

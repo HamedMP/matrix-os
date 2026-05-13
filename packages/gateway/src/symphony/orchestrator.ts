@@ -40,6 +40,12 @@ function shouldDispatch(ticket: TrackedTicket, rule: TicketSourceRule): boolean 
   return true;
 }
 
+function isRetryBackoffActive(run: SymphonyRun, nowMs = Date.now()): boolean {
+  if (run.status !== "retrying" || !run.nextRetryAt) return false;
+  const retryAt = Date.parse(run.nextRetryAt);
+  return Number.isFinite(retryAt) && retryAt > nowMs;
+}
+
 export function createMatrixSymphonyOrchestrator(options: {
   homePath: string;
   repository: SymphonyRepository;
@@ -69,6 +75,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       ? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket))
       : existing;
     const timestamp = nowIso();
+    if (active && isRetryBackoffActive(active)) return active;
     if (active && active.status !== "queued" && active.status !== "retrying") return active;
 
     const run: SymphonyRun = active ?? {
@@ -173,6 +180,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       if (dispatched >= capacity) break;
       if (!shouldDispatch(ticket, snapshot.rule)) continue;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+      if (existing && isRetryBackoffActive(existing)) continue;
       if (existing && existing.status !== "queued" && existing.status !== "retrying") continue;
       const run = await dispatchTicket(ownerId, snapshot.installation, snapshot.rule, ticket, existing);
       if (run.status === "running" || run.status === "queued" || run.status === "retrying") dispatched += 1;
@@ -275,6 +283,11 @@ export function createMatrixSymphonyOrchestrator(options: {
     async retryRun(ownerId: string, runId: string, actorId: string) {
       const run = await options.repository.getRun(ownerId, runId);
       if (!run) return null;
+      if (run.sessionId) {
+        await options.agentSessionManager.killSession(run.sessionId).catch((err: unknown) => {
+          console.warn("[symphony] Retry run session kill failed:", err instanceof Error ? err.message : String(err));
+        });
+      }
       const updated = await options.repository.updateRun(ownerId, runId, {
         status: "queued",
         attempt: run.attempt + 1,

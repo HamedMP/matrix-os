@@ -213,4 +213,18 @@ describe("Matrix Symphony routes", () => {
     expect(orchestrator.stopRun).toHaveBeenCalledWith("user_123", "run_1", "user_123");
     expect(await res.json()).toMatchObject({ run: { status: "stopped" } });
   });
+
+  it("returns start success even when the immediate poll fails after enabling", async () => {
+    const { app, orchestrator } = deps(structuredClone(baseSnapshot));
+    orchestrator.poll = vi.fn(async () => {
+      throw new Error("linear_unavailable");
+    });
+
+    const res = await app.request(jsonRequest("/start", "POST", {}));
+
+    expect(res.status).toBe(200);
+    expect(orchestrator.start).toHaveBeenCalledWith("user_123", "user_123");
+    expect(orchestrator.poll).toHaveBeenCalledWith("user_123");
+    expect(await res.json()).toMatchObject({ running: true, installationId: "sym_user_123" });
+  });
 });

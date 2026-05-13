@@ -195,7 +195,9 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     const parsed = await parseJson(c, EmptyBodySchema);
     if (!parsed.ok) return parsed.response;
     const installation = await deps.orchestrator.start(auth.ownerId, principal.userId);
-    await deps.orchestrator.poll(auth.ownerId);
+    void deps.orchestrator.poll(auth.ownerId).catch((err: unknown) => {
+      console.warn("[symphony] Initial poll after start failed:", err instanceof Error ? err.message : String(err));
+    });
     return c.json({ running: installation.enabled, installationId: installation.id });
   }));
 
