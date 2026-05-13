@@ -46,10 +46,11 @@ export function autoArrangeWindows() {
   }
 
   const arranged = useWindowManager.getState().windows.filter((w) => !w.minimized);
+  const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
   useCanvasTransform.getState().fitAll(
     arranged.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-    window.innerWidth,
-    window.innerHeight,
+    cRect?.width ?? window.innerWidth,
+    cRect?.height ?? window.innerHeight,
   );
 }
 
@@ -69,10 +70,11 @@ export function CanvasToolbar() {
 
   const onFitAll = useCallback(() => {
     const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
+    const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
     fitAll(
       windows.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-      window.innerWidth,
-      window.innerHeight,
+      cRect?.width ?? window.innerWidth,
+      cRect?.height ?? window.innerHeight,
     );
   }, [fitAll]);
 
@@ -80,7 +82,10 @@ export function CanvasToolbar() {
   const screenToCanvas = useCanvasTransform((s) => s.screenToCanvas);
 
   const onAddLabel = useCallback(() => {
-    const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
+    const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+    const cx = (cRect?.left ?? 0) + (cRect?.width ?? window.innerWidth) / 2;
+    const cy = (cRect?.top ?? 0) + (cRect?.height ?? window.innerHeight) / 2;
+    const center = screenToCanvas(cx, cy);
     createLabel("Label", center.x, center.y);
   }, [screenToCanvas, createLabel]);
 

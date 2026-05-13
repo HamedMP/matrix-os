@@ -27,6 +27,8 @@ export function CanvasTransform({
   const panBy = useCanvasTransform((s) => s.panBy);
   const navMode = useCanvasSettings((s) => s.navMode);
 
+  const setContainerEl = useCanvasTransform((s) => s.setContainerEl);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const zoomOverlayRef = useRef<HTMLDivElement>(null);
   const transformRef = useRef<HTMLDivElement>(null);
@@ -35,6 +37,11 @@ export function CanvasTransform({
   const lastPointer = useRef({ x: 0, y: 0 });
   const spaceDown = useRef(false);
   const [grabCursor, setGrabCursor] = useState(false);
+
+  useEffect(() => {
+    setContainerEl(containerRef.current);
+    return () => setContainerEl(null);
+  }, [setContainerEl]);
 
   const isCanvasSurfaceEvent = useCallback((target: EventTarget | null) => {
     if (

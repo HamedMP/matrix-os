@@ -75,13 +75,18 @@ export function CanvasMinimap() {
     ctx.roundRect(0, 0, LG_W, LG_H, 8);
     ctx.fill();
 
-    const { zoom, panX, panY, screenToCanvas } = useCanvasTransform.getState();
+    const { zoom, panX, panY, screenToCanvas, containerEl } = useCanvasTransform.getState();
     const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
     const groups = useCanvasGroups.getState().groups;
 
-    // Viewport rect in canvas coords
-    const topLeft = screenToCanvas(0, 0);
-    const bottomRight = screenToCanvas(window.innerWidth, window.innerHeight);
+    // Viewport rect in canvas coords — use container bounds, not window bounds
+    const cRect = containerEl?.getBoundingClientRect();
+    const cLeft = cRect?.left ?? 0;
+    const cTop = cRect?.top ?? 0;
+    const cRight = cLeft + (cRect?.width ?? window.innerWidth);
+    const cBottom = cTop + (cRect?.height ?? window.innerHeight);
+    const topLeft = screenToCanvas(cLeft, cTop);
+    const bottomRight = screenToCanvas(cRight, cBottom);
     const viewportRect = {
       x: topLeft.x,
       y: topLeft.y,
@@ -155,10 +160,15 @@ export function CanvasMinimap() {
       const mx = clientX - rect.left;
       const my = clientY - rect.top;
 
-      const { zoom, screenToCanvas } = useCanvasTransform.getState();
+      const { zoom, screenToCanvas, containerEl } = useCanvasTransform.getState();
       const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
-      const topLeft = screenToCanvas(0, 0);
-      const bottomRight = screenToCanvas(window.innerWidth, window.innerHeight);
+      const cRect = containerEl?.getBoundingClientRect();
+      const cLeft = cRect?.left ?? 0;
+      const cTop = cRect?.top ?? 0;
+      const cW = cRect?.width ?? window.innerWidth;
+      const cH = cRect?.height ?? window.innerHeight;
+      const topLeft = screenToCanvas(cLeft, cTop);
+      const bottomRight = screenToCanvas(cLeft + cW, cTop + cH);
       const viewportRect = {
         x: topLeft.x,
         y: topLeft.y,
@@ -181,8 +191,8 @@ export function CanvasMinimap() {
       const canvasY = (my - offsetY) / scale + world.minY;
 
       // Center viewport on this point
-      const panX = window.innerWidth / (2 * zoom) - canvasX;
-      const panY = window.innerHeight / (2 * zoom) - canvasY;
+      const panX = cW / (2 * zoom) - canvasX;
+      const panY = cH / (2 * zoom) - canvasY;
       useCanvasTransform.getState().setPan(panX, panY);
     },
     [],
