@@ -226,11 +226,15 @@ For very simple tools (calculators, clocks, single-screen utilities), use `~/app
 ### Manifest
 ```json
 {
-  "name": "my-app",
-  "title": "My App",
-  "type": "html-app",
+  "name": "My App",
+  "slug": "my-app",
   "description": "Short description",
-  "status": "active"
+  "version": "1.0.0",
+  "runtime": "static",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "scope": "personal",
+  "category": "utilities"
 }
 ```
 
