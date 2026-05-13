@@ -46,6 +46,14 @@ function isRetryBackoffActive(run: SymphonyRun, nowMs = Date.now()): boolean {
   return Number.isFinite(retryAt) && retryAt > nowMs;
 }
 
+function failedKillCode(result: unknown): string | null {
+  if (!result || typeof result !== "object" || !("ok" in result) || (result as { ok?: unknown }).ok !== false) {
+    return null;
+  }
+  const error = (result as { error?: { code?: unknown } }).error;
+  return typeof error?.code === "string" ? error.code : "session_kill_failed";
+}
+
 export function createMatrixSymphonyOrchestrator(options: {
   homePath: string;
   repository: SymphonyRepository;
@@ -62,6 +70,62 @@ export function createMatrixSymphonyOrchestrator(options: {
     const record = await options.repository.appendEvent(ownerId, event);
     await options.statusHub?.publishOperatorEvent(ownerId, record);
     return record;
+  }
+
+  async function killRunSession(run: SymphonyRun, logContext: string): Promise<string | null> {
+    if (!run.sessionId) return null;
+    try {
+      return failedKillCode(await options.agentSessionManager.killSession(run.sessionId));
+    } catch (err: unknown) {
+      console.warn(`[symphony] ${logContext}:`, err instanceof Error ? err.message : String(err));
+      return "session_kill_failed";
+    }
+  }
+
+  async function markRunBlockedAfterKillFailure(ownerId: string, run: SymphonyRun, code: string, actorId?: string): Promise<SymphonyRun | null> {
+    const updated = await options.repository.updateRun(ownerId, run.id, {
+      status: "blocked",
+      lastErrorCode: code,
+      lastEvent: "Session could not be stopped",
+    }, { allowedStatuses: ["queued", "running", "retrying", "blocked"] });
+    await append(ownerId, {
+      installationId: run.installationId,
+      runId: run.id,
+      type: "symphony.run.updated",
+      message: "Session could not be stopped",
+      severity: "warning",
+      actorId,
+    });
+    return updated;
+  }
+
+  async function reconcileIneligibleRunningRuns(
+    ownerId: string,
+    installation: SymphonyInstallation,
+    activeRuns: SymphonyRun[],
+    eligibleClaimKeys: Set<string>,
+  ): Promise<void> {
+    for (const run of activeRuns) {
+      if (eligibleClaimKeys.has(run.claimKey)) continue;
+      const killFailureCode = await killRunSession(run, "Ineligible run session kill failed");
+      if (killFailureCode) {
+        await markRunBlockedAfterKillFailure(ownerId, run, killFailureCode);
+        continue;
+      }
+      const stopped = await options.repository.updateRun(ownerId, run.id, {
+        status: "stopped",
+        lastEvent: "Ticket no longer matches Symphony rule",
+        finishedAt: nowIso(),
+      }, { allowedStatuses: ["running"] });
+      if (!stopped) continue;
+      await append(ownerId, {
+        installationId: installation.id,
+        runId: run.id,
+        type: "symphony.run.stopped",
+        message: "Ticket no longer matches Symphony rule",
+        severity: "info",
+      });
+    }
   }
 
   async function dispatchTicket(
@@ -167,6 +231,8 @@ export function createMatrixSymphonyOrchestrator(options: {
     if (!snapshot.installation || !snapshot.rule || !snapshot.installation.enabled || !snapshot.installation.credentialConfigured) {
       return { matchedTickets: 0, dispatched: 0, skipped: 0 };
     }
+    const installation = snapshot.installation;
+    const rule = snapshot.rule;
     const credential = await options.credentialStore.readLinearCredential(ownerId);
     if (!credential) {
       await append(ownerId, {
@@ -177,18 +243,22 @@ export function createMatrixSymphonyOrchestrator(options: {
       });
       return { matchedTickets: 0, dispatched: 0, skipped: 0 };
     }
-    const preview = await options.linearSource.previewTickets(snapshot.rule, credential, { limit: 100 });
+    const preview = await options.linearSource.previewTickets(rule, credential, { limit: 100 });
     const activeRuns = (await options.repository.listRuns(ownerId, { limit: 100 }))
       .filter((run) => run.status === "running");
-    const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - activeRuns.length);
+    const eligibleTickets = preview.tickets.filter((ticket) => shouldDispatch(ticket, rule));
+    const eligibleClaimKeys = new Set(eligibleTickets.map((ticket) => claimKey(ticket)));
+    await reconcileIneligibleRunningRuns(ownerId, installation, activeRuns, eligibleClaimKeys);
+    const eligibleRunningCount = activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
+    const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - eligibleRunningCount);
     let dispatched = 0;
     for (const ticket of preview.tickets) {
       if (dispatched >= capacity) break;
-      if (!shouldDispatch(ticket, snapshot.rule)) continue;
+      if (!shouldDispatch(ticket, rule)) continue;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
       if (existing && isRetryBackoffActive(existing)) continue;
       if (existing && existing.status !== "queued" && existing.status !== "retrying") continue;
-      const run = await dispatchTicket(ownerId, snapshot.installation, snapshot.rule, ticket, existing);
+      const run = await dispatchTicket(ownerId, installation, rule, ticket, existing);
       if (run.status === "running" || run.status === "queued" || run.status === "retrying") dispatched += 1;
     }
     const at = nowIso();
@@ -265,11 +335,8 @@ export function createMatrixSymphonyOrchestrator(options: {
     async stopRun(ownerId: string, runId: string, actorId: string) {
       const run = await options.repository.getRun(ownerId, runId);
       if (!run) return null;
-      if (run.sessionId) {
-        await options.agentSessionManager.killSession(run.sessionId).catch((err: unknown) => {
-          console.warn("[symphony] Run stop session kill failed:", err instanceof Error ? err.message : String(err));
-        });
-      }
+      const killFailureCode = await killRunSession(run, "Run stop session kill failed");
+      if (killFailureCode) return markRunBlockedAfterKillFailure(ownerId, run, killFailureCode, actorId);
       const updated = await options.repository.updateRun(ownerId, runId, {
         status: "stopped",
         lastEvent: "Run stopped",
@@ -289,11 +356,8 @@ export function createMatrixSymphonyOrchestrator(options: {
     async retryRun(ownerId: string, runId: string, actorId: string) {
       const run = await options.repository.getRun(ownerId, runId);
       if (!run) return null;
-      if (run.sessionId) {
-        await options.agentSessionManager.killSession(run.sessionId).catch((err: unknown) => {
-          console.warn("[symphony] Retry run session kill failed:", err instanceof Error ? err.message : String(err));
-        });
-      }
+      const killFailureCode = await killRunSession(run, "Retry run session kill failed");
+      if (killFailureCode) return markRunBlockedAfterKillFailure(ownerId, run, killFailureCode, actorId);
       const updated = await options.repository.updateRun(ownerId, runId, {
         status: "queued",
         attempt: run.attempt + 1,

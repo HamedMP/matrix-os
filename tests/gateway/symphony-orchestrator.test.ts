@@ -486,4 +486,84 @@ describe("Matrix Symphony orchestrator", () => {
       attempt: 2,
     });
   });
+
+  it("keeps a stopped run in attention state when session kill fails", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "running",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      sessionId: "sess_existing",
+      lastEvent: "Agent session started",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: { previewTickets: vi.fn() },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: {
+        startSession: vi.fn(),
+        killSession: vi.fn(async () => ({ ok: false as const, status: 503, error: { code: "runtime_unavailable", message: "Runtime unavailable" } })),
+      },
+    });
+
+    await orchestrator.stopRun("user_123", "run_existing", "user_123");
+
+    await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
+      status: "blocked",
+      lastErrorCode: "runtime_unavailable",
+    });
+  });
+
+  it("stops running agents whose ticket no longer matches the active Linear filter", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "running",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      sessionId: "sess_existing",
+      lastEvent: "Agent session started",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const agentSessionManager = {
+      startSession: vi.fn(),
+      killSession: vi.fn(async () => ({ ok: true as const, session: { id: "sess_existing", runtime: { status: "exited" } } })),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({ truncated: false, tickets: [] })),
+      },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager,
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(agentSessionManager.killSession).toHaveBeenCalledWith("sess_existing");
+    await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
+      status: "stopped",
+      lastEvent: "Ticket no longer matches Symphony rule",
+    });
+  });
 });
