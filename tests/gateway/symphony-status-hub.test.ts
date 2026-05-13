@@ -38,6 +38,28 @@ describe("Symphony status hub", () => {
     expect(hub.size()).toBe(1);
   });
 
+  it("keeps quiet touched subscribers alive for the next event", async () => {
+    let now = 1_000;
+    const send = vi.fn();
+    const hub = createSymphonyStatusHub({ subscriberTtlMs: 100, now: () => now });
+    hub.subscribe({ id: "a", ownerId: "user_1", send });
+
+    now = 1_080;
+    expect(hub.touch("a")).toBe(true);
+    now = 1_160;
+
+    await hub.publishOperatorEvent("user_1", {
+      id: "evt_1",
+      installationId: "sym_user_1",
+      type: "symphony.run.updated",
+      message: "running",
+      severity: "info",
+      createdAt: "2026-05-13T00:00:00.000Z",
+    });
+
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("drains subscribers on close", async () => {
     const close = vi.fn();
     const hub = createSymphonyStatusHub();

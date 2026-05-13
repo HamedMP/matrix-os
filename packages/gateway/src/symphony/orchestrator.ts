@@ -25,8 +25,8 @@ function claimKey(ticket: Pick<TrackedTicket, "externalId">): string {
   return `linear:${ticket.externalId}`;
 }
 
-function runIdFor(ticket: Pick<TrackedTicket, "externalId">): string {
-  return `run_${createHash("sha256").update(ticket.externalId).digest("hex").slice(0, 16)}`;
+function runIdFor(ownerId: string, ticket: Pick<TrackedTicket, "externalId">): string {
+  return `run_${createHash("sha256").update(`${ownerId}:${ticket.externalId}`).digest("hex").slice(0, 16)}`;
 }
 
 function branchFor(ticket: TrackedTicket): string {
@@ -50,6 +50,7 @@ export function createMatrixSymphonyOrchestrator(options: {
   statusHub?: SymphonyStatusHub;
 }) {
   const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pollLocks = new Map<string, Promise<{ matchedTickets: number; dispatched: number; skipped: number }>>();
 
   async function append(ownerId: string, event: Parameters<SymphonyRepository["appendEvent"]>[1]) {
     const record = await options.repository.appendEvent(ownerId, event);
@@ -57,13 +58,21 @@ export function createMatrixSymphonyOrchestrator(options: {
     return record;
   }
 
-  async function dispatchTicket(ownerId: string, installation: SymphonyInstallation, rule: TicketSourceRule, ticket: TrackedTicket): Promise<SymphonyRun> {
-    const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+  async function dispatchTicket(
+    ownerId: string,
+    installation: SymphonyInstallation,
+    rule: TicketSourceRule,
+    ticket: TrackedTicket,
+    existing?: SymphonyRun | null,
+  ): Promise<SymphonyRun> {
+    const active = existing === undefined
+      ? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket))
+      : existing;
     const timestamp = nowIso();
-    if (existing && existing.status !== "queued" && existing.status !== "retrying") return existing;
+    if (active && active.status !== "queued" && active.status !== "retrying") return active;
 
-    const run: SymphonyRun = existing ?? {
-      id: runIdFor(ticket),
+    const run: SymphonyRun = active ?? {
+      id: runIdFor(ownerId, ticket),
       installationId: installation.id,
       ticketExternalId: ticket.externalId,
       ticketIdentifier: ticket.identifier,
@@ -77,7 +86,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       lastEvent: "Queued for Matrix agent dispatch",
       updatedAt: timestamp,
     };
-    if (!existing) await options.repository.upsertRun(ownerId, run);
+    if (!active) await options.repository.upsertRun(ownerId, run);
     try {
       const workflow = await loadWorkflowContract({ homePath: options.homePath, projectSlug: installation.projectSlug });
       const worktreeResult = await options.worktreeManager.createWorktree({
@@ -140,7 +149,7 @@ export function createMatrixSymphonyOrchestrator(options: {
     }
   }
 
-  async function poll(ownerId: string): Promise<{ matchedTickets: number; dispatched: number; skipped: number }> {
+  async function pollOnce(ownerId: string): Promise<{ matchedTickets: number; dispatched: number; skipped: number }> {
     const snapshot = await options.repository.getSnapshot(ownerId);
     if (!snapshot.installation || !snapshot.rule || !snapshot.installation.enabled || !snapshot.installation.credentialConfigured) {
       return { matchedTickets: 0, dispatched: 0, skipped: 0 };
@@ -163,7 +172,9 @@ export function createMatrixSymphonyOrchestrator(options: {
     for (const ticket of preview.tickets) {
       if (dispatched >= capacity) break;
       if (!shouldDispatch(ticket, snapshot.rule)) continue;
-      const run = await dispatchTicket(ownerId, snapshot.installation, snapshot.rule, ticket);
+      const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+      if (existing && existing.status !== "queued" && existing.status !== "retrying") continue;
+      const run = await dispatchTicket(ownerId, snapshot.installation, snapshot.rule, ticket, existing);
       if (run.status === "running" || run.status === "queued" || run.status === "retrying") dispatched += 1;
     }
     const at = nowIso();
@@ -176,6 +187,16 @@ export function createMatrixSymphonyOrchestrator(options: {
       metadata: { matchedTickets: preview.tickets.length, dispatched, skipped: Math.max(0, preview.tickets.length - dispatched) },
     });
     return { matchedTickets: preview.tickets.length, dispatched, skipped: Math.max(0, preview.tickets.length - dispatched) };
+  }
+
+  async function poll(ownerId: string): Promise<{ matchedTickets: number; dispatched: number; skipped: number }> {
+    const active = pollLocks.get(ownerId);
+    if (active) return active;
+    const next = pollOnce(ownerId).finally(() => {
+      if (pollLocks.get(ownerId) === next) pollLocks.delete(ownerId);
+    });
+    pollLocks.set(ownerId, next);
+    return next;
   }
 
   function clearPoll(ownerId: string): void {

@@ -88,6 +88,13 @@ export function createSymphonyStatusHub(options: {
       subscribers.delete(id);
     },
 
+    touch(id: string): boolean {
+      const subscriber = subscribers.get(id);
+      if (!subscriber) return false;
+      subscriber.lastTouched = now();
+      return true;
+    },
+
     async publishOperatorEvent(ownerId: string, event: OperatorEvent): Promise<SymphonyRealtimeEvent> {
       return publish(ownerId, {
         type: event.type,

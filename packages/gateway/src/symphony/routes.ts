@@ -24,6 +24,8 @@ import type { MatrixSymphonyOrchestrator } from "./orchestrator.js";
 import type { SymphonyRepository } from "./repository.js";
 import type { SymphonyStatusHub } from "./status-hub.js";
 
+const SSE_HEARTBEAT_MS = 60_000;
+
 export interface MatrixSymphonyRouteDeps {
   repository: SymphonyRepository;
   credentialStore: SymphonyCredentialStore;
@@ -232,11 +234,14 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (!auth.ok) return auth.response;
     if (!deps.statusHub) return c.text("", status(204));
     const encoder = new TextEncoder();
-    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
     const subscriberId = `sub_${randomUUID()}`;
+    const stopHeartbeat = () => {
+      if (heartbeat) clearInterval(heartbeat);
+      heartbeat = null;
+    };
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controllerRef = controller;
         const subscribed = deps.statusHub!.subscribe({
           id: subscriberId,
           ownerId: auth.ownerId,
@@ -244,17 +249,32 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
             controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
           },
           close: () => {
+            stopHeartbeat();
             controller.close();
           },
         });
         if (!subscribed.ok) {
           controller.enqueue(encoder.encode("event: symphony.error\ndata: {\"error\":\"subscriber_limit\"}\n\n"));
           controller.close();
+          return;
         }
+        heartbeat = setInterval(() => {
+          if (!deps.statusHub?.touch(subscriberId)) {
+            stopHeartbeat();
+            return;
+          }
+          try {
+            controller.enqueue(encoder.encode(": heartbeat\n\n"));
+          } catch (err: unknown) {
+            console.warn("[symphony] SSE heartbeat failed:", err instanceof Error ? err.message : String(err));
+            deps.statusHub?.unsubscribe(subscriberId);
+            stopHeartbeat();
+          }
+        }, SSE_HEARTBEAT_MS);
       },
       cancel() {
+        stopHeartbeat();
         deps.statusHub?.unsubscribe(subscriberId);
-        controllerRef = null;
       },
     });
     return new Response(stream, {
