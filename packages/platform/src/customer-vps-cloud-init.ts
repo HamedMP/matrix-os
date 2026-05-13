@@ -22,6 +22,7 @@ export interface CustomerHostConfig {
   browserTurnSecret: string;
   browserHandoffPublicKey: string;
   browserHandoffJwksUrl: string;
+  browserHandoffKeyId: string;
 }
 
 const SECRET_KEYS = [
@@ -50,10 +51,14 @@ export function renderCloudInitTemplate(template: string, input: CustomerHostCon
     let value = input[key];
     if (typeof value !== 'string') return match;
     if (key === 'browserHandoffPublicKey') {
-      value = value.replace(/\r?\n/g, '\\n');
+      value = shellQuote(value.replace(/\r?\n/g, '\\n'));
     }
     return value;
   });
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export async function renderCloudInitFile(path: string, input: CustomerHostConfig): Promise<string> {

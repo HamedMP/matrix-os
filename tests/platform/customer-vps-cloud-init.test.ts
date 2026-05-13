@@ -31,6 +31,7 @@ describe('platform/customer-vps-cloud-init', () => {
     browserTurnSecret: 'turn-secret',
     browserHandoffPublicKey: '-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----',
     browserHandoffJwksUrl: 'https://platform.example/.well-known/browser-jwks.json',
+    browserHandoffKeyId: 'browser-handoff-1',
   };
 
   it('renders required host variables into the cloud-init template', () => {
@@ -55,7 +56,8 @@ describe('platform/customer-vps-cloud-init', () => {
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
     expect(rendered).toContain('BROWSER_RUNTIME_URL=http://127.0.0.1:4011');
-    expect(rendered).toContain('BROWSER_HANDOFF_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\nabc\\n-----END PUBLIC KEY-----');
+    expect(rendered).toContain("BROWSER_HANDOFF_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----\\nabc\\n-----END PUBLIC KEY-----'");
+    expect(rendered).toContain('BROWSER_HANDOFF_KEY_ID=browser-handoff-1');
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });

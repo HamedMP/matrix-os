@@ -33,7 +33,11 @@ export function useBrowserSession() {
     if (!session || typeof WebSocket === "undefined") return undefined;
     if (!session.wsUrl || !session.streamToken) return undefined;
     const wsUrl = new URL(session.wsUrl, window.location.origin);
-    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    if (wsUrl.protocol === "https:") {
+      wsUrl.protocol = "wss:";
+    } else if (wsUrl.protocol === "http:") {
+      wsUrl.protocol = "ws:";
+    }
     const socket = new WebSocket(wsUrl.toString(), [`browser-stream.${session.streamToken}`]);
     let closingForCleanup = false;
     socketRef.current = socket;

@@ -65,6 +65,8 @@ describe("proxy auth: route classification", () => {
   it("classifies Browser handoff routes as public token-gated shell paths", () => {
     expect(isPublicShellPath("/browser")).toBe(true);
     expect(isPublicShellPath("/browser/google.com")).toBe(true);
+    expect(isPublicShellPath("/apps/browser")).toBe(true);
+    expect(isPublicShellPath("/apps/browser/")).toBe(true);
   });
 
   it("non-public paths require auth", () => {

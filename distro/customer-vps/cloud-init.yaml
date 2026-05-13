@@ -650,6 +650,7 @@ write_files:
       BROWSER_TURN_SECRET={{browserTurnSecret}}
       BROWSER_HANDOFF_PUBLIC_KEY={{browserHandoffPublicKey}}
       BROWSER_HANDOFF_JWKS_URL={{browserHandoffJwksUrl}}
+      BROWSER_HANDOFF_KEY_ID={{browserHandoffKeyId}}
       PLAYWRIGHT_BROWSERS_PATH=/var/lib/matrix-browser/playwright
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/r2.env

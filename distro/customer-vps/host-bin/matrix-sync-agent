@@ -57,6 +57,34 @@ fetch_manifest() {
   printf '%s' "$manifest"
 }
 
+shell_quote_env_value() {
+  local value="$1"
+  value="${value//$'\r'/}"
+  value="${value//$'\n'/\\n}"
+  value="${value//\'/\'\\\'\'}"
+  printf "'%s'" "$value"
+}
+
+ensure_host_env_var() {
+  local key="$1" value="$2"
+  [ -n "$value" ] || return 0
+  if sudo grep -q "^${key}=" /opt/matrix/env/host.env; then
+    return 0
+  fi
+  printf '%s=%s\n' "$key" "$(shell_quote_env_value "$value")" | sudo tee -a /opt/matrix/env/host.env >/dev/null
+}
+
+persist_browser_env() {
+  ensure_host_env_var "BROWSER_RUNTIME_PORT" "${BROWSER_RUNTIME_PORT:-4011}"
+  ensure_host_env_var "BROWSER_RUNTIME_URL" "${BROWSER_RUNTIME_URL:-http://127.0.0.1:4011}"
+  ensure_host_env_var "BROWSER_TURN_URLS" "${BROWSER_TURN_URLS:-}"
+  ensure_host_env_var "BROWSER_TURN_SECRET" "${BROWSER_TURN_SECRET:-}"
+  ensure_host_env_var "BROWSER_HANDOFF_PUBLIC_KEY" "${BROWSER_HANDOFF_PUBLIC_KEY:-}"
+  ensure_host_env_var "BROWSER_HANDOFF_JWKS_URL" "${BROWSER_HANDOFF_JWKS_URL:-}"
+  ensure_host_env_var "BROWSER_HANDOFF_KEY_ID" "${BROWSER_HANDOFF_KEY_ID:-browser-handoff-1}"
+  ensure_host_env_var "PLAYWRIGHT_BROWSERS_PATH" "${PLAYWRIGHT_BROWSERS_PATH:-/var/lib/matrix-browser/playwright}"
+}
+
 prepare_triggered_update() {
   local url="" target=""
   if [ -f "$UPDATE_VERSION_FILE" ]; then
@@ -210,6 +238,7 @@ apply_update() {
     sudo systemctl enable matrix-browser.service || true
     log "Updated systemd units"
   fi
+  persist_browser_env
 
   # Start services and health-check
   log "Starting services..."

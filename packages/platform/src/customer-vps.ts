@@ -134,6 +134,14 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_R2_BUCKET={{r2Bucket}}',
   '      MATRIX_R2_PREFIX={{r2Prefix}}',
+  '      BROWSER_RUNTIME_PORT=4011',
+  '      BROWSER_RUNTIME_URL=http://127.0.0.1:4011',
+  '      BROWSER_TURN_URLS={{browserTurnUrls}}',
+  '      BROWSER_TURN_SECRET={{browserTurnSecret}}',
+  '      BROWSER_HANDOFF_PUBLIC_KEY={{browserHandoffPublicKey}}',
+  '      BROWSER_HANDOFF_JWKS_URL={{browserHandoffJwksUrl}}',
+  '      BROWSER_HANDOFF_KEY_ID={{browserHandoffKeyId}}',
+  '      PLAYWRIGHT_BROWSERS_PATH=/var/lib/matrix-browser/playwright',
   '      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix',
   '  - path: /opt/matrix/env/r2.env',
   '    permissions: "0640"',
@@ -217,6 +225,7 @@ function buildHostConfig(
     browserTurnSecret: config.browserTurnSecret,
     browserHandoffPublicKey: config.browserHandoffPublicKey,
     browserHandoffJwksUrl: config.browserHandoffJwksUrl,
+    browserHandoffKeyId: config.browserHandoffKeyId,
   };
 }
 
