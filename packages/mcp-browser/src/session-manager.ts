@@ -111,6 +111,7 @@ export class SessionManager {
   private profileRoot: string | undefined;
   private defaultProfile: string;
   private maxSurfaces: number;
+  private surfaceIdleMs: number;
   private consoleMessages: Array<{ type: string; text: string }> = [];
   private consolePages = new WeakSet<PageLike>();
   private actionQueue: Promise<unknown> = Promise.resolve();
@@ -123,6 +124,7 @@ export class SessionManager {
     this.profileRoot = opts.profileRoot ? resolve(opts.profileRoot) : undefined;
     this.defaultProfile = normalizeBrowserProfileName(opts.defaultProfile, "default");
     this.maxSurfaces = opts.maxSurfaces ?? 3;
+    this.surfaceIdleMs = opts.idleTimeoutMs ?? 5 * 60 * 1000;
   }
 
   async launch(opts: { profile?: string; deviceId?: string; sessionId?: string } = {}): Promise<BrowserSession> {
@@ -146,7 +148,7 @@ export class SessionManager {
           error instanceof Error ? error.message : String(error),
         );
       }
-      return this.launch({ profile, deviceId: opts.deviceId });
+      return this.launch({ profile, deviceId: opts.deviceId, sessionId: opts.sessionId });
     }
     if (this.session?.profile === profile) {
       if (opts.deviceId && this.session.lockDeviceId && this.session.lockDeviceId !== opts.deviceId) {
@@ -217,6 +219,7 @@ export class SessionManager {
       throw new BrowserProfileLockedError("Browser profile is open on another device");
     }
     this.session.lockDeviceId = opts.deviceId;
+    this.sweepStaleSurfaces();
     const surface: BrowserSurface = {
       id: opts.surfaceId,
       deviceId: opts.deviceId,
@@ -236,10 +239,26 @@ export class SessionManager {
   }
 
   focusSurface(surfaceId: string): void {
-    if (!this.session?.surfaces?.has(surfaceId)) {
+    const surface = this.session?.surfaces?.get(surfaceId);
+    if (!this.session || !surface) {
       throw new BrowserSessionError("Browser surface not found");
     }
+    surface.lastTouched = Date.now();
     this.session.focusSurfaceId = surfaceId;
+    this.touch();
+  }
+
+  detachSurface(surfaceId: string): void {
+    if (!this.session?.surfaces) return;
+    this.session.surfaces.delete(surfaceId);
+    if (this.session.focusSurfaceId === surfaceId) {
+      const nextSurfaceId = this.session.surfaces.keys().next().value;
+      if (nextSurfaceId) {
+        this.session.focusSurfaceId = nextSurfaceId;
+      } else {
+        delete this.session.focusSurfaceId;
+      }
+    }
     this.touch();
   }
 
@@ -313,6 +332,24 @@ export class SessionManager {
       if (page) return page;
     }
     return undefined;
+  }
+
+  private sweepStaleSurfaces(now = Date.now()): void {
+    const surfaces = this.session?.surfaces;
+    if (!surfaces) return;
+    for (const [surfaceId, surface] of surfaces.entries()) {
+      if (now - surface.lastTouched > this.surfaceIdleMs) {
+        surfaces.delete(surfaceId);
+      }
+    }
+    if (this.session?.focusSurfaceId && !surfaces.has(this.session.focusSurfaceId)) {
+      const nextSurfaceId = surfaces.keys().next().value;
+      if (nextSurfaceId) {
+        this.session.focusSurfaceId = nextSurfaceId;
+      } else {
+        delete this.session.focusSurfaceId;
+      }
+    }
   }
 
   getActive(): BrowserSession | undefined {

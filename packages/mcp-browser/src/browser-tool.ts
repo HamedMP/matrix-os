@@ -179,6 +179,9 @@ export function createBrowserTool(opts: BrowserToolOptions) {
   async function ensureSession(profile?: string) {
     const requestedProfile = normalizeBrowserProfileName(profile, defaultProfile);
     let session = manager.getActive();
+    if (session && session.profile !== requestedProfile && opts.authorizeAgentAction) {
+      throw new Error("Browser profile switch requires an active authorized session");
+    }
     if (!session || session.profile !== requestedProfile) {
       session = await manager.launch({ profile: requestedProfile });
     }

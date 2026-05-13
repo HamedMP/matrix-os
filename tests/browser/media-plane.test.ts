@@ -78,6 +78,9 @@ describe("Browser media plane", () => {
     expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 10.0.0.4 5353 typ host")).toThrow("media_policy");
     expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 10.0.0.4 3478 typ relay")).toThrow("media_policy");
     expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 ::ffff:192.168.1.1 3478 typ relay")).toThrow("media_policy");
+    expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 ::ffff:7f00:1 3478 typ relay")).toThrow("media_policy");
+    expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 2002:c0a8:0101::1 3478 typ relay")).toThrow("media_policy");
+    expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 2001:0000:c0a8:0101::1 3478 typ relay")).toThrow("media_policy");
     expect(() => assertRelayIceCandidate("candidate:1 1 udp 1 fe90::1 3478 typ relay")).toThrow("media_policy");
   });
 });

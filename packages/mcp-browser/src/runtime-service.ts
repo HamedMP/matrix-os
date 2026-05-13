@@ -72,7 +72,7 @@ export class BrowserRuntimeService {
   private readonly idleMs: number;
   private readonly tabs = new Map<string, BrowserRuntimeTabState>();
   private readonly downloads = new Map<string, BrowserRuntimeDownloadState>();
-  private recoverableTabs: BrowserRuntimeTabState[] = [];
+  private recoverableTabsByProfile = new Map<string, BrowserRuntimeTabState[]>();
   private activeTabId: string | undefined;
   private activePolicy: BrowserNavigationPolicyBinding | undefined;
   private launchHostResolverRules: string[] = [];
@@ -116,12 +116,17 @@ export class BrowserRuntimeService {
         : [];
     }
     const session = await this.manager.launch(opts);
-    if (this.tabs.size === 0 && this.recoverableTabs.length > 0) {
-      for (const tab of this.recoverableTabs) {
+    if (active && active.id !== session.id) {
+      this.requestPolicyInstalled = false;
+    }
+    const profile = session.profile ?? "default";
+    const recoverableTabs = this.recoverableTabsByProfile.get(profile) ?? [];
+    if (this.tabs.size === 0 && recoverableTabs.length > 0) {
+      for (const tab of recoverableTabs) {
         this.tabs.set(tab.id, { ...tab });
       }
-      this.activeTabId = this.recoverableTabs[0]?.id;
-      this.recoverableTabs = [];
+      this.activeTabId = recoverableTabs[0]?.id;
+      this.recoverableTabsByProfile.delete(profile);
     }
     return {
       id: session.id,
@@ -261,7 +266,8 @@ export class BrowserRuntimeService {
     const session = this.manager.getActive();
     if (!session) return null;
     if (now - session.lastActivity < this.idleMs) return null;
-    this.recoverableTabs = this.listTabs();
+    const recoverableTabs = this.listTabs();
+    this.recoverableTabsByProfile.set(session.profile ?? "default", recoverableTabs);
     const state: BrowserRuntimeSessionState = {
       id: session.id,
       profile: session.profile ?? "default",
@@ -269,18 +275,19 @@ export class BrowserRuntimeService {
       currentUrl: session.page.url(),
       lastActivity: new Date(session.lastActivity).toISOString(),
       state: "hibernated",
-      tabs: this.recoverableTabs.map((tab) => ({ ...tab })),
+      tabs: recoverableTabs.map((tab) => ({ ...tab })),
     };
     this.tabs.clear();
     this.activeTabId = undefined;
     await this.manager.close();
+    this.requestPolicyInstalled = false;
     return state;
   }
 
   async close(): Promise<void> {
     this.tabs.clear();
     this.downloads.clear();
-    this.recoverableTabs = [];
+    this.recoverableTabsByProfile.clear();
     this.activeTabId = undefined;
     this.activePolicy = undefined;
     this.requestPolicyInstalled = false;

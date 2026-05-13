@@ -220,4 +220,26 @@ describe("BrowserRuntimeService", () => {
       tabs: [expect.objectContaining({ url: "https://example.com/" })],
     });
   });
+
+  it("scopes recoverable tab state to the hibernated profile", async () => {
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowser(),
+      profileRoot: "/tmp/browser-profiles",
+      limits: { idleMs: 10 },
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await runtime.open({ profile: "work", deviceId: "device_1" });
+    runtime.createTab({ url: "https://work.example/" });
+    await runtime.hibernateIfIdle(Date.now() + 20);
+
+    await expect(runtime.open({ profile: "personal", deviceId: "device_1" })).resolves.toMatchObject({
+      profile: "personal",
+      tabs: [],
+    });
+    await expect(runtime.open({ profile: "work", deviceId: "device_1" })).resolves.toMatchObject({
+      profile: "work",
+      tabs: [expect.objectContaining({ url: "https://work.example/" })],
+    });
+  });
 });

@@ -138,4 +138,29 @@ describe("Browser SessionManager shared runtime", () => {
       kind: "standalone",
     })).toThrow(BrowserStreamLimitError);
   });
+
+  it("evicts stale surfaces before enforcing the stream cap", async () => {
+    const manager = new SessionManager({
+      launcher: async () => fakeBrowser(),
+      maxSurfaces: 1,
+      idleTimeoutMs: 10,
+    });
+    const session = await manager.launch({ profile: "default", deviceId: "device_a" });
+    const stale = manager.attachSurface({
+      sessionId: session.id,
+      surfaceId: "surface_1",
+      deviceId: "device_a",
+      kind: "canvas",
+    });
+    stale.lastTouched = Date.now() - 1_000;
+
+    expect(() => manager.attachSurface({
+      sessionId: session.id,
+      surfaceId: "surface_2",
+      deviceId: "device_a",
+      kind: "standalone",
+    })).not.toThrow();
+    expect(manager.getActive()?.surfaces?.has("surface_1")).toBe(false);
+    expect(manager.getActive()?.surfaces?.has("surface_2")).toBe(true);
+  });
 });

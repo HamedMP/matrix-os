@@ -343,6 +343,24 @@ describe("Browser Tool (composite action dispatch)", () => {
       expect(result).toMatchObject({ success: false, error: "Browser action failed" });
       expect(mockPage.goto).not.toHaveBeenCalled();
     });
+
+    it("does not switch profiles before authorizing an active session action", async () => {
+      const authorizeAgentAction = vi.fn().mockResolvedValue(undefined);
+      const tool = createBrowserTool({
+        homePath,
+        launcher: launcher as never,
+        idleTimeoutMs: 300_000,
+        resolveHostname: async () => ["93.184.216.34"],
+        authorizeAgentAction,
+      });
+
+      await expect(tool.execute({ action: "launch", profile: "work" })).resolves.toMatchObject({ success: true });
+      const result = await tool.execute({ action: "snapshot", profile: "personal" });
+
+      expect(result).toMatchObject({ success: false, error: "Browser action failed" });
+      expect(launcher).toHaveBeenCalledTimes(1);
+      expect(mockBrowser.close).not.toHaveBeenCalled();
+    });
   });
 
   describe("snapshot", () => {
