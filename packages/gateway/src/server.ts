@@ -3553,6 +3553,7 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/messages", createMessagingRoutes({
       repository: messagingRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      appserviceToken: process.env.MATRIX_MESSAGING_APPSERVICE_TOKEN,
     }));
   } else {
     app.all("/api/messages/*", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));

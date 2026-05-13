@@ -59,11 +59,22 @@ describe("Messages app setup flow", () => {
             {
               id: "conv_0123456789abcdef0123456789abcdef",
               networkSlug: "telegram",
+              roomId: "!room:matrixos.local",
               displayName: "Launch",
               lastEventAt: "2026-05-13T00:00:00.000Z",
+              permissions: {
+                readEnabled: false,
+                replyEnabled: false,
+                automationEnabled: false,
+                mentionOnly: true,
+                revision: 1,
+              },
             },
           ],
         });
+      }
+      if (path === "/api/messages/drafts") {
+        return jsonResponse({ drafts: [] });
       }
       if (path === "/api/messages/accounts/setup" && init?.method === "POST") {
         return jsonResponse({

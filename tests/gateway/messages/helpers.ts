@@ -62,6 +62,27 @@ export function createRepositoryMock(overrides: Partial<MessagingRepository> = {
     getMappingByExternalThread: vi.fn().mockResolvedValue(null),
     upsertConversation: vi.fn(),
     upsertConversationMapping: vi.fn(),
+    getPermission: vi.fn().mockResolvedValue({
+      ownerId,
+      roomId: "!room:matrixos.local",
+      readEnabled: false,
+      replyEnabled: false,
+      automationEnabled: false,
+      mentionOnly: true,
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    }),
+    updatePermission: vi.fn(),
+    ingestBridgeEvent: vi.fn(),
+    createReply: vi.fn(),
+    markReplySending: vi.fn(),
+    markReplySent: vi.fn(),
+    markReplyFailed: vi.fn(),
+    listDrafts: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
+    getReply: vi.fn().mockResolvedValue(null),
+    cancelReply: vi.fn(),
+    approveReply: vi.fn(),
     ...overrides,
   };
 }
@@ -70,6 +91,7 @@ export function createMessagingTestApp(repository: MessagingRepository, resolved
   const app = new Hono();
   app.route("/api/messages", createMessagingRoutes({
     repository,
+    appserviceToken: "test-appservice-token",
     getOwnerId: () => {
       if (!resolvedOwnerId) return "";
       return resolvedOwnerId;

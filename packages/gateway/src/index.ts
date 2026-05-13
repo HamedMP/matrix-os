@@ -98,6 +98,9 @@ export type { CanvasSubscriber, CanvasSubscriptionHubOptions } from "./canvas/su
 export { createMessagingRoutes } from "./messages/routes.js";
 export { MessagingError, mapMessagingError } from "./messages/errors.js";
 export { MessagingKyselyRepository } from "./messages/repository.js";
+export { createPermissionRegistry } from "./messages/permission-registry.js";
+export { createHermesCapabilityToken, verifyHermesCapabilityToken } from "./messages/hermes-capability.js";
+export { HermesDeliveryRegistry } from "./messages/hermes-delivery.js";
 export type {
   MessagingRepository,
   MessagingOwnerScope,
