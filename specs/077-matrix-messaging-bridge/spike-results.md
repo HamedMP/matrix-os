@@ -6,9 +6,18 @@ against real homeserver and bridge services.
 
 ## Current Local Status
 
-- Status: blocked on external spike environment
+- Status: partial live infrastructure spike passed; account-login and message
+  loop still pending
 - Completed locally: inert spike harnesses, fixture helpers, resource-floor
   helper, duplicate-adapter policy test
+- Completed on prod VPS spike host: isolated Synapse + Postgres +
+  mautrix-telegram + mautrix-whatsapp started on localhost-only ports using the
+  attached Hetzner volume for Docker/containerd storage
+- Spike runtime paths:
+  - Data root: `/mnt/HC_Volume_104683898/matrix-messaging-spike`
+  - Synapse client API: `127.0.0.1:8618`
+  - Telegram bridge appservice: `127.0.0.1:8620`
+  - WhatsApp bridge appservice: `127.0.0.1:8621`
 - Focused validation:
   `bun run test tests/deploy/customer-vps/matrix-messaging-conduit-spike.test.ts tests/deploy/customer-vps/matrix-messaging-synapse-spike.test.ts tests/deploy/customer-vps/telegram-bridge-spike.test.ts tests/deploy/customer-vps/whatsapp-bridge-spike.test.ts tests/deploy/customer-vps/messaging-media-backfill-spike.test.ts tests/deploy/customer-vps/messaging-e2ee-spike.test.ts tests/deploy/customer-vps/messaging-restore-spike.test.ts tests/deploy/customer-vps/messaging-resource-floor.test.ts tests/gateway/messages/duplicate-adapter-policy.test.ts`
 - Focused validation result: pass in default inert mode; set
@@ -16,9 +25,28 @@ against real homeserver and bridge services.
 
 ## Gate 1: Homeserver And Bridge Spike
 
-- Status: pending live spike
+- Status: partial live spike passed for Synapse appservice registration and
+  bridge boot; Telegram/WhatsApp account login, inbound/outbound text, media,
+  and backup/restore remain pending
 - Candidate homeservers: Conduit, Synapse, split-homeserver
 - Required networks: Telegram, WhatsApp
+- Live result, 2026-05-13:
+  - Synapse 1.152.1 starts against isolated Postgres with `C` collation after
+    appservice registrations are installed.
+  - Synapse client API responds at `http://127.0.0.1:8618/_matrix/client/versions`.
+  - mautrix-whatsapp boots, migrates its separate `whatsapp` database, registers
+    `@whatsappbot:matrixos-spike.local`, and receives homeserver appservice
+    ping.
+  - mautrix-telegram boots, migrates its separate `telegram` database,
+    registers `@telegrambot:matrixos-spike.local`, and receives homeserver
+    appservice ping. It is using a synthetic API ID/hash only for boot; real
+    login still requires real Telegram API credentials.
+  - Restart recovery for `matrix-spike-postgres`, `matrix-spike-synapse`,
+    `matrix-spike-telegram`, and `matrix-spike-whatsapp` passed at the service
+    liveness layer.
+  - Docker/containerd storage was moved to `/mnt/HC_Volume_104683898` before
+    this spike so root disk pressure does not affect image pulls or bridge
+    state.
 - Harnesses:
   - `tests/deploy/customer-vps/matrix-messaging-conduit-spike.test.ts`
   - `tests/deploy/customer-vps/matrix-messaging-synapse-spike.test.ts`
