@@ -76,6 +76,9 @@ describe("Messages app setup flow", () => {
       if (path === "/api/messages/drafts") {
         return jsonResponse({ drafts: [] });
       }
+      if (path === "/api/messages/automation/rules") {
+        return jsonResponse({ rules: [] });
+      }
       if (path === "/api/messages/accounts/setup" && init?.method === "POST") {
         return jsonResponse({
           id: "setup_0123456789abcdef0123456789abcdef",

@@ -101,6 +101,8 @@ export { MessagingKyselyRepository } from "./messages/repository.js";
 export { createPermissionRegistry } from "./messages/permission-registry.js";
 export { createHermesCapabilityToken, verifyHermesCapabilityToken } from "./messages/hermes-capability.js";
 export { HermesDeliveryRegistry } from "./messages/hermes-delivery.js";
+export { evaluateAutomationRules } from "./messages/automation-evaluator.js";
+export { createAutomationActionRunner } from "./messages/automation-actions.js";
 export type {
   MessagingRepository,
   MessagingOwnerScope,

@@ -52,6 +52,15 @@ interface DraftReply {
   createdAt: string;
 }
 
+interface AutomationRule {
+  id: string;
+  name: string;
+  scope: "room" | "network" | "account" | "all_permitted";
+  trigger: { type: "text_contains"; value: string };
+  action: { type: "create_task"; titleTemplate: string } | { type: "draft_reply"; bodyTemplate: string };
+  status: "enabled" | "paused" | "disabled";
+}
+
 const networkTone: Record<NetworkSlug, string> = {
   telegram: "blue",
   whatsapp: "green",
@@ -74,6 +83,8 @@ export default function App() {
   const [accounts, setAccounts] = useState<MessagingAccount[]>([]);
   const [conversations, setConversations] = useState<MatrixConversation[]>([]);
   const [drafts, setDrafts] = useState<DraftReply[]>([]);
+  const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
+  const [automationTrigger, setAutomationTrigger] = useState("");
   const [setupSession, setSetupSession] = useState<SetupSession | null>(null);
   const [activeNetwork, setActiveNetwork] = useState<NetworkSlug | "all">("all");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -82,16 +93,18 @@ export default function App() {
   async function refresh() {
     setStatus("loading");
     try {
-      const [networkResult, accountResult, conversationResult, draftsResult] = await Promise.all([
+      const [networkResult, accountResult, conversationResult, draftsResult, automationResult] = await Promise.all([
         requestJson<{ networks: MessagingNetwork[] }>("/api/messages/networks"),
         requestJson<{ accounts: MessagingAccount[] }>("/api/messages/accounts"),
         requestJson<{ items: MatrixConversation[] }>("/api/messages/conversations"),
         requestJson<{ drafts: DraftReply[] }>("/api/messages/drafts"),
+        requestJson<{ rules: AutomationRule[] }>("/api/messages/automation/rules"),
       ]);
       setNetworks(networkResult.networks);
       setAccounts(accountResult.accounts);
       setConversations(conversationResult.items);
       setDrafts(draftsResult.drafts);
+      setAutomationRules(automationResult.rules);
       setStatus("ready");
     } catch {
       setStatus("error");
@@ -145,6 +158,26 @@ export default function App() {
           mentionOnly: next.mentionOnly,
         }),
       });
+      await refresh();
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  async function createAutomation() {
+    const trigger = automationTrigger.trim();
+    if (!trigger) return;
+    try {
+      await requestJson("/api/messages/automation/rules", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Follow ups",
+          scope: "all_permitted",
+          trigger: { type: "text_contains", value: trigger },
+          action: { type: "create_task", titleTemplate: "Follow up: {body}" },
+        }),
+      });
+      setAutomationTrigger("");
       await refresh();
     } catch {
       setStatus("error");
@@ -291,6 +324,42 @@ export default function App() {
                   <p>{draft.bodyPreview}</p>
                 </div>
                 <span className="status-pill">pending</span>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="conversation-section drafts-section">
+        <div className="section-title">
+          <h2>Automations</h2>
+          <p>{automationRules.length}</p>
+        </div>
+        <div className="automation-create">
+          <label>
+            Trigger
+            <input
+              aria-label="Trigger"
+              value={automationTrigger}
+              onChange={(event) => setAutomationTrigger(event.currentTarget.value)}
+              placeholder="deadline"
+            />
+          </label>
+          <button className="primary-button" type="button" onClick={() => void createAutomation()}>
+            Add automation
+          </button>
+        </div>
+        {automationRules.length === 0 ? (
+          <div className="empty-state">No automations yet</div>
+        ) : (
+          <div className="conversation-list">
+            {automationRules.map((rule) => (
+              <article className="draft-row" key={rule.id}>
+                <div>
+                  <h3>{rule.name}</h3>
+                  <p>{rule.trigger.value}</p>
+                </div>
+                <span className={`status-pill ${rule.status === "enabled" ? "connected" : ""}`}>{rule.status}</span>
               </article>
             ))}
           </div>

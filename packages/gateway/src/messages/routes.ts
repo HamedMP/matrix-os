@@ -9,6 +9,8 @@ import {
   AppserviceEventsRequestSchema,
   ApproveDraftRequestSchema,
   AccountSetupRequestSchema,
+  AutomationRuleCreateRequestSchema,
+  AutomationRuleIdSchema,
   CancelDraftRequestSchema,
   CompleteSetupRequestSchema,
   DraftsQuerySchema,
@@ -264,6 +266,51 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
       const replyId = MessagingReplyIdSchema.parse(c.req.param("replyId"));
       const parsed = CancelDraftRequestSchema.parse(await c.req.json());
       return c.json(await deps.repository.cancelReply({ ownerId, replyId, ...parsed }));
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.get("/automation/rules", async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const parsed = DraftsQuerySchema.parse({
+        roomId: c.req.query("roomId"),
+        limit: c.req.query("limit"),
+        cursor: c.req.query("cursor"),
+      });
+      const result = await deps.repository.listAutomationRules({ ownerId }, parsed);
+      return c.json({ rules: result.items, nextCursor: result.nextCursor });
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.post("/automation/rules", routeBodyLimit, async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const parsed = AutomationRuleCreateRequestSchema.parse(await c.req.json());
+      return c.json(await deps.repository.createAutomationRule({ ownerId, ...parsed }), 201);
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.post("/automation/rules/:ruleId/pause", routeBodyLimit, async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const ruleId = AutomationRuleIdSchema.parse(c.req.param("ruleId"));
+      return c.json(await deps.repository.pauseAutomationRule({ ownerId, ruleId }));
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.delete("/automation/rules/:ruleId", deleteBodyLimit, async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const ruleId = AutomationRuleIdSchema.parse(c.req.param("ruleId"));
+      return c.json(await deps.repository.deleteAutomationRule({ ownerId, ruleId }));
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
     }

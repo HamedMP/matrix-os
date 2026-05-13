@@ -5,6 +5,10 @@ import { getMessagingBridgeAccountProvider, MESSAGING_NETWORKS } from "./bridge-
 import { isSetupExpired } from "./setup-sessions.js";
 import type {
   AccountSetupRequest,
+  AutomationAction,
+  AutomationRule,
+  AutomationRuleCreateRequest,
+  AutomationTrigger,
   CompleteSetupRequest,
   ConversationMapping,
   BridgeEventEffect,
@@ -145,6 +149,10 @@ export interface EnqueueHermesWorkInput {
   permissionRevision: number;
 }
 
+export interface CreateAutomationRuleInput extends AutomationRuleCreateRequest {
+  ownerId: string;
+}
+
 export interface MessagingRepository {
   listNetworks(): Promise<MessagingNetwork[]>;
   listAccounts(scope: MessagingOwnerScope): Promise<MessagingAccount[]>;
@@ -179,6 +187,10 @@ export interface MessagingRepository {
   cancelReply(input: CancelReplyInput): Promise<ReplySendResult>;
   enqueueHermesWork(input: EnqueueHermesWorkInput): Promise<HermesWorkItem>;
   listWorkItems(scope: MessagingOwnerScope & { roomId?: string }): Promise<HermesWorkItem[]>;
+  createAutomationRule(input: CreateAutomationRuleInput): Promise<AutomationRule>;
+  listAutomationRules(scope: MessagingOwnerScope, options?: MessagingListOptions & { roomId?: string }): Promise<MessagingListResult<AutomationRule>>;
+  pauseAutomationRule(input: { ownerId: string; ruleId: string }): Promise<AutomationRule>;
+  deleteAutomationRule(input: { ownerId: string; ruleId: string }): Promise<{ ruleId: string; status: "disabled" }>;
 }
 
 export interface BridgeAccountSetupState {
@@ -310,6 +322,19 @@ export interface MessagingHermesWorkItemsTable {
   updated_at: ColumnType<Date | string, Date | string | undefined, Date | string>;
 }
 
+export interface MessagingAutomationRulesTable {
+  id: string;
+  owner_id: string;
+  name: string;
+  scope: AutomationRule["scope"];
+  room_id: string | null;
+  trigger: ColumnType<unknown, unknown, unknown>;
+  action: ColumnType<unknown, unknown, unknown>;
+  status: AutomationRule["status"];
+  created_at: ColumnType<Date | string, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date | string, Date | string | undefined, Date | string>;
+}
+
 export interface MessagingDatabase {
   messaging_accounts: MessagingAccountsTable;
   messaging_setup_sessions: MessagingSetupSessionsTable;
@@ -320,9 +345,10 @@ export interface MessagingDatabase {
   messaging_event_cursors: MessagingEventCursorsTable;
   messaging_outgoing_replies: MessagingOutgoingRepliesTable;
   messaging_hermes_work_items: MessagingHermesWorkItemsTable;
+  messaging_automation_rules: MessagingAutomationRulesTable;
 }
 
-function prefixedId(prefix: "acct" | "setup" | "conv" | "map" | "reply" | "work" | "audit" | "abort"): string {
+function prefixedId(prefix: "acct" | "setup" | "conv" | "map" | "reply" | "work" | "audit" | "abort" | "auto"): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
 }
 
@@ -444,6 +470,26 @@ function toWorkItem(row: Selectable<MessagingHermesWorkItemsTable>): HermesWorkI
 
 function jsonb(value: unknown) {
   return sql`${JSON.stringify(value)}::jsonb`;
+}
+
+function parseJson<T>(value: unknown): T {
+  if (typeof value === "string") return JSON.parse(value) as T;
+  return value as T;
+}
+
+function toAutomationRule(row: Selectable<MessagingAutomationRulesTable>): AutomationRule {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    name: row.name,
+    scope: row.scope,
+    roomId: row.room_id ?? undefined,
+    trigger: parseJson<AutomationTrigger>(row.trigger),
+    action: parseJson<AutomationAction>(row.action),
+    status: row.status,
+    createdAt: requireIso(row.created_at),
+    updatedAt: requireIso(row.updated_at),
+  };
 }
 
 export class MessagingKyselyRepository implements MessagingRepository {
@@ -628,6 +674,22 @@ export class MessagingKyselyRepository implements MessagingRepository {
       )
     `.execute(this.kysely);
     await sql`CREATE INDEX IF NOT EXISTS idx_messaging_work_room ON messaging_hermes_work_items(owner_id, room_id, status)`.execute(this.kysely);
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS messaging_automation_rules (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('room', 'network', 'account', 'all_permitted')),
+        room_id TEXT,
+        trigger JSONB NOT NULL,
+        action JSONB NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('enabled', 'paused', 'disabled')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `.execute(this.kysely);
+    await sql`CREATE INDEX IF NOT EXISTS idx_messaging_automation_owner ON messaging_automation_rules(owner_id, status, updated_at DESC)`.execute(this.kysely);
   }
 
   async destroy(): Promise<void> {
@@ -1004,7 +1066,9 @@ export class MessagingKyselyRepository implements MessagingRepository {
   async ingestBridgeEvent(input: IngestBridgeEventInput): Promise<IngestBridgeEventResult> {
     const permission = await this.getPermission({ ownerId: input.ownerId }, input.roomId);
     const canRead = Boolean(permission?.readEnabled) && (!permission?.mentionOnly || Boolean(input.content.mentionsOwner));
-    const effect: BridgeEventEffect = canRead ? "sent_to_hermes" : "stored_only";
+    const effect: BridgeEventEffect = permission?.automationEnabled
+      ? "automation_queued"
+      : canRead ? "sent_to_hermes" : "stored_only";
     const inserted = await this.kysely
       .insertInto("messaging_event_cursors")
       .values({
@@ -1208,6 +1272,77 @@ export class MessagingKyselyRepository implements MessagingRepository {
     }
     const rows = await query.orderBy("created_at", "asc").execute();
     return rows.map(toWorkItem);
+  }
+
+  async createAutomationRule(input: CreateAutomationRuleInput): Promise<AutomationRule> {
+    const row = await this.kysely
+      .insertInto("messaging_automation_rules")
+      .values({
+        id: prefixedId("auto"),
+        owner_id: input.ownerId,
+        name: input.name,
+        scope: input.scope,
+        room_id: input.roomId ?? null,
+        trigger: jsonb(input.trigger),
+        action: jsonb(input.action),
+        status: "enabled",
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.insertAuditEvent(this.kysely, {
+      ownerId: input.ownerId,
+      type: "automation_triggered",
+      actor: "owner",
+      roomId: input.roomId,
+      safeSummary: "Messaging automation rule created",
+      metadata: { ruleId: row.id },
+    });
+    return toAutomationRule(row);
+  }
+
+  async listAutomationRules(
+    scope: MessagingOwnerScope,
+    options: MessagingListOptions & { roomId?: string } = {},
+  ): Promise<MessagingListResult<AutomationRule>> {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+    const offset = options.cursor ? Number.parseInt(options.cursor, 10) : 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new MessagingError("bad_request", "invalid cursor", 400);
+    let query = this.kysely
+      .selectFrom("messaging_automation_rules")
+      .selectAll()
+      .where("owner_id", "=", scope.ownerId)
+      .where("status", "!=", "disabled");
+    if (options.roomId) query = query.where("room_id", "=", options.roomId);
+    const rows = await query.orderBy("updated_at", "desc").limit(limit + 1).offset(offset).execute();
+    return {
+      items: rows.slice(0, limit).map(toAutomationRule),
+      nextCursor: rows.length > limit ? String(offset + limit) : undefined,
+    };
+  }
+
+  async pauseAutomationRule(input: { ownerId: string; ruleId: string }): Promise<AutomationRule> {
+    const row = await this.kysely
+      .updateTable("messaging_automation_rules")
+      .set({ status: "paused", updated_at: new Date().toISOString() })
+      .where("owner_id", "=", input.ownerId)
+      .where("id", "=", input.ruleId)
+      .where("status", "!=", "disabled")
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new MessagingError("not_found", "automation rule not found", 404);
+    return toAutomationRule(row);
+  }
+
+  async deleteAutomationRule(input: { ownerId: string; ruleId: string }): Promise<{ ruleId: string; status: "disabled" }> {
+    const row = await this.kysely
+      .updateTable("messaging_automation_rules")
+      .set({ status: "disabled", updated_at: new Date().toISOString() })
+      .where("owner_id", "=", input.ownerId)
+      .where("id", "=", input.ruleId)
+      .returning(["id", "status"])
+      .executeTakeFirst();
+    if (!row) throw new MessagingError("not_found", "automation rule not found", 404);
+    return { ruleId: row.id, status: "disabled" };
   }
 
   private async expireStaleSetupSessions(ownerId: string): Promise<void> {

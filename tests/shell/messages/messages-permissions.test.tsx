@@ -50,6 +50,9 @@ describe("Messages permissions UI", () => {
           }],
         });
       }
+      if (path === "/api/messages/automation/rules") {
+        return jsonResponse({ rules: [] });
+      }
       if (path === "/api/messages/conversations/!room%3Amatrixos.local/permissions" && init?.method === "PATCH") {
         return jsonResponse({
           roomId: "!room:matrixos.local",
