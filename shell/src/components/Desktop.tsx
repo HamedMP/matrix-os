@@ -213,16 +213,22 @@ function DockIcon({
   canQuit?: boolean;
 }) {
   const initial = name.charAt(0).toUpperCase();
+  const [imgError, setImgError] = useState(false);
+  const showImage = iconUrl && !imgError;
 
   const btn = (
     <button
       onClick={onClick}
-      className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60"
+      className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60 overflow-hidden"
       style={{ width: iconSize, height: iconSize }}
     >
-      <span className="text-sm font-semibold text-foreground">
-        {initial}
-      </span>
+      {showImage ? (
+        <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgError(true)} />
+      ) : (
+        <span className="text-sm font-semibold text-foreground">
+          {initial}
+        </span>
+      )}
       {active && (
         <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
       )}
@@ -563,39 +569,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const generatingRef = useRef(new Set<string>());
   const checkedRef = useRef(new Set<string>());
 
-  const checkAndGenerateIcon = useCallback((slug: string) => {
-    if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
-    checkedRef.current.add(slug);
-    const iconPath = `/icons/${slug}.png`;
-    fetch(`${GATEWAY_URL}${iconPath}`, {
-      method: "HEAD",
-      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-    }).then((res) => {
-      if (res.ok) {
-        // Icon exists — update with ETag-based version if available
-        const etag = res.headers.get("etag");
-        if (etag) {
-          const versionedUrl = versionedIconUrl(`/icons/${slug}.png`, etag);
-          wmSetApps((prev) =>
-            prev.map((a) =>
-              nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
-                ? { ...a, iconUrl: versionedUrl }
-                : a,
-            ),
-          );
-        }
-      } else {
-        wmSetApps((prev) =>
-          prev.map((a) =>
-            nameToSlug(a.name) === slug && a.iconUrl
-              ? { ...a, iconUrl: undefined }
-              : a,
-          ),
-        );
-      }
-    }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
-  }, [wmSetApps]);
-
   const regenerateIcon = useCallback((slug: string) => {
     generatingRef.current.add(slug);
     fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
@@ -622,6 +595,32 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
       .finally(() => generatingRef.current.delete(slug));
   }, [wmSetApps]);
+
+  const checkAndGenerateIcon = useCallback((slug: string) => {
+    if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
+    checkedRef.current.add(slug);
+    const iconPath = `/icons/${slug}.png`;
+    fetch(`${GATEWAY_URL}${iconPath}`, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+    }).then((res) => {
+      if (res.ok) {
+        const etag = res.headers.get("etag");
+        if (etag) {
+          const versionedUrl = versionedIconUrl(`/icons/${slug}.png`, etag);
+          wmSetApps((prev) =>
+            prev.map((a) =>
+              nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
+                ? { ...a, iconUrl: versionedUrl }
+                : a,
+            ),
+          );
+        }
+      } else {
+        regenerateIcon(slug);
+      }
+    }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
+  }, [wmSetApps, regenerateIcon]);
 
   const renameAppOnServer = useCallback((slug: string, newName: string) => {
     fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
@@ -916,11 +915,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           if (event === "unlink") {
             wmSetApps((prev) => prev.filter((a) => a.path !== path));
             wmSetWindows((prev) => prev.filter((w) => w.path !== path));
-          } else if (event === "add") {
-            addApp(name, path);
           } else {
-            // "change" on existing app -- refresh open windows, don't force-open
-            addApp(name, path);
+            addApp(name, path, nameToSlug(name));
           }
         }
       },

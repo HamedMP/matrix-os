@@ -1,6 +1,21 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+export const DEFAULT_ICON_STYLE = "Minimal app icon filling the entire square canvas edge to edge with zero margin or padding, solid muted sage-cream background color #D1D3BC (a warm gray-green) that is IDENTICAL across ALL icons for a cohesive unified look, a single centered symbolic glyph or pictogram that clearly represents what the app does — the symbol color should be chosen from the Matrix OS design palette: Forest #434E3F (default, earthy dark green), Ember #D06F25 (warm terracotta orange), Deep #32352E (rich charcoal), or Cream #E0E1CA (soft warm light) — pick whichever color best suits the app's personality while maintaining contrast against the sage background, the glyph should be clean and geometric with organic rounded edges, instantly recognizable and directly related to the app purpose, no text, no transparency, no rounded corners (the UI container handles rounding), no gradients on the background (flat solid sage-cream), the symbol can have subtle depth or dimension but the background must remain flat #D1D3BC, every icon must look like part of the same family";
+
+export function loadIconStyle(homePath: string): string {
+  try {
+    const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+    if (desktop.iconStyle) return desktop.iconStyle;
+  } catch { /* fall through to default */ }
+  return DEFAULT_ICON_STYLE;
+}
+
+export function buildIconPrompt(slug: string, style: string): string {
+  const name = slug.replace(/-/g, " ").replace(/_/g, " ");
+  return `App icon for '${name}': ${style}, no text, 1:1 square`;
+}
 
 export interface ImageResult {
   localPath: string;

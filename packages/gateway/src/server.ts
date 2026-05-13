@@ -54,6 +54,8 @@ import {
   type KernelEvent,
   loadHandle,
   createImageClient,
+  loadIconStyle,
+  buildIconPrompt,
   createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
@@ -3162,22 +3164,9 @@ export async function createGateway(config: GatewayConfig) {
         }
       }
 
-      let iconStyle = body.style ?? "";
-      if (!iconStyle) {
-        try {
-          const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
-          iconStyle = desktop.iconStyle ?? "";
-        } catch (err: unknown) {
-          logBestEffortFailure("Failed to read desktop icon style", err);
-        }
-      }
-      if (!iconStyle) {
-        iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
-      }
-
+      const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
-      const name = slug.replace(/-/g, " ").replace(/_/g, " ");
-      const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
+      const prompt = buildIconPrompt(slug, iconStyle);
       const iconsDir = join(homePath, "system/icons");
       const result = await client.generateImage(prompt, {
         aspectRatio: "1:1",
@@ -3201,8 +3190,39 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
-    void c;
-    return c.json({ regenerated: 0, failed: [], generated: false, reason: "default_icons_are_shipped" });
+    const geminiKey = process.env.GEMINI_API_KEY ?? "";
+    if (!geminiKey) {
+      return c.json({ regenerated: 0, failed: [], generated: false });
+    }
+
+    const iconStyle = loadIconStyle(homePath);
+    const iconsDir = join(homePath, "system/icons");
+    if (!existsSync(iconsDir)) {
+      return c.json({ regenerated: 0, failed: [] });
+    }
+
+    const pngFiles = readdirSync(iconsDir).filter((f: string) => f.endsWith(".png"));
+    const client = createImageClient(geminiKey);
+    let regenerated = 0;
+    const failed: string[] = [];
+
+    for (const file of pngFiles) {
+      const slug = file.replace(/\.png$/, "");
+      try {
+        await client.generateImage(buildIconPrompt(slug, iconStyle), {
+          aspectRatio: "1:1",
+          imageDir: iconsDir,
+          saveAs: `${slug}.png`,
+        });
+        regenerated++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        console.error(`Icon regeneration failed for "${slug}":`, msg);
+        failed.push(slug);
+      }
+    }
+
+    return c.json({ regenerated, failed });
   });
 
   app.get("/api/cron", (c) => {
