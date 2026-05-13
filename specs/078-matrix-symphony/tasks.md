@@ -138,8 +138,8 @@
 - [ ] T047 Run `bun run test` from repo root `/home/deploy/matrix-os.worktrees/078-matrix-symphony`
 - [x] T048 Review changed files with `docs/dev/review-pipeline.md` trust-boundary and atomicity passes
 - [x] T049 Commit implementation with Conventional Commit messages
-- [ ] T050 Push `078-matrix-symphony` and open PR with backend invariants
-- [ ] T051 Inspect and fix all actionable PR review comments
+- [x] T050 Push `078-matrix-symphony` and open PR with backend invariants
+- [x] T051 Inspect and fix all actionable PR review comments
 
 ---
 
