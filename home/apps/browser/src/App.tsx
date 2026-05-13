@@ -109,7 +109,7 @@ export default function App() {
         muted={muted}
         busy={browser.state === "starting"}
         downloads={downloads}
-        onNavigate={browser.navigate}
+        onNavigate={(target) => browser.navigate(target, browser.surface)}
         onReload={() => browser.navigate(browser.url, browser.surface)}
         onToggleMute={() => setMuted((value) => !value)}
         onDeleteDownload={deleteDownload}

@@ -65,7 +65,10 @@ export async function createBrowserSession(opts: {
 }): Promise<BrowserSessionResponse> {
   const res = await fetch("/api/browser/sessions", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(opts.handoffToken ? { "x-browser-handoff": "1" } : {}),
+    },
     signal: browserApiSignal(),
     body: JSON.stringify({
       profileName: opts.profileName ?? "default",

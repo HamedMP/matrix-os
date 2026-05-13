@@ -59,7 +59,7 @@ export function useBrowserSession() {
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(String(event.data)) as { type?: string; payload?: { code?: string; message?: string } };
-        if (message.type === "stream.ready" || message.type === "surface.focused") {
+        if (message.type === "stream.ready" || message.type === "surface.focused" || message.type === "navigation.committed") {
           setState("connected");
         } else if (message.type === "stream.taken_over") {
           setState("locked");
@@ -108,6 +108,13 @@ export function useBrowserSession() {
       setSurface(nextSurface);
       setState("starting");
       setError(null);
+      if (session && sendStreamMessage({
+        type: "browser.navigate",
+        payload: { targetUrl: normalized, surface: nextSurface },
+      })) {
+        setState("stream-pending");
+        return;
+      }
       const next = await createBrowserSession({
         targetUrl: normalized,
         profileName: "default",
@@ -130,7 +137,7 @@ export function useBrowserSession() {
       setState(err instanceof BrowserProtocolError && /limit/i.test(err.message) ? "limit" : "error");
       setError(err instanceof BrowserProtocolError ? err.message : "Browser is unavailable right now.");
     }
-  }, []);
+  }, [sendStreamMessage, session]);
 
   const takeover = useCallback(async () => {
     if (!session) return;
@@ -152,7 +159,16 @@ export function useBrowserSession() {
         throw new BrowserProtocolError("Browser request is invalid.");
       }
       setSession(body);
-      setState("stream-pending");
+      if (body.session.takeoverRequired || body.session.state === "locked") {
+        setState("locked");
+        setError("This profile is already open on another device.");
+      } else if (body.session.state === "hibernated") {
+        setState("hibernated");
+      } else if (body.session.state === "recoverable") {
+        setState("recoverable");
+      } else {
+        setState("stream-pending");
+      }
     } catch (err: unknown) {
       setState("error");
       setError(err instanceof BrowserProtocolError ? err.message : "Browser is unavailable right now.");

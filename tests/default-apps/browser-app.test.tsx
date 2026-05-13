@@ -214,6 +214,7 @@ describe("Browser app", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/browser/sessions", expect.objectContaining({
       method: "POST",
+      headers: { "content-type": "application/json", "x-browser-handoff": "1" },
       signal: expect.any(AbortSignal),
       body: JSON.stringify({
         profileName: "default",
@@ -226,6 +227,15 @@ describe("Browser app", () => {
     await waitFor(() => expect((screen.getByRole("textbox", { name: "URL" }) as HTMLInputElement).value).toBe("https://example.com/docs"));
     await waitFor(() => expect(sockets).toHaveLength(1));
     expect(sockets[0]?.protocols).toEqual(["browser-stream.stream_token"]);
+    sockets[0]?.open();
+    fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
+      target: { value: "https://example.com/docs/next" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Navigate" }));
+    expect(sockets[0]?.sent.map((value) => JSON.parse(value))).toContainEqual({
+      type: "browser.navigate",
+      payload: { targetUrl: "https://example.com/docs/next", surface: "standalone" },
+    });
   });
 
   it("shows downloads, grants, and clear-data controls", async () => {

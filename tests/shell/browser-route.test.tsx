@@ -24,4 +24,10 @@ describe("standalone Browser route helpers", () => {
       "/apps/browser/?target=https%3A%2F%2Fgoogle.com%2F&surface=standalone",
     );
   });
+
+  it("passes one-use handoff tokens through the exact Browser route", () => {
+    expect(buildBrowserStandaloneAppUrl(undefined, "handoff_1")).toBe(
+      "/apps/browser/?target=about%3Ablank&surface=standalone&handoff=handoff_1",
+    );
+  });
 });
