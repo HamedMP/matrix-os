@@ -214,6 +214,7 @@ function DockIcon({
 }) {
   const initial = name.charAt(0).toUpperCase();
   const [imgError, setImgError] = useState(false);
+  useEffect(() => setImgError(false), [iconUrl]);
   const showImage = iconUrl && !imgError;
 
   const btn = (

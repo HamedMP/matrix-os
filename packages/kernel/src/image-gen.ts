@@ -8,7 +8,11 @@ export function loadIconStyle(homePath: string): string {
   try {
     const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
     if (desktop.iconStyle) return desktop.iconStyle;
-  } catch { /* fall through to default */ }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("[image-gen] Failed to read desktop.json icon style:", err instanceof Error ? err.message : String(err));
+    }
+  }
   return DEFAULT_ICON_STYLE;
 }
 
