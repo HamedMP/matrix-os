@@ -13,7 +13,7 @@
   "agents/knowledge/channel-routing.md": "3cbaf9d2c941a5fab993aea8fdf130a72ad01786d040b1ba54661474f85edb7f",
   "agents/knowledge/desktop-customization.md": "e4b51a493fa4a286dcbac263d35620fda8a04954bd1c6017a37308047c3647d5",
   "agents/knowledge/healing-strategies.md": "ca22e2fa6e7ee965406752a44112c4d51e55d3180b180c791cf87876b6905a64",
-  "agents/knowledge/matrix-design-system.md": "5c7e2e6b7d2c380252bcb7a6eca2092f6137f2192d4dae44335c2a4998d38d55",
+  "agents/knowledge/matrix-design-system.md": "467b88e88997a3c17a8aaf3c56d73912735a689d17d64ef1cb9dbfeb017d6481",
   "agents/knowledge/module-standard.md": "2c0be1613f3131341451b7c2ea7adc2ddbae81a330472bf69904c051a44b3b59",
   "agents/knowledge/observability.md": "7fe3d96dd59deea2ba6d16535bb271ebfbd62c29a0dba6eaa7763238f864212f",
   "agents/memory/long-term.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -108,5 +108,6 @@
   "system/state.md": "8ac15ff1bb6838de4619849457ea512ff643aa77717fffa67ebef9fe5b2e5231",
   "system/theme.json": "447e28b84ffa67a618f4ccb7ce150f3f4b6d3d651e1be21aa8a7b64e81f0e47e",
   "system/user.md": "e6e32a770ba0c7f272d18d55df3e0748cfd70f518fd0056c71660bdc684a3dff",
-  "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688"
+  "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688",
+  "apps/_shared/theme.css": "e3b223cf782fbb3e416e2875e1000686af9fc0d3c3a25173c162d029892228d7"
 }
