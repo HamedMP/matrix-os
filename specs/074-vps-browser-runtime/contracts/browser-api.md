@@ -158,7 +158,7 @@ Request:
   "targetUrl": "https://example.com",
   "handoffToken": "optional-one-use-platform-token",
   "surface": "canvas",
-  "deviceId": "device_abc"
+  "deviceId": "server-bound-device_abc"
 }
 ```
 
@@ -182,6 +182,7 @@ Response:
 
 Validation:
 - `targetUrl` is optional. When present, it is normalized and server-preflighted before runtime navigation.
+- `deviceId` MUST be server-issued or bound to the authenticated Matrix session/device before profile lock decisions. Clients may echo the bound id, but raw client-chosen device ids are not trusted for same-device lock reuse.
 - `handoffToken` is optional and only accepted on owner VPS session bootstrap. When present, the owner VPS verifies the platform signature, owner binding, expiry, key id, nonce, and replay store before consuming the token exactly once. The verified token target overrides any client-supplied `targetUrl`.
 - Handoff token TTL MUST NOT exceed 60 seconds. The replay store keeps consumed nonces until token expiry plus 30 seconds, caps at 10,000 entries per owner VPS process, evicts oldest entries first, and treats process restart inside the TTL window as an accepted residual replay risk unless a durable nonce store is configured.
 - If another physical device holds the profile lock, response is `409 takeover_required`.
