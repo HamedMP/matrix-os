@@ -29,6 +29,9 @@ describe("Browser TURN policy", () => {
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 93.184.216.34 3478 typ srflx")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 192.168.1.10 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 ::ffff:192.168.1.10 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 ::ffff:7f00:1 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 2002:c0a8:0101::1 3478 typ relay")).toBe(false);
+    expect(isBrowserRelayCandidate("candidate:1 1 udp 1 2001:0000:c0a8:0101::1 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 100.64.0.1 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 224.0.0.1 3478 typ relay")).toBe(false);
     expect(isBrowserRelayCandidate("candidate:1 1 udp 1 198.51.100.1 3478 typ relay")).toBe(false);

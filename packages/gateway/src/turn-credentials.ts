@@ -56,7 +56,15 @@ function isPublicIceAddress(address: string): boolean {
   if (ipVersion === 4) return isPublicIpv4(address);
   if (ipVersion === 6) {
     const lower = address.toLowerCase();
-    const firstHextet = firstIpv6Hextet(lower);
+    const hextets = expandIpv6(lower);
+    if (hextets) {
+      if (isIpv4MappedOrCompatible(hextets)) {
+        return isPublicIpv4(ipv4FromLastHextets(hextets));
+      }
+      if (hextets[0] === 0x2001 && hextets[1] === 0x0000) return false;
+      if (hextets[0] === 0x2002) return isPublicIpv4(ipv4FromHextets(hextets[1] ?? 0, hextets[2] ?? 0));
+    }
+    const firstHextet = hextets?.[0] ?? firstIpv6Hextet(lower);
     return !(
       lower === "::" ||
       lower === "::1" ||
@@ -92,4 +100,45 @@ function firstIpv6Hextet(address: string): number | null {
   const match = address.match(/^([0-9a-f]{1,4})(?=:|$)/);
   if (!match?.[1]) return null;
   return Number.parseInt(match[1], 16);
+}
+
+function expandIpv6(address: string): number[] | null {
+  const input = address.toLowerCase();
+  const compression = input.indexOf("::");
+  const parsePart = (part: string): number[] | null => {
+    if (!part) return [];
+    const hextets: number[] = [];
+    for (const segment of part.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(segment)) return null;
+      hextets.push(Number.parseInt(segment, 16));
+    }
+    return hextets;
+  };
+  if (compression >= 0) {
+    const left = parsePart(input.slice(0, compression));
+    const right = parsePart(input.slice(compression + 2));
+    if (!left || !right || left.length + right.length > 8) return null;
+    return [...left, ...Array(8 - left.length - right.length).fill(0), ...right];
+  }
+  const hextets = parsePart(input);
+  return hextets?.length === 8 ? hextets : null;
+}
+
+function isIpv4MappedOrCompatible(hextets: number[]): boolean {
+  return hextets.slice(0, 5).every((part) => part === 0) &&
+    (hextets[5] === 0 || hextets[5] === 0xffff) &&
+    (hextets[6] !== 0 || hextets[7] !== 0);
+}
+
+function ipv4FromLastHextets(hextets: number[]): string {
+  return ipv4FromHextets(hextets[6] ?? 0, hextets[7] ?? 0);
+}
+
+function ipv4FromHextets(high: number, low: number): string {
+  return [
+    (high >> 8) & 0xff,
+    high & 0xff,
+    (low >> 8) & 0xff,
+    low & 0xff,
+  ].join(".");
 }
