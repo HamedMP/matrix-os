@@ -332,5 +332,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/072-request-principal/plan.md`.
+Current Spec Kit plan: `specs/078-matrix-symphony/plan.md`.
 <!-- SPECKIT END -->
