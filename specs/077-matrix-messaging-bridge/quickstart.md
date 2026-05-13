@@ -1,6 +1,7 @@
-# Quickstart: Matrix Messaging Bridge Planning Validation
+# Quickstart: Matrix Messaging Bridge Validation
 
-This quickstart validates the plan before implementation tasks are generated. It is not a production rollout guide.
+This quickstart validates the implemented first slice and keeps the remaining
+real-network gates visible. It is not a broad production rollout guide.
 
 ## 1. Confirm Spec Inputs
 
@@ -176,7 +177,33 @@ Expected first product flow:
 11. New messages no longer reach Hermes or automations within 10 seconds.
 ```
 
-## 9. Required Pre-PR Gates For Implementation
+## 9. Implemented Slice Validation
+
+Focused tests:
+
+```bash
+pnpm exec vitest run tests/gateway/messages tests/shell/messages tests/deploy/customer-vps/messaging-systemd.test.ts tests/deploy/customer-vps/messaging-backup-restore.test.ts tests/platform/messaging-provisioning.test.ts tests/gateway/apps.test.ts
+```
+
+Package checks:
+
+```bash
+pnpm --filter @matrix-os/gateway build
+pnpm --filter @matrix-os/platform exec tsc --noEmit -p tsconfig.typecheck.json
+bun run check:patterns
+pnpm --dir home/apps/messages build
+```
+
+Default app build:
+
+```bash
+node scripts/build-default-apps.mjs home/apps
+```
+
+`home/apps/**/dist` is generated output and is ignored by the repository; rerun
+the app build before host-bundle packaging.
+
+## 10. Required Pre-PR Gates For Implementation
 
 When this moves beyond planning:
 
@@ -187,3 +214,16 @@ bun run test
 ```
 
 Add focused suites for the new module before running the full suite. Backend PRs must include an Invariants section covering source of truth, transaction scope, acceptable orphan states, auth source of truth, and deferred scope.
+
+## 11. Remaining Live Gate
+
+The repo slice is complete through setup, permissions, drafts, automations, and
+operations. The real first-loop test remains blocked until production Telegram
+credentials and WhatsApp pairing are available:
+
+```bash
+pnpm exec vitest run tests/deploy/customer-vps/matrix-messaging-first-loop.test.ts
+```
+
+That test should prove inbound and outbound text for both Telegram and WhatsApp
+against real paired accounts before broad enablement.

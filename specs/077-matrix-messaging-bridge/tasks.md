@@ -79,7 +79,7 @@ before production enablement.
 - [X] T033 [P] [US1] Write contract tests for account disconnect retention behavior in `tests/gateway/messages/disconnect-routes.test.ts`
 - [X] T034 [P] [US1] Write repository tests for ConnectedAccount, SetupSession, MatrixConversation, and ConversationMapping in `tests/gateway/messages/repository.test.ts`
 - [X] T035 [P] [US1] Write Messages app setup flow test for Telegram and WhatsApp cards in `tests/shell/messages/messages-app-setup.test.tsx`
-- [ ] T036 [P] [US1] Write end-to-end bridge loop test using spike fixtures in `tests/deploy/customer-vps/matrix-messaging-first-loop.test.ts`
+- [ ] T036 [P] [US1] Write end-to-end bridge loop test using spike fixtures in `tests/deploy/customer-vps/matrix-messaging-first-loop.test.ts` (blocked on real Telegram credentials and WhatsApp pairing)
 
 ### Implementation for User Story 1
 
@@ -200,14 +200,14 @@ before production enablement.
 
 **Purpose**: Security hardening, docs, validation, and readiness for review after desired stories are complete.
 
-- [ ] T097 [P] Add user-facing Messages and privacy docs in `www/content/docs/messages.mdx`
-- [ ] T098 [P] Add developer docs for message permissions and bridge architecture in `docs/platform/dev/messaging-bridge.md`
-- [ ] T099 [P] Add quickstart validation notes and commands to `specs/077-matrix-messaging-bridge/quickstart.md`
-- [ ] T100 [P] Add changelog entry for the messaging bridge feature in `specs/077-matrix-messaging-bridge/changelog.md`
-- [ ] T101 Run default app build with `scripts/build-default-apps.mjs` and update generated Messages dist artifacts in `home/apps/messages/dist/index.html`
-- [ ] T102 Run focused messaging tests documented in `tests/gateway/messages/README.md`
-- [ ] T103 Run full pre-PR gates defined in `package.json`
-- [ ] T104 Perform three-pass review against `docs/dev/review-pipeline.md` and record findings in `specs/077-matrix-messaging-bridge/review.md`
+- [X] T097 [P] Add user-facing Messages and privacy docs in `www/content/docs/messages.mdx`
+- [X] T098 [P] Add developer docs for message permissions and bridge architecture in `docs/platform/dev/messaging-bridge.md`
+- [X] T099 [P] Add quickstart validation notes and commands to `specs/077-matrix-messaging-bridge/quickstart.md`
+- [X] T100 [P] Add changelog entry for the messaging bridge feature in `specs/077-matrix-messaging-bridge/changelog.md`
+- [X] T101 Run default app build with `scripts/build-default-apps.mjs` and update generated Messages dist artifacts in `home/apps/messages/dist/index.html`
+- [X] T102 Run focused messaging tests documented in `tests/gateway/messages/README.md`
+- [ ] T103 Run full pre-PR gates defined in `package.json` (typecheck and pattern scanner passed; full `bun run test` hit unrelated long-running platform/integration failures)
+- [X] T104 Perform three-pass review against `docs/dev/review-pipeline.md` and record findings in `specs/077-matrix-messaging-bridge/review.md`
 
 ---
 
