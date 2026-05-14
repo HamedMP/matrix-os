@@ -11,8 +11,13 @@ export function isPublicShellPath(pathname: string): boolean {
     pathname === "/browser" ||
     pathname.startsWith("/browser/") ||
     pathname === "/apps/browser" ||
-    pathname.startsWith("/apps/browser/")
+    pathname.startsWith("/apps/browser/") ||
+    pathname === "/api/apps/browser/session"
   );
+}
+
+export function shouldProxyPublicShellPath(pathname: string): boolean {
+  return isPublicShellPath(pathname) && isGatewayProxyPath(pathname);
 }
 
 export function isGatewayProxyPath(pathname: string): boolean {

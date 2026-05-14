@@ -9,6 +9,13 @@ import {
 } from "./security.js";
 import { chromiumBrowserLaunchArgs } from "./media-service.js";
 import { SessionManager, type BrowserLike, type PageLike } from "./session-manager.js";
+import { parseBrowserClientMessage, type BrowserClientMessage } from "./stream-protocol.js";
+
+const RUNTIME_NAVIGATION_TIMEOUT_MS = 7_000;
+const RUNTIME_FRAME_CAPTURE_TIMEOUT_MS = 3_000;
+const DEFAULT_BROWSER_VIEWPORT_WIDTH = 1365;
+const DEFAULT_BROWSER_VIEWPORT_HEIGHT = 768;
+const DEFAULT_BROWSER_LOCALE = "en-US";
 
 export interface BrowserRuntimeSessionState {
   id: string;
@@ -41,6 +48,67 @@ export interface BrowserRuntimeResourceUsage {
   downloads?: number;
   streams?: number;
   sessions?: number;
+}
+
+export interface BrowserRuntimeFrame {
+  sessionId: string;
+  url: string;
+  mimeType: "image/jpeg";
+  data: string;
+  capturedAt: string;
+}
+
+type BrowserRuntimeInputMessage = Extract<
+  BrowserClientMessage,
+  { type: "input.pointer" | "input.keyboard" | "input.paste" | "input.ime" }
+>;
+
+export interface BrowserHumanContextOptions {
+  viewport: { width: number; height: number };
+  screen: { width: number; height: number };
+  locale: string;
+  extraHTTPHeaders: Record<string, string>;
+  timezoneId?: string;
+  colorScheme: "light";
+  serviceWorkers: "allow";
+}
+
+export function readBrowserHumanContextOptions(env: NodeJS.ProcessEnv = process.env): BrowserHumanContextOptions {
+  const width = boundedInt(env.BROWSER_VIEWPORT_WIDTH, DEFAULT_BROWSER_VIEWPORT_WIDTH, 800, 3840);
+  const height = boundedInt(env.BROWSER_VIEWPORT_HEIGHT, DEFAULT_BROWSER_VIEWPORT_HEIGHT, 600, 2160);
+  const locale = safeLocale(env.BROWSER_LOCALE ?? DEFAULT_BROWSER_LOCALE);
+  const language = locale.split("-")[0] ?? "en";
+  const timezoneId = safeTimezone(env.BROWSER_TIMEZONE_ID);
+  return {
+    viewport: { width, height },
+    screen: { width, height },
+    locale,
+    extraHTTPHeaders: {
+      "Accept-Language": `${locale},${language};q=0.9`,
+    },
+    ...(timezoneId ? { timezoneId } : {}),
+    colorScheme: "light",
+    serviceWorkers: "allow",
+  };
+}
+
+export function browserAutomationDefaultArgs(): string[] {
+  return ["--enable-automation"];
+}
+
+function boundedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const value = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function safeLocale(raw: string): string {
+  return /^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(raw) ? raw : DEFAULT_BROWSER_LOCALE;
+}
+
+function safeTimezone(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  return /^[A-Za-z_]+\/[A-Za-z0-9_+\-]+(?:\/[A-Za-z0-9_+\-]+)?$/.test(raw) ? raw : undefined;
 }
 
 export interface BrowserRuntimeServiceOptions {
@@ -77,6 +145,7 @@ export class BrowserRuntimeService {
   private activePolicy: BrowserNavigationPolicyBinding | undefined;
   private launchHostResolverRules: string[] = [];
   private requestPolicyInstalled = false;
+  private operationQueue: Promise<unknown> = Promise.resolve();
 
   constructor(opts: BrowserRuntimeServiceOptions) {
     this.resolveHostname = opts.resolveHostname;
@@ -92,6 +161,7 @@ export class BrowserRuntimeService {
         ...launchOpts,
         args: [
           ...chromiumBrowserLaunchArgs(),
+          `--window-size=${readBrowserHumanContextOptions().viewport.width},${readBrowserHumanContextOptions().viewport.height}`,
           ...hostResolverLaunchArgs(this.launchHostResolverRules),
         ],
       }),
@@ -166,7 +236,17 @@ export class BrowserRuntimeService {
       this.requestPolicyInstalled = false;
     }
     await this.installRequestPolicy(session, policy);
-    await session.page.goto(policy.normalizedUrl, { waitUntil: "domcontentloaded" });
+    try {
+      await session.page.goto(policy.normalizedUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: RUNTIME_NAVIGATION_TIMEOUT_MS,
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[matrix-browser] navigation failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     this.manager.touch();
     const activeTabId = this.activeTabId ?? this.tabs.keys().next().value ?? "tab_1";
     const activeTab = this.tabs.get(activeTabId);
@@ -188,11 +268,73 @@ export class BrowserRuntimeService {
   }
 
   async navigateSession(sessionId: string, url: string): Promise<BrowserRuntimeSessionState> {
-    const session = this.manager.getActive();
-    if (!session || session.id !== sessionId) {
-      throw new Error("browser_session_not_found");
-    }
-    return await this.navigate(url);
+    return await this.enqueueRuntimeOperation(async () => {
+      const session = this.manager.getActive();
+      if (!session || session.id !== sessionId) {
+        throw new Error("browser_session_not_found");
+      }
+      return await this.navigate(url);
+    });
+  }
+
+  async captureFrame(sessionId: string): Promise<BrowserRuntimeFrame> {
+    return await this.enqueueRuntimeOperation(async () => {
+      const session = this.manager.getActive();
+      if (!session || session.id !== sessionId) {
+        throw new Error("browser_session_not_found");
+      }
+      const page = await this.ensureLivePage(session);
+      const data = await this.capturePageJpeg(page);
+      this.manager.touch();
+      return {
+        sessionId,
+        url: page.url(),
+        mimeType: "image/jpeg",
+        data,
+        capturedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  async applyInput(sessionId: string, message: BrowserRuntimeInputMessage): Promise<void> {
+    await this.enqueueRuntimeOperation(async () => {
+      const session = this.manager.getActive();
+      if (!session || session.id !== sessionId) {
+        throw new Error("browser_session_not_found");
+      }
+      const page = await this.ensureLivePage(session);
+      if (message.type === "input.pointer") {
+        const { kind, x, y, button, deltaX, deltaY } = message.payload;
+        await page.mouse.move?.(x, y);
+        if (kind === "down" && button !== "none") {
+          await page.mouse.down?.({ button });
+        } else if (kind === "up" && button !== "none") {
+          await page.mouse.up?.({ button });
+        } else if (kind === "wheel") {
+          await page.mouse.wheel(deltaX ?? 0, deltaY ?? 0);
+        }
+      } else if (message.type === "input.keyboard") {
+        const { kind, key, text } = message.payload;
+        if (kind === "text" && text) {
+          await page.keyboard?.insertText?.(text);
+        } else if (kind === "keydown") {
+          if (text && page.keyboard?.insertText) {
+            await page.keyboard.insertText(text);
+          } else if (page.keyboard?.press) {
+            await page.keyboard.press(key);
+          } else {
+            await page.keyboard?.down?.(key);
+          }
+        } else if (kind === "keyup") {
+          await page.keyboard?.up?.(key);
+        }
+      } else if (message.type === "input.paste") {
+        await page.keyboard?.insertText?.(message.payload.text);
+      } else if (message.type === "input.ime" && message.payload.kind === "compositionend") {
+        await page.keyboard?.insertText?.(message.payload.text);
+      }
+      this.manager.touch();
+    });
   }
 
   createTab(input: { url?: string; title?: string | null } = {}): BrowserRuntimeTabState {
@@ -328,10 +470,9 @@ export class BrowserRuntimeService {
       return;
     }
     const refreshed = await createBrowserNavigationPolicy(rawUrl, opts);
-    if (refreshed.hostname !== policy.hostname) {
-      throw new Error("browser_navigation_policy_mismatch");
+    if (refreshed.hostname === policy.hostname) {
+      this.activePolicy = refreshed;
     }
-    this.activePolicy = refreshed;
   }
 
   private upsertRuntimeTab(tab: BrowserRuntimeTabState): void {
@@ -355,6 +496,60 @@ export class BrowserRuntimeService {
     download.updatedAt = new Date(now).toISOString();
     this.manager.touch();
     return { ...download };
+  }
+
+  private async ensureLivePage(session: { browser: BrowserLike; page: PageLike }): Promise<PageLike> {
+    if (!session.page.isClosed?.()) {
+      return session.page;
+    }
+    for (const context of session.browser.contexts()) {
+      const page = context.pages().find((candidate) => !candidate.isClosed?.());
+      if (page) {
+        this.manager.setActivePage(page);
+        return page;
+      }
+      const nextPage = await context.newPage();
+      this.manager.setActivePage(nextPage);
+      return nextPage;
+    }
+    const page = await session.browser.newPage();
+    this.manager.setActivePage(page);
+    return page;
+  }
+
+  private async capturePageJpeg(page: PageLike): Promise<string> {
+    const context = page.context();
+    if (context.newCDPSession) {
+      const client = await context.newCDPSession(page);
+      const result = await client.send("Page.captureScreenshot", {
+        format: "jpeg",
+        quality: 60,
+        fromSurface: true,
+      });
+      const data = (result as { data?: unknown }).data;
+      if (typeof data === "string" && data.length > 0) {
+        return data;
+      }
+    }
+    const buffer = await page.screenshot({
+      type: "jpeg",
+      quality: 60,
+      fullPage: false,
+      timeout: RUNTIME_FRAME_CAPTURE_TIMEOUT_MS,
+    });
+    return buffer.toString("base64");
+  }
+
+  private async enqueueRuntimeOperation<T>(run: () => Promise<T>): Promise<T> {
+    const ready = this.operationQueue.catch((error: unknown) => {
+      console.warn(
+        "[matrix-browser] Previous runtime operation failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+    const current = ready.then(run);
+    this.operationQueue = current.catch(() => undefined);
+    return await current;
   }
 }
 
@@ -435,6 +630,28 @@ async function handleBrowserRuntimeRequest(
     writeJson(res, 200, { session: await runtime.navigateSession(navigateMatch[1] ?? "", body.targetUrl) });
     return;
   }
+  const frameMatch = url.pathname.match(/^\/sessions\/([^/]+)\/frame$/);
+  if (req.method === "GET" && frameMatch) {
+    writeJson(res, 200, { frame: await runtime.captureFrame(frameMatch[1] ?? "") });
+    return;
+  }
+  const inputMatch = url.pathname.match(/^\/sessions\/([^/]+)\/input$/);
+  if (req.method === "POST" && inputMatch) {
+    const body = await readJsonBody(req);
+    const message = parseBrowserClientMessage(body);
+    if (
+      message.type !== "input.pointer" &&
+      message.type !== "input.keyboard" &&
+      message.type !== "input.paste" &&
+      message.type !== "input.ime"
+    ) {
+      writeJson(res, 400, { error: "validation_error" });
+      return;
+    }
+    await runtime.applyInput(inputMatch[1] ?? "", message);
+    writeJson(res, 200, { ok: true });
+    return;
+  }
   writeJson(res, 404, { error: "not_found" });
 }
 
@@ -453,7 +670,9 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
 }
 
 async function createDefaultBrowserRuntimeService(): Promise<BrowserRuntimeService> {
+  process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY ??= "1";
   const playwright = await import("playwright");
+  const humanContext = readBrowserHumanContextOptions();
   return new BrowserRuntimeService({
     profileRoot: process.env.BROWSER_PROFILE_ROOT ?? "/var/lib/matrix-browser/profiles",
     defaultProfile: "default",
@@ -465,6 +684,8 @@ async function createDefaultBrowserRuntimeService(): Promise<BrowserRuntimeServi
         const context = await playwright.chromium.launchPersistentContext(launchOpts.userDataDir, {
           headless: launchOpts.headless ?? true,
           args,
+          ignoreDefaultArgs: browserAutomationDefaultArgs(),
+          ...humanContext,
           ...(executablePath ? { executablePath } : {}),
         });
         return {
@@ -476,6 +697,7 @@ async function createDefaultBrowserRuntimeService(): Promise<BrowserRuntimeServi
       return await playwright.chromium.launch({
         headless: launchOpts?.headless ?? true,
         args,
+        ignoreDefaultArgs: browserAutomationDefaultArgs(),
         ...(executablePath ? { executablePath } : {}),
       }) as unknown as BrowserLike;
     },

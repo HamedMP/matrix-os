@@ -27,6 +27,7 @@ input {
   grid-template-rows: auto auto 1fr;
   min-height: 100vh;
   background: #0b1014;
+  color: #e8edf2;
 }
 
 .browser-toolbar {
@@ -125,7 +126,7 @@ input {
 .browser-viewport {
   display: grid;
   min-height: 0;
-  place-items: center;
+  padding: 10px;
   background: #0f151b;
 }
 
@@ -164,16 +165,26 @@ input {
 .browser-frame {
   display: grid;
   grid-template-rows: auto 1fr;
-  width: min(100%, 1280px);
-  height: min(100%, 720px);
-  min-height: 360px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: #0b1014;
+  border-radius: 8px;
+  outline: none;
+  background: #05070a;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  touch-action: none;
+}
+
+.browser-frame:focus-visible {
+  border-color: rgba(119, 212, 176, 0.75);
+  box-shadow: 0 0 0 3px rgba(119, 212, 176, 0.16), 0 18px 60px rgba(0, 0, 0, 0.28);
 }
 
 .browser-frame-bar {
   overflow: hidden;
-  padding: 8px 10px;
+  padding: 7px 10px;
   color: #9aa8b5;
   font-size: 12px;
   text-overflow: ellipsis;
@@ -186,4 +197,19 @@ input {
   place-content: center;
   padding: 24px;
   text-align: center;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    #070b0f;
+  background-size: 32px 32px;
+}
+
+.browser-frame-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  background: #05070a;
+  user-select: none;
+  pointer-events: none;
 }

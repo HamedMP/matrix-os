@@ -1,6 +1,6 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse, type NextRequest } from "next/server";
-import { isGatewayProxyPath, isPublicShellPath } from "./lib/proxy-routes";
+import { isGatewayProxyPath, isPublicShellPath, shouldProxyPublicShellPath } from "./lib/proxy-routes";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
@@ -106,8 +106,13 @@ export function proxy(
 ) {
   // E2E screenshot tests run against `next start`, which always serves the
   // built app with production semantics. Use the explicit bypass flag alone so
-  // screenshot runs can skip auth without depending on NODE_ENV.
+  // screenshot runs can skip auth without depending on NODE_ENV. Gateway-bound
+  // paths must still be rewritten; otherwise browser/app API calls fall through
+  // to Next and return auth pages or 404s instead of gateway responses.
   if (process.env.E2E_TEST_BYPASS === "1") {
+    if (isGatewayProxy(request)) {
+      return rewriteGatewayRequest(request);
+    }
     return NextResponse.next();
   }
   // Platform already verified the Clerk session. Handle this before invoking
@@ -117,6 +122,9 @@ export function proxy(
     return platformResponse;
   }
   if (isPublicShellPath(request.nextUrl.pathname)) {
+    if (shouldProxyPublicShellPath(request.nextUrl.pathname)) {
+      return rewriteGatewayRequest(request);
+    }
     return NextResponse.next();
   }
   // All requests — including gateway-proxy paths — flow through Clerk so the

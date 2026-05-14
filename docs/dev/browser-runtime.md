@@ -29,6 +29,12 @@ Feature 074 adds a production Browser runtime for Matrix owner VPSes.
 - `BROWSER_HANDOFF_KEY_ID`: key id in signed handoff JWT headers.
 - `BROWSER_HANDOFF_TTL_SECONDS`: handoff token lifetime; default 60 seconds.
 - `BROWSER_OWNER_HOST_ALLOWLIST`: optional comma-separated owner hosts allowed for handoff redirects.
+- `BROWSER_HEADLESS`: set to `false` to run the owner Browser as a visible Chromium process under `xvfb-run` when no display is present.
+- `BROWSER_VIEWPORT_WIDTH` / `BROWSER_VIEWPORT_HEIGHT`: desktop viewport used for the human-operated Browser context; defaults to `1365x768`.
+- `BROWSER_LOCALE`: browser locale and `Accept-Language`; defaults to `en-US`.
+- `BROWSER_TIMEZONE_ID`: optional IANA timezone for the Browser context. Leave unset unless the owner has a known preferred timezone.
+
+The runtime uses a persistent Chromium profile, allows service workers, sets a stable desktop viewport and language, and removes Chromium's automation banner default arg. It does not inject stealth scripts or bypass site challenges; server IP reputation can still cause Google or other sites to require extra verification.
 
 ## Review Checklist
 

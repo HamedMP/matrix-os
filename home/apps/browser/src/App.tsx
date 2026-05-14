@@ -130,6 +130,7 @@ export default function App() {
         state={browser.state}
         error={browser.error}
         url={browser.url}
+        frameDataUrl={browser.frameDataUrl}
         onTakeover={browser.takeover}
         onFocusSurface={() => browser.sendStreamMessage({
           type: "surface.focus",

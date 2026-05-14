@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isGatewayProxyPath, isPublicShellPath } from "../../shell/src/lib/proxy-routes";
+import { isGatewayProxyPath, isPublicShellPath, shouldProxyPublicShellPath } from "../../shell/src/lib/proxy-routes";
 
 /**
  * Unit tests for the proxy.ts auth logic.
@@ -67,6 +67,14 @@ describe("proxy auth: route classification", () => {
     expect(isPublicShellPath("/browser/google.com")).toBe(true);
     expect(isPublicShellPath("/apps/browser")).toBe(true);
     expect(isPublicShellPath("/apps/browser/")).toBe(true);
+    expect(isPublicShellPath("/api/apps/browser/session")).toBe(true);
+  });
+
+  it("proxies public Browser app/session paths through the gateway", () => {
+    expect(shouldProxyPublicShellPath("/apps/browser")).toBe(true);
+    expect(shouldProxyPublicShellPath("/apps/browser/")).toBe(true);
+    expect(shouldProxyPublicShellPath("/api/apps/browser/session")).toBe(true);
+    expect(shouldProxyPublicShellPath("/browser/google.com")).toBe(false);
   });
 
   it("non-public paths require auth", () => {

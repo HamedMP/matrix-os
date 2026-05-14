@@ -38,6 +38,7 @@ export interface BrowserWebSocketRouteLike {
 }
 
 export interface PageLike {
+  isClosed?(): boolean;
   goto(url: string, opts?: Record<string, unknown>): Promise<{ status(): number } | null>;
   title(): Promise<string>;
   url(): string;
@@ -54,7 +55,18 @@ export interface PageLike {
   waitForLoadState(state?: string): Promise<void>;
   setDefaultTimeout(ms: number): void;
   close(): Promise<void>;
-  mouse: { wheel(opts: { deltaX: number; deltaY: number }): Promise<void> };
+  mouse: {
+    move?(x: number, y: number): Promise<void>;
+    down?(opts?: { button?: "left" | "middle" | "right" }): Promise<void>;
+    up?(opts?: { button?: "left" | "middle" | "right" }): Promise<void>;
+    wheel(deltaX: number, deltaY: number): Promise<void>;
+  };
+  keyboard?: {
+    down?(key: string): Promise<void>;
+    up?(key: string): Promise<void>;
+    press?(key: string): Promise<void>;
+    insertText?(text: string): Promise<void>;
+  };
   accessibility: { snapshot(): Promise<unknown> };
   on(event: string, handler: (...args: unknown[]) => void): void;
   route?(
@@ -72,6 +84,7 @@ export interface BrowserContextLike {
   pages(): PageLike[];
   newPage(): Promise<PageLike>;
   close(): Promise<void>;
+  newCDPSession?(page: PageLike): Promise<{ send(method: string, params?: Record<string, unknown>): Promise<unknown> }>;
   route?(
     url: BrowserRoutePattern,
     handler: (route: BrowserRequestRouteLike) => Promise<void> | void,
@@ -153,6 +166,9 @@ export class SessionManager {
     if (this.session?.profile === profile) {
       if (opts.deviceId && this.session.lockDeviceId && this.session.lockDeviceId !== opts.deviceId) {
         throw new BrowserProfileLockedError("Browser profile is open on another device");
+      }
+      if (opts.sessionId && this.session.id !== opts.sessionId) {
+        this.session.id = opts.sessionId;
       }
       return this.session;
     }

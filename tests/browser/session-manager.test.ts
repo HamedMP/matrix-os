@@ -59,6 +59,22 @@ describe("Browser SessionManager shared runtime", () => {
     await expect(manager.launch({ profile: "default", deviceId: "device_b" })).resolves.toBe(session);
   });
 
+  it("adopts a caller-supplied session id when reopening the active profile", async () => {
+    const manager = new SessionManager({ launcher: async () => fakeBrowser() });
+    await expect(manager.launch({
+      profile: "default",
+      deviceId: "device_a",
+      sessionId: "browser_session_1",
+    })).resolves.toMatchObject({ id: "browser_session_1" });
+
+    await expect(manager.launch({
+      profile: "default",
+      deviceId: "device_a",
+      sessionId: "browser_session_2",
+    })).resolves.toMatchObject({ id: "browser_session_2" });
+    expect(manager.getActive()?.id).toBe("browser_session_2");
+  });
+
   it("enforces focus lease for user input and lets agent actions serialize without focus takeover", async () => {
     const manager = new SessionManager({ launcher: async () => fakeBrowser() });
     const session = await manager.launch({ profile: "default", deviceId: "device_a" });

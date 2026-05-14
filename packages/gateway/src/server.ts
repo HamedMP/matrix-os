@@ -170,6 +170,7 @@ import {
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
 import { BrowserStreamController, BrowserStreamHub, parseBrowserWsMessage } from "./browser/ws.js";
+import type { BrowserClientMessage } from "@matrix-os/mcp-browser/stream-protocol";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -188,6 +189,16 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
     return;
   }
   console.info("[terminal-debug][gateway]", event, details);
+}
+
+function isBrowserInputMessage(message: BrowserClientMessage): message is Extract<
+  BrowserClientMessage,
+  { type: "input.pointer" | "input.keyboard" | "input.paste" | "input.ime" }
+> {
+  return message.type === "input.pointer" ||
+    message.type === "input.keyboard" ||
+    message.type === "input.paste" ||
+    message.type === "input.ime";
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
@@ -3461,6 +3472,29 @@ export async function createGateway(config: GatewayConfig) {
         turnUrls,
         turnSecret: process.env.BROWSER_TURN_SECRET,
       });
+      let frameTimer: ReturnType<typeof setInterval> | undefined;
+      let frameInFlight = false;
+      const sendFrame = async (ws: WSContext) => {
+        if (frameInFlight) return;
+        frameInFlight = true;
+        try {
+          const frame = await browserService.captureFrame({ ownerId, sessionId });
+          if (!frame) return;
+          ws.send(JSON.stringify({
+            type: "frame.jpeg",
+            payload: {
+              sessionId: frame.sessionId,
+              url: frame.url,
+              data: frame.data,
+              capturedAt: frame.capturedAt,
+            },
+          }));
+        } catch (err: unknown) {
+          console.warn("[browser/ws] Frame capture failed:", err instanceof Error ? err.message : String(err));
+        } finally {
+          frameInFlight = false;
+        }
+      };
       return {
         async onOpen(_evt, ws) {
           try {
@@ -3499,6 +3533,7 @@ export async function createGateway(config: GatewayConfig) {
                 type: "navigation.committed",
                 payload: { url: parsed.payload.targetUrl },
               }));
+              void sendFrame(ws);
               return;
             }
             browserStreamHub.touch(connectionId, surfaceId);
@@ -3512,6 +3547,16 @@ export async function createGateway(config: GatewayConfig) {
                 browserStreamHub.touch(connectionId, surfaceId);
               }
               ws.send(JSON.stringify(message));
+              if (message.type === "stream.ready") {
+                void sendFrame(ws);
+                frameTimer = setInterval(() => {
+                  void sendFrame(ws);
+                }, 1_000);
+              }
+            }
+            if (isBrowserInputMessage(parsed)) {
+              await browserService.sendInput({ ownerId, sessionId, message: parsed });
+              void sendFrame(ws);
             }
           } catch (err: unknown) {
             ws.send(JSON.stringify({
@@ -3523,6 +3568,7 @@ export async function createGateway(config: GatewayConfig) {
           }
         },
         onClose() {
+          if (frameTimer) clearInterval(frameTimer);
           browserStreamHub.unregister(connectionId);
         },
       };

@@ -391,7 +391,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           const session = await ensureSession(input.profile);
           await authorizeAgentAction(input, session, session.page.url());
           const page = session.page;
-          await page.mouse.wheel({ deltaX: 0, deltaY: 500 });
+          await page.mouse.wheel(0, 500);
           return { action, success: true, content: "Scrolled down" };
         }
 

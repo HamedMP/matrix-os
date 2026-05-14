@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { BrowserRuntimeService } from "../../packages/mcp-browser/src/runtime-service.js";
+import {
+  BrowserRuntimeService,
+  browserAutomationDefaultArgs,
+  readBrowserHumanContextOptions,
+} from "../../packages/mcp-browser/src/runtime-service.js";
 import type { BrowserLike, PageLike } from "../../packages/mcp-browser/src/session-manager.js";
 
 type RouteHandler = (route: { request(): { url(): string }; continue(): Promise<void>; abort(errorCode?: string): Promise<void> }) => Promise<void> | void;
@@ -35,6 +39,16 @@ function fakePage(): PageLike & { __routes: RouteHandler[] } {
   };
 }
 
+function fakePageWithFailingGoto(): PageLike & { __routes: RouteHandler[] } {
+  const page = fakePage();
+  return {
+    ...page,
+    async goto(_url: string) {
+      throw new Error("page.goto: Timeout 30000ms exceeded.");
+    },
+  };
+}
+
 function fakeBrowser(): BrowserLike {
   const page = fakePage();
   return {
@@ -46,7 +60,103 @@ function fakeBrowser(): BrowserLike {
   };
 }
 
+function fakeBrowserWithClosedInitialPage(): BrowserLike {
+  const closedPage = {
+    ...fakePage(),
+    isClosed() { return true; },
+    async screenshot() { throw new Error("page closed"); },
+  };
+  const livePage = fakePage();
+  return {
+    async newPage() { return livePage; },
+    contexts() {
+      return [{
+        pages: () => [closedPage],
+        async newPage() { return livePage; },
+        async close() {},
+      }];
+    },
+    async close() {},
+  };
+}
+
+function fakeBrowserWithCdpScreenshot(): BrowserLike {
+  let context: ReturnType<PageLike["context"]>;
+  const page = {
+    ...fakePage(),
+    context() { return context; },
+  };
+  context = {
+    pages: () => [page],
+    async newPage() { return page; },
+    async close() {},
+    async newCDPSession() {
+      return {
+        async send(method: string) {
+          if (method !== "Page.captureScreenshot") throw new Error("unexpected method");
+          return { data: Buffer.from("jpeg").toString("base64") };
+        },
+      };
+    },
+  };
+  return {
+    async newPage() { return page; },
+    contexts() { return [context]; },
+    async close() {},
+  };
+}
+
+function fakeBrowserWithInputRecorder(events: string[]): BrowserLike {
+  const page = {
+    ...fakePage(),
+    mouse: {
+      async move(x: number, y: number) { events.push(`move:${x}:${y}`); },
+      async down(opts?: { button?: "left" | "middle" | "right" }) { events.push(`down:${opts?.button ?? "left"}`); },
+      async up(opts?: { button?: "left" | "middle" | "right" }) { events.push(`up:${opts?.button ?? "left"}`); },
+      async wheel(deltaX: number, deltaY: number) { events.push(`wheel:${deltaX}:${deltaY}`); },
+    },
+    keyboard: {
+      async insertText(text: string) { events.push(`text:${text}`); },
+      async press(key: string) { events.push(`press:${key}`); },
+      async up(key: string) { events.push(`key-up:${key}`); },
+    },
+  };
+  return {
+    async newPage() { return page; },
+    contexts() {
+      return [{ pages: () => [page], async newPage() { return page; }, async close() {} }];
+    },
+    async close() {},
+  };
+}
+
 describe("BrowserRuntimeService", () => {
+  it("uses stable human-operated desktop context defaults", () => {
+    expect(readBrowserHumanContextOptions({} as NodeJS.ProcessEnv)).toEqual({
+      viewport: { width: 1365, height: 768 },
+      screen: { width: 1365, height: 768 },
+      locale: "en-US",
+      extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
+      colorScheme: "light",
+      serviceWorkers: "allow",
+    });
+    expect(readBrowserHumanContextOptions({
+      BROWSER_VIEWPORT_WIDTH: "1440",
+      BROWSER_VIEWPORT_HEIGHT: "900",
+      BROWSER_LOCALE: "de-DE",
+      BROWSER_TIMEZONE_ID: "Europe/Berlin",
+    } as NodeJS.ProcessEnv)).toMatchObject({
+      viewport: { width: 1440, height: 900 },
+      locale: "de-DE",
+      timezoneId: "Europe/Berlin",
+      extraHTTPHeaders: { "Accept-Language": "de-DE,de;q=0.9" },
+    });
+  });
+
+  it("removes Chromium's automation banner default arg without disabling scripts or service workers", () => {
+    expect(browserAutomationDefaultArgs()).toEqual(["--enable-automation"]);
+  });
+
   it("tracks bounded tabs and records navigation state", async () => {
     const runtime = new BrowserRuntimeService({
       launcher: async () => fakeBrowser(),
@@ -105,6 +215,29 @@ describe("BrowserRuntimeService", () => {
     });
 
     expect(outcomes).toEqual(["continue", "abort"]);
+  });
+
+  it("keeps the runtime session active when Chromium navigation times out", async () => {
+    const page = fakePageWithFailingGoto();
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => ({
+        async newPage() { return page; },
+        async close() {},
+        contexts() {
+          return [{ pages: () => [page], async newPage() { return page; }, async close() {}, async route(_url, handler) { page.__routes.push(handler); } }];
+        },
+      }),
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await runtime.open({ profile: "default", deviceId: "device_1" });
+
+    await expect(runtime.navigate("https://example.com/docs")).resolves.toMatchObject({
+      currentUrl: "about:blank",
+      state: "active",
+      tabs: expect.arrayContaining([expect.objectContaining({ url: "https://example.com/docs" })]),
+    });
   });
 
   it("pins Chromium DNS resolution to the active navigation policy", async () => {
@@ -197,6 +330,77 @@ describe("BrowserRuntimeService", () => {
     await expect(runtime.navigateSession("browser_session_1", "https://example.com/docs")).resolves.toMatchObject({
       currentUrl: "https://example.com/docs",
     });
+  });
+
+  it("recovers a closed page before capturing fallback frames", async () => {
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowserWithClosedInitialPage(),
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await runtime.open({
+      profile: "default",
+      deviceId: "device_1",
+      sessionId: "browser_session_1",
+    });
+
+    await expect(runtime.captureFrame("browser_session_1")).resolves.toMatchObject({
+      sessionId: "browser_session_1",
+      mimeType: "image/jpeg",
+    });
+  });
+
+  it("captures fallback frames through CDP when available", async () => {
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowserWithCdpScreenshot(),
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await runtime.open({
+      profile: "default",
+      deviceId: "device_1",
+      sessionId: "browser_session_1",
+    });
+
+    await expect(runtime.captureFrame("browser_session_1")).resolves.toMatchObject({
+      data: Buffer.from("jpeg").toString("base64"),
+      mimeType: "image/jpeg",
+    });
+  });
+
+  it("applies pointer and keyboard input to the live page", async () => {
+    const events: string[] = [];
+    const runtime = new BrowserRuntimeService({
+      launcher: async () => fakeBrowserWithInputRecorder(events),
+      profileRoot: "/tmp/browser-profiles",
+      resolveHostname: async () => ["93.184.216.34"],
+    });
+
+    await runtime.open({
+      profile: "default",
+      deviceId: "device_1",
+      sessionId: "browser_session_1",
+    });
+    await runtime.applyInput("browser_session_1", {
+      type: "input.pointer",
+      payload: { kind: "down", x: 42, y: 64, button: "left", modifiers: [] },
+    });
+    await runtime.applyInput("browser_session_1", {
+      type: "input.pointer",
+      payload: { kind: "wheel", x: 42, y: 64, button: "none", deltaX: 1, deltaY: 2, modifiers: [] },
+    });
+    await runtime.applyInput("browser_session_1", {
+      type: "input.keyboard",
+      payload: { kind: "keydown", key: "a", code: "KeyA", text: "a", modifiers: [] },
+    });
+    await runtime.applyInput("browser_session_1", {
+      type: "input.paste",
+      payload: { text: "hello" },
+    });
+
+    expect(events).toEqual(["move:42:64", "down:left", "move:42:64", "wheel:1:2", "text:a", "text:hello"]);
   });
 
   it("hibernates idle sessions and restores saved tab URLs on reopen", async () => {

@@ -1,9 +1,11 @@
 import type { BrowserConnectionState } from "./useBrowserSession";
+import type { PointerEvent, WheelEvent } from "react";
 
 export function BrowserViewport(props: {
   state: BrowserConnectionState;
   error: string | null;
   url: string;
+  frameDataUrl?: string | null;
   onTakeover?: () => void;
   onFocusSurface?: () => void;
   onPointerInput?: (input: {
@@ -72,44 +74,64 @@ export function BrowserViewport(props: {
           aria-label="Browser viewport"
           tabIndex={0}
           onFocus={props.onFocusSurface}
-          onPointerDown={(event) => props.onPointerInput?.({
-            kind: "down",
-            x: event.clientX,
-            y: event.clientY,
-            button: pointerButton(event.button),
-          })}
-          onPointerUp={(event) => props.onPointerInput?.({
-            kind: "up",
-            x: event.clientX,
-            y: event.clientY,
-            button: pointerButton(event.button),
-          })}
-          onPointerMove={(event) => props.onPointerInput?.({
-            kind: "move",
-            x: event.clientX,
-            y: event.clientY,
-            button: "none",
-          })}
-          onWheel={(event) => props.onPointerInput?.({
-            kind: "wheel",
-            x: event.clientX,
-            y: event.clientY,
-            button: "none",
-            deltaX: event.deltaX,
-            deltaY: event.deltaY,
-          })}
-          onKeyDown={(event) => props.onKeyboardInput?.({
-            kind: "keydown",
-            key: event.key,
-            code: event.code,
-            text: event.key.length === 1 ? event.key : "",
-          })}
-          onKeyUp={(event) => props.onKeyboardInput?.({
-            kind: "keyup",
-            key: event.key,
-            code: event.code,
-            text: "",
-          })}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.focus();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            const point = viewportPoint(event);
+            props.onPointerInput?.({
+              kind: "down",
+              ...point,
+              button: pointerButton(event.button),
+            });
+          }}
+          onPointerUp={(event) => {
+            event.preventDefault();
+            const point = viewportPoint(event);
+            props.onPointerInput?.({
+              kind: "up",
+              ...point,
+              button: pointerButton(event.button),
+            });
+          }}
+          onPointerMove={(event) => {
+            const point = viewportPoint(event);
+            props.onPointerInput?.({
+              kind: "move",
+              ...point,
+              button: "none",
+            });
+          }}
+          onWheel={(event) => {
+            event.preventDefault();
+            const point = viewportPoint(event);
+            props.onPointerInput?.({
+              kind: "wheel",
+              ...point,
+              button: "none",
+              deltaX: event.deltaX,
+              deltaY: event.deltaY,
+            });
+          }}
+          onKeyDown={(event) => {
+            event.preventDefault();
+            props.onKeyboardInput?.({
+              kind: "keydown",
+              key: event.key,
+              code: event.code,
+              text: event.key.length === 1 ? event.key : "",
+            });
+          }}
+          onKeyUp={(event) => {
+            event.preventDefault();
+            props.onKeyboardInput?.({
+              kind: "keyup",
+              key: event.key,
+              code: event.code,
+              text: "",
+            });
+          }}
           onPaste={(event) => {
             event.preventDefault();
             props.onPasteInput?.(event.clipboardData.getData("text/plain"));
@@ -119,10 +141,19 @@ export function BrowserViewport(props: {
           onCompositionEnd={(event) => props.onImeInput?.("compositionend", event.data)}
         >
           <div className="browser-frame-bar">{props.url}</div>
-          <div className="browser-stream-placeholder">
-            <h1>{props.state === "connected" ? "Browser stream connected" : "WebRTC stream pending"}</h1>
-            <p>The owner VPS Chromium session is allocated. Media negotiation attaches here.</p>
-          </div>
+          {props.frameDataUrl ? (
+            <img
+              className="browser-frame-image"
+              src={props.frameDataUrl}
+              alt=""
+              draggable={false}
+            />
+          ) : (
+            <div className="browser-stream-placeholder">
+              <h1>{props.state === "connected" ? "Browser stream connected" : "WebRTC stream pending"}</h1>
+              <p>Waiting for the owner VPS Chromium frame.</p>
+            </div>
+          )}
         </div>
       </section>
     );
@@ -136,6 +167,14 @@ export function BrowserViewport(props: {
       </div>
     </section>
   );
+}
+
+function viewportPoint(event: PointerEvent<HTMLElement> | WheelEvent<HTMLElement>) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(3840, Math.round(event.clientX - rect.left))),
+    y: Math.max(0, Math.min(2160, Math.round(event.clientY - rect.top))),
+  };
 }
 
 function pointerButton(button: number): "left" | "middle" | "right" | "none" {

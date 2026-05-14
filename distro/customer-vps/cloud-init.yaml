@@ -651,6 +651,9 @@ write_files:
       BROWSER_HANDOFF_PUBLIC_KEY={{browserHandoffPublicKey}}
       BROWSER_HANDOFF_JWKS_URL={{browserHandoffJwksUrl}}
       BROWSER_HANDOFF_KEY_ID={{browserHandoffKeyId}}
+      BROWSER_VIEWPORT_WIDTH=1365
+      BROWSER_VIEWPORT_HEIGHT=768
+      BROWSER_LOCALE=en-US
       PLAYWRIGHT_BROWSERS_PATH=/var/lib/matrix-browser/playwright
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/r2.env
@@ -692,7 +695,7 @@ runcmd:
       apt_get_update
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 fonts-liberation
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 fonts-liberation xvfb
     if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
       DEBIAN_FRONTEND=noninteractive apt-get install -y chromium || DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser
     fi

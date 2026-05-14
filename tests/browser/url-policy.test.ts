@@ -52,6 +52,24 @@ describe("Browser URL policy", () => {
     })).rejects.toThrow("not allowed");
   });
 
+  it("allows third-party public subresources while still blocking private destinations", async () => {
+    const policy = await createBrowserNavigationPolicy("https://example.com/start", {
+      resolveHostname: async (hostname) => hostname === "example.com" ? ["93.184.216.34"] : ["142.250.190.78"],
+      now: 1_000,
+      ttlMs: 30_000,
+    });
+
+    await expect(assertRuntimeRequestMatchesPolicy("https://cdn.example.net/app.css", policy, {
+      resolveHostname: resolver(["142.250.190.78"]),
+      now: 2_000,
+    })).resolves.toBe("https://cdn.example.net/app.css");
+
+    await expect(assertRuntimeRequestMatchesPolicy("https://internal.example/secret.js", policy, {
+      resolveHostname: resolver(["10.0.0.2"]),
+      now: 2_000,
+    })).rejects.toThrow("not allowed");
+  });
+
   it("rejects expired navigation policy bindings", async () => {
     const policy = await createBrowserNavigationPolicy("https://example.com/", {
       resolveHostname: resolver(["93.184.216.34"]),
@@ -65,14 +83,23 @@ describe("Browser URL policy", () => {
     })).rejects.toThrow("could not be verified");
   });
 
-  it("creates Chromium resolver pinning rules for DNS-bound hostnames", async () => {
+  it("creates a single Chromium resolver pinning rule for DNS-bound hostnames", async () => {
     const policy = await createBrowserNavigationPolicy("https://example.com/", {
-      resolveHostname: resolver(["93.184.216.34", "93.184.216.35"]),
+      resolveHostname: resolver(["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34", "93.184.216.35"]),
     });
 
     expect(createChromiumHostResolverRules(policy)).toEqual([
       "MAP example.com 93.184.216.34",
-      "MAP example.com 93.184.216.35",
+    ]);
+  });
+
+  it("brackets IPv6-only Chromium resolver pinning addresses", async () => {
+    const policy = await createBrowserNavigationPolicy("https://example.com/", {
+      resolveHostname: resolver(["2606:2800:220:1:248:1893:25c8:1946"]),
+    });
+
+    expect(createChromiumHostResolverRules(policy)).toEqual([
+      "MAP example.com [2606:2800:220:1:248:1893:25c8:1946]",
     ]);
   });
 

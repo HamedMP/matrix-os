@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod/v4";
+import type { BrowserClientMessage } from "@matrix-os/mcp-browser/stream-protocol";
 import {
   BrowserRepositoryError,
   type BrowserAuditEvent,
@@ -22,6 +23,11 @@ import {
   verifyBrowserStreamToken,
   type BrowserStreamTokenClaims,
 } from "./stream-token.js";
+
+type BrowserInputMessage = Extract<
+  BrowserClientMessage,
+  { type: "input.pointer" | "input.keyboard" | "input.paste" | "input.ime" }
+>;
 
 export class BrowserSafeError extends Error {
   constructor(
@@ -278,6 +284,77 @@ export class BrowserService {
       },
     });
     return tab;
+  }
+
+  async captureFrame(input: {
+    ownerId: string;
+    sessionId: string;
+  }): Promise<{
+    sessionId: string;
+    url: string;
+    mimeType: "image/jpeg";
+    data: string;
+    capturedAt: string;
+  } | null> {
+    if (!this.runtimeBaseUrl) return null;
+    const session = await this.repo.getSession(input.ownerId, input.sessionId);
+    if (!session || session.state !== "active" || session.takeoverRequired) {
+      return null;
+    }
+    const res = await fetch(new URL(`/sessions/${encodeURIComponent(input.sessionId)}/frame`, this.runtimeBaseUrl), {
+      method: "GET",
+      signal: AbortSignal.timeout(5_000),
+    }).catch((error: unknown) => {
+      console.warn("[browser/service] Runtime frame capture failed:", error instanceof Error ? error.message : String(error));
+      return null;
+    });
+    if (!res?.ok) return null;
+    const body = await res.json().catch((error: unknown) => {
+      console.warn("[browser/service] Runtime frame response parse failed:", error instanceof Error ? error.message : String(error));
+      return null;
+    }) as { frame?: { sessionId?: string; url?: string; mimeType?: string; data?: string; capturedAt?: string } } | null;
+    const frame = body?.frame;
+    if (
+      frame?.sessionId !== input.sessionId ||
+      frame.mimeType !== "image/jpeg" ||
+      typeof frame.data !== "string" ||
+      typeof frame.url !== "string" ||
+      typeof frame.capturedAt !== "string"
+    ) {
+      return null;
+    }
+    return {
+      sessionId: frame.sessionId,
+      url: frame.url,
+      mimeType: frame.mimeType,
+      data: frame.data,
+      capturedAt: frame.capturedAt,
+    };
+  }
+
+  async sendInput(input: {
+    ownerId: string;
+    sessionId: string;
+    message: BrowserInputMessage;
+  }): Promise<void> {
+    if (!this.runtimeBaseUrl) return;
+    const session = await this.repo.getSession(input.ownerId, input.sessionId);
+    if (!session || session.state !== "active" || session.takeoverRequired) {
+      throw new BrowserSafeError("session_not_found", "Browser session was not found.");
+    }
+    const res = await fetch(new URL(`/sessions/${encodeURIComponent(input.sessionId)}/input`, this.runtimeBaseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(5_000),
+      body: JSON.stringify(input.message),
+    }).catch((error: unknown) => {
+      console.warn("[browser/service] Runtime input failed:", error instanceof Error ? error.message : String(error));
+      throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
+    });
+    if (!res.ok) {
+      console.warn("[browser/service] Runtime input rejected:", res.status);
+      throw new BrowserSafeError("runtime_unavailable", "Browser is unavailable right now.");
+    }
   }
 
   async listTabs(input: { ownerId: string; sessionId: string }): Promise<BrowserTabRecord[]> {

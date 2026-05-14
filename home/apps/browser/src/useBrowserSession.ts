@@ -18,6 +18,7 @@ export function useBrowserSession() {
   const [state, setState] = useState<BrowserConnectionState>("empty");
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<BrowserSessionResponse | null>(null);
+  const [frameDataUrl, setFrameDataUrl] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   const sendStreamMessage = useCallback((message: unknown) => {
@@ -62,8 +63,20 @@ export function useBrowserSession() {
     };
     socket.onmessage = (event) => {
       try {
-        const message = JSON.parse(String(event.data)) as { type?: string; payload?: { code?: string; message?: string } };
+        const message = JSON.parse(String(event.data)) as {
+          type?: string;
+          payload?: {
+            code?: string;
+            message?: string;
+            data?: string;
+            url?: string;
+          };
+        };
         if (message.type === "stream.ready" || message.type === "surface.focused" || message.type === "navigation.committed") {
+          setState("connected");
+        } else if (message.type === "frame.jpeg" && typeof message.payload?.data === "string") {
+          setFrameDataUrl(`data:image/jpeg;base64,${message.payload.data}`);
+          if (typeof message.payload.url === "string") setUrl(message.payload.url);
           setState("connected");
         } else if (message.type === "stream.taken_over") {
           setState("locked");
@@ -109,6 +122,7 @@ export function useBrowserSession() {
       const normalized = normalizeBrowserTarget(target);
       const nextSurfaceId = nextSurface === "standalone" ? "browser-standalone" : "browser-canvas";
       setUrl(normalized);
+      setFrameDataUrl(null);
       setSurface(nextSurface);
       setState("starting");
       setError(null);
@@ -184,6 +198,7 @@ export function useBrowserSession() {
     setUrl,
     state,
     error,
+    frameDataUrl,
     session,
     surface,
     surfaceId,

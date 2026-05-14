@@ -72,6 +72,10 @@ Browser rollout requires these platform/customer env values:
 | `BROWSER_HANDOFF_KEY_ID` | Platform | JWT `kid` for handoff signing |
 | `BROWSER_HANDOFF_TTL_SECONDS` | Platform | Handoff token TTL, default 60 seconds |
 | `BROWSER_OWNER_HOST_ALLOWLIST` | Platform | Optional allowed owner hosts for redirect-only Browser handoff |
+| `BROWSER_HEADLESS` | Customer VPS | Optional; set `false` to run visible Chromium under `xvfb-run` when no display exists |
+| `BROWSER_VIEWPORT_WIDTH` / `BROWSER_VIEWPORT_HEIGHT` | Customer VPS | Desktop viewport for the human-operated Browser context; defaults to `1365x768` |
+| `BROWSER_LOCALE` | Customer VPS | Browser locale and `Accept-Language`; defaults to `en-US` |
+| `BROWSER_TIMEZONE_ID` | Customer VPS | Optional IANA timezone for owners with a known preferred timezone |
 
 After publishing a host bundle, verify Browser on a target VPS:
 

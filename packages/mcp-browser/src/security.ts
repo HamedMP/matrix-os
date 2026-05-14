@@ -360,14 +360,14 @@ export async function assertRuntimeRequestMatchesPolicy(
   policy: BrowserNavigationPolicyBinding,
   opts: Pick<BrowserUrlSafetyOptions, "resolveHostname" | "dnsTimeoutMs"> & { now?: number } = {},
 ): Promise<string> {
-  if ((opts.now ?? Date.now()) > Date.parse(policy.expiresAt)) {
-    throw new BrowserInputError("Browser navigation URL could not be verified");
-  }
   const normalizedUrl = await assertSafeBrowserUrl(rawUrl, opts);
   const parsed = new URL(normalizedUrl);
   const hostname = parsed.hostname.replace(/^\[(.*)]$/, "$1");
   if (hostname !== policy.hostname) {
-    throw new BrowserInputError("Browser navigation URL is not allowed");
+    return normalizedUrl;
+  }
+  if ((opts.now ?? Date.now()) > Date.parse(policy.expiresAt)) {
+    throw new BrowserInputError("Browser navigation URL could not be verified");
   }
   const resolved = isIP(hostname)
     ? [hostname]
@@ -384,7 +384,10 @@ export async function assertRuntimeRequestMatchesPolicy(
 
 export function createChromiumHostResolverRules(policy: BrowserNavigationPolicyBinding): string[] {
   if (policy.addresses.length === 0) return [];
-  return policy.addresses.map((address) => `MAP ${policy.hostname} ${address}`);
+  const selectedAddress = policy.addresses.find((address) => isIP(address) === 4) ?? policy.addresses[0];
+  if (!selectedAddress) return [];
+  const chromiumAddress = isIP(selectedAddress) === 6 ? `[${selectedAddress}]` : selectedAddress;
+  return [`MAP ${policy.hostname} ${chromiumAddress}`];
 }
 
 export async function assertSafeBrowserWebSocketUrl(

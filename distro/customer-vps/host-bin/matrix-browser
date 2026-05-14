@@ -13,4 +13,9 @@ if [ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]; then
 fi
 
 cd /opt/matrix/app
+if [ "${BROWSER_HEADLESS:-true}" = "false" ] && [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+  exec xvfb-run -a -s "-screen 0 ${BROWSER_VIEWPORT_WIDTH:-1365}x${BROWSER_VIEWPORT_HEIGHT:-768}x24" \
+    /opt/matrix/runtime/node/bin/node --import tsx /opt/matrix/app/packages/mcp-browser/src/runtime-service.ts
+fi
+
 exec /opt/matrix/runtime/node/bin/node --import tsx /opt/matrix/app/packages/mcp-browser/src/runtime-service.ts
