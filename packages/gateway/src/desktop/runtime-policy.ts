@@ -24,7 +24,10 @@ function normalizeWebUrl(rawUrl: string): string {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("[desktop] Runtime URL parse failed:", err instanceof Error ? err.message : String(err));
+    }
     throw new Error("Invalid Matrix desktop runtime URL");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
