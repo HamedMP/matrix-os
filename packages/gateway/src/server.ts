@@ -138,6 +138,8 @@ import { createDesktopRoutes } from "./desktop/routes.js";
 import { createWorkflowRoutes } from "./workflow/routes.js";
 import { createFileWorkflowRepository } from "./workflow/repository.js";
 import { createTicketRoutes } from "./tickets/routes.js";
+import { createTicketAutomationRoutes } from "./tickets/automation-routes.js";
+import type { TicketAutomationRule } from "./tickets/automation-contracts.js";
 import { KyselyTicketRepository } from "./tickets/internal-repository.js";
 import { createTicketStatusHub } from "./tickets/status-hub.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
@@ -275,6 +277,7 @@ function send(ws: WSContext, msg: ServerMessage) {
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
+const MAX_TICKET_AUTOMATION_RULES = 1_000;
 
 export function buildAllowedOrigins(options: {
   shellOrigin?: string;
@@ -1290,6 +1293,22 @@ export async function createGateway(config: GatewayConfig) {
   if (kyselyInstance) {
     const ticketRepository = new KyselyTicketRepository(kyselyInstance as Kysely<any>);
     await ticketRepository.bootstrap();
+    const ticketAutomationRules = new Map<string, TicketAutomationRule>();
+    app.route("/api/projects", createTicketAutomationRoutes({
+      saveRule: async (rule) => {
+        if (ticketAutomationRules.size >= MAX_TICKET_AUTOMATION_RULES) {
+          const oldestRuleId = ticketAutomationRules.keys().next().value;
+          if (typeof oldestRuleId === "string") ticketAutomationRules.delete(oldestRuleId);
+        }
+        const automation: TicketAutomationRule = {
+          ...rule,
+          id: `automation_${randomBytes(8).toString("hex")}`,
+          enabled: rule.enabled ?? true,
+        };
+        ticketAutomationRules.set(automation.id, automation);
+        return automation;
+      },
+    }));
     app.route("/api/projects", createTicketRoutes({
       repository: ticketRepository,
       statusHub: createTicketStatusHub(),
