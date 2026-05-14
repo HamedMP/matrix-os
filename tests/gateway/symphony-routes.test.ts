@@ -242,6 +242,25 @@ describe("Matrix Symphony routes", () => {
     expect(await res.json()).toMatchObject({ run: { status: "stopped" } });
   });
 
+  it("lets operators target a delegated owner after creating their own installation", async () => {
+    const ownSnapshot = structuredClone(baseSnapshot);
+    ownSnapshot.installation = { ...ownSnapshot.installation!, ownerId: "user_456", id: "sym_user_456", authorizedOperators: [] };
+    ownSnapshot.runs = [];
+    const delegatedSnapshot = structuredClone(baseSnapshot);
+    const { app, repository } = deps(delegatedSnapshot, { userId: "user_456", source: "dev-default" });
+    vi.mocked(repository.resolveOwnerIdForOperator).mockResolvedValue("user_456");
+    vi.mocked(repository.getSnapshot).mockImplementation(async (ownerId: string) =>
+      ownerId === "user_456" ? ownSnapshot : delegatedSnapshot);
+    vi.mocked(repository.listRuns).mockImplementation(async (ownerId: string, input = {}) =>
+      ownerId === "user_123" ? delegatedSnapshot.runs.filter((run) => !input.status || run.status === input.status) : []);
+
+    const res = await app.request("/runs?ownerId=user_123");
+
+    expect(res.status).toBe(200);
+    expect(repository.listRuns).toHaveBeenCalledWith("user_123", { limit: 100 });
+    expect(await res.json()).toMatchObject({ runs: [{ id: "run_1" }] });
+  });
+
   it("returns start success even when the immediate poll fails after enabling", async () => {
     const { app, orchestrator } = deps(structuredClone(baseSnapshot));
     orchestrator.poll = vi.fn(async () => {

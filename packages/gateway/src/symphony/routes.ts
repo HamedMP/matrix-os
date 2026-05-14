@@ -25,6 +25,9 @@ import type { SymphonyRepository } from "./repository.js";
 import type { SymphonyStatusHub } from "./status-hub.js";
 
 const SSE_HEARTBEAT_MS = 60_000;
+const OwnerScopeQuerySchema = z.object({
+  ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_@:.=-]+$/).optional(),
+}).passthrough();
 
 export interface MatrixSymphonyRouteDeps {
   repository: SymphonyRepository;
@@ -88,14 +91,22 @@ function unauthorized(c: Context) {
   return c.json(genericSymphonyError("unauthorized", "Unauthorized"), status(401));
 }
 
-async function resolveOwnerId(deps: MatrixSymphonyRouteDeps, principal: RequestPrincipal): Promise<string | null> {
-  return await deps.repository.resolveOwnerIdForOperator(principal.userId) ?? principal.userId;
+function queryWithoutOwnerScope(c: Context): Record<string, string> {
+  const { ownerId: _ownerId, ...rest } = c.req.query();
+  return rest;
 }
 
 async function requireOperator(c: Context, deps: MatrixSymphonyRouteDeps, principal: RequestPrincipal) {
-  const ownerId = await resolveOwnerId(deps, principal);
+  const ownerScope = OwnerScopeQuerySchema.safeParse(c.req.query());
+  if (!ownerScope.success) {
+    return { ok: false as const, response: c.json(genericSymphonyError("invalid_request", "Request query is invalid"), status(400)) };
+  }
+  const ownerId = ownerScope.data.ownerId ?? await deps.repository.resolveOwnerIdForOperator(principal.userId) ?? principal.userId;
   if (!ownerId) return { ok: false as const, response: unauthorized(c) };
   const snapshot = await deps.repository.getSnapshot(ownerId);
+  if (ownerScope.data.ownerId && ownerScope.data.ownerId !== principal.userId && !snapshot.installation) {
+    return { ok: false as const, response: unauthorized(c) };
+  }
   if (!isAuthorizedSymphonyOperator(principal, snapshot.installation)) return { ok: false as const, response: unauthorized(c) };
   return { ok: true as const, ownerId, snapshot };
 }
@@ -165,7 +176,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     const auth = await requireOperator(c, deps, principal);
     if (!auth.ok) return auth.response;
     if (!auth.snapshot.rule) return c.json({ tickets: [], truncated: false });
-    const query = PreviewQuerySchema.safeParse(c.req.query());
+    const query = PreviewQuerySchema.safeParse(queryWithoutOwnerScope(c));
     if (!query.success) return c.json(genericSymphonyError("invalid_request", "Request query is invalid"), status(400));
     const credential = await deps.credentialStore.readLinearCredential(auth.ownerId);
     if (!credential) return c.json(genericSymphonyError("credential_required", "Linear credential is required"), status(409));
@@ -180,7 +191,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
   app.get("/runs", (c) => withPrincipal(c, deps, async (principal) => {
     const auth = await requireOperator(c, deps, principal);
     if (!auth.ok) return auth.response;
-    const query = RunsQuerySchema.safeParse(c.req.query());
+    const query = RunsQuerySchema.safeParse(queryWithoutOwnerScope(c));
     if (!query.success) return c.json(genericSymphonyError("invalid_request", "Request query is invalid"), status(400));
     const runs = await deps.repository.listRuns(auth.ownerId, query.data);
     return c.json({ runs, nextCursor: null });

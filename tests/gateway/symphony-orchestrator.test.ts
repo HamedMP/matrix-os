@@ -565,6 +565,78 @@ describe("Matrix Symphony orchestrator", () => {
     });
   });
 
+  it("does not emit stopped events when stop transition is rejected", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_completed",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "completed",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      lastEvent: "Run completed",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: { previewTickets: vi.fn() },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.stopRun("user_123", "run_completed", "user_123")).resolves.toMatchObject({ status: "completed" });
+
+    expect(repository.appendEvent).not.toHaveBeenCalled();
+  });
+
+  it("marks stale started sessions as blocked when cleanup kill fails", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    const originalUpdateRun = vi.mocked(repository.updateRun).getMockImplementation();
+    if (!originalUpdateRun) throw new Error("missing updateRun mock implementation");
+    vi.mocked(repository.updateRun).mockImplementation(async (ownerId, runId, patch, options) => {
+      if (patch.status === "running") {
+        await originalUpdateRun(ownerId, runId, { status: "stopped", lastEvent: "Run stopped" });
+        return null;
+      }
+      return originalUpdateRun(ownerId, runId, patch, options);
+    });
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager: {
+        createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: "wt_stale", path: "/repo/wt", projectSlug: "matrix-os" } })),
+      },
+      agentSessionManager: {
+        startSession: vi.fn(async () => ({ ok: true as const, status: 201 as const, session: { id: "sess_stale", runtime: { status: "running" } } })),
+        killSession: vi.fn(async () => ({ ok: false as const, status: 503, error: { code: "runtime_unavailable", message: "Runtime unavailable" } })),
+      },
+    });
+
+    await orchestrator.poll("user_123");
+
+    const runs = await repository.listRuns("user_123");
+    expect(runs[0]).toMatchObject({
+      status: "blocked",
+      sessionId: "sess_stale",
+      lastErrorCode: "runtime_unavailable",
+      lastEvent: "Stale agent session could not be stopped",
+    });
+  });
+
   it("stops running agents whose ticket no longer matches the active Linear filter", async () => {
     const snapshot = structuredClone(baseSnapshot);
     snapshot.runs = [{

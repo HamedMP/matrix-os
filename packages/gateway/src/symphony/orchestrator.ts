@@ -204,9 +204,33 @@ export function createMatrixSymphonyOrchestrator(options: {
         startedAt: timestamp,
       }, { allowedStatuses: ["queued", "retrying"] });
       if (!running) {
-        await options.agentSessionManager.killSession(sessionResult.session.id).catch((err: unknown) => {
+        let cleanupFailureCode: string | null = null;
+        try {
+          cleanupFailureCode = failedKillCode(await options.agentSessionManager.killSession(sessionResult.session.id));
+        } catch (err: unknown) {
           console.warn("[symphony] Stale start session cleanup failed:", err instanceof Error ? err.message : String(err));
-        });
+          cleanupFailureCode = "session_kill_failed";
+        }
+        if (cleanupFailureCode) {
+          const blocked = await options.repository.updateRun(ownerId, run.id, {
+            status: "blocked",
+            sessionId: sessionResult.session.id,
+            worktreeId: worktreeResult.worktree.id,
+            worktreePath: worktreeResult.worktree.path,
+            lastErrorCode: cleanupFailureCode,
+            lastEvent: "Stale agent session could not be stopped",
+          }, { allowedStatuses: ["queued", "running", "retrying", "blocked", "stopped", "failed"] });
+          if (blocked) {
+            await append(ownerId, {
+              installationId: installation.id,
+              runId: run.id,
+              type: "symphony.run.updated",
+              message: "Stale agent session could not be stopped",
+              severity: "warning",
+            });
+            return blocked;
+          }
+        }
         return await options.repository.getRun(ownerId, run.id) ?? run;
       }
       await append(ownerId, {
@@ -345,6 +369,7 @@ export function createMatrixSymphonyOrchestrator(options: {
         lastEvent: "Run stopped",
         finishedAt: nowIso(),
       }, { allowedStatuses: ["queued", "running", "retrying", "blocked"] });
+      if (!updated) return await options.repository.getRun(ownerId, runId);
       await append(ownerId, {
         installationId: run.installationId,
         runId,
