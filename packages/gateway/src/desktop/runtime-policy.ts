@@ -21,7 +21,12 @@ const DESKTOP_CAPABILITIES = [
 ] as const;
 
 function normalizeWebUrl(rawUrl: string): string {
-  const parsed = new URL(rawUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("Invalid Matrix desktop runtime URL");
+  }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Invalid Matrix desktop runtime URL");
   }

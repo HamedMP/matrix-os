@@ -11,13 +11,17 @@ export interface MatrixDesktopConfig {
 }
 
 export interface DesktopRuntimePolicy {
-  shellUrl: string;
-  gatewayUrl: string;
   agentExecution: {
     mode: "cloud";
     localAgentsAllowed: false;
   };
   capabilities: string[];
+  gatewayHealth: "healthy" | "degraded" | "unreachable";
+  instance: {
+    shellUrl: string;
+    gatewayUrl: string;
+    version: string;
+  };
   version: 1;
 }
 
@@ -84,10 +88,14 @@ export function parseMatrixDesktopConfig(env: NodeJS.ProcessEnv = process.env): 
 
 export function createDesktopRuntimePolicy(config: MatrixDesktopConfig): DesktopRuntimePolicy {
   return {
-    shellUrl: config.shellUrl,
-    gatewayUrl: config.gatewayUrl,
     agentExecution: { mode: "cloud", localAgentsAllowed: false },
     capabilities: [...DESKTOP_CAPABILITIES],
+    gatewayHealth: "healthy",
+    instance: {
+      shellUrl: config.shellUrl,
+      gatewayUrl: config.gatewayUrl,
+      version: "desktop",
+    },
     version: 1,
   };
 }

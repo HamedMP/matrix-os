@@ -13,8 +13,9 @@ describe("desktop runtime policy", () => {
 
     const policy = createDesktopRuntimePolicy(config);
 
-    expect(policy.shellUrl).toBe("http://localhost:3000/");
-    expect(policy.gatewayUrl).toBe("http://localhost:4000/");
+    expect(policy.instance.shellUrl).toBe("http://localhost:3000/");
+    expect(policy.instance.gatewayUrl).toBe("http://localhost:4000/");
+    expect(policy.gatewayHealth).toBe("healthy");
     expect(policy.agentExecution).toEqual({ mode: "cloud", localAgentsAllowed: false });
     expect(policy.capabilities).toEqual(
       expect.arrayContaining([

@@ -32,11 +32,14 @@ declare global {
 
 const SAFE_CLIENT_ERROR = "Request failed";
 const MAX_CLIENT_ERROR_LENGTH = 120;
+const DESKTOP_ERROR_ALLOWLIST = new Set([
+  "Desktop runtime unavailable",
+  "Cloud agent runtime required",
+]);
 const DESKTOP_DEFAULT_APP_PATHS = new Set([
   "__workspace__",
   "__terminal__",
   "__file-browser__",
-  "__chat__",
   "symphony",
 ]);
 
@@ -68,10 +71,10 @@ export function safeDesktopClientError(value: unknown): string {
   if (!(value instanceof Error) || value.message.length > MAX_CLIENT_ERROR_LENGTH) {
     return SAFE_CLIENT_ERROR;
   }
-  if (/(token|secret|key|\/Users\/|postgres|database|anthropic|linear)/i.test(value.message)) {
+  if (/(token|secret|key|password|credential|passphrase|\/Users\/|\/home\/|\/root\/|\/opt\/|[A-Za-z]:\\|postgres|database|anthropic|linear)/i.test(value.message)) {
     return SAFE_CLIENT_ERROR;
   }
-  return value.message;
+  return DESKTOP_ERROR_ALLOWLIST.has(value.message) ? value.message : SAFE_CLIENT_ERROR;
 }
 
 export async function getDesktopRuntimePolicy(): Promise<DesktopRuntimePolicy | null> {

@@ -7,7 +7,7 @@
     "noEmit": true,
     "outDir": "out",
     "rootDir": ".",
-    "types": ["node", "electron"]
+    "types": ["node"]
   },
   "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts"]
 }

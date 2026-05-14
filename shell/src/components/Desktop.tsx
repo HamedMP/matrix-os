@@ -1248,11 +1248,10 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       label: app.name,
       group: "Apps" as const,
       icon: app.iconUrl,
-      keywords: [
-        app.path,
-        getDesktopAppAffordance(app.path, runtimeKind).launchSurface,
-        ...(getDesktopAppAffordance(app.path, runtimeKind).defaultApp ? ["default", "matrix"] : []),
-      ],
+      keywords: (() => {
+        const { launchSurface, defaultApp } = getDesktopAppAffordance(app.path, runtimeKind);
+        return [app.path, launchSurface, ...(defaultApp ? ["default", "matrix"] : [])];
+      })(),
       execute: () => openWindowRef.current(app.name, app.path),
     }));
     if (appCommands.length > 0) register(appCommands);

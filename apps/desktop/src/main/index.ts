@@ -71,7 +71,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
     win.show();
   });
 
-  win.on("close", () => {
+  let windowStateSaved = false;
+  win.on("close", (event) => {
+    if (windowStateSaved) return;
+    event.preventDefault();
     const bounds = win.getBounds();
     const nextState: DesktopWindowState = {
       width: bounds.width,
@@ -81,7 +84,14 @@ async function createMainWindow(): Promise<BrowserWindow> {
       maximized: win.isMaximized(),
       lastLoadedUrl: launchPlan.loadUrl,
     };
-    void saveDesktopWindowState(windowStatePath(), nextState);
+    void saveDesktopWindowState(windowStatePath(), nextState)
+      .catch((err: unknown) => {
+        console.warn("[desktop] Failed to save window state", err instanceof Error ? err.name : "UnknownError");
+      })
+      .finally(() => {
+        windowStateSaved = true;
+        win.close();
+      });
   });
 
   void win.loadURL(launchPlan.loadUrl).catch((err: unknown) => {
