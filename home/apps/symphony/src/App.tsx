@@ -76,6 +76,16 @@ interface FormState {
   defaultAgent: Agent;
 }
 
+interface MatrixOSBridge {
+  openApp?: (name: string, path: string) => void;
+}
+
+declare global {
+  interface Window {
+    MatrixOS?: MatrixOSBridge;
+  }
+}
+
 const DEFAULT_FORM: FormState = {
   projectSlug: "matrix-os",
   teamId: "",
@@ -116,6 +126,19 @@ function statusTone(status: RunStatus): string {
   if (status === "queued") return "bg-sky-100 text-sky-800";
   if (["retrying", "blocked", "failed"].includes(status)) return "bg-amber-100 text-amber-900";
   return "bg-zinc-100 text-zinc-700";
+}
+
+function openWorkspaceInShell() {
+  if (window.MatrixOS?.openApp) {
+    window.MatrixOS.openApp("Workspace", "__workspace__");
+    return;
+  }
+
+  window.parent.postMessage({
+    type: "os:open-app",
+    app: "Symphony",
+    payload: { name: "Workspace", path: "__workspace__" },
+  }, "*");
 }
 
 export default function App() {
@@ -225,7 +248,7 @@ export default function App() {
 
   async function runAction(run: Run, type: "stop" | "retry" | "open_workspace") {
     if (type === "open_workspace") {
-      window.open(`/workspace/${run.projectSlug}${run.worktreeId ? `/worktrees/${run.worktreeId}` : ""}`, "_blank", "noopener,noreferrer");
+      openWorkspaceInShell();
       return;
     }
     setBusy(`${type}:${run.id}`);

@@ -158,4 +158,17 @@ describe("Symphony app", () => {
     expect(actionCall?.init?.body).toBe(JSON.stringify({ type: "stop" }));
     expect(calls.some((call) => call.url.includes("/api/integrations/call"))).toBe(false);
   });
+
+  it("opens Workspace through the Matrix shell bridge", async () => {
+    const openApp = vi.fn();
+    vi.stubGlobal("MatrixOS", { openApp });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Workspace")[0]);
+
+    expect(openApp).toHaveBeenCalledWith("Workspace", "__workspace__");
+    expect(window.open).not.toHaveBeenCalledWith(expect.stringContaining("/workspace/"), expect.anything(), expect.anything());
+  });
 });
