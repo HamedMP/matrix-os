@@ -29,6 +29,12 @@ describe("messaging resource floor", () => {
       diskGiB: 40,
     }, SYNAPSE_MESSAGING_RESOURCE_FLOOR)).toBe(false);
 
+    expect(meetsMessagingResourceFloor({
+      vcpu: 2,
+      memoryGiB: 6,
+      diskGiB: 60,
+    }, SYNAPSE_MESSAGING_RESOURCE_FLOOR)).toBe(true);
+
     expect(DEFAULT_MESSAGING_RESOURCE_FLOOR.memoryGiB).toBe(4);
   });
 });

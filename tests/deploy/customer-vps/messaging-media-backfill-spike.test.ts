@@ -6,7 +6,9 @@ describe("Messaging media and backfill spike", () => {
   it("defines bounded media and latest-100 backfill checks", async () => {
     const result = await runMediaBackfillSpike();
     if (!messagingSpikesEnabled()) {
+      expect(result.network).toBe("telegram");
       expect(result.checks).toHaveProperty("latestHundredBackfill");
+      await expect(runMediaBackfillSpike("whatsapp")).resolves.toMatchObject({ network: "whatsapp" });
       return;
     }
     expect(result.passed, result.reason).toBe(true);

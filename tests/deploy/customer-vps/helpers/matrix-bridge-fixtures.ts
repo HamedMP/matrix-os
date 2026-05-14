@@ -52,9 +52,11 @@ export async function runBridgeLifecycleSpike(
   };
 }
 
-export async function runMediaBackfillSpike(): Promise<BridgeSpikeResult> {
+export async function runMediaBackfillSpike(
+  network: MessagingBridgeNetwork = "telegram",
+): Promise<BridgeSpikeResult> {
   return {
-    network: "telegram",
+    network,
     passed: false,
     checks: {
       mediaPreviewLimits: false,
@@ -66,9 +68,11 @@ export async function runMediaBackfillSpike(): Promise<BridgeSpikeResult> {
   };
 }
 
-export async function runBackupRestoreSpike(): Promise<BridgeSpikeResult> {
+export async function runBackupRestoreSpike(
+  network: MessagingBridgeNetwork = "whatsapp",
+): Promise<BridgeSpikeResult> {
   return {
-    network: "whatsapp",
+    network,
     passed: false,
     checks: {
       homeserverDbRestore: false,

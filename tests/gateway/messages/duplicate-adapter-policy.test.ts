@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest";
-
-function resolveAuthoritativeMessagingPath(input: {
-  hasBridgeMapping: boolean;
-  legacyAdapterEnabled: boolean;
-}): "bridged-matrix" | "legacy-direct" | "notification-only" {
-  if (input.hasBridgeMapping) {
-    return input.legacyAdapterEnabled ? "notification-only" : "bridged-matrix";
-  }
-  return "legacy-direct";
-}
+import { resolveAuthoritativeMessagingPath } from "../../../packages/gateway/src/messages/adapter-policy.js";
 
 describe("duplicate adapter policy", () => {
   it("makes bridged Matrix authoritative when a bridge mapping exists", () => {
@@ -23,5 +14,19 @@ describe("duplicate adapter policy", () => {
       hasBridgeMapping: true,
       legacyAdapterEnabled: true,
     })).toBe("notification-only");
+  });
+
+  it("keeps the legacy adapter authoritative until a bridge mapping exists", () => {
+    expect(resolveAuthoritativeMessagingPath({
+      hasBridgeMapping: false,
+      legacyAdapterEnabled: true,
+    })).toBe("legacy-direct");
+  });
+
+  it("returns none when no messaging path exists", () => {
+    expect(resolveAuthoritativeMessagingPath({
+      hasBridgeMapping: false,
+      legacyAdapterEnabled: false,
+    })).toBe("none");
   });
 });
