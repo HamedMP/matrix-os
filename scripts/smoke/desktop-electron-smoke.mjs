@@ -1,9 +1,17 @@
 import { _electron as electron } from "playwright";
 import { resolve } from "node:path";
+import { access } from "node:fs/promises";
 
 const repo = resolve(new URL("../..", import.meta.url).pathname);
+const electronMain = resolve(repo, "apps/desktop/out/main/index.js");
 const shellUrl = process.env.MATRIX_DESKTOP_SHELL_URL ?? "http://localhost:3100";
 const gatewayUrl = process.env.MATRIX_DESKTOP_GATEWAY_URL ?? "http://localhost:4000";
+
+try {
+  await access(electronMain);
+} catch {
+  throw new Error(`Desktop Electron bundle is missing at ${electronMain}. Run pnpm --dir apps/desktop build before scripts/smoke/desktop-electron-smoke.mjs.`);
+}
 
 function json(body) {
   return {
@@ -102,7 +110,7 @@ function routeBody(url) {
 }
 
 const app = await electron.launch({
-  args: [resolve(repo, "apps/desktop/out/main/index.js")],
+  args: [electronMain],
   env: {
     ...process.env,
     MATRIX_DESKTOP_SHELL_URL: shellUrl,

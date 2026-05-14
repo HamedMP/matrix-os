@@ -8,6 +8,8 @@ describe("desktop release workflow policy", () => {
   it("defines stacked desktop release workflows and checksum manifest script", () => {
     const workflow = readFileSync(".github/workflows/desktop-release.yml", "utf8");
     const foundation = readFileSync(".github/workflows/desktop-release-foundation.yml", "utf8");
+    const smoke = readFileSync("scripts/smoke/desktop-electron-smoke.mjs", "utf8");
+    const quickstart = readFileSync("specs/079-desktop-cloud-symphony/quickstart.md", "utf8");
 
     expect(workflow).toContain("workflow_dispatch");
     expect(workflow).toContain("desktop-release-foundation.yml");
@@ -18,6 +20,8 @@ describe("desktop release workflow policy", () => {
     expect(foundation).toContain("CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}");
     expect(foundation).toContain("WIN_CSC_LINK: ${{ secrets.DESKTOP_WIN_CSC_LINK }}");
     expect(foundation).toContain("node scripts/release/desktop/write-manifest.mjs apps/desktop/dist \"$DESKTOP_RELEASE_CHANNEL\"");
+    expect(smoke).toContain("Run pnpm --dir apps/desktop build");
+    expect(quickstart).toContain("pnpm --dir apps/desktop build");
     expect(existsSync("scripts/release/desktop/write-manifest.mjs")).toBe(true);
   });
 

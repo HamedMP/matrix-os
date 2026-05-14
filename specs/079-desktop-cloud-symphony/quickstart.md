@@ -66,6 +66,7 @@
    For a repeatable headless Electron smoke against a running shell:
 
    ```bash
+   pnpm --dir apps/desktop build
    MATRIX_DESKTOP_SHELL_URL=http://localhost:3100 \
      MATRIX_DESKTOP_GATEWAY_URL=http://localhost:4000 \
      node scripts/smoke/desktop-electron-smoke.mjs

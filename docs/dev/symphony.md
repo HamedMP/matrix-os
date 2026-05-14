@@ -76,7 +76,7 @@ Current role meanings:
 
 - `viewer`: can read the shared board.
 - `editor`: can read the shared board and claim authorized work.
-- owner: implicit for the project owner.
+- `owner`: implicit for the project owner.
 
 ## Validation
 
