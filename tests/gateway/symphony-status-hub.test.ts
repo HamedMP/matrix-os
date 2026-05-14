@@ -2,13 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import { createSymphonyStatusHub } from "../../packages/gateway/src/symphony/status-hub.js";
 
 describe("Symphony status hub", () => {
-  it("caps subscribers and evicts stale entries", () => {
+  it("caps subscribers by evicting and closing the oldest entry", () => {
+    const closeA = vi.fn();
+    const hub = createSymphonyStatusHub({ maxSubscribers: 2 });
+
+    expect(hub.subscribe({ id: "a", ownerId: "user_1", send: vi.fn(), close: closeA })).toEqual({ ok: true });
+    expect(hub.subscribe({ id: "b", ownerId: "user_1", send: vi.fn() })).toEqual({ ok: true });
+    expect(hub.subscribe({ id: "c", ownerId: "user_1", send: vi.fn() })).toEqual({ ok: true });
+
+    expect(closeA).toHaveBeenCalledOnce();
+    expect(hub.size()).toBe(2);
+  });
+
+  it("evicts stale entries", () => {
     let now = 1_000;
     const hub = createSymphonyStatusHub({ maxSubscribers: 2, subscriberTtlMs: 100, now: () => now });
 
     expect(hub.subscribe({ id: "a", ownerId: "user_1", send: vi.fn() })).toEqual({ ok: true });
     expect(hub.subscribe({ id: "b", ownerId: "user_1", send: vi.fn() })).toEqual({ ok: true });
-    expect(hub.subscribe({ id: "c", ownerId: "user_1", send: vi.fn() })).toEqual({ ok: false, code: "subscriber_limit" });
 
     now = 1_200;
     expect(hub.subscribe({ id: "c", ownerId: "user_1", send: vi.fn() })).toEqual({ ok: true });

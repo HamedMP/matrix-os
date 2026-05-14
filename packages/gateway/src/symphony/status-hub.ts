@@ -33,15 +33,35 @@ export function createSymphonyStatusHub(options: {
   const sequences = new Map<string, number>();
   const retained = new Map<string, SymphonyRealtimeEvent[]>();
 
+  function closeEvictedSubscriber(subscriber: SymphonySubscriber, context: string): void {
+    try {
+      const closeResult = subscriber.close?.();
+      if (closeResult && typeof (closeResult as Promise<void>).catch === "function") {
+        void (closeResult as Promise<void>).catch((err: unknown) => {
+          console.warn(`[symphony] status subscriber ${context} close failed:`, err instanceof Error ? err.message : String(err));
+        });
+      }
+    } catch (err: unknown) {
+      console.warn(`[symphony] status subscriber ${context} close failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function evictSubscriber(id: string, context: string): void {
+    const subscriber = subscribers.get(id);
+    if (!subscriber) return;
+    subscribers.delete(id);
+    closeEvictedSubscriber(subscriber, context);
+  }
+
   function sweep(): void {
     const cutoff = now() - subscriberTtlMs;
     for (const [id, subscriber] of subscribers) {
-      if (subscriber.lastTouched < cutoff) subscribers.delete(id);
+      if (subscriber.lastTouched < cutoff) evictSubscriber(id, "stale");
     }
     while (subscribers.size > maxSubscribers) {
       const oldest = subscribers.keys().next().value as string | undefined;
       if (!oldest) break;
-      subscribers.delete(oldest);
+      evictSubscriber(oldest, "cap");
     }
     while (retained.size > maxOwners) {
       const oldestOwner = retained.keys().next().value as string | undefined;
@@ -70,15 +90,22 @@ export function createSymphonyStatusHub(options: {
         dead.push(id);
       }
     }));
-    for (const id of dead) subscribers.delete(id);
+    for (const id of dead) evictSubscriber(id, "dead");
     return full;
   }
 
   return {
     subscribe(subscriber: SymphonySubscriber): { ok: true } | { ok: false; code: "subscriber_limit" } {
       sweep();
-      if (!subscribers.has(subscriber.id) && subscribers.size >= maxSubscribers) {
+      if (maxSubscribers < 1) {
         return { ok: false, code: "subscriber_limit" };
+      }
+      if (!subscribers.has(subscriber.id)) {
+        while (subscribers.size >= maxSubscribers) {
+          const oldest = subscribers.keys().next().value as string | undefined;
+          if (!oldest) break;
+          evictSubscriber(oldest, "cap");
+        }
       }
       subscribers.set(subscriber.id, { ...subscriber, lastTouched: now() });
       return { ok: true };

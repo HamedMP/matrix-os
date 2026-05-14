@@ -28,9 +28,10 @@ function memoryRepo(snapshot: SymphonySnapshot): SymphonyRepository {
       runs.set(run.id, run);
       return run;
     }),
-    updateRun: vi.fn(async (_ownerId, runId, patch) => {
+    updateRun: vi.fn(async (_ownerId, runId, patch, options) => {
       const current = runs.get(runId);
       if (!current) return null;
+      if (options?.allowedStatuses && !options.allowedStatuses.includes(current.status)) return null;
       const next = { ...current, ...patch, updatedAt: "2026-05-13T00:00:00.000Z" };
       runs.set(runId, next);
       return next;
@@ -485,6 +486,44 @@ describe("Matrix Symphony orchestrator", () => {
       status: "queued",
       attempt: 2,
     });
+  });
+
+  it("does not requeue completed or handoff runs", async () => {
+    for (const status of ["completed", "handoff"] as const) {
+      const snapshot = structuredClone(baseSnapshot);
+      snapshot.runs = [{
+        id: `run_${status}`,
+        installationId: "sym_user_123",
+        ticketExternalId: `issue_${status}`,
+        ticketIdentifier: "MAT-1",
+        ticketTitle: "One",
+        status,
+        attempt: 2,
+        agent: "codex",
+        projectSlug: "matrix-os",
+        claimKey: `linear:issue_${status}`,
+        lastEvent: "Run finished",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      }];
+      const repository = memoryRepo(snapshot);
+      const agentSessionManager = {
+        startSession: vi.fn(),
+        killSession: vi.fn(),
+      };
+      const orchestrator = createMatrixSymphonyOrchestrator({
+        homePath,
+        repository,
+        credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+        linearSource: { previewTickets: vi.fn() },
+        worktreeManager: { createWorktree: vi.fn() },
+        agentSessionManager,
+      });
+
+      await expect(orchestrator.retryRun("user_123", `run_${status}`, "user_123")).resolves.toMatchObject({ status });
+
+      expect(agentSessionManager.killSession).not.toHaveBeenCalled();
+      expect(repository.updateRun).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps a stopped run in attention state when session kill fails", async () => {

@@ -17,6 +17,8 @@ import type { SymphonyStatusHub } from "./status-hub.js";
 type WorktreeManager = Pick<ReturnType<typeof createWorktreeManager>, "createWorktree">;
 type AgentSessionManager = Pick<ReturnType<typeof createAgentSessionManager>, "startSession" | "killSession">;
 
+const RETRYABLE_RUN_STATUSES: SymphonyRun["status"][] = ["queued", "running", "retrying", "blocked", "failed", "stopped"];
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -356,6 +358,7 @@ export function createMatrixSymphonyOrchestrator(options: {
     async retryRun(ownerId: string, runId: string, actorId: string) {
       const run = await options.repository.getRun(ownerId, runId);
       if (!run) return null;
+      if (!RETRYABLE_RUN_STATUSES.includes(run.status)) return run;
       const killFailureCode = await killRunSession(run, "Retry run session kill failed");
       if (killFailureCode) return markRunBlockedAfterKillFailure(ownerId, run, killFailureCode, actorId);
       const updated = await options.repository.updateRun(ownerId, runId, {
@@ -364,7 +367,8 @@ export function createMatrixSymphonyOrchestrator(options: {
         lastEvent: "Run queued for retry",
         lastErrorCode: undefined,
         nextRetryAt: undefined,
-      });
+      }, { allowedStatuses: RETRYABLE_RUN_STATUSES });
+      if (!updated) return await options.repository.getRun(ownerId, runId);
       await append(ownerId, {
         installationId: run.installationId,
         runId,
