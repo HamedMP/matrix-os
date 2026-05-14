@@ -131,6 +131,10 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
 - **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
 
+## Next.js Gotchas
+
+- **Never place both `icon.png` and `icon.svg` in `src/app/`**: Next.js treats `icon.(png|svg)` as metadata icon routing. Having both with the same basename triggers a Turbopack panic ("Dependency tracking is disabled so invalidation is not allowed" — upstream Next.js #85496). Keep the SVG in `src/app/` for favicon routing; put any PNG equivalent under `public/` instead.
+
 ## Shell Gotchas
 
 - **Canvas mode is the primary shell experience**: users may only see Canvas in the sidebar. Build and verify new shell features in Canvas first, then Desktop. Desktop compatibility still matters, but Canvas is the main product surface.
