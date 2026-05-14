@@ -33,7 +33,16 @@ jobs:
       - run: pnpm --dir apps/desktop run ${{ matrix.package-script }}
         env:
           DESKTOP_RELEASE_CHANNEL: ${{ inputs.channel }}
-      - run: node scripts/release/desktop/write-manifest.mjs apps/desktop/dist "${{ inputs.channel }}"
+          CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.DESKTOP_APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DESKTOP_APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.DESKTOP_APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.DESKTOP_WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_WIN_CSC_KEY_PASSWORD }}
+      - run: node scripts/release/desktop/write-manifest.mjs apps/desktop/dist "$DESKTOP_RELEASE_CHANNEL"
+        env:
+          DESKTOP_RELEASE_CHANNEL: ${{ inputs.channel }}
       - uses: actions/upload-artifact@v4
         with:
           name: matrix-desktop-${{ matrix.os }}-${{ inputs.channel }}

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const [distDir = "apps/desktop/dist", channel = "dev"] = process.argv.slice(2);
 
@@ -24,7 +24,7 @@ const artifacts = [];
 for (const file of files) {
   const bytes = await readFile(file);
   artifacts.push({
-    path: file,
+    path: relative(distDir, file),
     sha256: createHash("sha256").update(bytes).digest("hex"),
     size: bytes.length,
   });
