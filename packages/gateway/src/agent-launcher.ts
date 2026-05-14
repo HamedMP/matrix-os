@@ -99,7 +99,14 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
     case "codex":
       return {
         command,
-        args: [...codexSandboxArgs(input.sandbox), ...promptArgs(input.prompt)],
+        args: [
+          "exec",
+          "--skip-git-repo-check",
+          "--ask-for-approval",
+          "never",
+          ...codexSandboxArgs(input.sandbox),
+          ...promptArgs(input.prompt),
+        ],
         cwd: input.cwd,
         env: {},
       };

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -673,10 +673,27 @@ describe("Matrix Symphony orchestrator", () => {
     }
   });
 
-  it("marks workflow failures as blocked attention states", async () => {
+  it("creates a default workflow and dispatches registered projects without a hand-written workflow", async () => {
     const repository = memoryRepo(structuredClone(baseSnapshot));
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-symphony-default-workflow-"));
+    const repoPath = join(homePath, "projects", "matrix-os", "repo");
+    await mkdir(repoPath, { recursive: true });
+    await atomicWriteJson(join(homePath, "projects", "matrix-os", "config.json"), {
+      id: "proj_matrix",
+      slug: "matrix-os",
+      name: "Matrix OS",
+      localPath: repoPath,
+      addedAt: "2026-05-13T00:00:00.000Z",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    const worktreeManager = { createWorktree: vi.fn(async () => ({ ok: true, worktree: { id: "wt_123456789abc", path: join(repoPath, ".worktrees", "mat-1") } })) };
+    const agentSessionManager = {
+      startSession: vi.fn(async () => ({ ok: true, status: 201, session: { id: "sess_run_1" } })),
+      killSession: vi.fn(),
+    };
     const orchestrator = createMatrixSymphonyOrchestrator({
-      homePath: "/tmp/matrix",
+      homePath,
       repository,
       credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
       linearSource: {
@@ -685,14 +702,24 @@ describe("Matrix Symphony orchestrator", () => {
           tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
         })),
       },
-      worktreeManager: { createWorktree: vi.fn() },
-      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+      worktreeManager,
+      agentSessionManager,
     });
 
-    await orchestrator.poll("user_123");
+    try {
+      await orchestrator.poll("user_123");
 
-    const runs = await repository.listRuns("user_123");
-    expect(runs[0]).toMatchObject({ status: "blocked", lastErrorCode: "workflow_missing" });
+      const runs = await repository.listRuns("user_123");
+      expect(runs[0]).toMatchObject({
+        status: "running",
+        lastEvent: "Agent session started",
+        worktreeId: "wt_123456789abc",
+        sessionId: "sess_run_1",
+      });
+      await expect(readFile(join(repoPath, "WORKFLOW.md"), "utf8")).resolves.toContain("Matrix Symphony workflow");
+    } finally {
+      rmSync(homePath, { recursive: true, force: true });
+    }
   });
 
   it("does not overwrite stopped runs with blocked dispatch failures", async () => {

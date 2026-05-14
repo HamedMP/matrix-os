@@ -12,6 +12,22 @@ type CommandRunner = (
   args: string[],
   options: { cwd: string; timeout: number },
 ) => Promise<{ stdout: string; stderr: string }>;
+type PtyProcess = Pick<import("node-pty").IPty, "kill" | "onExit">;
+type RetainedPty = {
+  process: PtyProcess;
+  startedAtMs: number;
+};
+type PtySpawn = (
+  command: string,
+  args: string[],
+  options: {
+    name: string;
+    cols: number;
+    rows: number;
+    cwd: string;
+    env: Record<string, string>;
+  },
+) => PtyProcess;
 
 export interface ZellijLayoutResult {
   sessionName: string;
@@ -32,6 +48,23 @@ export interface ZellijHealth {
 
 const SessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const ZELLIJ_TIMEOUT_MS = 10_000;
+const ZELLIJ_STARTUP_DELAY_MS = 500;
+const MAX_RETAINED_ZELLIJ_PTYS = 128;
+const RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
+const SAFE_PROCESS_ENV_KEYS = new Set([
+  "COLORTERM",
+  "DISPLAY",
+  "HOME",
+  "LANG",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TERM",
+  "TMPDIR",
+  "USER",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+]);
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +77,15 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
   });
   return { stdout, stderr };
 };
+
+let defaultPtySpawn: PtySpawn | undefined;
+async function getDefaultPtySpawn(): Promise<PtySpawn> {
+  if (!defaultPtySpawn) {
+    const nodePty = await import("node-pty");
+    defaultPtySpawn = nodePty.spawn as unknown as PtySpawn;
+  }
+  return defaultPtySpawn;
+}
 
 function sessionName(sessionId: string): string {
   const parsed = SessionIdSchema.parse(sessionId);
@@ -76,13 +118,27 @@ function renderLayout(input: {
     `// Matrix OS generated layout for ${input.sessionName}`,
     "layout {",
     "  tab name=\"Agent\" {",
-    `    pane cwd ${kdlString(input.launch.cwd)} command ${kdlString(input.launch.command)} {`,
+    `    pane cwd=${kdlString(input.launch.cwd)} command=${kdlString(input.launch.command)} {`,
     argsLine.trimEnd(),
     "    }",
     "  }",
     "}",
     "",
   ].filter((line) => line.length > 0).join("\n");
+}
+
+function ptyEnv(launchEnv: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string" && (SAFE_PROCESS_ENV_KEYS.has(key) || key.startsWith("LC_"))) {
+      env[key] = value;
+    }
+  }
+  return { ...env, ...launchEnv };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function atomicWriteText(path: string, content: string): Promise<void> {
@@ -100,10 +156,28 @@ async function atomicWriteText(path: string, content: string): Promise<void> {
 export function createZellijRuntime(options: {
   homePath: string;
   runCommand?: CommandRunner;
+  spawnPty?: PtySpawn;
+  startupDelayMs?: number;
+  retainedPtyTtlMs?: number;
+  nowMs?: () => number;
 }) {
   const homePath = resolve(options.homePath);
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const spawnPty = options.spawnPty;
+  const startupDelayMs = options.startupDelayMs ?? ZELLIJ_STARTUP_DELAY_MS;
+  const retainedPtyTtlMs = options.retainedPtyTtlMs ?? RETAINED_PTY_TTL_MS;
+  const nowMs = options.nowMs ?? Date.now;
   const layoutDir = join(homePath, "system", "zellij", "layouts");
+  const retainedPtys = new Map<string, RetainedPty>();
+
+  function sweepRetainedPtys(): void {
+    const cutoff = nowMs() - retainedPtyTtlMs;
+    for (const [name, retained] of retainedPtys) {
+      if (retained.startedAtMs > cutoff) continue;
+      retained.process.kill();
+      retainedPtys.delete(name);
+    }
+  }
 
   return {
     async generateLayout(input: {
@@ -122,10 +196,29 @@ export function createZellijRuntime(options: {
       launch: AgentLaunchSpec;
     }): Promise<ZellijStartResult> {
       const layout = await this.generateLayout(input);
-      await runCommand("zellij", ["--session", layout.sessionName, "--layout", layout.layoutPath], {
+      sweepRetainedPtys();
+      if (!retainedPtys.has(layout.sessionName) && retainedPtys.size >= MAX_RETAINED_ZELLIJ_PTYS) {
+        throw new Error("zellij_session_limit");
+      }
+      retainedPtys.get(layout.sessionName)?.process.kill();
+      retainedPtys.delete(layout.sessionName);
+      const resolvedSpawn = spawnPty ?? await getDefaultPtySpawn();
+      const ptyProcess = resolvedSpawn("zellij", ["--session", layout.sessionName, "--new-session-with-layout", layout.layoutPath], {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
         cwd: input.launch.cwd,
-        timeout: ZELLIJ_TIMEOUT_MS,
+        env: ptyEnv(input.launch.env),
       });
+      let exited: { exitCode: number; signal?: number } | null = null;
+      ptyProcess.onExit((event: { exitCode: number; signal?: number }) => {
+        exited = event;
+        retainedPtys.delete(layout.sessionName);
+      });
+      retainedPtys.set(layout.sessionName, { process: ptyProcess, startedAtMs: nowMs() });
+      await delay(startupDelayMs);
+      if (exited) throw new Error("zellij_start_failed");
+      if (!retainedPtys.has(layout.sessionName)) throw new Error("zellij_start_cancelled");
       return { ok: true, status: "running", ...layout };
     },
 
@@ -138,7 +231,11 @@ export function createZellijRuntime(options: {
     },
 
     async kill(sessionId: string): Promise<{ ok: true }> {
-      await runCommand("zellij", ["kill-session", sessionName(sessionId)], {
+      const name = sessionName(sessionId);
+      const ptyProcess = retainedPtys.get(name);
+      retainedPtys.delete(name);
+      ptyProcess?.process.kill();
+      await runCommand("zellij", ["kill-session", name], {
         cwd: homePath,
         timeout: ZELLIJ_TIMEOUT_MS,
       });

@@ -138,10 +138,10 @@ function includesAllLabels(ticket: TrackedTicket, requiredLabels: string[]): boo
 }
 
 function buildIssuesQuery(input: { projectId?: string; state?: string; labelName?: string; assigneeId?: string }) {
-  const variableDefs = ["$first: Int!", "$after: String", "$teamId: String!"];
+  const variableDefs = ["$first: Int!", "$after: String", "$teamId: ID!"];
   const filters = ["team: { id: { eq: $teamId } }"];
   if (input.projectId) {
-    variableDefs.push("$projectId: String!");
+    variableDefs.push("$projectId: ID!");
     filters.push("project: { id: { eq: $projectId } }");
   }
   if (input.state) {
@@ -153,7 +153,7 @@ function buildIssuesQuery(input: { projectId?: string; state?: string; labelName
     filters.push("labels: { name: { eq: $labelName } }");
   }
   if (input.assigneeId) {
-    variableDefs.push("$assigneeId: String!");
+    variableDefs.push("$assigneeId: ID!");
     filters.push("assignee: { id: { eq: $assigneeId } }");
   }
   return `
