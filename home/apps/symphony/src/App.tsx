@@ -39,6 +39,16 @@ interface SymphonyConfigResponse {
   } | null;
 }
 
+interface SetupOptions {
+  credentialConfigured: boolean;
+  matrixProjects: Array<{ slug: string; name: string; repositoryUrl?: string }>;
+  linear: {
+    teams: Array<{ id: string; key: string; name: string }>;
+    projects: Array<{ id: string; name: string; slug?: string; teamIds: string[] }>;
+    users: Array<{ id: string; name: string; displayName?: string; active?: boolean }>;
+  };
+}
+
 interface Ticket {
   externalId: string;
   identifier: string;
@@ -67,11 +77,13 @@ interface FormState {
   projectSlug: string;
   teamId: string;
   teamKey: string;
+  linearProjectId: string;
+  linearProjectSlug: string;
   linearSecret: string;
   requiredLabels: string;
   activeStates: string;
   terminalStates: string;
-  assigneeIds: string;
+  assigneeIds: string[];
   maxConcurrentAgents: number;
   defaultAgent: Agent;
 }
@@ -94,11 +106,13 @@ const DEFAULT_FORM: FormState = {
   projectSlug: "matrix-os",
   teamId: "",
   teamKey: "MAT",
+  linearProjectId: "",
+  linearProjectSlug: "",
   linearSecret: "",
   requiredLabels: "symphony",
   activeStates: "Todo, In Progress",
   terminalStates: "Done, Canceled, Cancelled, Duplicate",
-  assigneeIds: "",
+  assigneeIds: [],
   maxConcurrentAgents: 3,
   defaultAgent: "codex",
 };
@@ -150,6 +164,8 @@ export default function App() {
   const [config, setConfig] = useState<SymphonyConfigResponse | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [setupOptions, setSetupOptions] = useState<SetupOptions | null>(null);
+  const [setupLoading, setSetupLoading] = useState(false);
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOpenRef = useRef(false);
@@ -175,11 +191,13 @@ export default function App() {
         projectSlug: nextConfig.installation?.projectSlug ?? DEFAULT_FORM.projectSlug,
         teamId: nextConfig.rule?.teamId ?? "",
         teamKey: nextConfig.rule?.teamKey ?? DEFAULT_FORM.teamKey,
+        linearProjectId: nextConfig.rule?.projectId ?? "",
+        linearProjectSlug: nextConfig.rule?.projectSlug ?? "",
         linearSecret: "",
         requiredLabels: nextConfig.rule?.requiredLabels.join(", ") ?? DEFAULT_FORM.requiredLabels,
         activeStates: nextConfig.rule?.activeStates.join(", ") ?? DEFAULT_FORM.activeStates,
         terminalStates: nextConfig.rule?.terminalStates.join(", ") ?? DEFAULT_FORM.terminalStates,
-        assigneeIds: nextConfig.rule?.assigneeIds.join(", ") ?? "",
+        assigneeIds: nextConfig.rule?.assigneeIds ?? [],
         maxConcurrentAgents: nextConfig.installation?.maxConcurrentAgents ?? DEFAULT_FORM.maxConcurrentAgents,
         defaultAgent: nextConfig.installation?.defaultAgent ?? DEFAULT_FORM.defaultAgent,
       });
@@ -226,7 +244,96 @@ export default function App() {
   }, [load]);
 
   const grouped = useMemo(() => groupRuns(runs), [runs]);
+  const filteredLinearProjects = useMemo(() => {
+    const projects = setupOptions?.linear.projects ?? [];
+    if (!form.teamId) return projects;
+    return projects.filter((project) => project.teamIds.length === 0 || project.teamIds.includes(form.teamId));
+  }, [form.teamId, setupOptions?.linear.projects]);
   const needsSetup = !status?.credentialConfigured || !config?.rule;
+
+  const loadSetupOptions = useCallback(async () => {
+    setSetupLoading(true);
+    setError(null);
+    try {
+      const options = await fetchJson<SetupOptions>("/api/symphony/setup-options");
+      setSetupOptions(options);
+      setForm((current) => ({
+        ...current,
+        projectSlug: current.projectSlug || options.matrixProjects[0]?.slug || DEFAULT_FORM.projectSlug,
+      }));
+    } catch (err: unknown) {
+      console.warn("[symphony] setup options failed:", err instanceof Error ? err.message : String(err));
+      setError("Symphony setup options could not be loaded.");
+    } finally {
+      setSetupLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    void loadSetupOptions();
+  }, [loadSetupOptions, settingsOpen]);
+
+  function selectLinearTeam(teamId: string) {
+    const team = setupOptions?.linear.teams.find((candidate) => candidate.id === teamId);
+    setForm((current) => ({
+      ...current,
+      teamId,
+      teamKey: team?.key ?? "",
+      linearProjectId: "",
+      linearProjectSlug: "",
+    }));
+  }
+
+  function selectLinearProject(projectId: string) {
+    const project = setupOptions?.linear.projects.find((candidate) => candidate.id === projectId);
+    setForm((current) => ({
+      ...current,
+      linearProjectId: projectId,
+      linearProjectSlug: project?.slug ?? "",
+    }));
+  }
+
+  function toggleAssignee(userId: string) {
+    setForm((current) => ({
+      ...current,
+      assigneeIds: current.assigneeIds.includes(userId)
+        ? current.assigneeIds.filter((id) => id !== userId)
+        : [...current.assigneeIds, userId],
+    }));
+  }
+
+  function resetLinearSelection(next: Partial<FormState> = {}) {
+    setForm((current) => ({
+      ...current,
+      teamId: "",
+      teamKey: "",
+      linearProjectId: "",
+      linearProjectSlug: "",
+      assigneeIds: [],
+      ...next,
+    }));
+  }
+
+  async function saveLinearCredential() {
+    if (!form.linearSecret.trim()) return;
+    setBusy("credential");
+    setError(null);
+    try {
+      await fetchJson("/api/symphony/credentials/linear", {
+        method: "POST",
+        body: JSON.stringify({ kind: "api_key", secret: form.linearSecret.trim() }),
+      });
+      resetLinearSelection({ linearSecret: "" });
+      await loadSetupOptions();
+      await load({ hydrateForm: false });
+    } catch (err: unknown) {
+      console.warn("[symphony] credential save failed:", err instanceof Error ? err.message : String(err));
+      setError("Linear credential could not be saved.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function saveSetup() {
     setBusy("setup");
@@ -237,6 +344,9 @@ export default function App() {
           method: "POST",
           body: JSON.stringify({ kind: "api_key", secret: form.linearSecret.trim() }),
         });
+        resetLinearSelection({ linearSecret: "" });
+        await loadSetupOptions();
+        return;
       }
       await fetchJson("/api/symphony/config", {
         method: "POST",
@@ -251,12 +361,12 @@ export default function App() {
           rule: {
             teamId: form.teamId,
             teamKey: form.teamKey,
-            projectId: config?.rule?.projectId,
-            projectSlug: config?.rule?.projectSlug,
+            projectId: form.linearProjectId || undefined,
+            projectSlug: form.linearProjectSlug || undefined,
             requiredLabels: splitList(form.requiredLabels),
             activeStates: splitList(form.activeStates),
             terminalStates: splitList(form.terminalStates),
-            assigneeIds: splitList(form.assigneeIds),
+            assigneeIds: form.assigneeIds,
           },
         }),
       });
@@ -401,14 +511,65 @@ export default function App() {
               <Button variant="ghost" onClick={() => setSettingsOpen(false)}>Close</Button>
             </div>
             <div className="mt-5 space-y-4">
-              <Field label="Linear API secret"><Input value={form.linearSecret} type="password" onChange={(event) => setForm({ ...form, linearSecret: event.target.value })} placeholder="lin_api_..." /></Field>
-              <Field label="Project slug"><Input value={form.projectSlug} onChange={(event) => setForm({ ...form, projectSlug: event.target.value })} /></Field>
-              <Field label="Linear team ID"><Input value={form.teamId} onChange={(event) => setForm({ ...form, teamId: event.target.value })} /></Field>
-              <Field label="Linear team key"><Input value={form.teamKey} onChange={(event) => setForm({ ...form, teamKey: event.target.value })} /></Field>
+              <div className="rounded-md border bg-zinc-50 p-3">
+                <Field label="Linear API key"><Input value={form.linearSecret} type="password" onChange={(event) => setForm({ ...form, linearSecret: event.target.value })} placeholder="lin_api_..." /></Field>
+                <Button className="mt-3 w-full" variant="outline" onClick={() => void saveLinearCredential()} disabled={busy === "credential" || !form.linearSecret.trim()}>
+                  Save Linear Key
+                </Button>
+              </div>
+              <Field label="Matrix project">
+                <select
+                  className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+                  value={form.projectSlug}
+                  onChange={(event) => setForm({ ...form, projectSlug: event.target.value })}
+                >
+                  {(setupOptions?.matrixProjects.length ? setupOptions.matrixProjects : [{ slug: form.projectSlug, name: form.projectSlug }]).map((project) => (
+                    <option key={project.slug} value={project.slug}>{project.name} ({project.slug})</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Linear team">
+                <select
+                  className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+                  value={form.teamId}
+                  onChange={(event) => selectLinearTeam(event.target.value)}
+                  disabled={setupLoading || !setupOptions?.linear.teams.length}
+                >
+                  <option value="">{setupLoading ? "Loading Linear teams..." : "Choose a Linear team"}</option>
+                  {(setupOptions?.linear.teams ?? []).map((team) => (
+                    <option key={team.id} value={team.id}>{team.name} ({team.key})</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Linear project">
+                <select
+                  className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+                  value={form.linearProjectId}
+                  onChange={(event) => selectLinearProject(event.target.value)}
+                  disabled={setupLoading || filteredLinearProjects.length === 0}
+                >
+                  <option value="">Any project in selected team</option>
+                  {filteredLinearProjects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}{project.slug ? ` (${project.slug})` : ""}</option>
+                  ))}
+                </select>
+              </Field>
+              <div className="block text-sm">
+                <div className="mb-2 font-medium">Team members</div>
+                <div className="max-h-44 space-y-2 overflow-auto rounded-md border bg-white p-2">
+                  {(setupOptions?.linear.users ?? []).length === 0 ? (
+                    <div className="px-1 py-2 text-muted-foreground">{setupLoading ? "Loading members..." : "Any matching assignee"}</div>
+                  ) : setupOptions!.linear.users.filter((user) => user.active !== false).map((user) => (
+                    <label key={user.id} className="flex items-center gap-2 rounded px-1 py-1">
+                      <input type="checkbox" checked={form.assigneeIds.includes(user.id)} onChange={() => toggleAssignee(user.id)} />
+                      <span className="min-w-0 flex-1 truncate">{user.displayName ?? user.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
               <Field label="Required labels"><Input value={form.requiredLabels} onChange={(event) => setForm({ ...form, requiredLabels: event.target.value })} /></Field>
               <Field label="Active states"><Input value={form.activeStates} onChange={(event) => setForm({ ...form, activeStates: event.target.value })} /></Field>
               <Field label="Terminal states"><Input value={form.terminalStates} onChange={(event) => setForm({ ...form, terminalStates: event.target.value })} /></Field>
-              <Field label="Assignee IDs"><Input value={form.assigneeIds} onChange={(event) => setForm({ ...form, assigneeIds: event.target.value })} placeholder="optional, comma separated" /></Field>
               <Field label="Concurrency"><Input value={form.maxConcurrentAgents} type="number" min={1} max={10} onChange={(event) => setForm({ ...form, maxConcurrentAgents: Number(event.target.value) })} /></Field>
               <Button className="w-full" onClick={() => void saveSetup()} disabled={busy === "setup" || !form.teamId.trim()}>
                 Save and Preview Tickets

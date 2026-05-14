@@ -17,6 +17,7 @@ import {
   SYMPHONY_BODY_LIMIT,
   SYMPHONY_EMPTY_BODY_LIMIT,
   type SymphonyRun,
+  type MatrixProjectOption,
 } from "./contracts.js";
 import type { SymphonyCredentialStore } from "./credential-store.js";
 import type { LinearSource } from "./linear-source.js";
@@ -35,6 +36,7 @@ export interface MatrixSymphonyRouteDeps {
   linearSource: LinearSource;
   orchestrator: MatrixSymphonyOrchestrator;
   statusHub?: SymphonyStatusHub;
+  listMatrixProjects?: () => Promise<MatrixProjectOption[]>;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -156,6 +158,35 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     const auth = await requireOperator(c, deps, principal);
     if (!auth.ok) return auth.response;
     return c.json({ installation: auth.snapshot.installation, rule: auth.snapshot.rule });
+  }));
+
+  app.get("/setup-options", (c) => withPrincipal(c, deps, async (principal) => {
+    const auth = await requireOperator(c, deps, principal);
+    if (!auth.ok) return auth.response;
+    let matrixProjects: MatrixProjectOption[] = [];
+    try {
+      matrixProjects = deps.listMatrixProjects ? await deps.listMatrixProjects() : [];
+    } catch (err: unknown) {
+      console.warn("[symphony] Matrix project setup discovery failed:", err instanceof Error ? err.message : String(err));
+    }
+    const credential = await deps.credentialStore.readLinearCredential(auth.ownerId);
+    if (!credential) {
+      return c.json({
+        credentialConfigured: false,
+        matrixProjects,
+        linear: { teams: [], projects: [], users: [] },
+      });
+    }
+    if (!deps.linearSource.discoverSetupOptions) {
+      return c.json({ credentialConfigured: true, matrixProjects, linear: { teams: [], projects: [], users: [] } });
+    }
+    try {
+      const linear = await deps.linearSource.discoverSetupOptions(credential);
+      return c.json({ credentialConfigured: true, matrixProjects, linear });
+    } catch (err: unknown) {
+      console.warn("[symphony] Linear setup discovery failed:", err instanceof Error ? err.message : String(err));
+      return c.json(genericSymphonyError("linear_setup_failed", "Linear setup options could not be loaded"), status(502));
+    }
   }));
 
   app.post("/config", limited, (c) => withPrincipal(c, deps, async (principal) => {

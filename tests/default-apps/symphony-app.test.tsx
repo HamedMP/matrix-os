@@ -99,6 +99,20 @@ describe("Symphony app", () => {
           ],
         });
       }
+      if (url === "/api/symphony/setup-options") {
+        return json({
+          credentialConfigured: true,
+          matrixProjects: [{ slug: "matrix-os", name: "Matrix OS", repositoryUrl: "https://github.com/hamedmp/matrix-os" }],
+          linear: {
+            teams: [{ id: "team_1", key: "MAT", name: "Matrix" }],
+            projects: [{ id: "linear_project_1", name: "Matrix OS", slug: "matrix-os", teamIds: ["team_1"] }],
+            users: [
+              { id: "linear_user", name: "Hamed", displayName: "Hamed", active: true },
+              { id: "inactive_user", name: "Former teammate", displayName: "Former teammate", active: false },
+            ],
+          },
+        });
+      }
       if (url === "/api/symphony/credentials/linear" && init?.method === "POST") {
         return json({ credentialConfigured: true, accountLabel: "Linear" });
       }
@@ -164,8 +178,11 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
 
     fireEvent.click(screen.getAllByText("Setup")[0]);
-    fireEvent.change(screen.getByLabelText("Linear API secret"), { target: { value: "lin_api_secret" } });
-    fireEvent.change(screen.getByLabelText("Linear team ID"), { target: { value: "team_1" } });
+    fireEvent.change(screen.getByLabelText("Linear API key"), { target: { value: "lin_api_secret" } });
+    fireEvent.click(screen.getByText("Save Linear Key"));
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/setup-options")).toBe(true));
+    fireEvent.change(screen.getByLabelText("Linear team"), { target: { value: "team_1" } });
+    fireEvent.change(screen.getByLabelText("Linear project"), { target: { value: "linear_project_1" } });
     fireEvent.click(screen.getByText("Save and Preview Tickets"));
 
     await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/credentials/linear")).toBe(true));
@@ -174,8 +191,48 @@ describe("Symphony app", () => {
     expect(String(configCall?.init?.body)).not.toContain("lin_api_secret");
     expect(JSON.parse(String(configCall?.init?.body))).toMatchObject({
       installation: { authorizedOperators: ["user_456"], pollIntervalMs: 120000 },
-      rule: { projectId: "linear_project_1", projectSlug: "matrix-os" },
+      rule: { teamId: "team_1", teamKey: "MAT", projectId: "linear_project_1", projectSlug: "matrix-os", assigneeIds: [] },
     });
+  });
+
+  it("hides inactive Linear users from the assignee selector", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Setup")[0]);
+    await waitFor(() => expect(screen.getByLabelText("Hamed")).toBeTruthy());
+
+    expect(screen.queryByLabelText("Former teammate")).toBeNull();
+  });
+
+  it("clears stale Linear selections when the credential changes", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Setup")[0]);
+    await waitFor(() => expect(screen.getByLabelText("Linear team")).toBeTruthy());
+    expect((screen.getByLabelText("Linear team") as HTMLSelectElement).value).toBe("team_1");
+
+    fireEvent.change(screen.getByLabelText("Linear API key"), { target: { value: "lin_api_new_secret" } });
+    fireEvent.click(screen.getByText("Save Linear Key"));
+
+    await waitFor(() => expect((screen.getByLabelText("Linear team") as HTMLSelectElement).value).toBe(""));
+    expect((screen.getByLabelText("Linear project") as HTMLSelectElement).value).toBe("");
+    expect((screen.getByLabelText("Hamed") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("does not save config from stale selections when setup includes a new credential", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Setup")[0]);
+    await waitFor(() => expect(screen.getByLabelText("Linear team")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Linear API key"), { target: { value: "lin_api_new_secret" } });
+    fireEvent.click(screen.getByText("Save and Preview Tickets"));
+
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/credentials/linear" && call.init?.method === "POST")).toBe(true));
+    expect(calls.some((call) => call.url === "/api/symphony/config" && call.init?.method === "POST")).toBe(false);
+    expect((screen.getByLabelText("Linear team") as HTMLSelectElement).value).toBe("");
   });
 
   it("runs dashboard actions without shell commands or raw GraphQL", async () => {
@@ -220,7 +277,7 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
 
     fireEvent.click(screen.getAllByText("Setup")[0]);
-    const secretInput = screen.getByLabelText("Linear API secret") as HTMLInputElement;
+    const secretInput = screen.getByLabelText("Linear API key") as HTMLInputElement;
     fireEvent.change(secretInput, { target: { value: "lin_api_secret_draft" } });
     const initialStatusCalls = calls.filter((call) => call.url === "/api/symphony/status").length;
 
@@ -229,6 +286,6 @@ describe("Symphony app", () => {
     await waitFor(() => {
       expect(calls.filter((call) => call.url === "/api/symphony/status").length).toBeGreaterThan(initialStatusCalls);
     });
-    expect((screen.getByLabelText("Linear API secret") as HTMLInputElement).value).toBe("lin_api_secret_draft");
+    expect((screen.getByLabelText("Linear API key") as HTMLInputElement).value).toBe("lin_api_secret_draft");
   });
 });
