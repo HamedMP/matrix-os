@@ -34,7 +34,10 @@ const SAFE_CLIENT_ERROR = "Request failed";
 const MAX_CLIENT_ERROR_LENGTH = 120;
 const DESKTOP_ERROR_ALLOWLIST = new Set([
   "Desktop runtime unavailable",
+  "Workspace request failed",
   "Cloud agent runtime required",
+  "Ticket assignment failed",
+  "Symphony request failed",
 ]);
 const DESKTOP_DEFAULT_APP_PATHS = new Set([
   "__workspace__",
@@ -75,6 +78,12 @@ export function safeDesktopClientError(value: unknown): string {
     return SAFE_CLIENT_ERROR;
   }
   return DESKTOP_ERROR_ALLOWLIST.has(value.message) ? value.message : SAFE_CLIENT_ERROR;
+}
+
+export function desktopSafeErrorMessage(value: unknown): string {
+  if (!(value instanceof Error)) return SAFE_CLIENT_ERROR;
+  if (DESKTOP_ERROR_ALLOWLIST.has(value.message)) return value.message;
+  return safeDesktopClientError(value);
 }
 
 export async function getDesktopRuntimePolicy(): Promise<DesktopRuntimePolicy> {

@@ -22,6 +22,8 @@ nativeRebuilder: sequential
 mac:
   artifactName: ${productName}-${version}-${arch}.${ext}
   category: public.app-category.developer-tools
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false
   target:
@@ -35,6 +37,9 @@ dmg:
 
 win:
   executableName: matrix-desktop
+  signAndEditExecutable: true
+  publisherName:
+    - Matrix OS
   target:
     - target: nsis
       arch:

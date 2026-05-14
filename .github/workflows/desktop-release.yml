@@ -1,0 +1,22 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Desktop release channel
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - canary
+          - beta
+          - stable
+
+jobs:
+  desktop-release:
+    uses: ./.github/workflows/desktop-release-foundation.yml
+    with:
+      channel: ${{ inputs.channel }}
+    secrets: inherit

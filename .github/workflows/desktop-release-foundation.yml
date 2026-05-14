@@ -1,0 +1,35 @@
+name: Desktop Release Foundation
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+
+jobs:
+  build-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/desktop build
+        env:
+          DESKTOP_RELEASE_CHANNEL: ${{ inputs.channel }}
+      - run: node scripts/release/desktop/write-manifest.mjs apps/desktop/dist "${{ inputs.channel }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matrix-desktop-${{ matrix.os }}-${{ inputs.channel }}
+          path: |
+            apps/desktop/dist/**

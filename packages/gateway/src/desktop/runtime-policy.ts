@@ -12,6 +12,14 @@ export interface AgentRuntimeRequest {
   mode?: string;
 }
 
+export interface DesktopOperatorAuthorizationInput {
+  ownerId: string;
+  principalUserId: string;
+  operatorIds?: string[];
+}
+
+const SAFE_DESKTOP_OPERATOR_ID = /^[A-Za-z0-9_-]{1,256}$/;
+
 function normalizeWebUrl(rawUrl: string): string {
   let parsed: URL;
   try {
@@ -33,6 +41,17 @@ export function assertCloudAgentRuntime(request: AgentRuntimeRequest): void {
     return;
   }
   throw new Error("Cloud agent runtime required");
+}
+
+export function normalizeDesktopOperators(operatorIds: readonly string[] = []): string[] {
+  return Array.from(new Set(operatorIds.filter((id) => SAFE_DESKTOP_OPERATOR_ID.test(id)))).slice(0, 50);
+}
+
+export function canUseDesktopOperatorControls(input: DesktopOperatorAuthorizationInput): boolean {
+  if (!SAFE_DESKTOP_OPERATOR_ID.test(input.ownerId) || !SAFE_DESKTOP_OPERATOR_ID.test(input.principalUserId)) {
+    return false;
+  }
+  return input.principalUserId === input.ownerId || normalizeDesktopOperators(input.operatorIds).includes(input.principalUserId);
 }
 
 export function createGatewayDesktopRuntimePolicy(

@@ -202,23 +202,23 @@
 
 ### Tests for User Story 6
 
-- [ ] T088 [P] [US6] Write failing desktop settings tests in `tests/shell/desktop-settings.test.tsx`
-- [ ] T089 [P] [US6] Write failing operator authorization tests in `tests/gateway/desktop-operator-auth.test.ts`
-- [ ] T090 [P] [US6] Write failing safe error display tests in `tests/shell/desktop-safe-errors.test.tsx`
-- [ ] T091 [P] [US6] Write failing desktop packaging config tests in `tests/desktop/package-config.test.ts`
-- [ ] T092 [P] [US6] Write failing release workflow policy tests in `tests/desktop/release-workflow-policy.test.ts`
+- [X] T088 [P] [US6] Write failing desktop settings tests in `tests/shell/desktop-settings.test.tsx`
+- [X] T089 [P] [US6] Write failing operator authorization tests in `tests/gateway/desktop-operator-auth.test.ts`
+- [X] T090 [P] [US6] Write failing safe error display tests in `tests/shell/desktop-safe-errors.test.tsx`
+- [X] T091 [P] [US6] Write failing desktop packaging config tests in `tests/desktop/package-config.test.ts`
+- [X] T092 [P] [US6] Write failing release workflow policy tests in `tests/desktop/release-workflow-policy.test.ts`
 
 ### Implementation for User Story 6
 
-- [ ] T093 [US6] Add desktop settings and Slay onboarding/import guidance section in `shell/src/components/settings/sections/DesktopSection.tsx`
-- [ ] T094 [US6] Wire desktop settings into `shell/src/components/Settings.tsx`
-- [ ] T095 [US6] Add operator authorization helpers in `packages/gateway/src/desktop/runtime-policy.ts`
-- [ ] T096 [US6] Add desktop-safe error allowlist helper in `shell/src/lib/desktop-runtime.ts`
-- [ ] T097 [US6] Finalize desktop packaging metadata in `apps/desktop/electron-builder.yml`
-- [ ] T098 [US6] Add desktop update/channel display in `shell/src/components/settings/sections/DesktopSection.tsx`
-- [ ] T099 [US6] Add Slay-style desktop release workflow in `.github/workflows/desktop-release.yml`
-- [ ] T100 [US6] Add reusable desktop release foundation workflow in `.github/workflows/desktop-release-foundation.yml`
-- [ ] T101 [US6] Add release asset manifest/checksum scripts in `scripts/release/desktop/`
+- [X] T093 [US6] Add desktop settings and Slay onboarding/import guidance section in `shell/src/components/settings/sections/DesktopSection.tsx`
+- [X] T094 [US6] Wire desktop settings into `shell/src/components/Settings.tsx`
+- [X] T095 [US6] Add operator authorization helpers in `packages/gateway/src/desktop/runtime-policy.ts`
+- [X] T096 [US6] Add desktop-safe error allowlist helper in `shell/src/lib/desktop-runtime.ts`
+- [X] T097 [US6] Finalize desktop packaging metadata in `apps/desktop/electron-builder.yml`
+- [X] T098 [US6] Add desktop update/channel display in `shell/src/components/settings/sections/DesktopSection.tsx`
+- [X] T099 [US6] Add Slay-style desktop release workflow in `.github/workflows/desktop-release.yml`
+- [X] T100 [US6] Add reusable desktop release foundation workflow in `.github/workflows/desktop-release-foundation.yml`
+- [X] T101 [US6] Add release asset manifest/checksum scripts in `scripts/release/desktop/`
 
 ---
 
