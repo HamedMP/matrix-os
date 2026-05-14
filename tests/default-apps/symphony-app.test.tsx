@@ -207,4 +207,21 @@ describe("Symphony app", () => {
       expect(calls.filter((call) => call.url === "/api/symphony/status").length).toBeGreaterThan(initialStatusCalls);
     });
   });
+
+  it("preserves unsaved setup drafts during background Symphony refreshes", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Setup")[0]);
+    const secretInput = screen.getByLabelText("Linear API secret") as HTMLInputElement;
+    fireEvent.change(secretInput, { target: { value: "lin_api_secret_draft" } });
+    const initialStatusCalls = calls.filter((call) => call.url === "/api/symphony/status").length;
+
+    eventListeners["symphony.poll.completed"]?.forEach((listener) => listener());
+
+    await waitFor(() => {
+      expect(calls.filter((call) => call.url === "/api/symphony/status").length).toBeGreaterThan(initialStatusCalls);
+    });
+    expect((screen.getByLabelText("Linear API secret") as HTMLInputElement).value).toBe("lin_api_secret_draft");
+  });
 });

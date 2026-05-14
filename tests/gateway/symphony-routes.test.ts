@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMatrixSymphonyRoutes } from "../../packages/gateway/src/symphony/routes.js";
 import type { SymphonyRepository } from "../../packages/gateway/src/symphony/repository.js";
-import type { SymphonyInstallation, SymphonyRun, SymphonySnapshot } from "../../packages/gateway/src/symphony/contracts.js";
+import type { OperatorEvent, SymphonyInstallation, SymphonyRun, SymphonySnapshot } from "../../packages/gateway/src/symphony/contracts.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 function jsonRequest(path: string, method: "POST" | "DELETE", body: unknown): Request {
@@ -80,18 +80,36 @@ function deps(snapshot: SymphonySnapshot, principal: RequestPrincipal = { userId
   const linearSource = {
     previewTickets: vi.fn(async () => ({ tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "Build", stateName: "Todo", labels: ["symphony"] }], truncated: false })),
   };
+  const statusHub = {
+    subscribe: vi.fn(() => ({ ok: true as const })),
+    unsubscribe: vi.fn(),
+    touch: vi.fn(() => true),
+    publishOperatorEvent: vi.fn(async (_ownerId: string, event: OperatorEvent) => ({
+      type: event.type,
+      installationId: event.installationId,
+      runId: event.runId,
+      sequence: 1,
+      createdAt: event.createdAt,
+      payload: { message: event.message, severity: event.severity, metadata: event.metadata ?? {} },
+    })),
+    retained: vi.fn(() => []),
+    size: vi.fn(() => 0),
+    close: vi.fn(async () => undefined),
+  };
   return {
     app: createMatrixSymphonyRoutes({
       repository,
       credentialStore,
       linearSource,
       orchestrator,
+      statusHub,
       getPrincipal: () => principal,
     }),
     repository,
     credentialStore,
     linearSource,
     orchestrator,
+    statusHub,
   };
 }
 
@@ -150,7 +168,7 @@ describe("Matrix Symphony routes", () => {
   });
 
   it("saves config and never returns the Linear secret", async () => {
-    const { app, repository } = deps(structuredClone(baseSnapshot));
+    const { app, repository, statusHub } = deps(structuredClone(baseSnapshot));
 
     const res = await app.request(jsonRequest("/config", "POST", {
       installation: {
@@ -172,6 +190,13 @@ describe("Matrix Symphony routes", () => {
 
     expect(res.status).toBe(200);
     expect(repository.saveConfig).toHaveBeenCalledOnce();
+    expect(statusHub.publishOperatorEvent).toHaveBeenCalledWith("user_123", expect.objectContaining({
+      installationId: "sym_user_123",
+      type: "symphony.config.updated",
+      message: "Symphony configuration updated",
+      severity: "info",
+      actorId: "user_123",
+    }));
     expect(JSON.stringify(await res.json())).not.toContain("lin_api");
   });
 

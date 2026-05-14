@@ -89,6 +89,19 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function gitRefExists(runCommand: CommandRunner, cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runCommand("git", ["rev-parse", "--verify", "--quiet", ref], {
+      cwd,
+      timeout: DEFAULT_TIMEOUT_MS,
+    });
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error) return false;
+    throw err;
+  }
+}
+
 function isErrnoCode(err: unknown, code: string): boolean {
   return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === code;
 }
@@ -195,21 +208,17 @@ export function createWorktreeManager(options: {
               timeout: DEFAULT_TIMEOUT_MS,
             });
           }
-          let branchExists = true;
+          let addArgs = ["worktree", "add", "--", path, currentBranch];
           if (input.branch && input.createBranch) {
-            try {
-              await runCommand("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${currentBranch}`], {
-                cwd: project.localPath,
-                timeout: DEFAULT_TIMEOUT_MS,
-              });
-            } catch (err: unknown) {
-              if (!(err instanceof Error)) throw err;
-              branchExists = false;
+            const branchExists = await gitRefExists(runCommand, project.localPath, `refs/heads/${currentBranch}`);
+            if (!branchExists) {
+              const remoteRef = `refs/remotes/origin/${currentBranch}`;
+              const remoteBranchExists = await gitRefExists(runCommand, project.localPath, remoteRef);
+              addArgs = remoteBranchExists
+                ? ["worktree", "add", "-b", currentBranch, "--track", "--", path, `origin/${currentBranch}`]
+                : ["worktree", "add", "-b", currentBranch, "--", path, baseRef];
             }
           }
-          const addArgs = input.branch && input.createBranch && !branchExists
-            ? ["worktree", "add", "-b", currentBranch, "--", path, baseRef]
-            : ["worktree", "add", "--", path, currentBranch];
           await runCommand("git", addArgs, {
             cwd: project.localPath,
             timeout: DEFAULT_TIMEOUT_MS,

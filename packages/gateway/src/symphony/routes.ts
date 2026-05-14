@@ -144,6 +144,15 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (!parsed.ok) return parsed.response;
     const credentialConfigured = await deps.credentialStore.hasLinearCredential(principal.userId);
     const saved = await deps.repository.saveConfig(principal.userId, parsed.value, principal.userId, credentialConfigured);
+    await deps.statusHub?.publishOperatorEvent(principal.userId, {
+      id: `evt_${randomUUID()}`,
+      installationId: saved.installation.id,
+      type: "symphony.config.updated",
+      message: "Symphony configuration updated",
+      severity: "info",
+      actorId: principal.userId,
+      createdAt: new Date().toISOString(),
+    });
     return c.json({ installation: saved.installation, rule: saved.rule });
   }));
 

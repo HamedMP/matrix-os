@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ExternalLink, KeyRound, Play, RefreshCw, Square, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,10 @@ interface FormState {
   defaultAgent: Agent;
 }
 
+interface LoadOptions {
+  hydrateForm?: boolean;
+}
+
 interface MatrixOSBridge {
   openApp?: (name: string, path: string) => void;
 }
@@ -148,10 +152,15 @@ export default function App() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpenRef = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    settingsOpenRef.current = settingsOpen;
+  }, [settingsOpen]);
+
+  const load = useCallback(async (options: LoadOptions = {}) => {
     setError(null);
     const [nextStatus, nextConfig, runList] = await Promise.all([
       fetchJson<SymphonyStatus>("/api/symphony/status"),
@@ -161,7 +170,7 @@ export default function App() {
     setStatus(nextStatus);
     setConfig(nextConfig);
     setRuns(runList.runs);
-    if (nextConfig.installation || nextConfig.rule) {
+    if ((options.hydrateForm ?? true) && !settingsOpenRef.current && (nextConfig.installation || nextConfig.rule)) {
       setForm({
         projectSlug: nextConfig.installation?.projectSlug ?? DEFAULT_FORM.projectSlug,
         teamId: nextConfig.rule?.teamId ?? "",
@@ -190,7 +199,7 @@ export default function App() {
     const events = new EventSource("/api/symphony/events");
     const refresh = () => {
       if (closed) return;
-      void load().catch((err: unknown) => {
+      void load({ hydrateForm: false }).catch((err: unknown) => {
         console.warn("[symphony] event refresh failed:", err instanceof Error ? err.message : String(err));
       });
     };
