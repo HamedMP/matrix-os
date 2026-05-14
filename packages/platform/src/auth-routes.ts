@@ -13,7 +13,12 @@ import {
 } from './sync-jwt.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 import type { PlatformDB } from './db.js';
-import { getContainer, getContainerByClerkId } from './db.js';
+import {
+  getActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
+  getContainer,
+  getContainerByClerkId,
+} from './db.js';
 import type { ClerkAuth } from './clerk-auth.js';
 
 const DEVICE_BODY_LIMIT = 4096;
@@ -168,7 +173,7 @@ function approvalPage(
     <p>You're approving:</p>
     <div class="code">${escapedCode}</div>
     <div id="signin-area" style="display:none"></div>
-    <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
+    <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
       <input type="hidden" name="userCode" value="${escapedCode}">
       <input type="hidden" name="csrf" value="${escapedCsrf}">
       <button type="submit">Confirm</button>
@@ -210,20 +215,22 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     now: config.now,
     issueToken: async ({ clerkUserId }) => {
       const container = await getContainerByClerkId(config.db, clerkUserId);
-      if (!container) {
+      const machine = container ? undefined : await getActiveUserMachineByClerkId(config.db, clerkUserId);
+      const handle = container?.handle ?? machine?.handle;
+      if (!handle) {
         throw new Error('No container provisioned for this Clerk user');
       }
-      const gatewayUrl = config.gatewayUrlForHandle(container.handle);
+      const gatewayUrl = config.gatewayUrlForHandle(handle);
       const issued = await issueSyncJwt({
         secret: config.jwtSecret,
         clerkUserId,
-        handle: container.handle,
+        handle,
         gatewayUrl,
       });
       return {
         token: issued.token,
         expiresAt: issued.expiresAt,
-        handle: container.handle,
+        handle,
       };
     },
   });
@@ -424,13 +431,19 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       return c.json({ error: 'unauthorized' }, 401);
     }
     const container = await getContainer(config.db, claims.handle);
-    if (!container) {
+    const machine = container ? undefined : await getActiveUserMachineByHandle(config.db, claims.handle);
+    const ownerClerkUserId = container?.clerkUserId ?? machine?.clerkUserId;
+    const handle = container?.handle ?? machine?.handle;
+    if (!ownerClerkUserId || !handle) {
       return c.json({ error: 'unknown_handle' }, 404);
+    }
+    if (ownerClerkUserId !== claims.sub) {
+      return c.json({ error: 'unauthorized' }, 401);
     }
     return c.json({
       userId: claims.sub,
-      handle: container.handle,
-      gatewayUrl: config.gatewayUrlForHandle(container.handle),
+      handle,
+      gatewayUrl: config.gatewayUrlForHandle(handle),
     });
   });
 
