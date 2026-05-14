@@ -55,4 +55,41 @@ describe("automation evaluator", () => {
     expect(result.executed).toBe(0);
     expect(runAction).not.toHaveBeenCalled();
   });
+
+  it("skips unsupported network and account scoped rules even when they match", async () => {
+    const runAction = vi.fn().mockResolvedValue({ ok: true });
+    const matchingRule = {
+      id: "auto_0123456789abcdef0123456789abcdef",
+      ownerId: "user_a",
+      name: "Deadlines",
+      trigger: { type: "text_contains" as const, value: "deadline" },
+      action: { type: "create_task" as const, titleTemplate: "Follow up: {body}" },
+      status: "enabled" as const,
+      createdAt: "2026-05-13T00:00:00.000Z",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    };
+
+    const result = await evaluateAutomationRules({
+      event: { ownerId: "user_a", roomId: "!room:matrixos.local", body: "deadline tomorrow" },
+      permission: {
+        ownerId: "user_a",
+        roomId: "!room:matrixos.local",
+        readEnabled: false,
+        replyEnabled: false,
+        automationEnabled: true,
+        mentionOnly: false,
+        revision: 2,
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+      rules: [
+        { ...matchingRule, scope: "network" as const },
+        { ...matchingRule, id: "auto_abcdef0123456789abcdef0123456789", scope: "account" as const },
+      ],
+      runAction,
+    });
+
+    expect(result.executed).toBe(0);
+    expect(runAction).not.toHaveBeenCalled();
+  });
 });

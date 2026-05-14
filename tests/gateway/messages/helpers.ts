@@ -85,6 +85,8 @@ export function createRepositoryMock(overrides: Partial<MessagingRepository> = {
     getReply: vi.fn().mockResolvedValue(null),
     cancelReply: vi.fn(),
     approveReply: vi.fn(),
+    enqueueHermesWork: vi.fn(),
+    listWorkItems: vi.fn().mockResolvedValue([]),
     createAutomationRule: vi.fn(),
     listAutomationRules: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
     pauseAutomationRule: vi.fn(),

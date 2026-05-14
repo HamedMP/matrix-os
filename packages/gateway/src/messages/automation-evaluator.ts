@@ -27,6 +27,7 @@ export async function evaluateAutomationRules(input: EvaluateAutomationRulesInpu
   let executed = 0;
   for (const rule of input.rules) {
     if (rule.status !== "enabled") continue;
+    if (rule.scope === "network" || rule.scope === "account") continue;
     if (rule.scope === "room" && rule.roomId !== input.event.roomId) continue;
     if (rule.trigger.type === "text_contains" && !input.event.body.toLowerCase().includes(rule.trigger.value.toLowerCase())) {
       continue;

@@ -4,7 +4,8 @@ import { createAutomationActionRunner } from "../../../packages/gateway/src/mess
 describe("automation task action", () => {
   it("creates a scoped Matrix OS task from a matching message", async () => {
     const createTask = vi.fn().mockResolvedValue("task_1");
-    const runner = createAutomationActionRunner({ createTask });
+    const createDraft = vi.fn();
+    const runner = createAutomationActionRunner({ createTask, createDraft });
 
     const result = await runner({
       ownerId: "user_a",
@@ -19,5 +20,29 @@ describe("automation task action", () => {
       ownerId: "user_a",
       title: "Follow up: deadline tomorrow",
     });
+    expect(createDraft).not.toHaveBeenCalled();
+  });
+
+  it("persists a scoped draft reply from a matching message", async () => {
+    const createTask = vi.fn();
+    const createDraft = vi.fn().mockResolvedValue("reply_1");
+    const runner = createAutomationActionRunner({ createTask, createDraft });
+
+    const result = await runner({
+      ownerId: "user_a",
+      ruleId: "auto_0123456789abcdef0123456789abcdef",
+      roomId: "!room:matrixos.local",
+      body: "deadline tomorrow",
+      action: { type: "draft_reply", bodyTemplate: "I saw: {body}" },
+    });
+
+    expect(result).toEqual({ ok: true, draftReplyId: "reply_1" });
+    expect(createDraft).toHaveBeenCalledWith({
+      ownerId: "user_a",
+      roomId: "!room:matrixos.local",
+      ruleId: "auto_0123456789abcdef0123456789abcdef",
+      body: "I saw: deadline tomorrow",
+    });
+    expect(createTask).not.toHaveBeenCalled();
   });
 });

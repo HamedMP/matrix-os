@@ -22,4 +22,15 @@ describe("automation schemas", () => {
       action: { type: "shell_exec", command: "rm -rf /" },
     })).toThrow();
   });
+
+  it("rejects network and account scopes until scoped dispatch is implemented", () => {
+    for (const scope of ["network", "account"] as const) {
+      expect(() => AutomationRuleCreateRequestSchema.parse({
+        name: "Unsupported",
+        scope,
+        trigger: { type: "text_contains", value: "deadline" },
+        action: { type: "create_task", titleTemplate: "Follow up: {body}" },
+      })).toThrow(/network and account automation scopes are not available yet/);
+    }
+  });
 });

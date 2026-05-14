@@ -227,6 +227,7 @@ export const HermesWorkItemSchema = z.object({
   status: HermesWorkItemStatusSchema,
   permissionRevision: z.number().int().min(1),
   abortTokenId: z.string().trim().min(1).max(160),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -315,6 +316,9 @@ export const AutomationRuleCreateRequestSchema = z.object({
 }).refine((value) => value.scope !== "room" || Boolean(value.roomId), {
   message: "roomId is required for room automation",
   path: ["roomId"],
+}).refine((value) => value.scope === "room" || value.scope === "all_permitted", {
+  message: "network and account automation scopes are not available yet",
+  path: ["scope"],
 });
 export type AutomationRuleCreateRequest = z.infer<typeof AutomationRuleCreateRequestSchema>;
 
