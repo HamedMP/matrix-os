@@ -210,6 +210,8 @@ export default function App() {
           rule: {
             teamId: form.teamId,
             teamKey: form.teamKey,
+            projectId: config?.rule?.projectId,
+            projectSlug: config?.rule?.projectSlug,
             requiredLabels: splitList(form.requiredLabels),
             activeStates: splitList(form.activeStates),
             terminalStates: splitList(form.terminalStates),

@@ -605,4 +605,49 @@ describe("Matrix Symphony orchestrator", () => {
       lastEvent: "Ticket no longer matches Symphony rule",
     });
   });
+
+  it("does not stop running agents when the Linear preview is truncated", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_101",
+      ticketIdentifier: "MAT-101",
+      ticketTitle: "Beyond first page",
+      status: "running",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_101",
+      sessionId: "sess_existing",
+      lastEvent: "Agent session started",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const agentSessionManager = {
+      startSession: vi.fn(),
+      killSession: vi.fn(),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: true,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "First page", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager,
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(agentSessionManager.killSession).not.toHaveBeenCalled();
+    await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
+      status: "running",
+      sessionId: "sess_existing",
+    });
+  });
 });

@@ -250,9 +250,11 @@ export function createMatrixSymphonyOrchestrator(options: {
       .filter((run) => run.status === "running");
     const eligibleTickets = preview.tickets.filter((ticket) => shouldDispatch(ticket, rule));
     const eligibleClaimKeys = new Set(eligibleTickets.map((ticket) => claimKey(ticket)));
-    await reconcileIneligibleRunningRuns(ownerId, installation, activeRuns, eligibleClaimKeys);
-    const eligibleRunningCount = activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
-    const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - eligibleRunningCount);
+    if (!preview.truncated) await reconcileIneligibleRunningRuns(ownerId, installation, activeRuns, eligibleClaimKeys);
+    const countedRunning = preview.truncated
+      ? activeRuns.length
+      : activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
+    const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - countedRunning);
     let dispatched = 0;
     for (const ticket of preview.tickets) {
       if (dispatched >= capacity) break;

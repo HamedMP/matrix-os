@@ -58,6 +58,8 @@ describe("Symphony app", () => {
           rule: {
             teamId: "team_1",
             teamKey: "MAT",
+            projectId: "linear_project_1",
+            projectSlug: "matrix-os",
             requiredLabels: ["symphony"],
             activeStates: ["Todo"],
             terminalStates: ["Done"],
@@ -144,6 +146,7 @@ describe("Symphony app", () => {
     expect(String(configCall?.init?.body)).not.toContain("lin_api_secret");
     expect(JSON.parse(String(configCall?.init?.body))).toMatchObject({
       installation: { authorizedOperators: ["user_456"] },
+      rule: { projectId: "linear_project_1", projectSlug: "matrix-os" },
     });
   });
 
