@@ -172,7 +172,7 @@ describe("WorkspaceApp", () => {
     render(<WorkspaceApp initialProjectSlug="repo" />);
 
     await waitFor(() => expect(screen.getByText("MAT-1")).toBeTruthy());
-    expect(screen.getByText("task_1")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("task_1")).toBeTruthy());
     expect(screen.getByText("sess_1")).toBeTruthy();
     expect(screen.queryByText("not-an-artifact")).toBeNull();
     expect(screen.getAllByText("Task preview").length).toBeGreaterThan(0);
