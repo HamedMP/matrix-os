@@ -67,7 +67,7 @@
 
    ```bash
    pnpm --dir apps/desktop build
-   MATRIX_DESKTOP_SHELL_URL=http://localhost:3100 \
+   MATRIX_DESKTOP_SHELL_URL=http://localhost:3000 \
      MATRIX_DESKTOP_GATEWAY_URL=http://localhost:4000 \
      node scripts/smoke/desktop-electron-smoke.mjs
    ```
@@ -138,7 +138,7 @@ Latest local validation for the current stack:
   validate Linux packaging again on the GitHub Linux runner before publishing.
 - `node scripts/release/desktop/write-manifest.mjs apps/desktop/dist dev`: passed
   and wrote `desktop-release-manifest.json` with SHA-256 checksums.
-- `MATRIX_DESKTOP_SHELL_URL=http://localhost:3100 MATRIX_DESKTOP_GATEWAY_URL=http://localhost:4000 node scripts/smoke/desktop-electron-smoke.mjs`:
+- `MATRIX_DESKTOP_SHELL_URL=http://localhost:3000 MATRIX_DESKTOP_GATEWAY_URL=http://localhost:4000 node scripts/smoke/desktop-electron-smoke.mjs`:
   passed. Verified Electron launched the Matrix shell, exposed the cloud-only
   preload runtime policy, opened the launcher, listed Workspace, Files, Chat,
   Symphony, and Notes, and opened Workspace, Files, Chat, and Settings.

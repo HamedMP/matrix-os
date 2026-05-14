@@ -21,7 +21,11 @@ describe("desktop release workflow policy", () => {
     expect(foundation).toContain("WIN_CSC_LINK: ${{ secrets.DESKTOP_WIN_CSC_LINK }}");
     expect(foundation).toContain("node scripts/release/desktop/write-manifest.mjs apps/desktop/dist \"$DESKTOP_RELEASE_CHANNEL\"");
     expect(smoke).toContain("Run pnpm --dir apps/desktop build");
+    expect(smoke).toContain("createRequire(resolve(repo, \"apps/desktop/package.json\"))");
+    expect(smoke).toContain("executablePath: electronExecutablePath");
+    expect(smoke).toContain("http://localhost:3000");
     expect(quickstart).toContain("pnpm --dir apps/desktop build");
+    expect(quickstart).toContain("MATRIX_DESKTOP_SHELL_URL=http://localhost:3000");
     expect(existsSync("scripts/release/desktop/write-manifest.mjs")).toBe(true);
   });
 

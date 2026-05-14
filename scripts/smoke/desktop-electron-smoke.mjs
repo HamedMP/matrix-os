@@ -1,15 +1,19 @@
 import { _electron as electron } from "playwright";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { access } from "node:fs/promises";
 
 const repo = resolve(new URL("../..", import.meta.url).pathname);
+const desktopRequire = createRequire(resolve(repo, "apps/desktop/package.json"));
 const electronMain = resolve(repo, "apps/desktop/out/main/index.js");
-const shellUrl = process.env.MATRIX_DESKTOP_SHELL_URL ?? "http://localhost:3100";
+const electronExecutablePath = desktopRequire("electron");
+const shellUrl = process.env.MATRIX_DESKTOP_SHELL_URL ?? "http://localhost:3000";
 const gatewayUrl = process.env.MATRIX_DESKTOP_GATEWAY_URL ?? "http://localhost:4000";
 
 try {
   await access(electronMain);
-} catch {
+} catch (err) {
+  if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) throw err;
   throw new Error(`Desktop Electron bundle is missing at ${electronMain}. Run pnpm --dir apps/desktop build before scripts/smoke/desktop-electron-smoke.mjs.`);
 }
 
@@ -110,6 +114,7 @@ function routeBody(url) {
 }
 
 const app = await electron.launch({
+  executablePath: electronExecutablePath,
   args: [electronMain],
   env: {
     ...process.env,
