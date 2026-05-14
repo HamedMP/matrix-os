@@ -134,6 +134,7 @@ describe("Matrix Symphony orchestrator", () => {
     await orchestrator.poll("user_123");
 
     expect(worktreeManager.createWorktree).toHaveBeenCalledTimes(1);
+    expect(worktreeManager.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ createBranch: true }));
     expect(agentSessionManager.startSession).toHaveBeenCalledTimes(1);
   });
 

@@ -166,6 +166,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       const worktreeResult = await options.worktreeManager.createWorktree({
         projectSlug: installation.projectSlug,
         branch: branchFor(ticket),
+        createBranch: true,
       });
       if (!worktreeResult.ok) {
         return await options.repository.updateRun(ownerId, run.id, {

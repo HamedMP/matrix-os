@@ -5,6 +5,7 @@ export interface LinearSource {
 }
 
 type FetchLike = typeof fetch;
+const MAX_LINEAR_PREVIEW_REQUESTS = 20;
 
 interface LinearIssueNode {
   id?: string;
@@ -121,6 +122,7 @@ export function createLinearSource(options: {
       const assigneeIds = rule.assigneeIds.length > 0 ? rule.assigneeIds : [undefined];
       const tickets: TrackedTicket[] = [];
       let truncated = false;
+      let requests = 0;
 
       for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
         const state = states[stateIndex];
@@ -133,6 +135,10 @@ export function createLinearSource(options: {
           let after: string | null = null;
           let hasNextPage = false;
           do {
+            if (requests >= MAX_LINEAR_PREVIEW_REQUESTS) {
+              return { tickets: tickets.slice(0, limit), truncated: true };
+            }
+            requests += 1;
             const response = await fetchImpl(endpoint, {
               method: "POST",
               headers: {

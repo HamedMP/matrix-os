@@ -59,6 +59,20 @@ describe("worktree-manager", () => {
     expect(runCommand).toHaveBeenNthCalledWith(2, "git", ["worktree", "add", "--", expect.any(String), "pr-42"], expect.any(Object));
   });
 
+  it("creates a missing branch worktree from the project base ref when requested", async () => {
+    const runCommand = vi.fn(async (_command: string, args: string[]) => {
+      if (args[0] === "rev-parse") throw new Error("missing branch");
+      return { stdout: "", stderr: "" };
+    });
+    const manager = createWorktreeManager({ homePath, runCommand });
+
+    const result = await manager.createWorktree({ projectSlug: "repo", branch: "symphony/mat-1", createBranch: true });
+
+    expect(result.ok).toBe(true);
+    expect(runCommand).toHaveBeenNthCalledWith(1, "git", ["rev-parse", "--verify", "--quiet", "refs/heads/symphony/mat-1"], expect.any(Object));
+    expect(runCommand).toHaveBeenNthCalledWith(2, "git", ["worktree", "add", "-b", "symphony/mat-1", "--", expect.any(String), "main"], expect.any(Object));
+  });
+
   it("serializes concurrent creation for the same worktree", async () => {
     const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
     const manager = createWorktreeManager({ homePath, runCommand });

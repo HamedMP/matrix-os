@@ -96,6 +96,27 @@ describe("Symphony Linear source", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("caps Linear request fan-out for broad rules", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        issues: {
+          nodes: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    }))) as unknown as typeof fetch;
+    const source = createLinearSource({ fetch: fetchMock });
+
+    const result = await source.previewTickets({
+      ...rule,
+      activeStates: Array.from({ length: 20 }, (_unused, index) => `State ${index}`),
+      assigneeIds: Array.from({ length: 50 }, (_unused, index) => `assignee_${index}`),
+    }, "lin_api_secret", { limit: 100 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(20);
+    expect(result).toMatchObject({ tickets: [], truncated: true });
+  });
+
   it("pages through Linear results before applying remaining label filters", async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
