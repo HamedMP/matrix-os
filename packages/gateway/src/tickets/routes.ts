@@ -38,6 +38,9 @@ export interface TicketRoutesDeps {
 }
 
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
+const OwnerScopeQuerySchema = z.object({
+  ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_@:.=-]+$/).optional(),
+}).passthrough();
 
 function status(code: number): ContentfulStatusCode {
   return code as ContentfulStatusCode;
@@ -87,17 +90,28 @@ function readProjectSlug(c: Context): { ok: true; projectSlug: string } | { ok: 
   return { ok: true, projectSlug: parsed.data };
 }
 
+function readOwnerId(c: Context, principal: RequestPrincipal): { ok: true; ownerId: string } | { ok: false; response: Response } {
+  const parsed = OwnerScopeQuerySchema.safeParse(c.req.query());
+  if (!parsed.success) {
+    return { ok: false, response: c.json(ticketError("invalid_query", "Request query is invalid"), status(400)) };
+  }
+  return { ok: true, ownerId: parsed.data.ownerId ?? principal.userId };
+}
+
 async function authorizeProjectAccess(
   c: Context,
   deps: TicketRoutesDeps,
   principal: RequestPrincipal,
+  ownerId: string,
   projectSlug: string,
   action: "read" | "write",
 ): Promise<Response | null> {
-  if (!deps.authorizeProjectAccess) return null;
+  if (!deps.authorizeProjectAccess) {
+    return ownerId === principal.userId ? null : c.json(ticketError("unauthorized", "Unauthorized"), status(401));
+  }
   try {
     const allowed = await deps.authorizeProjectAccess({
-      ownerId: principal.userId,
+      ownerId,
       principalUserId: principal.userId,
       projectSlug,
       action,
@@ -117,21 +131,25 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.get("/:projectSlug/tickets", (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "read");
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, owner.ownerId, project.projectSlug, "read");
     if (unauthorized) return unauthorized;
     const query = TicketListQuerySchema.safeParse(c.req.query());
     if (!query.success) return c.json(ticketError("invalid_query", "Request query is invalid"), status(400));
-    return c.json(await deps.repository.listTickets(principal.userId, project.projectSlug, query.data));
+    return c.json(await deps.repository.listTickets(owner.ownerId, project.projectSlug, query.data));
   }));
 
   app.post("/:projectSlug/tickets", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "write");
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, owner.ownerId, project.projectSlug, "write");
     if (unauthorized) return unauthorized;
     const parsed = await parseJson(c, CreateInternalTicketSchema);
     if (!parsed.ok) return parsed.response;
-    const ticket = await deps.repository.createInternalTicket(principal.userId, project.projectSlug, parsed.value);
+    const ticket = await deps.repository.createInternalTicket(owner.ownerId, project.projectSlug, parsed.value);
     statusHub.publish({
       id: `evt_${randomUUID()}`,
       ownerId: principal.userId,
@@ -147,13 +165,15 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.patch("/:projectSlug/tickets/:ticketId", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "write");
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, owner.ownerId, project.projectSlug, "write");
     if (unauthorized) return unauthorized;
     const ticketId = TicketIdSchema.safeParse(c.req.param("ticketId"));
     if (!ticketId.success) return c.json(ticketError("invalid_ticket_id", "Ticket id is invalid"), status(400));
     const parsed = await parseJson(c, UpdateTicketSchema);
     if (!parsed.ok) return parsed.response;
-    const ticket = await deps.repository.updateTicket(principal.userId, project.projectSlug, ticketId.data, parsed.value);
+    const ticket = await deps.repository.updateTicket(owner.ownerId, project.projectSlug, ticketId.data, parsed.value);
     if (!ticket) return c.json(ticketError("revision_conflict", "Ticket was updated by another request"), status(409));
     statusHub.publish({
       id: `evt_${randomUUID()}`,
@@ -170,7 +190,9 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.post("/:projectSlug/tickets/sync/linear", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "write");
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, owner.ownerId, project.projectSlug, "write");
     if (unauthorized) return unauthorized;
     const parsed = await parseJson(c, LinearSyncSchema);
     if (!parsed.ok) return parsed.response;
@@ -205,7 +227,9 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.get("/:projectSlug/tickets/events", (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "read");
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, owner.ownerId, project.projectSlug, "read");
     if (unauthorized) return unauthorized;
     return c.json({ events: statusHub.recent(principal.userId, project.projectSlug, 100) });
   }));

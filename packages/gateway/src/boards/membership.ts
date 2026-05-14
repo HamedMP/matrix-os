@@ -18,6 +18,13 @@ export interface BoardMembershipService {
 
 const MAX_BOARDS = 1_000;
 
+export class BoardMemberLimitExceededError extends Error {
+  constructor() {
+    super("Board member limit exceeded");
+    this.name = "BoardMemberLimitExceededError";
+  }
+}
+
 function boardKey(ownerId: string, projectSlug: string): string {
   return `${ownerId}\u0000${projectSlug}`;
 }
@@ -137,21 +144,40 @@ export class KyselyBoardMembershipService implements BoardMembershipService {
       addedBy: ownerId,
       addedAt: nowIso(),
     };
-    await this.db
-      .insertInto("shared_board_members")
-      .values({
-        owner_id: ownerId,
-        project_slug: projectSlug,
-        user_id: member.userId,
-        role: member.role,
-        member: JSON.stringify(member),
-      })
-      .onConflict((oc) => oc.columns(["owner_id", "project_slug", "user_id"]).doUpdateSet({
-        role: member.role,
-        member: JSON.stringify(member),
-        updated_at: sql`now()`,
-      }))
-      .execute();
+    await this.db.transaction().execute(async (trx) => {
+      const existing = await trx
+        .selectFrom("shared_board_members")
+        .select(["user_id"])
+        .where("owner_id", "=", ownerId)
+        .where("project_slug", "=", projectSlug)
+        .where("user_id", "=", member.userId)
+        .executeTakeFirst();
+      if (!existing) {
+        const countRow = await trx
+          .selectFrom("shared_board_members")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("owner_id", "=", ownerId)
+          .where("project_slug", "=", projectSlug)
+          .executeTakeFirst();
+        const count = Number(countRow?.count ?? 0);
+        if (count >= BOARD_MEMBER_LIMIT) throw new BoardMemberLimitExceededError();
+      }
+      await trx
+        .insertInto("shared_board_members")
+        .values({
+          owner_id: ownerId,
+          project_slug: projectSlug,
+          user_id: member.userId,
+          role: member.role,
+          member: JSON.stringify(member),
+        })
+        .onConflict((oc) => oc.columns(["owner_id", "project_slug", "user_id"]).doUpdateSet({
+          role: member.role,
+          member: JSON.stringify(member),
+          updated_at: sql`now()`,
+        }))
+        .execute();
+    });
     return member;
   }
 

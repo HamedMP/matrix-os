@@ -11,7 +11,7 @@ import {
   BoardUserIdSchema,
   boardError,
 } from "./contracts.js";
-import type { BoardMembershipService } from "./membership.js";
+import { BoardMemberLimitExceededError, type BoardMembershipService } from "./membership.js";
 
 export interface BoardMembershipRouteDeps {
   service: BoardMembershipService;
@@ -79,7 +79,15 @@ export function createBoardMembershipRoutes(deps: BoardMembershipRouteDeps) {
     if (!parsed.ok) return parsed.response;
     const canWrite = await deps.service.canWriteBoard(principal.userId, project.projectSlug, principal.userId);
     if (!canWrite) return c.json(boardError("unauthorized", "Unauthorized"), status(401));
-    const member = await deps.service.addMember(principal.userId, project.projectSlug, parsed.value);
+    let member;
+    try {
+      member = await deps.service.addMember(principal.userId, project.projectSlug, parsed.value);
+    } catch (err: unknown) {
+      if (err instanceof BoardMemberLimitExceededError) {
+        return c.json(boardError("member_limit_exceeded", "Board member limit exceeded"), status(409));
+      }
+      throw err;
+    }
     return c.json({ member }, status(201));
   }));
 

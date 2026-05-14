@@ -19,6 +19,28 @@ describe("shared board authorization", () => {
     expect(listTickets).not.toHaveBeenCalled();
   });
 
+  it("reads shared board tickets from the board owner's scope", async () => {
+    const listTickets = vi.fn(async () => ({ tickets: [], nextCursor: null }));
+    const authorizeProjectAccess = vi.fn(async () => true);
+    const app = new Hono();
+    app.route("/api/projects", createTicketRoutes({
+      repository: { listTickets } as any,
+      getPrincipal: () => ({ userId: "user_2", source: "dev-default" }),
+      authorizeProjectAccess,
+    }));
+
+    const res = await app.request("/api/projects/repo/tickets?ownerId=owner_1");
+
+    expect(res.status).toBe(200);
+    expect(authorizeProjectAccess).toHaveBeenCalledWith({
+      ownerId: "owner_1",
+      principalUserId: "user_2",
+      projectSlug: "repo",
+      action: "read",
+    });
+    expect(listTickets).toHaveBeenCalledWith("owner_1", "repo", expect.objectContaining({ source: "all" }));
+  });
+
   it("prevents a teammate from claiming tickets outside their shared board permission", async () => {
     const orchestrator = createMatrixSymphonyOrchestrator({
       homePath: "/tmp/matrix",
