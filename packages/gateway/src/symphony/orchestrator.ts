@@ -39,6 +39,10 @@ function runIdFor(ownerId: string, ticket: Pick<TrackedTicket, "externalId" | "s
   return `run_${createHash("sha256").update(`${ownerId}:${sourceKindFor(ticket)}:${ticket.externalId}`).digest("hex").slice(0, 16)}`;
 }
 
+function legacyLinearRunIdFor(ownerId: string, ticket: Pick<TrackedTicket, "externalId">): string {
+  return `run_${createHash("sha256").update(`${ownerId}:${ticket.externalId}`).digest("hex").slice(0, 16)}`;
+}
+
 function branchFor(ticket: TrackedTicket): string {
   return ticket.branchName?.trim() || `symphony/${ticket.identifier.toLowerCase().replace(/[^a-z0-9._/-]+/g, "-")}`;
 }
@@ -54,6 +58,10 @@ function isRetryBackoffActive(run: SymphonyRun, nowMs = Date.now()): boolean {
   if (run.status !== "retrying" || !run.nextRetryAt) return false;
   const retryAt = Date.parse(run.nextRetryAt);
   return Number.isFinite(retryAt) && retryAt > nowMs;
+}
+
+function consumesAgentCapacity(run: SymphonyRun): boolean {
+  return ["queued", "running", "retrying", "blocked"].includes(run.status);
 }
 
 function dispatchFailurePatch(run: SymphonyRun, code: string, message: string): Partial<SymphonyRun> {
@@ -173,7 +181,9 @@ export function createMatrixSymphonyOrchestrator(options: {
   ): Promise<SymphonyRun> {
     const id = runIdFor(ownerId, ticket);
     const active = existing ?? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
-    const current = active ?? await options.repository.getRun(ownerId, id);
+    const current = active
+      ?? await options.repository.getRun(ownerId, id)
+      ?? (sourceKindFor(ticket) === "linear" ? await options.repository.getRun(ownerId, legacyLinearRunIdFor(ownerId, ticket)) : null);
     const timestamp = nowIso();
     if (current && isRetryBackoffActive(current)) return current;
     if (current && current.status !== "queued" && current.status !== "retrying") return current;
@@ -393,6 +403,9 @@ export function createMatrixSymphonyOrchestrator(options: {
       const installation = snapshot.installation;
       if (!installation) return null;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+      if (existing && !isRetryBackoffActive(existing) && existing.status !== "queued" && existing.status !== "retrying") return existing;
+      const activeRuns = snapshot.runs.filter((run) => run.claimKey !== claimKey(ticket) && consumesAgentCapacity(run));
+      if (activeRuns.length >= (installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS)) return null;
       const rule: TicketSourceRule = snapshot.rule ?? {
         installationId: installation.id,
         teamId: "manual",
@@ -404,6 +417,7 @@ export function createMatrixSymphonyOrchestrator(options: {
         updatedAt: nowIso(),
       };
       const run = await dispatchTicket(ownerId, installation, rule, ticket, existing);
+      if (run === existing) return run;
       await append(ownerId, {
         installationId: installation.id,
         runId: run.id,

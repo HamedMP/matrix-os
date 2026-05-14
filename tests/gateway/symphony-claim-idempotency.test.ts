@@ -45,5 +45,6 @@ describe("Symphony duplicate ticket claims", () => {
 
     expect(second.id).toBe(first.id);
     expect(startSession).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(repository.appendEvent).mock.calls.filter(([, event]) => event.type === "symphony.ticket.assigned")).toHaveLength(1);
   });
 });

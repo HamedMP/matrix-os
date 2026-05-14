@@ -262,9 +262,6 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
   app.get("/codex/readiness", (c) => withPrincipal(c, deps, async (principal) => {
     const auth = await requireOperator(c, deps, principal);
     if (!auth.ok) return auth.response;
-    if (!("codexReadiness" in deps.orchestrator) || typeof deps.orchestrator.codexReadiness !== "function") {
-      return c.json({ status: "unknown", lastCheckedAt: new Date().toISOString() });
-    }
     return c.json(await deps.orchestrator.codexReadiness());
   }));
 
@@ -273,9 +270,6 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (!auth.ok) return auth.response;
     const parsed = await parseJson(c, ManualTicketAssignmentSchema);
     if (!parsed.ok) return parsed.response;
-    if (!("assignTicket" in deps.orchestrator) || typeof deps.orchestrator.assignTicket !== "function") {
-      return c.json(genericSymphonyError("assignment_unavailable", "Ticket assignment is unavailable"), status(503));
-    }
     const run = await deps.orchestrator.assignTicket(auth.ownerId, parsed.value, principal.userId);
     if (!run) return c.json(genericSymphonyError("assignment_unavailable", "Ticket assignment is unavailable"), status(409));
     return c.json({ run: publicRun(run) }, status(201));

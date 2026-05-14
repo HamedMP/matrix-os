@@ -178,7 +178,7 @@ export interface SymphonyRun {
 }
 
 export const ManualTicketAssignmentSchema = z.object({
-  sourceKind: z.enum(["linear", "matrix"]).default("matrix"),
+  sourceKind: z.enum(["linear", "matrix"]).default("linear"),
   externalId: z.string().trim().min(1).max(256),
   identifier: z.string().trim().min(1).max(128),
   title: z.string().trim().min(1).max(300),

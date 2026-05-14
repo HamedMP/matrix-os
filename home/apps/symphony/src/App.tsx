@@ -60,6 +60,18 @@ interface Ticket {
   labels: string[];
 }
 
+interface MatrixTrackedTicket {
+  id: string;
+  sourceKind: "linear" | "matrix";
+  sourceId: string;
+  sourceUrl?: string;
+  identifier: string;
+  title: string;
+  status: string;
+  assigneeIds: string[];
+  labelIds: string[];
+}
+
 interface Run {
   id: string;
   status: RunStatus;
@@ -158,6 +170,26 @@ function openWorkspaceInShell() {
     app: "Symphony",
     payload: { name: "Workspace", path: "__workspace__" },
   }, "*");
+}
+
+function matrixTicketToAssignmentTicket(ticket: MatrixTrackedTicket): Ticket {
+  return {
+    sourceKind: "matrix",
+    externalId: ticket.id,
+    identifier: ticket.identifier,
+    title: ticket.title,
+    url: ticket.sourceUrl,
+    stateName: ticket.status,
+    labels: ticket.labelIds,
+  };
+}
+
+function mergeAssignmentTickets(groups: Ticket[][]): Ticket[] {
+  const byKey = new Map<string, Ticket>();
+  for (const ticket of groups.flat()) {
+    byKey.set(`${ticket.sourceKind ?? "linear"}:${ticket.externalId}`, ticket);
+  }
+  return Array.from(byKey.values());
 }
 
 export default function App() {
@@ -317,6 +349,23 @@ export default function App() {
     }));
   }
 
+  async function loadAssignmentPreview(): Promise<Ticket[]> {
+    const projectSlug = form.projectSlug || config?.installation?.projectSlug || config?.rule?.projectSlug || DEFAULT_FORM.projectSlug;
+    const linearPreview = fetchJson<{ tickets: Ticket[] }>("/api/symphony/tickets/preview?limit=10");
+    const matrixPreview = projectSlug
+      ? fetchJson<{ tickets: MatrixTrackedTicket[] }>(`/api/projects/${encodeURIComponent(projectSlug)}/tickets?source=matrix&limit=10`)
+      : Promise.resolve({ tickets: [] });
+    const [linear, matrix] = await Promise.allSettled([linearPreview, matrixPreview]);
+    const ticketsToShow = mergeAssignmentTickets([
+      linear.status === "fulfilled" ? linear.value.tickets : [],
+      matrix.status === "fulfilled" ? matrix.value.tickets.map(matrixTicketToAssignmentTicket) : [],
+    ]);
+    if (ticketsToShow.length === 0 && linear.status === "rejected" && matrix.status === "rejected") {
+      throw new Error("preview_failed");
+    }
+    return ticketsToShow;
+  }
+
   async function saveLinearCredential() {
     if (!form.linearSecret.trim()) return;
     setBusy("credential");
@@ -372,8 +421,7 @@ export default function App() {
           },
         }),
       });
-      const preview = await fetchJson<{ tickets: Ticket[] }>("/api/symphony/tickets/preview?limit=10");
-      setTickets(preview.tickets);
+      setTickets(await loadAssignmentPreview());
       setSettingsOpen(false);
       await load();
     } catch (err: unknown) {
@@ -405,8 +453,7 @@ export default function App() {
     setBusy("preview");
     setError(null);
     try {
-      const preview = await fetchJson<{ tickets: Ticket[] }>("/api/symphony/tickets/preview?limit=10");
-      setTickets(preview.tickets);
+      setTickets(await loadAssignmentPreview());
     } catch (err: unknown) {
       console.warn("[symphony] ticket preview failed:", err instanceof Error ? err.message : String(err));
       setError("Ticket preview failed.");
