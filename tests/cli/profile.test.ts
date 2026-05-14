@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { profileCommand } from "../../packages/sync-client/src/cli/commands/profile.js";
+import { loadProfiles } from "../../packages/sync-client/src/lib/profiles.js";
 
 const roots: string[] = [];
 const originalHome = process.env.HOME;
@@ -134,5 +135,28 @@ describe("profile CLI command", () => {
       ok: true,
       data: { active: "staging" },
     });
+  });
+
+  it("can load profiles without migrating daemon config files", async () => {
+    const home = process.env.HOME!;
+    const configDir = join(home, ".matrixos");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "profiles.json"),
+      JSON.stringify({
+        active: "cloud",
+        profiles: {
+          cloud: {
+            platformUrl: "https://app.matrix-os.com",
+            gatewayUrl: "https://app.matrix-os.com",
+          },
+        },
+      }),
+    );
+    await writeFile(join(configDir, "config.json"), JSON.stringify({ gatewayUrl: "https://gateway.example" }));
+
+    await loadProfiles({ migrateLegacyFiles: false });
+
+    await expect(readFile(join(configDir, "config.json"), "utf-8")).resolves.toContain("gateway.example");
   });
 });

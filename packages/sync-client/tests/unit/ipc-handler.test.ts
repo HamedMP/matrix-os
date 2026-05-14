@@ -71,10 +71,12 @@ describe("createIpcHandler", () => {
         manifestVersion: 4,
         lastSyncAt: 1234,
         fileCount: 2,
+        conflictCount: 0,
         syncPath: deps.config.syncPath,
         gatewayFolder: "",
         gatewayUrl: deps.config.gatewayUrl,
         platformUrl: deps.config.platformUrl,
+        profile: undefined,
         peerId: deps.config.peerId,
       });
     });
@@ -125,6 +127,7 @@ describe("createIpcHandler", () => {
         gatewayFolder: "",
         gatewayUrl: deps.config.gatewayUrl,
         platformUrl: deps.config.platformUrl,
+        profile: undefined,
         peerId: deps.config.peerId,
         pauseSync: false,
       });

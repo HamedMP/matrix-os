@@ -32,6 +32,7 @@ const DEFAULT_STATE: SyncState = {
   manifestVersion: 0,
   lastSyncAt: 0,
   files: {},
+  conflicts: {},
 };
 
 export async function loadSyncState(filePath: string): Promise<SyncState> {

@@ -22,6 +22,7 @@ export type ProfilesFile = z.infer<typeof ProfilesFileSchema>;
 
 export interface LoadProfilesOptions {
   configDir?: string;
+  migrateLegacyFiles?: boolean;
 }
 
 function defaultConfigDir(): string {
@@ -84,7 +85,9 @@ export async function loadProfiles(
     }
   }
 
-  await migrateLegacyProfileFiles(configDir);
+  if (options.migrateLegacyFiles !== false) {
+    await migrateLegacyProfileFiles(configDir);
+  }
   return profiles;
 }
 

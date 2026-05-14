@@ -11,12 +11,20 @@ describe("parseSyncEventMessage", () => {
     expect(
       parseSyncEventMessage(JSON.stringify({
         type: "sync:change",
-        path: "notes/today.md",
-        action: "update",
-        hash: `sha256:${"a".repeat(64)}`,
+        files: [{
+          path: "notes/today.md",
+          action: "update",
+          hash: `sha256:${"a".repeat(64)}`,
+          size: 12,
+        }],
         peerId: "laptop-1",
+        manifestVersion: 7,
       })),
-    ).toMatchObject({ type: "sync:change", path: "notes/today.md" });
+    ).toMatchObject({
+      type: "sync:change",
+      files: [{ path: "notes/today.md" }],
+      manifestVersion: 7,
+    });
   });
 
   it("ignores non-sync messages", () => {

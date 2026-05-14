@@ -8,10 +8,11 @@ import {
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
-import { clearProfileAuth, isExpired, loadAuth, loadProfileAuth } from "../auth/token-store.js";
+import { clearProfileAuth, isExpired, loadProfileAuth } from "../auth/token-store.js";
 import { loadProfiles } from "../lib/profiles.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
+import { hashFile } from "../lib/hash.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
@@ -19,6 +20,7 @@ import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
+import { generateConflictPath } from "./conflict-resolver.js";
 import {
   requestPresignedUrls,
   uploadFile,
@@ -349,6 +351,62 @@ export function parseRemoteManifestEnvelope(body: unknown): RemoteManifestEnvelo
   return parsed.data;
 }
 
+export async function shouldPreserveLocalEdit(
+  syncRoot: string,
+  localRel: string,
+  lastSyncedHash: string | undefined,
+  remoteHash: string,
+): Promise<{ conflict: boolean; localHash?: string; localSize?: number; localMtime?: number }> {
+  const localPath = resolveWithinSyncRoot(syncRoot, localRel);
+  try {
+    const [localHash, localStat] = await Promise.all([
+      hashFile(localPath),
+      stat(localPath),
+    ]);
+    if (!lastSyncedHash) {
+      return localHash === remoteHash
+        ? { conflict: false, localHash, localSize: localStat.size, localMtime: localStat.mtimeMs }
+        : { conflict: true, localHash, localSize: localStat.size, localMtime: localStat.mtimeMs };
+    }
+    if (localHash === remoteHash || localHash === lastSyncedHash) {
+      return { conflict: false, localHash, localSize: localStat.size, localMtime: localStat.mtimeMs };
+    }
+    return { conflict: true, localHash, localSize: localStat.size, localMtime: localStat.mtimeMs };
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return { conflict: false };
+    }
+    throw err;
+  }
+}
+
+export function recordSyncConflict(
+  syncState: SyncState,
+  input: {
+    path: string;
+    conflictPath: string;
+    localHash: string;
+    remoteHash: string;
+    remotePeerId: string;
+    detectedAt?: number;
+  },
+): void {
+  syncState.conflicts ??= {};
+  syncState.conflicts[input.path] = {
+    path: input.path,
+    conflictPath: input.conflictPath,
+    localHash: input.localHash,
+    remoteHash: input.remoteHash,
+    remotePeerId: input.remotePeerId,
+    detectedAt: input.detectedAt ?? Date.now(),
+    resolved: false,
+  };
+}
+
 export async function startDaemon(): Promise<void> {
   const logger = pino({
     transport: {
@@ -363,9 +421,11 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
-  const auth = await loadAuth();
+  const profiles = await loadProfiles({ migrateLegacyFiles: false });
+  const profileName = config.profile ?? profiles.active;
+  const auth = await loadProfileAuth(profileName);
   if (!auth) {
-    logger.error("Not logged in. Run 'matrixos login' first.");
+    logger.error(`Not logged in for profile "${profileName}". Run 'matrixos login' first.`);
     process.exit(1);
   }
   if (isExpired(auth)) {
@@ -484,9 +544,53 @@ export async function startDaemon(): Promise<void> {
             delete syncState.files[remotePath];
           }
           if (exitOnAuthFailure(err, logger)) return;
-          await adoptRemoteManifestVersion(syncState, err, async () => {
-            await saveSyncState(stateFile, syncState);
-          });
+          if (err instanceof VersionConflictError) {
+            try {
+              const latest = await fetchManifest(gatewayClient);
+              const latestEnvelope = parseRemoteManifestEnvelope(latest.manifest);
+              syncState.manifestVersion = latestEnvelope.manifestVersion;
+              const latestEntry = latestEnvelope.manifest.files[remotePath];
+              if (
+                latestEntry &&
+                !latestEntry.deleted &&
+                latestEntry.hash !== event.hash &&
+                latestEntry.hash !== existing?.lastSyncedHash
+              ) {
+                const conflictPath = generateConflictPath(event.path, latestEntry.peerId, new Date());
+                const urls = await requestPresignedUrls(gatewayClient, [
+                  { path: remotePath, action: "get" },
+                ]);
+                if (urls[0]) {
+                  const conflictAbsPath = resolveWithinSyncRoot(config.syncPath, conflictPath);
+                  await downloadFile(urls[0].url, conflictAbsPath, latestEntry.hash);
+                  const conflictStat = await stat(conflictAbsPath);
+                  syncState.files[toRemote(conflictPath)] = {
+                    hash: latestEntry.hash,
+                    mtime: conflictStat.mtimeMs,
+                    size: conflictStat.size,
+                  };
+                  recordSyncConflict(syncState, {
+                    path: remotePath,
+                    conflictPath: toRemote(conflictPath),
+                    localHash: event.hash,
+                    remoteHash: latestEntry.hash,
+                    remotePeerId: latestEntry.peerId,
+                  });
+                  logger.warn(
+                    { path: remotePath, conflictPath },
+                    "Upload conflicted with a newer remote version; preserved both files",
+                  );
+                }
+              }
+              await saveSyncState(stateFile, syncState);
+            } catch (reconcileErr) {
+              logger.error({ err: reconcileErr, path: remotePath }, "Upload conflict reconciliation failed");
+            }
+          } else {
+            await adoptRemoteManifestVersion(syncState, err, async () => {
+              await saveSyncState(stateFile, syncState);
+            });
+          }
           logger.error({ err, path: remotePath }, "Upload failed");
         }
       } else if (event.type === "unlink") {
@@ -523,63 +627,128 @@ export async function startDaemon(): Promise<void> {
     onEvent: async (event) => enqueue(async () => {
       if (config.pauseSync) return;
 
-      // Only react to events for files inside our prefix. A daemon syncing
-      // `~/audit` (prefix "audit") ignores changes another peer made to
-      // `notes/foo.md`.
-      const localRel = "path" in event ? toLocal(event.path) : null;
-      if (!localRel) return;
+      if (event.type !== "sync:change") return;
 
-      if (event.type === "sync:change" && event.action !== "delete") {
-        try {
-          const urls = await requestPresignedUrls(gatewayClient, [
-            { path: event.path, action: "get" },
-          ]);
-          if (urls[0]) {
-            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-            await downloadFile(
-              urls[0].url,
-              localPath,
-              event.hash,
-            );
-            const downloadedStat = await stat(localPath);
-            syncState.files[event.path] = {
-              hash: event.hash,
-              mtime: downloadedStat.mtimeMs,
-              size: downloadedStat.size,
-              lastSyncedHash: event.hash,
-            };
-            capSyncStateFiles(syncState);
-            await saveSyncState(stateFile, syncState);
-          }
-        } catch (err) {
-          if (exitOnAuthFailure(err, logger)) return;
-          logger.error({ err, path: event.path }, "Download failed");
-        }
-      } else if (
-        event.type === "sync:change" &&
-        event.action === "delete"
-      ) {
-        try {
-          const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-          const { unlink: unlinkFile } = await import("node:fs/promises");
+      for (const file of event.files) {
+        // Only react to events for files inside our prefix. A daemon syncing
+        // `~/audit` (prefix "audit") ignores changes another peer made to
+        // `notes/foo.md`.
+        const localRel = toLocal(file.path);
+        if (!localRel) continue;
+
+        if (file.action !== "delete") {
           try {
-            await unlinkFile(localPath);
-          } catch (err: unknown) {
-            if (
-              !(err instanceof Error) ||
-              !("code" in err) ||
-              (err as NodeJS.ErrnoException).code !== "ENOENT"
-            ) {
-              throw err;
+            const urls = await requestPresignedUrls(gatewayClient, [
+              { path: file.path, action: "get" },
+            ]);
+            if (urls[0]) {
+              const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
+              const cached = syncState.files[file.path];
+              const localEdit = await shouldPreserveLocalEdit(
+                config.syncPath,
+                localRel,
+                cached?.lastSyncedHash,
+                file.hash,
+              );
+
+              if (localEdit.conflict && localEdit.localHash) {
+                const conflictPath = generateConflictPath(
+                  localRel,
+                  event.peerId,
+                  new Date(),
+                );
+                const conflictAbsPath = resolveWithinSyncRoot(config.syncPath, conflictPath);
+                await downloadFile(urls[0].url, conflictAbsPath, file.hash);
+                const conflictStat = await stat(conflictAbsPath);
+                syncState.files[file.path] = {
+                  hash: localEdit.localHash,
+                  mtime: localEdit.localMtime ?? Date.now(),
+                  size: localEdit.localSize ?? 0,
+                  lastSyncedHash: cached?.lastSyncedHash,
+                };
+                syncState.files[toRemote(conflictPath)] = {
+                  hash: file.hash,
+                  mtime: conflictStat.mtimeMs,
+                  size: conflictStat.size,
+                };
+                recordSyncConflict(syncState, {
+                  path: file.path,
+                  conflictPath: toRemote(conflictPath),
+                  localHash: localEdit.localHash,
+                  remoteHash: file.hash,
+                  remotePeerId: event.peerId,
+                });
+                logger.warn(
+                  { path: file.path, conflictPath },
+                  "Remote change conflicted with local edits; preserved both files",
+                );
+              } else {
+                await downloadFile(
+                  urls[0].url,
+                  localPath,
+                  file.hash,
+                );
+                const downloadedStat = await stat(localPath);
+                syncState.files[file.path] = {
+                  hash: file.hash,
+                  mtime: downloadedStat.mtimeMs,
+                  size: downloadedStat.size,
+                  lastSyncedHash: file.hash,
+                };
+              }
+              capSyncStateFiles(syncState);
+              syncState.manifestVersion = Math.max(
+                syncState.manifestVersion,
+                event.manifestVersion ?? syncState.manifestVersion,
+              );
+              await saveSyncState(stateFile, syncState);
             }
+          } catch (err) {
+            if (exitOnAuthFailure(err, logger)) return;
+            logger.error({ err, path: file.path }, "Download failed");
           }
-          delete syncState.files[event.path];
-          await saveSyncState(stateFile, syncState);
-        } catch (err) {
-          logger.error(
-            { err, path: event.path },
-            "Local delete failed",
-          );
+        } else {
+          try {
+            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
+            const cached = syncState.files[file.path];
+            const localEdit = await shouldPreserveLocalEdit(
+              config.syncPath,
+              localRel,
+              cached?.lastSyncedHash,
+              file.hash,
+            );
+            if (localEdit.conflict) {
+              logger.warn(
+                { path: file.path },
+                "Remote delete conflicted with local edits; kept local file",
+              );
+              await saveSyncState(stateFile, syncState);
+              continue;
+            }
+            const { unlink: unlinkFile } = await import("node:fs/promises");
+            try {
+              await unlinkFile(localPath);
+            } catch (err: unknown) {
+              if (
+                !(err instanceof Error) ||
+                !("code" in err) ||
+                (err as NodeJS.ErrnoException).code !== "ENOENT"
+              ) {
+                throw err;
+              }
+            }
+            delete syncState.files[file.path];
+            syncState.manifestVersion = Math.max(
+              syncState.manifestVersion,
+              event.manifestVersion ?? syncState.manifestVersion,
+            );
+            await saveSyncState(stateFile, syncState);
+          } catch (err) {
+            logger.error(
+              { err, path: file.path },
+              "Local delete failed",
+            );
+          }
         }
       }
     }),
@@ -588,13 +757,9 @@ export async function startDaemon(): Promise<void> {
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
-  const loadActiveProfileAuth = async () => {
-    const profiles = await loadProfiles();
-    return loadProfileAuth(profiles.active);
-  };
+  const loadActiveProfileAuth = async () => loadProfileAuth(profileName);
   const clearActiveProfileAuth = async () => {
-    const profiles = await loadProfiles();
-    await clearProfileAuth(profiles.active);
+    await clearProfileAuth(profileName);
   };
   const ipcHandler = createIpcHandler({
     config,
@@ -675,7 +840,7 @@ export async function startDaemon(): Promise<void> {
     let pulled = 0;
     let skipped = 0;
     for (const [remotePath, entry] of Object.entries(remoteFiles)) {
-      if (!entry?.hash) continue;
+      if (!entry?.hash || entry.deleted) continue;
       // Only pull files that belong to our prefix. A daemon for `~/audit`
       // doesn't materialize `notes/...` from the same gateway.
       const localRel = toLocal(remotePath);
@@ -694,13 +859,45 @@ export async function startDaemon(): Promise<void> {
         if (!urls[0]) continue;
 
         const localAbsPath = resolveWithinSyncRoot(config.syncPath, localRel);
-        await downloadFile(urls[0].url, localAbsPath, entry.hash);
-        syncState.files[remotePath] = {
-          hash: entry.hash,
-          mtime: entry.mtime,
-          size: entry.size,
-          lastSyncedHash: entry.hash,
-        };
+        const localEdit = await shouldPreserveLocalEdit(
+          config.syncPath,
+          localRel,
+          cached?.lastSyncedHash,
+          entry.hash,
+        );
+        if (localEdit.conflict && localEdit.localHash) {
+          const conflictPath = generateConflictPath(localRel, entry.peerId, new Date());
+          const conflictAbsPath = resolveWithinSyncRoot(config.syncPath, conflictPath);
+          await downloadFile(urls[0].url, conflictAbsPath, entry.hash);
+          const conflictStat = await stat(conflictAbsPath);
+          syncState.files[remotePath] = {
+            hash: localEdit.localHash,
+            mtime: localEdit.localMtime ?? Date.now(),
+            size: localEdit.localSize ?? 0,
+            lastSyncedHash: cached?.lastSyncedHash,
+          };
+          syncState.files[toRemote(conflictPath)] = {
+            hash: entry.hash,
+            mtime: conflictStat.mtimeMs,
+            size: conflictStat.size,
+          };
+          recordSyncConflict(syncState, {
+            path: remotePath,
+            conflictPath: toRemote(conflictPath),
+            localHash: localEdit.localHash,
+            remoteHash: entry.hash,
+            remotePeerId: entry.peerId,
+          });
+        } else {
+          await downloadFile(urls[0].url, localAbsPath, entry.hash);
+          const downloadedStat = await stat(localAbsPath);
+          syncState.files[remotePath] = {
+            hash: entry.hash,
+            mtime: downloadedStat.mtimeMs,
+            size: downloadedStat.size,
+            lastSyncedHash: entry.hash,
+          };
+        }
         pulled++;
       } catch (err) {
         if (exitOnAuthFailure(err, logger)) return;

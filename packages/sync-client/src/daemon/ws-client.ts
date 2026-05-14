@@ -24,10 +24,14 @@ export const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 const SyncEventMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("sync:change"),
-    path: z.string().min(1).max(1024),
-    hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    files: z.array(z.object({
+      path: z.string().min(1).max(1024),
+      hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      size: z.number().int().nonnegative(),
+      action: z.enum(["add", "create", "update", "delete"]),
+    })).min(1).max(100),
     peerId: z.string().min(1).max(128),
-    action: z.enum(["create", "update", "delete"]),
+    manifestVersion: z.number().int().nonnegative().optional(),
   }),
   z.object({
     type: z.literal("sync:conflict"),

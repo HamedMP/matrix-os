@@ -6,12 +6,14 @@ import {
   adoptRemoteManifestVersion,
   capSyncStateFiles,
   createSerialTaskQueue,
-    exitOnAuthFailure,
-    parseRemoteManifestEnvelope,
-    persistPauseState,
-    resolveWithinSyncRoot,
-    writePidFileExclusive,
-  } from "../../src/daemon/index.js";
+  exitOnAuthFailure,
+  parseRemoteManifestEnvelope,
+  persistPauseState,
+  recordSyncConflict,
+  resolveWithinSyncRoot,
+  shouldPreserveLocalEdit,
+  writePidFileExclusive,
+} from "../../src/daemon/index.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
 import { AuthRejectedError, VersionConflictError } from "../../src/daemon/r2-client.js";
 import type { SyncState } from "../../src/daemon/types.js";
@@ -38,6 +40,37 @@ describe("daemon runtime guards", () => {
     expect(() => resolveWithinSyncRoot(tempDir, "../../.ssh/authorized_keys")).toThrow(
       "Remote event path escapes sync root",
     );
+  });
+
+  it("detects when a remote change would overwrite local edits", async () => {
+    await writeFile(join(tempDir, "note.md"), "local edit");
+
+    await expect(
+      shouldPreserveLocalEdit(
+        tempDir,
+        "note.md",
+        `sha256:${"a".repeat(64)}`,
+        `sha256:${"b".repeat(64)}`,
+      ),
+    ).resolves.toMatchObject({
+      conflict: true,
+      localHash: expect.stringMatching(/^sha256:/),
+    });
+  });
+
+  it("does not flag a conflict when local content still matches the last synced hash", async () => {
+    await writeFile(join(tempDir, "note.md"), "base");
+    const { hashFile } = await import("../../src/lib/hash.js");
+    const baseHash = await hashFile(join(tempDir, "note.md"));
+
+    await expect(
+      shouldPreserveLocalEdit(
+        tempDir,
+        "note.md",
+        baseHash,
+        `sha256:${"b".repeat(64)}`,
+      ),
+    ).resolves.toMatchObject({ conflict: false });
   });
 
   it("creates the pid file exclusively", async () => {
@@ -152,6 +185,29 @@ describe("daemon runtime guards", () => {
     expect(syncState.files["file-0.txt"]).toBeUndefined();
     expect(syncState.files["file-1.txt"]).toBeUndefined();
     expect(syncState.files["file-50001.txt"]).toBeDefined();
+  });
+
+  it("records conflict metadata for sync status", () => {
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {},
+    };
+
+    recordSyncConflict(syncState, {
+      path: "note.md",
+      conflictPath: "note (conflict - vps - 2026-05-14).md",
+      localHash: `sha256:${"a".repeat(64)}`,
+      remoteHash: `sha256:${"b".repeat(64)}`,
+      remotePeerId: "vps",
+      detectedAt: 1,
+    });
+
+    expect(syncState.conflicts?.["note.md"]).toMatchObject({
+      path: "note.md",
+      resolved: false,
+      detectedAt: 1,
+    });
   });
 
   it("rejects malformed remote manifest envelopes", () => {

@@ -19,6 +19,12 @@ async function runStatus(): Promise<void> {
   console.log(`  Syncing: ${status.syncing ? "yes" : "paused"}`);
   console.log(`  Manifest version: ${status.manifestVersion}`);
   console.log(`  Files tracked: ${status.fileCount}`);
+  if (typeof status.conflictCount === "number") {
+    console.log(`  Conflicts: ${status.conflictCount}`);
+  }
+  if (typeof status.profile === "string") {
+    console.log(`  Profile: ${status.profile}`);
+  }
   if (typeof status.lastSyncAt === "number" && status.lastSyncAt > 0) {
     console.log(`  Last sync: ${new Date(status.lastSyncAt).toISOString()}`);
   }
@@ -40,12 +46,14 @@ async function runStart(
         ...previous,
         platformUrl: profile.platformUrl,
         gatewayUrl: profile.gatewayUrl,
+        profile: profile.name,
         syncPath,
         gatewayFolder,
       }
     : {
         platformUrl: profile.platformUrl,
         gatewayUrl: profile.gatewayUrl,
+        profile: profile.name,
         syncPath,
         gatewayFolder,
         peerId: generatePeerId(),

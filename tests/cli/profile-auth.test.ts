@@ -50,8 +50,10 @@ describe("profile-aware auth CLI commands", () => {
       await readFile(join(home, ".matrixos", "profiles", "local", "auth.json"), "utf-8"),
     );
     const profiles = JSON.parse(await readFile(join(home, ".matrixos", "profiles.json"), "utf-8"));
+    const config = JSON.parse(await readFile(join(home, ".matrixos", "config.json"), "utf-8"));
     await expect(readFile(join(home, ".matrixos", "auth.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(auth).toMatchObject({ accessToken: "dev-token", userId: "user_dev", handle: "dev" });
+    expect(config.profile).toBe("local");
     expect(profiles.active).toBe("local");
     expect(profiles.profiles.local).toEqual({
       platformUrl: "http://localhost:9000",
