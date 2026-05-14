@@ -23,6 +23,7 @@ import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } f
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
+import { createProjectManager } from "./project-manager.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createSymphonyRoutes } from "./symphony-routes.js";
 import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
@@ -2327,6 +2328,7 @@ export async function createGateway(config: GatewayConfig) {
     await repository.bootstrap();
     const credentialStore = createFileSymphonyCredentialStore({ homePath });
     const linearSource = createLinearSource();
+    const projectManager = createProjectManager({ homePath });
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath });
     const agentSessionManager = createAgentSessionManager({
@@ -2352,6 +2354,15 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       orchestrator: matrixSymphonyOrchestrator,
       statusHub: matrixSymphonyStatusHub,
+      listMatrixProjects: async () => {
+        const result = await projectManager.listManagedProjects();
+        return result.projects.map((project) => ({
+          slug: project.slug,
+          name: project.name,
+          repositoryUrl: project.github?.htmlUrl ?? project.remote,
+          updatedAt: project.updatedAt,
+        }));
+      },
     }));
   } else {
     console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");

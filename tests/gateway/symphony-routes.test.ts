@@ -78,6 +78,11 @@ function deps(snapshot: SymphonySnapshot, principal: RequestPrincipal = { userId
     idForNewRun: vi.fn(),
   };
   const linearSource = {
+    discoverSetupOptions: vi.fn(async () => ({
+      teams: [{ id: "team_1", key: "MAT", name: "Matrix" }],
+      projects: [{ id: "linear_project_1", name: "Matrix OS", slug: "matrix-os", teamIds: ["team_1"] }],
+      users: [{ id: "linear_user", name: "Hamed", displayName: "Hamed" }],
+    })),
     previewTickets: vi.fn(async () => ({ tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "Build", stateName: "Todo", labels: ["symphony"] }], truncated: false })),
   };
   const statusHub = {
@@ -103,6 +108,7 @@ function deps(snapshot: SymphonySnapshot, principal: RequestPrincipal = { userId
       linearSource,
       orchestrator,
       statusHub,
+      listMatrixProjects: vi.fn(async () => [{ slug: "matrix-os", name: "Matrix OS", repositoryUrl: "https://github.com/hamedmp/matrix-os" }]),
       getPrincipal: () => principal,
     }),
     repository,
@@ -201,6 +207,27 @@ describe("Matrix Symphony routes", () => {
       actorId: "user_123",
     }));
     expect(JSON.stringify(await res.json())).not.toContain("lin_api");
+  });
+
+  it("discovers setup options from Matrix projects and the stored Linear credential", async () => {
+    const { app, credentialStore, linearSource } = deps(structuredClone(baseSnapshot));
+
+    const res = await app.request("/setup-options");
+
+    expect(res.status).toBe(200);
+    expect(credentialStore.readLinearCredential).toHaveBeenCalledWith("user_123");
+    expect(linearSource.discoverSetupOptions).toHaveBeenCalledWith("lin_api_secret");
+    const body = await res.json();
+    expect(body).toMatchObject({
+      credentialConfigured: true,
+      matrixProjects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      linear: {
+        teams: [{ id: "team_1", key: "MAT", name: "Matrix" }],
+        projects: [{ id: "linear_project_1", slug: "matrix-os", teamIds: ["team_1"] }],
+        users: [{ id: "linear_user", displayName: "Hamed" }],
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("lin_api_secret");
   });
 
   it("lets delegated operators create their own owner config", async () => {

@@ -99,6 +99,40 @@ export interface TicketSourceRule extends SymphonyRuleInput {
   updatedAt: string;
 }
 
+export interface MatrixProjectOption {
+  slug: string;
+  name: string;
+  repositoryUrl?: string;
+  updatedAt?: string;
+}
+
+export interface LinearTeamOption {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface LinearProjectOption {
+  id: string;
+  name: string;
+  slug?: string;
+  teamIds: string[];
+}
+
+export interface LinearUserOption {
+  id: string;
+  name: string;
+  displayName?: string;
+  email?: string;
+  active?: boolean;
+}
+
+export interface LinearSetupOptions {
+  teams: LinearTeamOption[];
+  projects: LinearProjectOption[];
+  users: LinearUserOption[];
+}
+
 export interface TrackedTicket {
   externalId: string;
   identifier: string;

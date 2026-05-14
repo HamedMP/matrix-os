@@ -13,6 +13,39 @@ const rule = {
 };
 
 describe("Symphony Linear source", () => {
+  it("discovers teams, projects, and users without exposing the credential", async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(init.signal).toBeTruthy();
+      expect(init.headers).toMatchObject({ Authorization: "lin_api_secret" });
+      const body = JSON.parse(String(init.body));
+      expect(body.query).toContain("MatrixSymphonySetupOptions");
+      return new Response(JSON.stringify({
+        data: {
+          teams: { nodes: [{ id: "team_123", key: "MAT", name: "Matrix" }] },
+          projects: {
+            nodes: [{
+              id: "linear_project_1",
+              name: "Matrix OS",
+              slugId: "matrix-os",
+              teams: { nodes: [{ id: "team_123", key: "MAT", name: "Matrix" }] },
+            }],
+          },
+          users: { nodes: [{ id: "user_1", name: "Hamed", displayName: "Hamed", email: "hamed@example.com", active: true }] },
+        },
+      }));
+    }) as unknown as typeof fetch;
+    const source = createLinearSource({ fetch: fetchMock });
+
+    const result = await source.discoverSetupOptions("lin_api_secret");
+
+    expect(result).toEqual({
+      teams: [{ id: "team_123", key: "MAT", name: "Matrix" }],
+      projects: [{ id: "linear_project_1", name: "Matrix OS", slug: "matrix-os", teamIds: ["team_123"] }],
+      users: [{ id: "user_1", name: "Hamed", displayName: "Hamed", email: "hamed@example.com", active: true }],
+    });
+    expect(JSON.stringify(result)).not.toContain("lin_api_secret");
+  });
+
   it("filters by assignee and required labels without exposing the credential", async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       expect(init.signal).toBeTruthy();

@@ -1,6 +1,16 @@
-import { MAX_PREVIEW_TICKETS, sanitizeLabels, type TicketSourceRule, type TrackedTicket } from "./contracts.js";
+import {
+  MAX_PREVIEW_TICKETS,
+  sanitizeLabels,
+  type LinearProjectOption,
+  type LinearSetupOptions,
+  type LinearTeamOption,
+  type LinearUserOption,
+  type TicketSourceRule,
+  type TrackedTicket,
+} from "./contracts.js";
 
 export interface LinearSource {
+  discoverSetupOptions?(credential: string): Promise<LinearSetupOptions>;
   previewTickets(rule: TicketSourceRule, credential: string, input?: { limit?: number; state?: string }): Promise<{ tickets: TrackedTicket[]; truncated: boolean }>;
 }
 
@@ -32,6 +42,55 @@ interface LinearIssuesPayload {
     };
   };
   errors?: unknown[];
+}
+
+interface LinearSetupPayload {
+  data?: {
+    teams?: { nodes?: Array<{ id?: string; key?: string; name?: string }> };
+    projects?: {
+      nodes?: Array<{
+        id?: string;
+        name?: string;
+        slugId?: string | null;
+        teams?: { nodes?: Array<{ id?: string; key?: string; name?: string }> };
+      }>;
+    };
+    users?: { nodes?: Array<{ id?: string; name?: string; displayName?: string | null; email?: string | null; active?: boolean }> };
+  };
+  errors?: unknown[];
+}
+
+function normalizeSetupOptions(payload: LinearSetupPayload): LinearSetupOptions {
+  const teams: LinearTeamOption[] = [];
+  for (const node of payload.data?.teams?.nodes ?? []) {
+    if (!node.id || !node.key || !node.name) continue;
+    teams.push({ id: node.id, key: node.key, name: node.name });
+  }
+
+  const projects: LinearProjectOption[] = [];
+  for (const node of payload.data?.projects?.nodes ?? []) {
+    if (!node.id || !node.name) continue;
+    projects.push({
+      id: node.id,
+      name: node.name,
+      slug: node.slugId ?? undefined,
+      teamIds: Array.from(new Set((node.teams?.nodes ?? []).map((team) => team.id).filter((id): id is string => Boolean(id)))),
+    });
+  }
+
+  const users: LinearUserOption[] = [];
+  for (const node of payload.data?.users?.nodes ?? []) {
+    if (!node.id || !node.name) continue;
+    users.push({
+      id: node.id,
+      name: node.name,
+      displayName: node.displayName ?? undefined,
+      email: node.email ?? undefined,
+      active: node.active,
+    });
+  }
+
+  return { teams, projects, users };
 }
 
 function normalizeIssue(node: LinearIssueNode): TrackedTicket | null {
@@ -106,6 +165,25 @@ function buildIssuesQuery(input: { projectId?: string; state?: string; labelName
   `;
 }
 
+const SETUP_OPTIONS_QUERY = `
+  query MatrixSymphonySetupOptions($first: Int!) {
+    teams(first: $first) {
+      nodes { id key name }
+    }
+    projects(first: $first) {
+      nodes {
+        id
+        name
+        slugId
+        teams { nodes { id key name } }
+      }
+    }
+    users(first: $first) {
+      nodes { id name displayName email active }
+    }
+  }
+`;
+
 export function createLinearSource(options: {
   endpoint?: string;
   fetch?: FetchLike;
@@ -137,6 +215,31 @@ export function createLinearSource(options: {
   }
 
   return {
+    async discoverSetupOptions(credential: string): Promise<LinearSetupOptions> {
+      const response = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: {
+          "Authorization": credential,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: SETUP_OPTIONS_QUERY,
+          variables: { first: 100 },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) {
+        console.warn("[symphony] Linear setup discovery failed with status", response.status);
+        throw new Error("linear_setup_failed");
+      }
+      const payload = await response.json() as LinearSetupPayload;
+      if (payload.errors) {
+        console.warn("[symphony] Linear setup discovery returned GraphQL errors");
+        throw new Error("linear_setup_failed");
+      }
+      return normalizeSetupOptions(payload);
+    },
+
     async previewTickets(rule: TicketSourceRule, credential: string, input: { limit?: number; state?: string } = {}) {
       const limit = Math.min(input.limit ?? 25, MAX_PREVIEW_TICKETS);
       const states = input.state ? [input.state] : rule.activeStates;
