@@ -1,6 +1,26 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const path = require("path");
+
+const projectRoot = __dirname;
+const workspaceRoot = path.resolve(projectRoot, "../..");
 
 /** @type {import('expo/metro-config').MetroConfig} */
-const config = getDefaultConfig(__dirname);
+const config = getDefaultConfig(projectRoot);
+
+config.watchFolders = Array.from(new Set([...(config.watchFolders ?? []), workspaceRoot]));
+config.resolver = {
+  ...config.resolver,
+  disableHierarchicalLookup: true,
+  nodeModulesPaths: [
+    path.resolve(projectRoot, "node_modules"),
+    path.resolve(workspaceRoot, "node_modules"),
+  ],
+  extraNodeModules: {
+    ...(config.resolver?.extraNodeModules ?? {}),
+    react: path.resolve(projectRoot, "node_modules/react"),
+    "react-dom": path.resolve(projectRoot, "node_modules/react-dom"),
+    "react-native": path.resolve(projectRoot, "node_modules/react-native"),
+  },
+};
 
 module.exports = config;

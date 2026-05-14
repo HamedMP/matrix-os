@@ -56,8 +56,8 @@ export function jsonResponse(body: unknown, init: { ok?: boolean; status?: numbe
 
 export function installGatewayFetchMock(
   routes: Record<string, unknown | Response>,
-): jest.SpyInstance {
-  return jest.spyOn(global, "fetch").mockImplementation(async (input: Parameters<typeof fetch>[0], _init?: RequestInit) => {
+): jest.SpyInstance<ReturnType<typeof fetch>, Parameters<typeof fetch>> {
+  return jest.spyOn(global, "fetch").mockImplementation(async (input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
     const url = String(input);
     const path = safePathname(url);
     const route = routes[url] ?? routes[path];
