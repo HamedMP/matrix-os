@@ -110,7 +110,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-linux-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{imageVersion}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
@@ -181,7 +181,11 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-linux-tools');
-    expect(cloudInit).toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-linux-tools.service');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('Restart=on-failure');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2');
+    expect(cloudInit).not.toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
     expect(cloudInit).toContain('test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"');
     expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
@@ -210,9 +214,10 @@ describe('platform/customer-vps-cloud-init', () => {
     const bundleScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
 
     expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
-    expect(installer).toContain('NONINTERACTIVE=1 /bin/bash "$tmp_installer"');
-    expect(installer).toContain('"$BREW_BIN" install withgraphite/tap/graphite');
+    expect(installer).toContain('retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
+    expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite');
     expect(installer).toContain('/etc/profile.d/homebrew.sh');
+    expect(installer).toContain('"eval \\"\\$(${BREW_BIN} shellenv bash)\\""');
     expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
     expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
     expect(bundleScript).toContain('matrix-install-linux-tools');
@@ -314,7 +319,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-linux-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {
