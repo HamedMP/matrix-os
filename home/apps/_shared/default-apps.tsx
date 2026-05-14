@@ -377,7 +377,7 @@ function ProfileApp() {
       <section className="card profile-card">
         <div className="avatar">M</div>
         <h2>Matrix User</h2>
-        <p>@you.matrix-os.com</p>
+        <p>@you:matrix-os.com</p>
         <button className="btn btn-primary" type="button">Edit profile</button>
       </section>
       <section className="card side-list">

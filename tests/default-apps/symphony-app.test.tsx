@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +17,24 @@ vi.mock("@/components/ui/input", () => ({
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, className }: { children: React.ReactNode; className?: string }) => <span className={className}>{children}</span>,
 }));
+
+vi.mock(
+  "lucide-react",
+  () => {
+    const Icon = (props: React.SVGAttributes<SVGElement>) => <svg aria-hidden="true" {...props} />;
+
+    return {
+      AlertTriangle: Icon,
+      ExternalLink: Icon,
+      KeyRound: Icon,
+      Play: Icon,
+      RefreshCw: Icon,
+      Square: Icon,
+      TerminalSquare: Icon,
+    };
+  },
+  { virtual: true },
+);
 
 function json(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -138,6 +157,12 @@ describe("Symphony app", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("imports its stylesheet so the Vite bundle ships CSS", () => {
+    const entrypoint = readFileSync("home/apps/symphony/src/main.tsx", "utf8");
+
+    expect(entrypoint).toContain('import "./index.css";');
   });
 
   it("shows the dashboard groups as the default Symphony surface", async () => {

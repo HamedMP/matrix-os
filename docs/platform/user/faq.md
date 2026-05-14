@@ -3,13 +3,13 @@
 ## Account & Access
 
 **How do I access my Matrix OS?**
-Visit `https://{your-handle}.matrix-os.com`. If you chose the username "alice" during signup, your URL is `alice.matrix-os.com`.
+Visit `https://app.matrix-os.com` and sign in. Matrix uses your session to route you to your own customer VPS; there is no separate user host to remember.
 
 **What happens when I'm not using it?**
-Your Matrix OS keeps running on your own customer VPS. Platform routing sends your browser to that machine when you visit your URL. Your files, apps, and database state are preserved on the VPS and backed up through Matrix OS recovery flows.
+Your Matrix OS keeps running on your own customer VPS. Platform routing sends your signed-in browser session from `app.matrix-os.com` to that machine. Your files, apps, and database state are preserved on the VPS and backed up through Matrix OS recovery flows.
 
 **Can I use a custom domain?**
-Not yet. All instances are hosted at `{handle}.matrix-os.com`.
+Not yet. The managed Matrix shell is served through `app.matrix-os.com`.
 
 **How do I change my handle?**
 Handles are permanent and tied to your identity. Choose carefully during signup.

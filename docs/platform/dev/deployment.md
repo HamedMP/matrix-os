@@ -33,9 +33,8 @@ Root `matrix-os.com` stays on Vercel. The Matrix OS runtime domains point at the
 | CNAME | api | `<tunnel-id>.cfargotunnel.com` |
 | CNAME | app | `<tunnel-id>.cfargotunnel.com` |
 | CNAME | code | `<tunnel-id>.cfargotunnel.com` |
-| CNAME | * | `<tunnel-id>.cfargotunnel.com` |
 
-`app.matrix-os.com` and `code.matrix-os.com` are session-based. `{handle}.matrix-os.com` is handle-based. In all cases, the platform resolves the user or handle to a `running` `user_machines` row before proxying to the customer VPS.
+`app.matrix-os.com` and `code.matrix-os.com` are session-based. The platform resolves the signed-in Clerk user to a `running` `user_machines` row before proxying to the customer VPS. Do not document or depend on per-user Matrix subdomains for the managed product.
 
 ## Required Platform Environment
 

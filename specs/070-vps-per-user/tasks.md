@@ -85,7 +85,7 @@
 
 **Goal**: A registered customer VPS installs Matrix OS host services and profile routing prefers running VPS machines while preserving legacy container fallback.
 
-**Independent Test**: A mocked running `userMachines` row routes `{handle}.matrix-os.com` to the VPS HTTPS endpoint; a user without a running row still routes to the legacy container path.
+**Independent Test**: A mocked running `userMachines` row routes an authenticated `app.matrix-os.com` request to the VPS HTTPS endpoint; a user without a running row still routes to the legacy container path.
 
 ### Tests for User Story 2
 

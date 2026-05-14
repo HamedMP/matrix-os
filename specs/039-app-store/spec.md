@@ -68,13 +68,13 @@ Any published app gets a public URL:
 
 Data always lives on the VIEWER's OS, never the publisher's. The publisher provides code; the viewer provides data storage.
 
-### D: Personal Websites
+### D: Profiles
 
-Every user gets `{handle}.matrix-os.com`:
+Every user gets a Matrix profile surfaced through the managed app experience:
 
 - **Not logged in**: shows public profile page (bio, avatar, published apps, recent activity)
-- **Logged in as owner**: full Matrix OS experience (desktop, apps, chat)
-- **Custom domain**: users can point their own domain (CNAME to matrix-os.com)
+- **Logged in as owner**: profile editing and publishing controls in Matrix
+- **Custom domain**: deferred until explicit product support exists
 
 Profile page is itself a Matrix OS app (`~/apps/profile/`) that the user can customize:
 - Default template: clean personal page with name, bio, links, published apps
@@ -129,5 +129,5 @@ Not implemented now, but schema supports:
 - User publishes an app in under 30 seconds via chat
 - Public app link works for anonymous visitors (try before signup)
 - "Fork this app" works in one click
-- `{handle}.matrix-os.com` shows a personal page for every user
+- Matrix profiles are reachable from the managed app/social surfaces
 - Store has 20+ apps within first month (pre-seeded + community)
