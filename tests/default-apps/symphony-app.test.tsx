@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -138,6 +139,12 @@ describe("Symphony app", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("imports its stylesheet so the Vite bundle ships CSS", () => {
+    const entrypoint = readFileSync("home/apps/symphony/src/main.tsx", "utf8");
+
+    expect(entrypoint).toMatch(/import ['"]\.\/index\.css['"]/);
   });
 
   it("shows the dashboard groups as the default Symphony surface", async () => {

@@ -24,7 +24,6 @@ Internet
   |
   +-- app.matrix-os.com ----+  Clerk session -> platform resolves current user
   +-- code.matrix-os.com ---+  Clerk session -> platform resolves current user
-  +-- {handle}.matrix-os.com   handle route -> platform resolves machine
                             |
                      Cloudflare Tunnel
                             |
@@ -68,7 +67,7 @@ Internet
   +-- app.matrix-os.com ----+  (session-based: Clerk JWT -> container shell)
   +-- code.matrix-os.com ---+  (session-based: Clerk JWT -> container code-server)
   +-- api.matrix-os.com ----+
-  +-- *.matrix-os.com ------+  (handle-based: {handle}.matrix-os.com -> container)
+  +-- legacy wildcard ------+  (archived handle-based container routing only)
                             |
                      Cloudflare Tunnel
                             |
@@ -221,9 +220,8 @@ cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
 | CNAME | api  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | app  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | code | `<tunnel-id>.cfargotunnel.com` | Yes   |
-| CNAME | *    | `<tunnel-id>.cfargotunnel.com` | Yes   |
 
-Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains handle session-based routing (Clerk JWT -> customer VPS). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
+Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains handle session-based routing (Clerk JWT -> customer VPS). Do not create user-facing per-handle Matrix subdomains for the managed product.
 
 ## Step 3: Environment Variables
 
@@ -438,10 +436,9 @@ curl https://api.matrix-os.com/health
 
 `/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `clerk_user_id`, so repeated onboarding calls reuse the same active VPS for that user.
 
-**Two routing modes:**
+**Routing modes:**
 - `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's active VPS by `clerkUserId`. No handle in URL. Redirects to `/login` if no session.
 - `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway. No handle, SSH, or server IP is exposed.
-- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain and proxies to the running customer VPS. No auth required (public access).
 
 Legacy fallback code may exist only to keep historical records reachable during migration. New and production customer runtime should not be provisioned as containers.
 
@@ -500,7 +497,7 @@ Legacy shared-container lifecycle:
 - **Provision**: image pulled, ports allocated, volume mounted at `/data/users/{handle}/matrixos`
 - **Running**: 256MB memory, 0.5 CPU, restart unless-stopped
 - **Idle**: lifecycle manager checks every 5 min, stops after 30 min inactive
-- **Wake**: subdomain request -> platform detects stopped -> auto-starts -> proxy
+- **Wake**: `app.matrix-os.com` request -> platform resolves the signed-in user -> detects stopped runtime -> auto-starts -> proxies
 - **Destroy**: container removed, ports released, DB record deleted (data volume kept)
 
 ## Database
@@ -749,7 +746,7 @@ function pickNode(): string {
 ```
 
 **Routing change:**
-The subdomain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
+The session/app-domain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
 ```typescript
 // Instead of:
 fetch(`http://localhost:${record.shellPort}${path}`)
@@ -766,7 +763,7 @@ fetch(`http://${host}:${record.shellPort}${path}`)
 - [ ] Add `node_id` column to `containers` table
 - [ ] Update orchestrator to accept multiple Docker hosts
 - [ ] Add node selection logic (least-loaded)
-- [ ] Update subdomain proxy to route to correct node IP
+- [ ] Update session/app-domain proxy to route to correct node IP
 - [ ] Add `/nodes` admin API endpoints (register, deregister, status)
 - [ ] Build image on each worker (or set up private registry)
 
@@ -786,10 +783,9 @@ Understanding the request flow is critical for debugging:
 Current customer VPS route:
 
 ```
-Browser -> app.matrix-os.com / code.matrix-os.com / {handle}.matrix-os.com
+Browser -> app.matrix-os.com / code.matrix-os.com
   -> Cloudflare Tunnel -> platform :9000
     -> session-based: Clerk JWT -> running customer VPS by clerkUserId
-    -> handle-based: subdomain -> running customer VPS by handle
       -> HTTPS customer VPS gateway with per-host token
         -> nginx on customer VPS
           -> matrix-shell.service :3000 for shell paths
@@ -800,10 +796,9 @@ Browser -> app.matrix-os.com / code.matrix-os.com / {handle}.matrix-os.com
 Legacy shared-container route:
 
 ```
-Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
+Browser -> app.matrix-os.com
   -> Cloudflare Tunnel -> platform :9000
     -> session-based: Clerk JWT -> getContainerByClerkId -> proxy
-    -> handle-based: subdomain -> getContainer -> proxy
       -> http://matrixos-{handle}:3000 (Next.js shell, non-API paths)
       -> http://matrixos-{handle}:4000 (gateway, /api/*, /ws*, /files/*, /modules/*)
         -> shell proxy.ts middleware rewrites remaining API paths
@@ -811,8 +806,7 @@ Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
 ```
 
 **Key points:**
-- Platform has two routing middlewares: `app.matrix-os.com` (session-based, Clerk JWT) and `{handle}.matrix-os.com` (handle-based, no auth)
-- Both resolve to the same container -- different entry points, same destination
+- Platform routes the managed shell through `app.matrix-os.com` using session-based Clerk identity.
 - The session-based route auto-starts stopped containers on access
 - The shell's `proxy.ts` middleware rewrites API/file/WebSocket requests to the gateway (port 4000)
 - Both shell and gateway run inside the same container (started by `docker-entrypoint.sh`)
@@ -820,9 +814,9 @@ Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
 - If the shell crashes, the container stays up (gateway still running) but HTTP returns 502
 - Container memory is set to 512MB (gateway + Next.js shell together need ~200-300MB)
 
-### Clerk Auth (subdomain cookies)
+### Clerk Auth
 
-Clerk session cookies must be scoped to `.matrix-os.com` for `app.matrix-os.com` routing to work. Configure in Clerk Dashboard > Domains:
+Clerk session cookies must work on `app.matrix-os.com` for session routing. Configure in Clerk Dashboard > Domains:
 - Primary domain: `matrix-os.com`
 - Cookie domain: `.matrix-os.com`
 
@@ -832,7 +826,7 @@ The `app.matrix-os.com` route extracts the Clerk session from either:
 
 If no valid session is found, the user is redirected to `matrix-os.com/login`. If the user has no container provisioned, they are redirected to `matrix-os.com/dashboard`.
 
-The `{handle}.matrix-os.com` route does **not** require Clerk auth -- it proxies directly based on the subdomain handle. This means handle-based subdomains are publicly accessible to anyone with the URL.
+Do not add user-facing per-handle Matrix subdomains. Managed users enter through `app.matrix-os.com`.
 
 ## Observability Stack
 
@@ -993,7 +987,7 @@ Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`
 
 1. **Icon not generated yet**: Check if the PNG exists on disk. If not, trigger generation:
    ```bash
-   curl -X POST https://{handle}.matrix-os.com/api/apps/{slug}/icon
+   curl -X POST https://app.matrix-os.com/api/apps/{slug}/icon
    ```
 
 2. **Module manifest has invalid icon field**: Some `module.json`/`manifest.json` files use emojis or icon names instead of file paths. The shell ignores `meta.icon` and always uses the generated PNG at `/files/system/icons/{slug}.png`. If you see 404s for emoji URLs (e.g. `%F0%9F%94%A5`), the module manifest has `"icon": "emoji"` -- this is harmless, the generated PNG will be used instead.

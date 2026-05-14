@@ -40,7 +40,7 @@ Waitlist signups from matrix-os.com. Technical-curious builders who have used Op
 | expense-tracker | static HTML | **Migrate to `vite`** | Charts via recharts, CSV import, multi-currency. |
 | pomodoro | static HTML | **Migrate to `vite`** | Stats dashboard, streak tracking, sound packs. |
 | task-manager | static HTML | **Migrate to `vite`** | Kanban with drag-drop (@dnd-kit). |
-| profile | static HTML | **Migrate to `vite`** | Modernize; actually serve at `{handle}.matrix-os.com`. |
+| profile | static HTML | **Migrate to `vite`** | Modernize the Matrix profile surface behind `app.matrix-os.com`. |
 | social | static HTML | **Migrate to `vite`** | Major: feed with infinite scroll, comments, media, virtualized list. |
 
 Calculator, clock, and games stay as-is. Everything else gets a React rewrite against the spec 063 Vite runtime.

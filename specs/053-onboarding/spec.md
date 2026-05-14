@@ -47,11 +47,10 @@ Per-stage timeouts: greeting 60s, interview 10min, api_key 5min. Max total sessi
 
 ## Platform Routing (app.matrix-os.com)
 
-### Current Architecture (Per-User Subdomains)
+### Removed Legacy Architecture (Per-User Subdomains)
 
 ```
-alice.matrix-os.com -> platform:9000 -> extract "alice" from hostname -> matrixos-alice
-bob.matrix-os.com   -> platform:9000 -> extract "bob" from hostname -> matrixos-bob
+per-user Matrix host -> platform:9000 -> extract handle from hostname -> user runtime
 ```
 
 Problems: wildcard DNS, Clerk cookies broken across subdomains, container rename complexity.
@@ -82,16 +81,15 @@ When a request hits `app.matrix-os.com`:
 ### Changes Required
 
 **`packages/platform/src/main.ts`:**
-- Add session-based routing middleware BEFORE existing subdomain router
+- Add session-based routing middleware for `app.matrix-os.com`
 - Use `@clerk/backend` to verify `__session` cookie JWT
-- Add `'app'` to the subdomain skip list so `app.matrix-os.com` doesn't match as a handle
-- Keep existing subdomain routing as fallback (backward compat)
+- Do not add per-user Matrix subdomain routing for the managed product
 
 **`distro/cloudflared.yml`:**
-- Add `app.matrix-os.com -> platform:9000` route before the wildcard
+- Add `app.matrix-os.com -> platform:9000`; do not rely on wildcard user subdomains
 
 **`www/src/app/dashboard/page.tsx`:**
-- Change "Open Matrix OS" link from `https://{handle}.matrix-os.com` to `https://app.matrix-os.com`
+- Change "Open Matrix OS" link to `https://app.matrix-os.com`
 
 **Clerk Configuration:**
 - Set cookie domain to `.matrix-os.com` so cookies are shared between `matrix-os.com` and `app.matrix-os.com`

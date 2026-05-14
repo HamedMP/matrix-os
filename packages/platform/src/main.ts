@@ -1356,6 +1356,59 @@ export function createApp(deps: {
     if (isAppDomain && isPublicIntegrationPath) {
       return next();
     }
+    if (isAppDomain && reqPath === '/voice/webhook/twilio') {
+      const webhookUrl = new URL(c.req.url);
+      const handle = webhookUrl.searchParams.get('handle') ?? '';
+      if (!HANDLE_PATTERN.test(handle)) {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+
+      const runningMachine = await getRunningUserMachineByHandle(db, handle);
+      if (!runningMachine) {
+        return c.json({ error: 'VPS unavailable' }, 404);
+      }
+
+      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) {
+          headers.set(key, value);
+        }
+      }
+      headers.set('host', 'app.matrix-os.com');
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
+      headers.set('connection', 'close');
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(handle, platformSecret)}`);
+      }
+
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: sanitizeProxyResponseHeaders(upstream.headers),
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain voice webhook proxy', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
 
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');

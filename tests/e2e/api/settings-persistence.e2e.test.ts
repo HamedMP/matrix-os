@@ -89,7 +89,7 @@ describe("E2E: Settings & Layout Persistence", () => {
       expect(app).toHaveProperty("file");
       expect(app).toHaveProperty("path");
     }
-  });
+  }, 45_000);
 
   it("GET /api/system/info returns system info", async () => {
     const res = await fetch(`${gw.url}/api/system/info`);

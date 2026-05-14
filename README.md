@@ -103,7 +103,7 @@ Terminal (1970s) -> GUI (1980s) -> Web (1990s) -> Mobile (2000s) -> AI Assistant
 
 **Observability.** Prometheus metrics for gateway, platform, and proxy. Ready for Grafana dashboards and alerting.
 
-**Cloud-native + Multi-tenant.** Sign up at matrix-os.com, get your own instance at `yourname.matrix-os.com`. Each user gets an isolated Docker container with persistent storage and a dedicated Postgres database.
+**Cloud-native + Multi-tenant.** Sign up at matrix-os.com and open Matrix at `app.matrix-os.com`. Each active user gets a dedicated customer VPS with persistent Matrix home storage and owner-local Postgres.
 
 **Documentation site.** Public docs at [matrix-os.com/docs](https://matrix-os.com/docs) built with Fumadocs.
 

@@ -1462,7 +1462,7 @@ ingress:
 
 - [ ] **Step 4: Update dashboard redirect**
 
-Change `www/src/app/dashboard/actions.ts` to redirect to `app.matrix-os.com` instead of `{handle}.matrix-os.com`.
+Change `www/src/app/dashboard/actions.ts` to redirect to `app.matrix-os.com`.
 
 - [ ] **Step 5: Configure Clerk cookie domain**
 

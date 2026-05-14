@@ -104,17 +104,16 @@ POST /api/store/apps/:id/rate
 { "rating": 5, "review": "Great chess AI!" }
 ```
 
-## Personal Websites
+## Profiles
 
-Every user gets a personal website at `{handle}.matrix-os.com`:
+Every user gets a Matrix profile surfaced through Matrix social/profile views:
 
-- **Not logged in**: shows your public profile page (name, avatar, bio, published apps)
-- **Logged in as owner**: shows the full Matrix OS desktop
-- **Logged in as other user**: shows the public profile
+- **Signed in as owner**: edit your profile and published apps from Matrix.
+- **Signed in as another user**: view the public profile information that user has shared.
 
 ### Profile Customization
 
-The profile page is itself a Matrix OS app (`~/apps/profile/`). Customize it via chat:
+The profile is backed by the Matrix profile app (`~/apps/profile/`). Customize it via chat:
 
 > Make my profile page dark and add my GitHub link
 

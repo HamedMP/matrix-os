@@ -1,22 +1,22 @@
 # Getting Started with Matrix OS
 
-Matrix OS is an AI-native operating system that runs in the cloud. You get your own instance at `{your-handle}.matrix-os.com` with a full desktop environment, AI assistant, and file system.
+Matrix OS is an AI-native operating system that runs in the cloud. Open it at `app.matrix-os.com`; the platform uses your signed-in session to route you to your own Matrix VPS with a full desktop environment, AI assistant, and file system.
 
 ## Create Your Account
 
 1. Visit [matrix-os.com](https://matrix-os.com)
 2. Click **Get Started**
-3. Choose a username -- this becomes your handle (e.g., `alice` gives you `alice.matrix-os.com`)
+3. Choose a username -- this becomes your Matrix handle and identity label
 4. Complete the signup process
 
 Your Matrix OS instance is automatically provisioned. This takes about 30 seconds.
 
 ## Access Your Instance
 
-Once provisioned, visit your personal URL:
+Once provisioned, visit:
 
 ```
-https://{your-handle}.matrix-os.com
+https://app.matrix-os.com
 ```
 
 You'll see the Matrix OS desktop with:
@@ -43,7 +43,7 @@ Visit [matrix-os.com/dashboard](https://matrix-os.com/dashboard) to:
 
 ## Auto Sleep/Wake
 
-To save resources, your instance automatically sleeps after 30 minutes of inactivity. When you visit your URL again, it wakes up automatically (takes a few seconds).
+To save resources, your instance can be recovered or refreshed by the platform when needed. When you visit `app.matrix-os.com`, the platform routes your signed-in session to your active customer VPS.
 
 ## What You Can Do
 

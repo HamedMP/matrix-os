@@ -22,34 +22,24 @@ describe("voice/tunnel/cloudflare", () => {
   });
 
   describe("start", () => {
-    it("returns correct URL with handle", async () => {
-      vi.stubEnv("MATRIX_HANDLE", "alice");
-
+    it("returns the shared app domain", async () => {
       const url = await tunnel.start({ provider: "cloudflare", localPort: 4000 });
 
-      expect(url).toBe("https://alice.matrix-os.com");
+      expect(url).toBe("https://app.matrix-os.com");
     });
 
-    it("falls back to 'dev' handle when MATRIX_HANDLE not set", async () => {
-      vi.stubEnv("MATRIX_HANDLE", "");
+    it("uses MATRIX_PUBLIC_APP_URL when configured", async () => {
+      vi.stubEnv("MATRIX_PUBLIC_APP_URL", "https://app.localhost:3000");
 
       const url = await tunnel.start({ provider: "cloudflare", localPort: 4000 });
 
-      expect(url).toBe("https://dev.matrix-os.com");
+      expect(url).toBe("https://app.localhost:3000");
     });
   });
 
   describe("health", () => {
-    it("returns true when MATRIX_HANDLE is set", async () => {
-      vi.stubEnv("MATRIX_HANDLE", "alice");
-
+    it("returns true for the managed app domain", async () => {
       expect(await tunnel.health()).toBe(true);
-    });
-
-    it("returns false when no handle", async () => {
-      vi.stubEnv("MATRIX_HANDLE", "");
-
-      expect(await tunnel.health()).toBe(false);
     });
   });
 
