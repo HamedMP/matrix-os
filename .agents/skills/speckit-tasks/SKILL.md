@@ -82,6 +82,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Dependencies section showing story completion order
    - Parallel execution examples per story
    - Implementation strategy section (MVP first, incremental delivery)
+   - Graphite stack plan section mapping phases to reviewable stacked PRs when the feature is more than one small PR
 
 5. **Report**: Output path to generated tasks.md and summary:
    - Total task count
@@ -89,6 +90,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Parallel opportunities identified
    - Independent test criteria for each story
    - Suggested MVP scope (typically just User Story 1)
+   - Suggested Graphite stack split by phase/story, using `docs/dev/stacked-prs.md`
    - Format validation: Confirm ALL tasks follow the checklist format (checkbox, ID, labels, file paths)
 
 6. **Check for extension hooks**: After tasks.md is generated, check if `.specify/extensions.yml` exists in the project root.
@@ -195,3 +197,15 @@ Every task MUST strictly follow this format:
   - Within each story: Tests (if requested) → Models → Services → Endpoints → Integration
   - Each phase should be a complete, independently testable increment
 - **Final Phase**: Polish & Cross-Cutting Concerns
+
+### Graphite Stack Plan
+
+For Matrix OS repositories with `docs/dev/stacked-prs.md`, tasks.md MUST include
+a "Graphite Stack Plan" section for any feature expected to exceed one small PR:
+
+- Setup/spec/docs gates can be the first stack layer.
+- Foundational shared infrastructure can be its own layer when it touches shared backend/platform code.
+- Each user story phase should map to one independently reviewable PR whenever possible.
+- Operations/deploy/docs polish should be the final layer unless it blocks earlier tests.
+- Keep each layer under the Matrix OS PR size limits from `docs/dev/review-pipeline.md`.
+- Do not instruct agents to flatten completed phases into a single PR unless explicitly requested.

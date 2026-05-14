@@ -101,6 +101,9 @@ create new ones.
   `feat(messages): add permission gates`.
 - Backend PR bodies must include the required Invariants section from
   `docs/dev/review-pipeline.md`.
+- Spec Kit features should preserve `tasks.md` phase boundaries as stack
+  boundaries. The Speckit task template and implementation skill both expect
+  multi-phase features to map phases/user stories to Graphite layers.
 - Declare stack order in each PR body, for example `Stack: 1/4`, `Stack: 2/4`.
 - Do not request deep review until the relevant PR is frozen or ready for
   review.
