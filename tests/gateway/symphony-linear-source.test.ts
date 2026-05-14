@@ -96,15 +96,37 @@ describe("Symphony Linear source", () => {
     expect(result.truncated).toBe(false);
   });
 
-  it("caps Linear request fan-out for broad rules", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+  it("uses one broad Linear query for large state and assignee rule sets", async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      expect(body.variables).not.toHaveProperty("state");
+      expect(body.variables).not.toHaveProperty("assigneeId");
+      return new Response(JSON.stringify({
       data: {
         issues: {
-          nodes: [],
+          nodes: [
+            {
+              id: "issue_late",
+              identifier: "MAT-999",
+              title: "Eligible later combination",
+              assignee: { id: "assignee_49" },
+              state: { name: "State 19" },
+              labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
+            },
+            {
+              id: "issue_wrong_state",
+              identifier: "MAT-998",
+              title: "Wrong state",
+              assignee: { id: "assignee_49" },
+              state: { name: "Backlog" },
+              labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
+            },
+          ],
           pageInfo: { hasNextPage: false, endCursor: null },
         },
       },
-    }))) as unknown as typeof fetch;
+    }));
+    }) as unknown as typeof fetch;
     const source = createLinearSource({ fetch: fetchMock });
 
     const result = await source.previewTickets({
@@ -113,8 +135,11 @@ describe("Symphony Linear source", () => {
       assigneeIds: Array.from({ length: 50 }, (_unused, index) => `assignee_${index}`),
     }, "lin_api_secret", { limit: 100 });
 
-    expect(fetchMock).toHaveBeenCalledTimes(20);
-    expect(result).toMatchObject({ tickets: [], truncated: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      truncated: false,
+      tickets: [expect.objectContaining({ externalId: "issue_late", identifier: "MAT-999" })],
+    });
   });
 
   it("pages through Linear results before applying remaining label filters", async () => {

@@ -359,13 +359,32 @@ export function createMatrixSymphonyOrchestrator(options: {
   return {
     async start(ownerId: string, actorId: string) {
       const installation = await options.repository.setEnabled(ownerId, true, actorId);
+      await options.statusHub?.publishOperatorEvent(ownerId, {
+        id: `evt_${randomUUID()}`,
+        installationId: installation.id,
+        type: "symphony.started",
+        message: "Symphony started",
+        severity: "info",
+        actorId,
+        createdAt: nowIso(),
+      });
       ensurePolling(ownerId, installation.pollIntervalMs);
       return installation;
     },
 
     async stop(ownerId: string, actorId: string) {
       clearPoll(ownerId);
-      return options.repository.setEnabled(ownerId, false, actorId);
+      const installation = await options.repository.setEnabled(ownerId, false, actorId);
+      await options.statusHub?.publishOperatorEvent(ownerId, {
+        id: `evt_${randomUUID()}`,
+        installationId: installation.id,
+        type: "symphony.stopped",
+        message: "Symphony stopped",
+        severity: "info",
+        actorId,
+        createdAt: nowIso(),
+      });
+      return installation;
     },
 
     async poll(ownerId: string) {

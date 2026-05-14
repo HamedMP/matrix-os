@@ -120,14 +120,19 @@ export function createLinearSource(options: {
       const states = input.state ? [input.state] : rule.activeStates;
       const labelForServer = rule.requiredLabels[0];
       const assigneeIds = rule.assigneeIds.length > 0 ? rule.assigneeIds : [undefined];
+      const combinationCount = states.length * assigneeIds.length;
+      const useBroadServerQuery = combinationCount > MAX_LINEAR_PREVIEW_REQUESTS;
+      const statesToQuery: Array<string | undefined> = useBroadServerQuery ? [undefined] : states;
+      const assigneeIdsToQuery: Array<string | undefined> = useBroadServerQuery ? [undefined] : assigneeIds;
+      const activeStateNames = new Set(states.map((state) => state.toLowerCase()));
       const tickets: TrackedTicket[] = [];
       let truncated = false;
       let requests = 0;
 
-      for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
-        const state = states[stateIndex];
-        for (let assigneeIndex = 0; assigneeIndex < assigneeIds.length; assigneeIndex += 1) {
-          const assigneeId = assigneeIds[assigneeIndex];
+      for (let stateIndex = 0; stateIndex < statesToQuery.length; stateIndex += 1) {
+        const state = statesToQuery[stateIndex];
+        for (let assigneeIndex = 0; assigneeIndex < assigneeIdsToQuery.length; assigneeIndex += 1) {
+          const assigneeId = assigneeIdsToQuery[assigneeIndex];
           if (tickets.length >= limit) {
             truncated = true;
             break;
@@ -177,6 +182,7 @@ export function createLinearSource(options: {
             for (const node of nodes) {
               const ticket = normalizeIssue(node);
               if (!ticket) continue;
+              if (activeStateNames.size > 0 && !activeStateNames.has(ticket.stateName.toLowerCase())) continue;
               if (!includesAllLabels(ticket, rule.requiredLabels)) continue;
               if (rule.assigneeIds.length > 0 && (!ticket.assigneeId || !rule.assigneeIds.includes(ticket.assigneeId))) continue;
               tickets.push(ticket);

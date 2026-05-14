@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMatrixSymphonyOrchestrator } from "../../packages/gateway/src/symphony/orchestrator.js";
 import type { SymphonyRepository } from "../../packages/gateway/src/symphony/repository.js";
+import type { SymphonyStatusHub } from "../../packages/gateway/src/symphony/status-hub.js";
 import type { SymphonyRun, SymphonySnapshot } from "../../packages/gateway/src/symphony/contracts.js";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 
@@ -509,6 +510,48 @@ describe("Matrix Symphony orchestrator", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("publishes start and stop events to realtime subscribers", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.installation = { ...snapshot.installation!, enabled: false };
+    const repository = memoryRepo(snapshot);
+    const statusHub: Pick<SymphonyStatusHub, "publishOperatorEvent"> = {
+      publishOperatorEvent: vi.fn(async () => ({
+        type: "symphony.started",
+        installationId: "sym_user_123",
+        sequence: 1,
+        createdAt: "2026-05-13T00:00:00.000Z",
+        payload: {},
+      })),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: { previewTickets: vi.fn(async () => ({ truncated: false, tickets: [] })) },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+      statusHub: statusHub as SymphonyStatusHub,
+    });
+
+    await orchestrator.start("user_123", "user_123");
+    await orchestrator.stop("user_123", "user_123");
+
+    expect(statusHub.publishOperatorEvent).toHaveBeenCalledWith("user_123", expect.objectContaining({
+      installationId: "sym_user_123",
+      type: "symphony.started",
+      message: "Symphony started",
+      severity: "info",
+      actorId: "user_123",
+    }));
+    expect(statusHub.publishOperatorEvent).toHaveBeenCalledWith("user_123", expect.objectContaining({
+      installationId: "sym_user_123",
+      type: "symphony.stopped",
+      message: "Symphony stopped",
+      severity: "info",
+      actorId: "user_123",
+    }));
   });
 
   it("resumes polling for persisted enabled installations", async () => {
