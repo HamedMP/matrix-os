@@ -105,6 +105,15 @@ export class KyselyBoardMembershipService implements BoardMembershipService {
 
   async bootstrap(): Promise<void> {
     await sql`
+      CREATE TABLE IF NOT EXISTS shared_boards (
+        owner_id text NOT NULL,
+        project_slug text NOT NULL,
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now(),
+        PRIMARY KEY (owner_id, project_slug)
+      )
+    `.execute(this.db);
+    await sql`
       CREATE TABLE IF NOT EXISTS shared_board_members (
         owner_id text NOT NULL,
         project_slug text NOT NULL,
@@ -144,6 +153,18 @@ export class KyselyBoardMembershipService implements BoardMembershipService {
       addedAt: nowIso(),
     };
     await this.db.transaction().execute(async (trx) => {
+      await trx
+        .insertInto("shared_boards")
+        .values({ owner_id: ownerId, project_slug: projectSlug })
+        .onConflict((oc) => oc.columns(["owner_id", "project_slug"]).doUpdateSet({ updated_at: sql`now()` }))
+        .execute();
+      await trx
+        .selectFrom("shared_boards")
+        .select(["owner_id"])
+        .where("owner_id", "=", ownerId)
+        .where("project_slug", "=", projectSlug)
+        .forUpdate()
+        .executeTakeFirst();
       const existing = await trx
         .selectFrom("shared_board_members")
         .select(["user_id"])
