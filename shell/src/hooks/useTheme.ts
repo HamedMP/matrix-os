@@ -106,10 +106,10 @@ export function useTheme() {
 export async function saveTheme(theme: Theme): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   await fetch(`${gatewayUrl}/api/settings/theme`, {
+    signal: AbortSignal.timeout(10_000),
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(theme),
-    signal: AbortSignal.timeout(10_000),
   });
 }
 

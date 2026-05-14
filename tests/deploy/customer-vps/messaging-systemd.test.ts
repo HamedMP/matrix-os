@@ -11,5 +11,11 @@ describe("customer VPS messaging systemd units", () => {
     expect(telegram).toContain("ExecStart=/opt/matrix/messaging/bin/mautrix-telegram");
     expect(whatsapp).toContain("ExecStart=/opt/matrix/messaging/bin/mautrix-whatsapp");
     expect(homeserver).toContain("StateDirectory=matrix-messaging");
+    for (const unit of [homeserver, telegram, whatsapp]) {
+      expect(unit).toContain("Environment=MATRIX_MESSAGING_ROOT=/var/lib/matrix-messaging");
+      expect(unit).toContain("EnvironmentFile=-/etc/matrix/messaging.env");
+      expect(unit).toContain("ConditionPathExists=/opt/matrix/messaging/bin/");
+      expect(unit).not.toContain("HC_Volume_");
+    }
   });
 });

@@ -2,13 +2,16 @@
 Description=Matrix OS WhatsApp bridge
 After=network-online.target matrix-homeserver.service
 Wants=network-online.target matrix-homeserver.service
+ConditionPathExists=/opt/matrix/messaging/bin/mautrix-whatsapp
 
 [Service]
 Type=simple
 User=matrix
 Group=matrix
-Environment=MATRIX_MESSAGING_ROOT=/mnt/HC_Volume_104683898/matrix-messaging
+Environment=MATRIX_MESSAGING_ROOT=/var/lib/matrix-messaging
+EnvironmentFile=-/etc/matrix/messaging.env
 WorkingDirectory=/opt/matrix/messaging
+StateDirectory=matrix-messaging
 ExecStart=/opt/matrix/messaging/bin/mautrix-whatsapp -c ${MATRIX_MESSAGING_ROOT}/mautrix-whatsapp/config.yaml
 Restart=on-failure
 RestartSec=5

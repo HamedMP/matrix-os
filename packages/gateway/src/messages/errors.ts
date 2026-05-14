@@ -35,6 +35,7 @@ const SAFE_MESSAGES: Record<MessagingSafeErrorCode, string> = {
   body_too_large: "Request body too large",
   provider_unavailable: "Messaging provider unavailable",
   misconfigured: "Messaging is not configured",
+  not_implemented: "Messaging action is not implemented",
   internal_error: "Messaging request failed",
 };
 
@@ -48,6 +49,7 @@ const STATUS_BY_CODE: Record<MessagingSafeErrorCode, ContentfulStatusCode> = {
   body_too_large: 413,
   provider_unavailable: 503,
   misconfigured: 503,
+  not_implemented: 501,
   internal_error: 500,
 };
 

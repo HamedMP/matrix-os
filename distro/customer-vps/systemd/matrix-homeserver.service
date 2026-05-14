@@ -2,12 +2,14 @@
 Description=Matrix OS messaging homeserver (Synapse)
 After=network-online.target postgresql.service
 Wants=network-online.target
+ConditionPathExists=/opt/matrix/messaging/bin/synapse
 
 [Service]
 Type=simple
 User=matrix
 Group=matrix
-Environment=MATRIX_MESSAGING_ROOT=/mnt/HC_Volume_104683898/matrix-messaging
+Environment=MATRIX_MESSAGING_ROOT=/var/lib/matrix-messaging
+EnvironmentFile=-/etc/matrix/messaging.env
 WorkingDirectory=/opt/matrix/messaging
 StateDirectory=matrix-messaging
 ExecStart=/opt/matrix/messaging/bin/synapse --config-path ${MATRIX_MESSAGING_ROOT}/synapse/homeserver.yaml

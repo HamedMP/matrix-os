@@ -1,10 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
-ROOT="${MATRIX_MESSAGING_ROOT:-/mnt/HC_Volume_104683898/matrix-messaging}"
+ROOT="${MATRIX_MESSAGING_ROOT:-/var/lib/matrix-messaging}"
 
 service_state() {
-  systemctl is-active "$1" 2>/dev/null || true
+  if systemctl is-active --quiet "$1" 2>/dev/null; then
+    printf active
+  else
+    printf unknown
+  fi
 }
 
 printf '{"root":"%s","homeserver":"%s","telegram":"%s","whatsapp":"%s"}\n' \

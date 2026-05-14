@@ -26,9 +26,9 @@ Key invariants:
 - Homeserver: Synapse for the first Telegram/WhatsApp slice.
 - Bridges: `mautrix-telegram` and `mautrix-whatsapp`.
 - Runtime: VPS-native systemd units, not Docker Compose.
-- Data root: `MATRIX_MESSAGING_ROOT`, defaulting to
-  `/mnt/HC_Volume_104683898/matrix-messaging` on hosts with the extra Hetzner
-  volume.
+- Data root: `MATRIX_MESSAGING_ROOT`, defaulting to `/var/lib/matrix-messaging`.
+  Override via `/etc/matrix/messaging.env` for hosts with a dedicated volume
+  mounted at a custom path.
 
 ## Gateway Architecture
 
@@ -76,9 +76,10 @@ WhatsApp/Synapse enablement.
 - `matrix-messaging-health` reports coarse systemd state only.
 - `matrix-messaging-backup` captures Synapse, Telegram bridge, WhatsApp bridge,
   and Matrix OS messaging tables including mappings and permissions.
-- `matrix-messaging-restore <backup-dir>` restores Matrix OS messaging tables
-  when `DATABASE_URL` is available and reports whether WhatsApp should be
-  relinked.
+- `matrix-messaging-restore <backup-dir>` stops the messaging units, restores
+  archived homeserver and bridge directories, replays available Matrix OS,
+  Synapse, Telegram bridge, and WhatsApp bridge database dumps, and reports
+  whether WhatsApp should be relinked.
 
 RPO is 1 hour. RTO is 15 minutes after the VPS is reachable. WhatsApp may need a
 fresh pairing if the restored backup is older than 24 hours or if the paired

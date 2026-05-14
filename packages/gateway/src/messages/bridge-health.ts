@@ -37,19 +37,19 @@ export function createMessagingBridgeHealthService(repository: MessagingReposito
         const accountsNeedingRelink = networkAccounts.filter((account) => account.status === "error" || account.status === "disconnected").length;
         return {
           network,
-          status: accountsNeedingRelink > 0 ? "degraded" : "ok",
+          status: networkAccounts.length === 0 ? "unknown" : accountsNeedingRelink > 0 ? "degraded" : "ok",
           accountsHealthy,
           accountsNeedingRelink,
         };
       });
-      return { homeserver: "ok", networks };
+      return { homeserver: "unknown", networks };
     },
     async startRecovery(input) {
       const account = await repository.getAccount({ ownerId: input.ownerId }, input.accountId);
       if (!account) {
         throw new MessagingError("not_found", "account not found", 404);
       }
-      return { accountId: input.accountId, status: "recovery_started" };
+      throw new MessagingError("not_implemented", `recovery action ${input.action} is not wired`, 501);
     },
   };
 }

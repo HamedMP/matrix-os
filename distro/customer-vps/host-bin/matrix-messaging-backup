@@ -1,12 +1,40 @@
 #!/usr/bin/env sh
 set -eu
 
-ROOT="${MATRIX_MESSAGING_ROOT:-/mnt/HC_Volume_104683898/matrix-messaging}"
+load_env_file() {
+  file="$1"
+  if [ -f "$file" ]; then
+    set -a
+    . "$file"
+    set +a
+  fi
+}
+
+HOST_ENV_FILE="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}"
+MESSAGING_ENV_FILE="${MATRIX_MESSAGING_ENV_FILE:-/etc/matrix/messaging.env}"
+load_env_file "$HOST_ENV_FILE"
+load_env_file "$MESSAGING_ENV_FILE"
+
+ROOT="${MATRIX_MESSAGING_ROOT:-/var/lib/matrix-messaging}"
 BACKUP_ROOT="${MATRIX_MESSAGING_BACKUP_ROOT:-/home/matrix/backups/messaging}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="$BACKUP_ROOT/$STAMP"
+MESSAGING_SERVICES="matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service"
+
+restart_services() {
+  if [ "${SERVICES_STOPPED:-0}" = "1" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl start $MESSAGING_SERVICES
+  fi
+}
 
 mkdir -p "$DEST"
+
+SERVICES_STOPPED=0
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop $MESSAGING_SERVICES 2>/dev/null || true
+  SERVICES_STOPPED=1
+  trap restart_services EXIT INT TERM
+fi
 
 for name in synapse mautrix-telegram mautrix-whatsapp; do
   if [ -d "$ROOT/$name" ]; then
@@ -14,15 +42,38 @@ for name in synapse mautrix-telegram mautrix-whatsapp; do
   fi
 done
 
-if command -v pg_dump >/dev/null 2>&1 && [ -n "${DATABASE_URL:-}" ]; then
-  pg_dump "$DATABASE_URL" \
-    --table=messaging_accounts \
-    --table=messaging_conversations \
-    --table=messaging_conversation_mappings \
-    --table=messaging_permissions \
-    --table=messaging_outgoing_replies \
-    --table=messaging_automation_rules \
-    --file="$DEST/matrix-os-messaging.sql"
+dump_database() {
+  label="$1"
+  url="$2"
+  if [ -z "$url" ]; then
+    return 0
+  fi
+  pg_dump "$url" --clean --if-exists --file="$DEST/$label.sql"
+}
+
+if command -v pg_dump >/dev/null 2>&1; then
+  if [ -n "${DATABASE_URL:-}" ]; then
+    pg_dump "$DATABASE_URL" \
+      --data-only \
+      --column-inserts \
+      --table=messaging_accounts \
+      --table=messaging_setup_sessions \
+      --table=messaging_conversations \
+      --table=messaging_conversation_mappings \
+      --table=messaging_permissions \
+      --table=messaging_audit_events \
+      --table=messaging_event_cursors \
+      --table=messaging_outgoing_replies \
+      --table=messaging_hermes_work_items \
+      --table=messaging_automation_rules \
+      --file="$DEST/matrix-os-messaging.sql"
+  fi
+  dump_database synapse-db "${SYNAPSE_DATABASE_URL:-}"
+  dump_database mautrix-telegram-db "${MAUTRIX_TELEGRAM_DATABASE_URL:-}"
+  dump_database mautrix-whatsapp-db "${MAUTRIX_WHATSAPP_DATABASE_URL:-}"
 fi
 
-printf '{"backup":"%s","rpo_minutes":60,"includes":["synapse","mautrix-telegram","mautrix-whatsapp","messaging_permissions","messaging_conversation_mappings"]}\n' "$DEST"
+restart_services
+trap - EXIT INT TERM
+
+printf '{"backup":"%s","rpo_minutes":60,"includes":["synapse","mautrix-telegram","mautrix-whatsapp","matrix-os-messaging","synapse-db","mautrix-telegram-db","mautrix-whatsapp-db"]}\n' "$DEST"

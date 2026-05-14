@@ -1,6 +1,23 @@
 #!/usr/bin/env sh
 set -eu
 
+MESSAGING_SERVICES="matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service"
+
+load_env_file() {
+  file="$1"
+  if [ -f "$file" ]; then
+    set -a
+    . "$file"
+    set +a
+  fi
+}
+
+HOST_ENV_FILE="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}"
+MESSAGING_ENV_FILE="${MATRIX_MESSAGING_ENV_FILE:-/etc/matrix/messaging.env}"
+load_env_file "$HOST_ENV_FILE"
+load_env_file "$MESSAGING_ENV_FILE"
+
+ROOT="${MATRIX_MESSAGING_ROOT:-/var/lib/matrix-messaging}"
 WHATSAPP_RELINK_AFTER_HOURS=24
 RTO_MINUTES=15
 BACKUP_DIR="${1:-}"
@@ -10,8 +27,57 @@ if [ -z "$BACKUP_DIR" ] || [ ! -d "$BACKUP_DIR" ]; then
   exit 2
 fi
 
-if [ -f "$BACKUP_DIR/matrix-os-messaging.sql" ] && command -v psql >/dev/null 2>&1 && [ -n "${DATABASE_URL:-}" ]; then
-  psql "$DATABASE_URL" < "$BACKUP_DIR/matrix-os-messaging.sql"
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop $MESSAGING_SERVICES 2>/dev/null || true
+fi
+
+mkdir -p "$ROOT"
+for name in synapse mautrix-telegram mautrix-whatsapp; do
+  if [ -f "$BACKUP_DIR/$name.tar.gz" ]; then
+    tar -C "$ROOT" -xzf "$BACKUP_DIR/$name.tar.gz"
+  fi
+done
+
+restore_matrix_os_database() {
+  url="$1"
+  file="$BACKUP_DIR/matrix-os-messaging.sql"
+  if [ -n "$url" ] && [ -f "$file" ]; then
+    psql --set ON_ERROR_STOP=1 "$url" <<'SQL'
+TRUNCATE TABLE
+  messaging_accounts,
+  messaging_setup_sessions,
+  messaging_conversations,
+  messaging_conversation_mappings,
+  messaging_permissions,
+  messaging_audit_events,
+  messaging_event_cursors,
+  messaging_outgoing_replies,
+  messaging_hermes_work_items,
+  messaging_automation_rules
+RESTART IDENTITY CASCADE;
+SQL
+    psql --set ON_ERROR_STOP=1 "$url" < "$file"
+  fi
+}
+
+restore_database() {
+  label="$1"
+  url="$2"
+  file="$BACKUP_DIR/$label.sql"
+  if [ -n "$url" ] && [ -f "$file" ]; then
+    psql --set ON_ERROR_STOP=1 "$url" < "$file"
+  fi
+}
+
+if command -v psql >/dev/null 2>&1; then
+  restore_matrix_os_database "${DATABASE_URL:-}"
+  restore_database synapse-db "${SYNAPSE_DATABASE_URL:-}"
+  restore_database mautrix-telegram-db "${MAUTRIX_TELEGRAM_DATABASE_URL:-}"
+  restore_database mautrix-whatsapp-db "${MAUTRIX_WHATSAPP_DATABASE_URL:-}"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl start $MESSAGING_SERVICES
 fi
 
 now="$(date +%s)"

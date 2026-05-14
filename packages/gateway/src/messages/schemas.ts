@@ -37,6 +37,7 @@ export const MessagingSafeErrorCodeSchema = z.enum([
   "body_too_large",
   "provider_unavailable",
   "misconfigured",
+  "not_implemented",
   "internal_error",
 ]);
 export type MessagingSafeErrorCode = z.infer<typeof MessagingSafeErrorCodeSchema>;
