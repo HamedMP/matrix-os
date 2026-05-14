@@ -8,7 +8,8 @@ import {
   Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useOAuth, useAuth } from "@clerk/clerk-expo";
+import { makeRedirectUri } from "expo-auth-session";
+import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -16,10 +17,14 @@ import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 WebBrowser.maybeCompleteAuthSession();
 
+const clerkOAuthRedirectUrl =
+  process.env.EXPO_PUBLIC_CLERK_OAUTH_REDIRECT_URL ??
+  makeRedirectUri({ scheme: "matrixos", path: "sso-callback" });
+
 export default function SignInScreen() {
   const router = useRouter();
   const { isSignedIn } = useAuth();
-  const { startOAuthFlow } = useOAuth({ strategy: "oauth_google" });
+  const { startSSOFlow } = useSSO();
 
   const [loading, setLoading] = useState(false);
   const redirectedRef = useRef(false);
@@ -34,19 +39,22 @@ export default function SignInScreen() {
   const handleGoogleSignIn = useCallback(async () => {
     setLoading(true);
     try {
-      const { createdSessionId, setActive } = await startOAuthFlow();
+      const { createdSessionId, setActive } = await startSSOFlow({
+        strategy: "oauth_google",
+        redirectUrl: clerkOAuthRedirectUrl,
+      });
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
         redirectedRef.current = true;
         router.replace("/(tabs)/apps" as any);
       }
-    } catch (err: any) {
-      const msg = err?.errors?.[0]?.longMessage || err?.message || "Sign in failed";
-      Alert.alert("Error", msg);
+    } catch (err: unknown) {
+      console.warn("[mobile] Google sign-in failed:", err);
+      Alert.alert("Sign in failed", "Check the mobile OAuth redirect URL and try again.");
     } finally {
       setLoading(false);
     }
-  }, [startOAuthFlow, router]);
+  }, [startSSOFlow, router]);
 
   if (isSignedIn) {
     return null;
@@ -58,7 +66,7 @@ export default function SignInScreen() {
         <View style={styles.header}>
           <View style={styles.logoContainer}>
             <Image
-              source={require("../assets/logo.png")}
+              source={require("../assets/icon.png")}
               style={styles.logo}
               contentFit="contain"
               accessibilityLabel="Matrix OS"

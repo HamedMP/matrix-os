@@ -1,5 +1,9 @@
 import { GatewayClient } from "@/lib/gateway-client";
 import type { MobileTerminalSession } from "@/lib/terminal-state";
+export { isSafeSessionId, parseTerminalSessions } from "@/lib/terminal-state";
+
+const WS_CONNECTING = 0;
+const WS_OPEN = 1;
 
 export type TerminalClientFrame =
   | { type: "attach"; sessionId?: string; cwd?: string; fromSeq?: number }
@@ -26,15 +30,6 @@ export interface MobileTerminalConnectOptions {
   onStatus?: (status: "connecting" | "open" | "closed" | "error") => void;
 }
 
-type ReactNativeWebSocketConstructor = new (
-  url: string,
-  protocols?: string | string[],
-  options?: { headers?: Record<string, string> },
-) => WebSocket;
-
-const SAFE_UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 export class MobileTerminalClient {
   constructor(private readonly gateway: GatewayClient) {}
 
@@ -48,10 +43,6 @@ export class MobileTerminalClient {
 
   async connect(options: MobileTerminalConnectOptions): Promise<MobileTerminalConnection | null> {
     const token = await this.gateway.getWsToken();
-    if (!token) {
-      options.onStatus?.("error");
-      return null;
-    }
     this.gateway.setWebSocketToken(token);
     const ws = this.gateway.openTerminalWebSocket(token);
     const connection = new MobileTerminalConnection(ws, options);
@@ -127,41 +118,16 @@ export class MobileTerminalConnection {
   }
 
   close(): void {
-    if (!this.attached) return;
+    if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
     this.attached = false;
     this.ws.close();
   }
 
   private sendFrame(frame: TerminalClientFrame): boolean {
-    if (this.ws.readyState !== WebSocket.OPEN) return false;
+    if (this.ws.readyState !== WS_OPEN) return false;
     this.ws.send(JSON.stringify(frame));
     return true;
   }
-}
-
-export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const candidate = entry as Record<string, unknown>;
-    if (typeof candidate.sessionId !== "string" || !isSafeSessionId(candidate.sessionId)) {
-      return [];
-    }
-    const session: MobileTerminalSession = {
-      sessionId: candidate.sessionId,
-      cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
-      state: typeof candidate.state === "string" ? candidate.state : "running",
-    };
-    if (typeof candidate.createdAt === "string") session.createdAt = candidate.createdAt;
-    if (typeof candidate.lastAttachedAt === "string") session.lastAttachedAt = candidate.lastAttachedAt;
-    if (typeof candidate.attachedClients === "number") session.attachedClients = candidate.attachedClients;
-    if (typeof candidate.exitCode === "number" || candidate.exitCode === null) session.exitCode = candidate.exitCode;
-    return [session];
-  });
-}
-
-export function isSafeSessionId(sessionId: string): boolean {
-  return SAFE_UUID.test(sessionId);
 }
 
 export function buildTerminalWebSocketUrl(baseUrl: string, token?: string | null): string {
@@ -194,17 +160,4 @@ function compactFrame<T extends Record<string, unknown>>(frame: T): T {
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.round(value)));
-}
-
-export function openTerminalWebSocket(
-  baseUrl: string,
-  token?: string | null,
-  bearerToken?: string,
-): WebSocket {
-  const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
-  return new WebSocketWithOptions(
-    buildTerminalWebSocketUrl(baseUrl, token),
-    [],
-    bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : undefined,
-  );
 }

@@ -1,6 +1,10 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { isGatewayProxyPath, isPublicShellPath } from "./src/lib/proxy-routes";
+import {
+  isGatewayProxyPath,
+  isPlatformMobileAppSessionRequest,
+  isPublicShellPath,
+} from "./src/lib/proxy-routes";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
@@ -62,7 +66,12 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
   }
 
   const platformUserId = request.headers.get("x-platform-user-id");
-  if (expectedClerkUserId && platformUserId !== expectedClerkUserId) {
+  const mobileAppSessionRequest = isPlatformMobileAppSessionRequest(
+    request.nextUrl.pathname,
+    request.nextUrl.search,
+    request.headers.get("cookie"),
+  );
+  if (expectedClerkUserId && platformUserId !== expectedClerkUserId && !mobileAppSessionRequest) {
     return new NextResponse("Forbidden: you do not own this instance", {
       status: 403,
     });

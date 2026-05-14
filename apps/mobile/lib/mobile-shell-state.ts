@@ -18,7 +18,8 @@ type MobileShellStorage = Pick<typeof AsyncStorage, "getItem" | "setItem">;
 
 const MOBILE_SHELL_MODES = new Set<MobileShellMode>(["launcher", "app", "terminal", "canvas"]);
 const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
-const SAFE_TERMINAL_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const SAFE_TERMINAL_SESSION_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function createDefaultMobileShellState(surface: MobileShellSurface = "native-mobile"): MobileShellState {
   return {

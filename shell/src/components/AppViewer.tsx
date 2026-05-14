@@ -16,6 +16,15 @@ import { openAppSession } from "@/lib/app-session";
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
+const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
+  "2048",
+  "backgammon",
+  "chess",
+  "minesweeper",
+  "snake",
+  "solitaire",
+  "tetris",
+]);
 export const APP_IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
 
 interface AppViewerProps {
@@ -35,11 +44,13 @@ export function extractSlug(path: string): string | null {
   const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
   if (topLevel) return topLevel[1];
 
-  // Older saved layouts used filesystem paths for nested bundled apps such as
-  // apps/games/backgammon/index.html. Those apps now have first-class runtime
-  // slugs, so route them through /apps/:slug/ instead of loading source HTML.
+  // Older saved layouts used filesystem paths for migrated bundled games. Only
+  // rewrite known migrated slugs; other nested paths still load as files.
   const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
-  return nestedIndex ? nestedIndex[1] : null;
+  if (nestedIndex && LEGACY_NESTED_RUNTIME_APP_SLUGS.has(nestedIndex[1])) {
+    return nestedIndex[1];
+  }
+  return null;
 }
 
 export function shouldRenderAppIframe(path: string): boolean {

@@ -23,7 +23,16 @@ import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { colors, fonts } from "@/lib/theme";
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
+let nativeSplashRegistered = false;
+const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
+  .then(() => {
+    nativeSplashRegistered = true;
+    return true;
+  })
+  .catch((err: unknown) => {
+    console.warn("[mobile] Native splash screen was not registered:", err);
+    return false;
+  });
 
 const clerkPublishableKey =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ??
@@ -86,9 +95,18 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (fontsLoaded && ready) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
+    if (!fontsLoaded || !ready) return;
+
+    let cancelled = false;
+    nativeSplashRegistration.then((registered) => {
+      if (cancelled || (!registered && !nativeSplashRegistered)) return;
+      void SplashScreen.hideAsync().catch((err: unknown) => {
+        console.warn("[mobile] Native splash screen could not be hidden:", err);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fontsLoaded, ready]);
 
   if (!fontsLoaded || !ready) {
@@ -252,7 +270,7 @@ function GatewayShell() {
           <Stack.Screen name="apps" options={{ headerShown: false }} />
           <Stack.Screen name="terminal" options={{ headerShown: false }} />
           <Stack.Screen name="runtime" options={{ headerShown: false }} />
-          <Stack.Screen name="canvas" options={{ headerShown: false }} />
+          <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
           <Stack.Screen
             name="connect"
             options={{

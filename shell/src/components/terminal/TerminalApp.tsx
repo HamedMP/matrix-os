@@ -183,6 +183,7 @@ export function TerminalApp({ initialCommand, initialSessionId, mobile = false }
   activeTabIdRef.current = activeTabId;
   const themeIdRef = useRef(themeId);
   themeIdRef.current = themeId;
+  const initialMobileRef = useRef(mobile);
   const sidebarOpenRef = useRef(sidebarOpen);
   sidebarOpenRef.current = sidebarOpen;
   const pendingPaneSessionsRef = useRef<Map<string, string>>(new Map());
@@ -328,7 +329,7 @@ export function TerminalApp({ initialCommand, initialSessionId, mobile = false }
             const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
             setTabs(data.tabs);
             setActiveTabId(nextActiveTabId);
-            setSidebarOpen(mobile ? false : data.sidebarOpen ?? true);
+            setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
             setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
             setInitialized(true);
             return;
@@ -350,7 +351,7 @@ export function TerminalApp({ initialCommand, initialSessionId, mobile = false }
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobile]);
+  }, []);
 
   useEffect(() => {
     if (!initialized) {

@@ -39,7 +39,7 @@ describe("mobile shell state", () => {
       surface: "browser-shell",
       mode: "desktop",
       lastActiveAppSlug: "../system/secrets",
-      lastActiveTerminalSessionId: "/tmp/socket",
+      lastActiveTerminalSessionId: "terminal_123",
       canvasEnteredAt: "not-a-date",
       updatedAt: "not-a-date",
     })).toMatchObject({
@@ -72,7 +72,7 @@ describe("mobile shell state", () => {
       surface: "native-mobile",
       mode: "app",
       lastActiveAppSlug: "Notes App",
-      lastActiveTerminalSessionId: "/tmp/socket",
+      lastActiveTerminalSessionId: "terminal_123",
       canvasEnteredAt: null,
       updatedAt: "bad-date",
     });

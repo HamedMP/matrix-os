@@ -138,4 +138,39 @@ describe("mobile terminal client", () => {
       { headers: { Authorization: "Bearer clerk-token" } },
     );
   });
+
+  it("opens unauthenticated terminal sockets when the gateway returns no ws token", async () => {
+    const webSocketMock = jest.fn().mockImplementation(() => new MockWebSocket());
+    global.WebSocket = webSocketMock as unknown as typeof WebSocket;
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ token: null }));
+
+    const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
+    const terminalClient = new MobileTerminalClient(gateway);
+    const connection = await terminalClient.connect({
+      cwd: "projects",
+      onMessage: jest.fn(),
+    });
+
+    expect(connection).toBeTruthy();
+    expect(webSocketMock).toHaveBeenCalledWith(
+      "wss://app.matrix-os.test/ws/terminal",
+      [],
+      { headers: { Authorization: "Bearer clerk-token" } },
+    );
+  });
+
+  it("closes sockets before open and uses local ready-state constants", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    (ws as unknown as MockWebSocket).readyState = 0;
+    const connection = new MobileTerminalConnection(ws, {
+      cwd: "projects",
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    connection.detach();
+
+    expect((ws as unknown as MockWebSocket).closed).toBe(true);
+    expect((ws as unknown as MockWebSocket).sent).toEqual([]);
+  });
 });

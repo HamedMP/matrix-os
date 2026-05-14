@@ -543,9 +543,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const isPhoneShell = useMobileViewport();
   const [mobileMode, setMobileMode] = useState<"launcher" | "app" | "canvas">("launcher");
   const [lastActiveMobileAppSlug, setLastActiveMobileAppSlug] = useState<string | null>(null);
-  const activeMobileWindow = focusedWindow ?? windows
-    .filter((w) => !w.minimized)
-    .sort((a, b) => b.zIndex - a.zIndex)[0];
+  const activeMobileWindow = focusedWindow;
 
   useEffect(() => {
     if (!isPhoneShell) return;

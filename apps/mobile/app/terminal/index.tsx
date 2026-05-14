@@ -38,6 +38,8 @@ export default function TerminalScreen() {
   const [lastTerminalSessionId, setLastTerminalSessionId] = useState<string | null>(null);
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
+  const connectAttemptRef = useRef(0);
+  const connectingRef = useRef(false);
   const outputRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
 
@@ -64,6 +66,8 @@ export default function TerminalScreen() {
 
   useEffect(() => {
     return () => {
+      connectAttemptRef.current += 1;
+      connectingRef.current = false;
       connectionRef.current?.detach();
       connectionRef.current = null;
     };
@@ -121,25 +125,53 @@ export default function TerminalScreen() {
       dispatch({ type: "terminal.error", message: "Terminal unavailable" });
       return;
     }
+    if (connectingRef.current) return;
 
+    const attemptId = connectAttemptRef.current + 1;
+    connectAttemptRef.current = attemptId;
+    connectingRef.current = true;
     connectionRef.current?.detach();
     connectionRef.current = null;
     dispatch({ type: "connection.changed", status: "connecting" });
 
-    const nextConnection = await terminalClient.connect({
-      sessionId,
-      cwd: "projects",
-      cols,
-      rows,
-      onMessage: handleFrame,
-      onStatus: (status) => {
-        if (status === "open") dispatch({ type: "connection.changed", status: "attached" });
-        if (status === "closed") dispatch({ type: "connection.changed", status: "detached" });
-        if (status === "error") dispatch({ type: "terminal.error", message: "Terminal unavailable" });
-      },
-    });
-    connectionRef.current = nextConnection;
-    inputRef.current?.focus();
+    let nextConnection: MobileTerminalConnection | null = null;
+    try {
+      nextConnection = await terminalClient.connect({
+        sessionId,
+        cwd: sessionId ? undefined : "projects",
+        cols,
+        rows,
+        onMessage: (frame) => {
+          if (connectAttemptRef.current === attemptId) handleFrame(frame);
+        },
+        onStatus: (status) => {
+          if (connectAttemptRef.current !== attemptId) return;
+          if (status === "open") dispatch({ type: "connection.changed", status: "attached" });
+          if (status === "closed") dispatch({ type: "connection.changed", status: "detached" });
+          if (status === "error") dispatch({ type: "terminal.error", message: "Terminal unavailable" });
+        },
+      });
+      if (connectAttemptRef.current !== attemptId) {
+        nextConnection?.detach();
+        return;
+      }
+      if (!nextConnection) {
+        dispatch({ type: "terminal.error", message: "Terminal unavailable" });
+        return;
+      }
+      connectionRef.current = nextConnection;
+      inputRef.current?.focus();
+    } catch (err: unknown) {
+      if (connectAttemptRef.current === attemptId) {
+        console.warn("[mobile] terminal connection failed", err instanceof Error ? err.message : String(err));
+        dispatch({ type: "terminal.error", message: "Terminal unavailable" });
+        dispatch({ type: "connection.changed", status: "detached" });
+      }
+    } finally {
+      if (connectAttemptRef.current === attemptId) {
+        connectingRef.current = false;
+      }
+    }
   }, [cols, handleFrame, rows, terminalClient]);
 
   const sendData = useCallback((data: string) => {
@@ -156,9 +188,18 @@ export default function TerminalScreen() {
 
   const destroySession = useCallback(async () => {
     const sessionId = state.activeSessionId;
+    if (sessionId) {
+      const deleted = await terminalClient?.deleteSession(sessionId);
+      if (!deleted) {
+        dispatch({ type: "terminal.error", message: "Terminal unavailable" });
+        loadSessions();
+        return;
+      }
+    }
+    connectAttemptRef.current += 1;
+    connectingRef.current = false;
     connectionRef.current?.destroy();
     connectionRef.current = null;
-    if (sessionId) await terminalClient?.deleteSession(sessionId);
     setLastTerminalSessionId(null);
     loadMobileShellState()
       .then((saved) => saveMobileShellState({

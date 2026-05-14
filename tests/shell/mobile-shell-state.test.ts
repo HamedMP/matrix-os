@@ -18,14 +18,14 @@ describe("browser mobile shell state", () => {
       surface: "browser-shell",
       mode: "terminal",
       lastActiveAppSlug: "task-manager",
-      lastActiveTerminalSessionId: "terminal_123",
+      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     })).toMatchObject({
       surface: "browser-shell",
       mode: "terminal",
       lastActiveAppSlug: "task-manager",
-      lastActiveTerminalSessionId: "terminal_123",
+      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     });
@@ -45,6 +45,17 @@ describe("browser mobile shell state", () => {
       lastActiveAppSlug: null,
       lastActiveTerminalSessionId: null,
       canvasEnteredAt: null,
+    });
+  });
+
+  it("uses the canonical app slug validator", () => {
+    expect(parseBrowserMobileShellState({
+      mode: "app",
+      lastActiveAppSlug: "my_app",
+      updatedAt: "2026-05-12T00:01:00.000Z",
+    })).toMatchObject({
+      mode: "app",
+      lastActiveAppSlug: null,
     });
   });
 
@@ -90,7 +101,7 @@ describe("browser mobile shell state", () => {
       surface: "browser-shell",
       mode: "app",
       lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: "terminal_123",
+      lastActiveTerminalSessionId: null,
     });
     expect(Date.parse(saved.updatedAt)).not.toBeNaN();
   });

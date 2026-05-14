@@ -10,6 +10,15 @@ describe("app launch helpers", () => {
     })).toBe("apps/backgammon/index.html");
   });
 
+  it("canonicalizes nested runtime app slugs without treating them as icon names", () => {
+    expect(canonicalAppLaunchPath({
+      slug: "games/minesweeper",
+      launchUrl: "/apps/games/minesweeper/",
+      path: "/files/apps/games/minesweeper/index.html",
+    })).toBe("apps/games/minesweeper/index.html");
+    expect(iconUrlForSlug("games/minesweeper")).toBeUndefined();
+  });
+
   it("falls back to legacy file paths for non-runtime apps", () => {
     expect(canonicalAppLaunchPath({
       path: "/files/apps/legacy.html",

@@ -334,8 +334,9 @@ export class GatewayClient {
         return null;
       }
       const data = (await res.json()) as { token?: unknown; expiresAt?: unknown };
+      if (data.token == null) return null;
       if (typeof data.token !== "string") {
-        console.warn("[mobile] /api/auth/ws-token returned no token");
+        console.warn("[mobile] /api/auth/ws-token returned invalid token");
         return null;
       }
       this.setWebSocketToken(data.token, typeof data.expiresAt === "number" ? data.expiresAt : undefined);

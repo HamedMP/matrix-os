@@ -61,6 +61,34 @@ describe("mobile terminal state", () => {
     expect(state.error).toBe("Terminal unavailable");
   });
 
+  it("preserves terminal errors across immediate socket close callbacks", () => {
+    const errored = terminalReducer(initialTerminalState, {
+      type: "terminal.error",
+      message: "Terminal unavailable",
+    });
+    const closed = terminalReducer(errored, {
+      type: "connection.changed",
+      status: "detached",
+    });
+
+    expect(closed.status).toBe("detached");
+    expect(closed.error).toBe("Terminal unavailable");
+  });
+
+  it("clears the active terminal session when refreshed sessions no longer include it", () => {
+    const attached = terminalReducer(initialTerminalState, {
+      type: "terminal.attached",
+      sessionId: "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9",
+      cwd: "/home/matrix/home",
+    });
+    const refreshed = terminalReducer(attached, {
+      type: "sessions.loaded",
+      sessions: [],
+    });
+
+    expect(refreshed.activeSessionId).toBeNull();
+  });
+
   it("formats common home paths compactly for narrow phones", () => {
     expect(formatTerminalCwd("/home/matrix/home/projects")).toBe("~/projects");
     expect(formatTerminalCwd("/home/deploy/matrix-os")).toBe("~/matrix-os");
