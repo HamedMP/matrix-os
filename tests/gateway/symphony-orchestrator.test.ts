@@ -798,6 +798,51 @@ describe("Matrix Symphony orchestrator", () => {
     });
   });
 
+  it("does not emit kill-failure events when the blocked transition loses a terminal-state race", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "running",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      sessionId: "sess_existing",
+      lastEvent: "Agent session started",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const originalUpdateRun = vi.mocked(repository.updateRun).getMockImplementation();
+    if (!originalUpdateRun) throw new Error("missing updateRun mock implementation");
+    vi.mocked(repository.updateRun).mockImplementation(async (ownerId, runId, patch, options) => {
+      if (patch.status === "blocked") {
+        await originalUpdateRun(ownerId, runId, { status: "completed", lastEvent: "Run completed" });
+      }
+      return originalUpdateRun(ownerId, runId, patch, options);
+    });
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: { previewTickets: vi.fn() },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: {
+        startSession: vi.fn(),
+        killSession: vi.fn(async () => ({ ok: false as const, status: 503, error: { code: "runtime_unavailable", message: "Runtime unavailable" } })),
+      },
+    });
+
+    await expect(orchestrator.stopRun("user_123", "run_existing", "user_123")).resolves.toMatchObject({
+      status: "completed",
+      lastEvent: "Run completed",
+    });
+    expect(repository.appendEvent).not.toHaveBeenCalled();
+  });
+
   it("clears runtime pointers after stopping a live run", async () => {
     const snapshot = structuredClone(baseSnapshot);
     snapshot.runs = [{

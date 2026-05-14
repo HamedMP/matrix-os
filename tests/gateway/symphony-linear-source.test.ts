@@ -96,6 +96,32 @@ describe("Symphony Linear source", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("marks an exact-limit preview as truncated when Linear has another page", async () => {
+    const nodes = Array.from({ length: 100 }, (_unused, index) => ({
+      id: `issue_${index}`,
+      identifier: `MAT-${index}`,
+      title: `Ticket ${index}`,
+      assignee: { id: "assignee_1" },
+      state: { name: "Todo" },
+      labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
+    }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        issues: {
+          nodes,
+          pageInfo: { hasNextPage: true, endCursor: "cursor_1" },
+        },
+      },
+    }))) as unknown as typeof fetch;
+    const source = createLinearSource({ fetch: fetchMock });
+
+    const result = await source.previewTickets(rule, "lin_api_secret", { limit: 100 });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.tickets).toHaveLength(100);
+    expect(result.truncated).toBe(true);
+  });
+
   it("rotates broad rule scans beyond the per-poll request cap", async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));

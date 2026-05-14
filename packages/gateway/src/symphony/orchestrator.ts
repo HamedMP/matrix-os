@@ -91,6 +91,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       lastErrorCode: code,
       lastEvent: "Session could not be stopped",
     }, { allowedStatuses: ["queued", "running", "retrying", "blocked"] });
+    if (!updated) return await options.repository.getRun(ownerId, run.id);
     await append(ownerId, {
       installationId: run.installationId,
       runId: run.id,

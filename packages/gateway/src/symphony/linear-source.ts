@@ -208,7 +208,10 @@ export function createLinearSource(options: {
         const hasNextPage = Boolean(pageInfo?.hasNextPage);
         const after = pageInfo?.endCursor ?? null;
         if (hasNextPage && !after) truncated = true;
-        if (hasNextPage && after && tickets.length < limit) queue.push({ state: item.state, assigneeId: item.assigneeId, after });
+        if (hasNextPage && after) {
+          if (tickets.length < limit) queue.push({ state: item.state, assigneeId: item.assigneeId, after });
+          else truncated = true;
+        }
       }
       if (queue.length > 0) truncated = true;
       rememberScanOffset(key, queue.length > 0 ? (startOffset + requests) % Math.max(combinations.length, 1) : 0);
