@@ -301,6 +301,43 @@ describe("Matrix Symphony orchestrator", () => {
     expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
   });
 
+  it("does not dispatch when the rule changes during an in-flight poll", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    let snapshots = 0;
+    vi.mocked(repository.getSnapshot).mockImplementation(async () => {
+      snapshots += 1;
+      return {
+        ...structuredClone(baseSnapshot),
+        rule: {
+          ...baseSnapshot.rule!,
+          requiredLabels: snapshots === 1 ? ["symphony"] : ["different"],
+          updatedAt: snapshots === 1 ? "2026-05-13T00:00:00.000Z" : "2026-05-13T00:01:00.000Z",
+        },
+        runs: [],
+      };
+    });
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: "wt_late", path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.poll("user_123")).resolves.toMatchObject({ dispatched: 0, skipped: 1 });
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+  });
+
   it("counts blocked live sessions against dispatch capacity", async () => {
     const snapshot = structuredClone(baseSnapshot);
     snapshot.installation = { ...snapshot.installation!, maxConcurrentAgents: 1 };

@@ -184,6 +184,38 @@ export default function App() {
     });
   }, [load]);
 
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return undefined;
+    let closed = false;
+    const events = new EventSource("/api/symphony/events");
+    const refresh = () => {
+      if (closed) return;
+      void load().catch((err: unknown) => {
+        console.warn("[symphony] event refresh failed:", err instanceof Error ? err.message : String(err));
+      });
+    };
+    const eventTypes = [
+      "symphony.config.updated",
+      "symphony.credential.updated",
+      "symphony.credential.deleted",
+      "symphony.started",
+      "symphony.stopped",
+      "symphony.poll.completed",
+      "symphony.run.updated",
+      "symphony.run.stopped",
+      "symphony.run.retry",
+    ];
+    for (const type of eventTypes) events.addEventListener(type, refresh);
+    events.onerror = () => {
+      if (!closed) console.warn("[symphony] event stream interrupted");
+    };
+    return () => {
+      closed = true;
+      for (const type of eventTypes) events.removeEventListener(type, refresh);
+      events.close();
+    };
+  }, [load]);
+
   const grouped = useMemo(() => groupRuns(runs), [runs]);
   const needsSetup = !status?.credentialConfigured || !config?.rule;
 

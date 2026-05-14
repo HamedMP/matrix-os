@@ -275,6 +275,9 @@ export function createMatrixSymphonyOrchestrator(options: {
     if (!latestSnapshot.installation?.enabled) {
       return { matchedTickets: preview.tickets.length, dispatched: 0, skipped: preview.tickets.length };
     }
+    if (latestSnapshot.installation.updatedAt !== installation.updatedAt || latestSnapshot.rule?.updatedAt !== rule.updatedAt) {
+      return { matchedTickets: preview.tickets.length, dispatched: 0, skipped: preview.tickets.length };
+    }
     const [activeRuns, blockedRuns] = await Promise.all([
       options.repository.listRuns(ownerId, { status: "running", limit: 100 }),
       options.repository.listRuns(ownerId, { status: "blocked", limit: 100 }),

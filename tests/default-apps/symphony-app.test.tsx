@@ -26,9 +26,11 @@ function json(body: unknown, init?: ResponseInit): Response {
 
 describe("Symphony app", () => {
   let calls: Array<{ url: string; init?: RequestInit }> = [];
+  let eventListeners: Record<string, Array<() => void>> = {};
 
   beforeEach(() => {
     calls = [];
+    eventListeners = {};
     vi.stubGlobal("open", vi.fn());
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -113,6 +115,25 @@ describe("Symphony app", () => {
       }
       return json({ ok: true });
     }));
+    vi.stubGlobal("EventSource", class {
+      url: string;
+
+      onerror: (() => void) | null = null;
+
+      constructor(url: string) {
+        this.url = url;
+      }
+
+      addEventListener(type: string, listener: () => void) {
+        eventListeners[type] = [...(eventListeners[type] ?? []), listener];
+      }
+
+      removeEventListener(type: string, listener: () => void) {
+        eventListeners[type] = (eventListeners[type] ?? []).filter((entry) => entry !== listener);
+      }
+
+      close() {}
+    });
   });
 
   afterEach(() => {
@@ -173,5 +194,17 @@ describe("Symphony app", () => {
 
     expect(openApp).toHaveBeenCalledWith("Workspace", "__workspace__");
     expect(window.open).not.toHaveBeenCalledWith(expect.stringContaining("/workspace/"), expect.anything(), expect.anything());
+  });
+
+  it("refreshes dashboard data when Symphony events arrive", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+    const initialStatusCalls = calls.filter((call) => call.url === "/api/symphony/status").length;
+
+    eventListeners["symphony.run.updated"]?.forEach((listener) => listener());
+
+    await waitFor(() => {
+      expect(calls.filter((call) => call.url === "/api/symphony/status").length).toBeGreaterThan(initialStatusCalls);
+    });
   });
 });
