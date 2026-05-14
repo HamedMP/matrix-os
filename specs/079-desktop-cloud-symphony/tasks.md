@@ -59,18 +59,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T025 [P] [US1] Write failing desktop app launch test in `tests/desktop/app-launch.test.ts`
-- [ ] T026 [P] [US1] Write failing shell app-launcher and default-app desktop affordance test in `tests/shell/desktop-app-launcher.test.tsx`
-- [ ] T027 [P] [US1] Write failing desktop state restore test in `tests/desktop/window-state.test.ts`
+- [X] T025 [P] [US1] Write failing desktop app launch test in `tests/desktop/app-launch.test.ts`
+- [X] T026 [P] [US1] Write failing shell app-launcher and default-app desktop affordance test in `tests/shell/desktop-app-launcher.test.tsx`
+- [X] T027 [P] [US1] Write failing desktop state restore test in `tests/desktop/window-state.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T028 [US1] Implement Matrix shell URL loading and reconnect state in `apps/desktop/src/main/index.ts`
-- [ ] T029 [US1] Implement local desktop window-state persistence in `apps/desktop/src/main/config.ts`
-- [ ] T030 [US1] Add desktop runtime detection helper in `shell/src/lib/desktop-runtime.ts`
-- [ ] T031 [US1] Update shell launcher affordances for desktop runtime in `shell/src/components/CommandPalette.tsx`
-- [ ] T032 [US1] Verify built-in app routing and desktop-aware default-app presentation stays Canvas/Desktop compatible in `shell/src/components/Desktop.tsx`
-- [ ] T033 [US1] Add desktop launcher and default-app native-affordance coverage for built-ins in `tests/shell/desktop-app-launcher.test.tsx`
+- [X] T028 [US1] Implement Matrix shell URL loading and reconnect state in `apps/desktop/src/main/index.ts`
+- [X] T029 [US1] Implement local desktop window-state persistence in `apps/desktop/src/main/config.ts`
+- [X] T030 [US1] Add desktop runtime detection helper in `shell/src/lib/desktop-runtime.ts`
+- [X] T031 [US1] Update shell launcher affordances for desktop runtime in `shell/src/components/CommandPalette.tsx`
+- [X] T032 [US1] Verify built-in app routing and desktop-aware default-app presentation stays Canvas/Desktop compatible in `shell/src/components/Desktop.tsx`
+- [X] T033 [US1] Add desktop launcher and default-app native-affordance coverage for built-ins in `tests/shell/desktop-app-launcher.test.tsx`
 
 **Checkpoint**: User Story 1 is independently usable as Matrix Desktop MVP.
 

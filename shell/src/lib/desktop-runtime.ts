@@ -13,6 +13,14 @@ export interface DesktopRuntimePolicy {
   version: 1;
 }
 
+export type DesktopRuntimeKind = "browser" | "desktop";
+export type DesktopLaunchSurface = "native-tab" | "shell-window";
+
+export interface DesktopAppAffordance {
+  launchSurface: DesktopLaunchSurface;
+  defaultApp: boolean;
+}
+
 declare global {
   interface Window {
     matrixDesktop?: {
@@ -24,9 +32,36 @@ declare global {
 
 const SAFE_CLIENT_ERROR = "Request failed";
 const MAX_CLIENT_ERROR_LENGTH = 120;
+const DESKTOP_DEFAULT_APP_PATHS = new Set([
+  "__workspace__",
+  "__terminal__",
+  "__file-browser__",
+  "__chat__",
+  "symphony",
+]);
 
 export function isDesktopRuntime(): boolean {
   return typeof window !== "undefined" && typeof window.matrixDesktop === "object";
+}
+
+export function getDesktopRuntimeKind(target: Pick<Window, "matrixDesktop"> | undefined = typeof window !== "undefined" ? window : undefined): DesktopRuntimeKind {
+  return target?.matrixDesktop ? "desktop" : "browser";
+}
+
+export function isDesktopDefaultApp(path: string): boolean {
+  const normalized = path.replace(/^\/files\//, "").replace(/^apps\/symphony\/index\.html$/, "symphony");
+  return DESKTOP_DEFAULT_APP_PATHS.has(normalized) || normalized.startsWith("__terminal__:");
+}
+
+export function getDesktopAppAffordance(
+  path: string,
+  runtime: DesktopRuntimeKind = getDesktopRuntimeKind(),
+): DesktopAppAffordance {
+  const defaultApp = isDesktopDefaultApp(path);
+  return {
+    defaultApp,
+    launchSurface: runtime === "desktop" && defaultApp ? "native-tab" : "shell-window",
+  };
 }
 
 export function safeDesktopClientError(value: unknown): string {

@@ -11,6 +11,7 @@ import {
   CommandItem,
   CommandShortcut,
 } from "@/components/ui/command";
+import { getDesktopAppAffordance, getDesktopRuntimeKind } from "@/lib/desktop-runtime";
 
 function formatShortcut(shortcut: string): string {
   const isMac =
@@ -29,6 +30,7 @@ export function CommandPalette({
   onOpenChange: (open: boolean) => void;
 }) {
   const commands = useCommandStore((s) => s.commands);
+  const runtimeKind = getDesktopRuntimeKind();
 
   const listRef = useRef<HTMLDivElement>(null);
   const handleInputChange = useCallback(() => {
@@ -63,26 +65,34 @@ export function CommandPalette({
         {apps.length > 0 && (
           <CommandGroup heading="Apps">
             {apps.map((cmd) => (
-              <CommandItem
-                key={cmd.id}
-                value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
-                onSelect={() => {
-                  cmd.execute();
-                  onOpenChange(false);
-                }}
-              >
-                {cmd.icon ? (
-                  <img src={cmd.icon} alt="" className="size-7 rounded-lg object-cover shrink-0" />
-                ) : (
-                  <span className="size-7 rounded-lg bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
-                    {cmd.label.charAt(0)}
-                  </span>
-                )}
-                <span>{cmd.label}</span>
-                {cmd.shortcut && (
-                  <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>
-                )}
-              </CommandItem>
+              (() => {
+                const appPath = cmd.id.startsWith("app:") ? cmd.id.slice(4) : cmd.keywords?.[0] ?? cmd.id;
+                const affordance = getDesktopAppAffordance(appPath, runtimeKind);
+                return (
+                  <CommandItem
+                    key={cmd.id}
+                    value={[cmd.label, affordance.launchSurface, ...(cmd.keywords ?? [])].join(" ")}
+                    data-desktop-launch-surface={affordance.launchSurface}
+                    data-default-app={affordance.defaultApp ? "true" : "false"}
+                    onSelect={() => {
+                      cmd.execute();
+                      onOpenChange(false);
+                    }}
+                  >
+                    {cmd.icon ? (
+                      <img src={cmd.icon} alt="" className="size-7 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <span className="size-7 rounded-lg bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
+                        {cmd.label.charAt(0)}
+                      </span>
+                    )}
+                    <span>{cmd.label}</span>
+                    {cmd.shortcut && (
+                      <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>
+                    )}
+                  </CommandItem>
+                );
+              })()
             ))}
           </CommandGroup>
         )}

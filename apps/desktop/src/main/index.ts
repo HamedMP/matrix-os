@@ -1,7 +1,14 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDesktopRuntimePolicy, parseMatrixDesktopConfig } from "./config.js";
+import {
+  createDesktopLaunchPlan,
+  createDesktopRuntimePolicy,
+  loadDesktopWindowState,
+  parseMatrixDesktopConfig,
+  saveDesktopWindowState,
+  type DesktopWindowState,
+} from "./config.js";
 import { createWindowOpenHandler, isAllowedShellNavigation } from "./security.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -10,10 +17,7 @@ app.enableSandbox();
 
 const desktopConfig = parseMatrixDesktopConfig();
 const desktopRuntimePolicy = createDesktopRuntimePolicy(desktopConfig);
-const allowedShellOrigins = new Set([
-  new URL(desktopConfig.shellUrl).origin,
-  new URL(desktopConfig.gatewayUrl).origin,
-]);
+const windowStatePath = () => join(app.getPath("userData"), "window-state.json");
 
 function registerDesktopIpc(): void {
   ipcMain.handle("matrix-desktop:get-runtime-policy", () => desktopRuntimePolicy);
@@ -25,10 +29,15 @@ function registerDesktopIpc(): void {
   });
 }
 
-function createMainWindow(): BrowserWindow {
+async function createMainWindow(): Promise<BrowserWindow> {
+  const windowState = await loadDesktopWindowState(windowStatePath());
+  const launchPlan = createDesktopLaunchPlan(desktopConfig, windowState);
+  const allowedShellOrigins = new Set(launchPlan.allowedOrigins);
   const win = new BrowserWindow({
-    width: 1440,
-    height: 960,
+    width: windowState.width,
+    height: windowState.height,
+    x: windowState.x,
+    y: windowState.y,
     minWidth: 960,
     minHeight: 640,
     show: false,
@@ -56,21 +65,49 @@ function createMainWindow(): BrowserWindow {
   });
 
   win.once("ready-to-show", () => {
+    if (windowState.maximized) {
+      win.maximize();
+    }
     win.show();
   });
 
-  void win.loadURL(desktopConfig.shellUrl);
+  win.on("close", () => {
+    const bounds = win.getBounds();
+    const nextState: DesktopWindowState = {
+      width: bounds.width,
+      height: bounds.height,
+      x: bounds.x,
+      y: bounds.y,
+      maximized: win.isMaximized(),
+      lastLoadedUrl: launchPlan.loadUrl,
+    };
+    void saveDesktopWindowState(windowStatePath(), nextState);
+  });
+
+  void win.loadURL(launchPlan.loadUrl).catch((err: unknown) => {
+    const failedState: DesktopWindowState = {
+      width: windowState.width,
+      height: windowState.height,
+      x: windowState.x,
+      y: windowState.y,
+      maximized: windowState.maximized,
+      lastLoadedUrl: launchPlan.loadUrl,
+      lastFailureAt: new Date().toISOString(),
+    };
+    console.warn("[desktop] Failed to load Matrix shell", err instanceof Error ? err.name : "UnknownError");
+    void saveDesktopWindowState(windowStatePath(), failedState);
+  });
   return win;
 }
 
 registerDesktopIpc();
 
 app.whenReady().then(() => {
-  createMainWindow();
+  void createMainWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      void createMainWindow();
     }
   });
 });

@@ -54,6 +54,7 @@ import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { openAppInStandaloneTab } from "@/lib/open-app-tab";
+import { getDesktopAppAffordance, getDesktopRuntimeKind } from "@/lib/desktop-runtime";
 import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
@@ -994,6 +995,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
   const desktopMode = useDesktopMode((s) => s.mode);
+  const runtimeKind = getDesktopRuntimeKind();
   const previousMode = useDesktopMode((s) => s.previousMode);
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const visibleModes = useDesktopMode((s) => s.visibleModes);
@@ -1246,12 +1248,16 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       label: app.name,
       group: "Apps" as const,
       icon: app.iconUrl,
-      keywords: [app.path],
+      keywords: [
+        app.path,
+        getDesktopAppAffordance(app.path, runtimeKind).launchSurface,
+        ...(getDesktopAppAffordance(app.path, runtimeKind).defaultApp ? ["default", "matrix"] : []),
+      ],
       execute: () => openWindowRef.current(app.name, app.path),
     }));
     if (appCommands.length > 0) register(appCommands);
     return () => unregister(apps.map((a) => `app:${a.path}`));
-  }, [apps, register, unregister]);
+  }, [apps, register, runtimeKind, unregister]);
 
   useEffect(() => {
     if (!fullscreenWindowId) return;
