@@ -152,7 +152,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     const ticket = await deps.repository.createInternalTicket(owner.ownerId, project.projectSlug, parsed.value);
     statusHub.publish({
       id: `evt_${randomUUID()}`,
-      ownerId: principal.userId,
+      ownerId: owner.ownerId,
       projectSlug: project.projectSlug,
       ticketId: ticket.id,
       type: "ticket.created",
@@ -177,7 +177,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     if (!ticket) return c.json(ticketError("revision_conflict", "Ticket was updated by another request"), status(409));
     statusHub.publish({
       id: `evt_${randomUUID()}`,
-      ownerId: principal.userId,
+      ownerId: owner.ownerId,
       projectSlug: project.projectSlug,
       ticketId: ticket.id,
       type: "ticket.updated",

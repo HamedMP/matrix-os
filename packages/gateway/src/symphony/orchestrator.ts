@@ -400,18 +400,22 @@ export function createMatrixSymphonyOrchestrator(options: {
 
   return {
     async assignTicket(ownerId: string, ticket: TrackedTicket, actorId?: string) {
+      const snapshot = await options.repository.getSnapshot(ownerId);
+      const installation = snapshot.installation;
+      if (!installation) return null;
       if (actorId && options.authorizeTicketClaim) {
         let allowed = false;
         try {
-          allowed = await options.authorizeTicketClaim({ ownerId, actorId, ticket });
+          allowed = await options.authorizeTicketClaim({
+            ownerId,
+            actorId,
+            ticket: ticket.projectSlug ? ticket : { ...ticket, projectSlug: installation.projectSlug },
+          });
         } catch (err: unknown) {
           console.warn("[symphony] Ticket claim authorization failed:", err instanceof Error ? err.message : String(err));
         }
         if (!allowed) return null;
       }
-      const snapshot = await options.repository.getSnapshot(ownerId);
-      const installation = snapshot.installation;
-      if (!installation) return null;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
       if (existing && !isRetryBackoffActive(existing) && existing.status !== "queued" && existing.status !== "retrying") return existing;
       const activeRuns = snapshot.runs.filter((run) => run.claimKey !== claimKey(ticket) && consumesAgentCapacity(run));

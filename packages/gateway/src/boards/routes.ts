@@ -52,6 +52,10 @@ function readOwnerId(c: Context, principal: RequestPrincipal): { ok: true; owner
   return { ok: true, ownerId: parsed.data.ownerId ?? principal.userId };
 }
 
+function canManageBoardMembers(ownerId: string, principal: RequestPrincipal): boolean {
+  return ownerId === principal.userId;
+}
+
 async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
   { ok: true; value: T } | { ok: false; response: Response }
 > {
@@ -93,8 +97,9 @@ export function createBoardMembershipRoutes(deps: BoardMembershipRouteDeps) {
     if (!owner.ok) return owner.response;
     const parsed = await parseJson(c, AddBoardMemberSchema);
     if (!parsed.ok) return parsed.response;
-    const canWrite = await deps.service.canWriteBoard(owner.ownerId, project.projectSlug, principal.userId);
-    if (!canWrite) return c.json(boardError("unauthorized", "Unauthorized"), status(401));
+    if (!canManageBoardMembers(owner.ownerId, principal)) {
+      return c.json(boardError("unauthorized", "Unauthorized"), status(401));
+    }
     let member;
     try {
       member = await deps.service.addMember(owner.ownerId, project.projectSlug, parsed.value);
@@ -114,8 +119,9 @@ export function createBoardMembershipRoutes(deps: BoardMembershipRouteDeps) {
     if (!owner.ok) return owner.response;
     const userId = BoardUserIdSchema.safeParse(c.req.param("userId"));
     if (!userId.success) return c.json(boardError("invalid_user_id", "User id is invalid"), status(400));
-    const canWrite = await deps.service.canWriteBoard(owner.ownerId, project.projectSlug, principal.userId);
-    if (!canWrite) return c.json(boardError("unauthorized", "Unauthorized"), status(401));
+    if (!canManageBoardMembers(owner.ownerId, principal)) {
+      return c.json(boardError("unauthorized", "Unauthorized"), status(401));
+    }
     await deps.service.removeMember(owner.ownerId, project.projectSlug, userId.data);
     return c.json({ ok: true });
   }));
