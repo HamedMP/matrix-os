@@ -260,7 +260,7 @@
 - [X] T117 Run `bun run typecheck` from repository root
 - [X] T118 Run `bun run check:patterns:diff` from repository root
 - [X] T119 Run focused test suites from `specs/079-desktop-cloud-symphony/quickstart.md`
-- [ ] T120 Run desktop app smoke flow from `specs/079-desktop-cloud-symphony/quickstart.md`
+- [X] T120 Run desktop app smoke flow from `specs/079-desktop-cloud-symphony/quickstart.md`
 - [X] T121 Run desktop release dry-run workflow or local equivalent and record artifact results
 - [X] T122 Record residual gaps and validation notes in `specs/079-desktop-cloud-symphony/quickstart.md`
 
