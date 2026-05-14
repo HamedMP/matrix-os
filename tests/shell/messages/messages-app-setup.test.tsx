@@ -44,6 +44,12 @@ describe("Messages app setup flow", () => {
               displayName: "Hamed",
               status: "connected",
             },
+            {
+              id: "acct_abcdef0123456789abcdef0123456789",
+              networkSlug: "telegram",
+              displayName: "Old Telegram",
+              status: "disconnected",
+            },
           ],
         });
       }
@@ -82,6 +88,7 @@ describe("Messages app setup flow", () => {
     expect(await screen.findByRole("heading", { name: "Telegram" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "WhatsApp" })).toBeTruthy();
     expect(screen.getByText("Hamed")).toBeTruthy();
+    expect(screen.queryByText("Old Telegram")).toBeNull();
     expect(screen.getByRole("heading", { name: "Launch" })).toBeTruthy();
   });
 

@@ -83,7 +83,11 @@ export default function App() {
   }, []);
 
   const connectedByNetwork = useMemo(() => {
-    return new Map(accounts.map((account) => [account.networkSlug, account]));
+    const latest = new Map<NetworkSlug, MessagingAccount>();
+    for (const account of accounts) {
+      if (!latest.has(account.networkSlug)) latest.set(account.networkSlug, account);
+    }
+    return latest;
   }, [accounts]);
 
   const visibleConversations = useMemo(() => {

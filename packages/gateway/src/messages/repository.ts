@@ -402,6 +402,7 @@ export class MessagingKyselyRepository implements MessagingRepository {
         .selectAll()
         .where("owner_id", "=", input.ownerId)
         .where("id", "=", input.setupId)
+        .forUpdate()
         .executeTakeFirst();
       if (!setup) throw new MessagingError("not_found", "setup not found", 404);
       if (setup.status !== "pending") throw new MessagingError("conflict", "setup already completed", 409);
@@ -437,40 +438,25 @@ export class MessagingKyselyRepository implements MessagingRepository {
         .returningAll()
         .executeTakeFirstOrThrow();
 
-      await trx
+      const completedSetup = await trx
         .updateTable("messaging_setup_sessions")
         .set({ status: "complete", account_id: accountRow.id, updated_at: new Date().toISOString() })
         .where("id", "=", setup.id)
         .where("owner_id", "=", input.ownerId)
         .where("status", "=", "pending")
-        .executeTakeFirstOrThrow();
+        .returningAll()
+        .executeTakeFirst();
+      if (!completedSetup) throw new MessagingError("conflict", "setup already completed", 409);
 
       return toAccount(accountRow);
     });
   }
 
   async disconnectAccount(input: DisconnectAccountInput): Promise<MessagingAccount> {
-    return this.kysely.transaction().execute(async (trx) => {
-      const account = await trx
-        .selectFrom("messaging_accounts")
-        .selectAll()
-        .where("owner_id", "=", input.ownerId)
-        .where("id", "=", input.accountId)
-        .executeTakeFirst();
-      if (!account) throw new MessagingError("not_found", "account not found", 404);
+    const account = await this.getAccount({ ownerId: input.ownerId }, input.accountId);
+    if (!account) throw new MessagingError("not_found", "account not found", 404);
 
-      const provider = getMessagingBridgeAccountProvider(this.providers, account.network_slug);
-      try {
-        await provider.disconnect({
-          ownerId: input.ownerId,
-          networkSlug: account.network_slug,
-          accountId: input.accountId,
-        });
-      } catch (err: unknown) {
-        console.error("[messages/repository] Bridge disconnect failed", err instanceof Error ? err.name : typeof err);
-        throw new MessagingError("provider_unavailable", "bridge disconnect failed", 503);
-      }
-
+    const updated = await this.kysely.transaction().execute(async (trx) => {
       if (input.retention === "delete_local_mapping") {
         await trx
           .deleteFrom("messaging_conversation_mappings")
@@ -479,15 +465,34 @@ export class MessagingKyselyRepository implements MessagingRepository {
           .execute();
       }
 
-      const updated = await trx
+      return toAccount(await trx
         .updateTable("messaging_accounts")
         .set({ status: "disconnected", status_reason: null, updated_at: new Date().toISOString() })
         .where("owner_id", "=", input.ownerId)
         .where("id", "=", input.accountId)
         .returningAll()
-        .executeTakeFirstOrThrow();
-      return toAccount(updated);
+        .executeTakeFirstOrThrow());
     });
+
+    const provider = getMessagingBridgeAccountProvider(this.providers, account.networkSlug);
+    try {
+      await provider.disconnect({
+        ownerId: input.ownerId,
+        networkSlug: account.networkSlug,
+        accountId: input.accountId,
+      });
+    } catch (err: unknown) {
+      console.error("[messages/repository] Bridge disconnect failed", err instanceof Error ? err.name : typeof err);
+      await this.kysely
+        .updateTable("messaging_accounts")
+        .set({ status: "error", status_reason: "bridge disconnect failed", updated_at: new Date().toISOString() })
+        .where("owner_id", "=", input.ownerId)
+        .where("id", "=", input.accountId)
+        .execute();
+      throw new MessagingError("provider_unavailable", "bridge disconnect failed", 503);
+    }
+
+    return updated;
   }
 
   async listConversations(

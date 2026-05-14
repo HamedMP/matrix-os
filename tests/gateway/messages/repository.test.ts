@@ -184,4 +184,45 @@ describe("MessagingKyselyRepository", () => {
       externalThreadId: "wa_thread_1",
     })).resolves.toBeNull();
   });
+
+  it("rejects repeat completion of the same setup session", async () => {
+    const setup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
+    await repository.completeSetupSession({
+      ownerId,
+      setupId: setup.id,
+      externalAccountId: "wa_once",
+      displayName: "Personal WhatsApp",
+    });
+
+    await expect(repository.completeSetupSession({
+      ownerId,
+      setupId: setup.id,
+      externalAccountId: "wa_twice",
+      displayName: "Duplicate WhatsApp",
+    })).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("marks an account unhealthy when bridge disconnect fails after local commit", async () => {
+    const setup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
+    const account = await repository.completeSetupSession({
+      ownerId,
+      setupId: setup.id,
+      externalAccountId: "wa_fail_disconnect",
+      displayName: "Personal WhatsApp",
+    });
+    vi.mocked(whatsappProvider.disconnect).mockRejectedValueOnce(new Error("bridge down"));
+
+    await expect(repository.disconnectAccount({
+      ownerId,
+      accountId: account.id,
+      retention: "keep_history",
+    })).rejects.toMatchObject({ code: "provider_unavailable" });
+
+    await expect(repository.getAccount({ ownerId }, account.id)).resolves.toMatchObject({
+      id: account.id,
+      status: "error",
+      statusReason: "bridge disconnect failed",
+    });
+  });
+
 });
