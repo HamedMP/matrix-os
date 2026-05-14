@@ -1,4 +1,5 @@
 import { normalizeMatrixDesktopUrl } from "./security.js";
+import { DESKTOP_CAPABILITIES } from "../../../../packages/gateway/src/desktop/capabilities.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -51,15 +52,6 @@ const MIN_WINDOW_WIDTH = 960;
 const MIN_WINDOW_HEIGHT = 640;
 const MAX_WINDOW_WIDTH = 7680;
 const MAX_WINDOW_HEIGHT = 4320;
-const DESKTOP_CAPABILITIES = [
-  "matrixShell",
-  "appLauncher",
-  "cloudDevelopment",
-  "linearTicketSync",
-  "internalTickets",
-  "symphonyRunner",
-] as const;
-
 export const DEFAULT_DESKTOP_WINDOW_STATE: DesktopWindowState = {
   width: 1440,
   height: 960,

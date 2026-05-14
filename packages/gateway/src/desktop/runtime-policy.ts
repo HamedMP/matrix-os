@@ -1,3 +1,4 @@
+import { DESKTOP_CAPABILITIES } from "./capabilities.js";
 import type { DesktopRuntimePolicyResponse } from "./contracts.js";
 
 export interface GatewayDesktopRuntimePolicyInput {
@@ -11,22 +12,13 @@ export interface AgentRuntimeRequest {
   mode?: string;
 }
 
-const DESKTOP_CAPABILITIES = [
-  "matrixShell",
-  "appLauncher",
-  "cloudDevelopment",
-  "linearTicketSync",
-  "internalTickets",
-  "symphonyRunner",
-] as const;
-
 function normalizeWebUrl(rawUrl: string): string {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch (err: unknown) {
     if (!(err instanceof TypeError)) {
-      console.warn("[desktop] Runtime URL parse failed:", err instanceof Error ? err.message : String(err));
+      console.warn("[desktop] Runtime URL parse failed:", err instanceof Error ? err.name : "UnknownError");
     }
     throw new Error("Invalid Matrix desktop runtime URL");
   }

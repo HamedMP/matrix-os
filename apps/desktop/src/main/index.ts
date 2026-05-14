@@ -105,7 +105,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
       lastFailureAt: new Date().toISOString(),
     };
     console.warn("[desktop] Failed to load Matrix shell", err instanceof Error ? err.name : "UnknownError");
-    void saveDesktopWindowState(windowStatePath(), failedState);
+    void saveDesktopWindowState(windowStatePath(), failedState).catch((saveErr: unknown) => {
+      console.warn("[desktop] Failed to save load failure state", saveErr instanceof Error ? saveErr.name : "UnknownError");
+    });
   });
   return win;
 }

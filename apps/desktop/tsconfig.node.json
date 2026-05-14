@@ -6,8 +6,13 @@
     "declarationMap": false,
     "noEmit": true,
     "outDir": "out",
-    "rootDir": ".",
+    "rootDir": "../..",
     "types": ["node"]
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts"]
+  "include": [
+    "electron.vite.config.ts",
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "../../packages/gateway/src/desktop/capabilities.ts"
+  ]
 }
