@@ -29,6 +29,12 @@ export interface TicketRoutesDeps {
     sourceId: string;
     mode: "preview" | "sync";
   }) => Promise<{ tickets: LinearTicketLike[]; truncated: boolean }>;
+  authorizeProjectAccess?: (input: {
+    ownerId?: string;
+    principalUserId: string;
+    projectSlug: string;
+    action: "read" | "write";
+  }) => Promise<boolean>;
 }
 
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
@@ -81,6 +87,28 @@ function readProjectSlug(c: Context): { ok: true; projectSlug: string } | { ok: 
   return { ok: true, projectSlug: parsed.data };
 }
 
+async function authorizeProjectAccess(
+  c: Context,
+  deps: TicketRoutesDeps,
+  principal: RequestPrincipal,
+  projectSlug: string,
+  action: "read" | "write",
+): Promise<Response | null> {
+  if (!deps.authorizeProjectAccess) return null;
+  try {
+    const allowed = await deps.authorizeProjectAccess({
+      ownerId: principal.userId,
+      principalUserId: principal.userId,
+      projectSlug,
+      action,
+    });
+    return allowed ? null : c.json(ticketError("unauthorized", "Unauthorized"), status(401));
+  } catch (err: unknown) {
+    console.error("[tickets] Project access authorization failed:", err);
+    return c.json(ticketError("authorization_failed", "Ticket request failed"), status(500));
+  }
+}
+
 export function createTicketRoutes(deps: TicketRoutesDeps) {
   const app = new Hono();
   const limited = bodyLimit({ maxSize: TICKET_BODY_LIMIT });
@@ -89,6 +117,8 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.get("/:projectSlug/tickets", (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "read");
+    if (unauthorized) return unauthorized;
     const query = TicketListQuerySchema.safeParse(c.req.query());
     if (!query.success) return c.json(ticketError("invalid_query", "Request query is invalid"), status(400));
     return c.json(await deps.repository.listTickets(principal.userId, project.projectSlug, query.data));
@@ -97,6 +127,8 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.post("/:projectSlug/tickets", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "write");
+    if (unauthorized) return unauthorized;
     const parsed = await parseJson(c, CreateInternalTicketSchema);
     if (!parsed.ok) return parsed.response;
     const ticket = await deps.repository.createInternalTicket(principal.userId, project.projectSlug, parsed.value);
@@ -115,6 +147,8 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.patch("/:projectSlug/tickets/:ticketId", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "write");
+    if (unauthorized) return unauthorized;
     const ticketId = TicketIdSchema.safeParse(c.req.param("ticketId"));
     if (!ticketId.success) return c.json(ticketError("invalid_ticket_id", "Ticket id is invalid"), status(400));
     const parsed = await parseJson(c, UpdateTicketSchema);
@@ -136,6 +170,8 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.post("/:projectSlug/tickets/sync/linear", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "write");
+    if (unauthorized) return unauthorized;
     const parsed = await parseJson(c, LinearSyncSchema);
     if (!parsed.ok) return parsed.response;
     if (!deps.linearSyncSource) return c.json(ticketError("linear_sync_unavailable", "Linear sync is unavailable"), status(503));
@@ -169,6 +205,8 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
   app.get("/:projectSlug/tickets/events", (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const unauthorized = await authorizeProjectAccess(c, deps, principal, project.projectSlug, "read");
+    if (unauthorized) return unauthorized;
     return c.json({ events: statusHub.recent(principal.userId, project.projectSlug, 100) });
   }));
 

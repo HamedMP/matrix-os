@@ -124,6 +124,11 @@ export { KyselyTicketAutomationRepository } from "./tickets/automation-repositor
 export { TicketAutomationRuleSchema } from "./tickets/automation-contracts.js";
 export type { TicketAutomationRepository } from "./tickets/automation-repository.js";
 export type { TicketAutomationRule, TicketAutomationRuleInput } from "./tickets/automation-contracts.js";
+export { createBoardMembershipRoutes } from "./boards/routes.js";
+export { createMemoryBoardMembershipService, KyselyBoardMembershipService } from "./boards/membership.js";
+export type { BoardMembershipRouteDeps } from "./boards/routes.js";
+export type { AddBoardMemberInput, BoardMember, BoardMemberRole } from "./boards/contracts.js";
+export type { BoardMembershipService } from "./boards/membership.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";

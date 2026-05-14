@@ -72,6 +72,11 @@ interface WorkspaceEvent {
   createdAt?: string;
 }
 
+interface WorkspaceBoardMember {
+  userId?: string;
+  role?: string;
+}
+
 interface WorkspaceWorkflow {
   setupConfigured?: boolean;
   liveConfigured?: boolean;
@@ -135,6 +140,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [worktrees, setWorktrees] = useState<WorkspaceWorktree[]>([]);
   const [previews, setPreviews] = useState<WorkspacePreview[]>([]);
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
+  const [boardMembers, setBoardMembers] = useState<WorkspaceBoardMember[]>([]);
   const [workflow, setWorkflow] = useState<WorkspaceWorkflow | null>(null);
   const [codex, setCodex] = useState<CodexReadiness | null>(null);
   const [attachMessage, setAttachMessage] = useState("");
@@ -187,7 +193,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     if (!projectSlug) return;
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
-      const [taskData, ticketData, sessionData, reviewData, worktreeData, previewData, eventData, workflowData] = await Promise.all([
+      const [taskData, ticketData, sessionData, reviewData, worktreeData, previewData, eventData, boardData, workflowData] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
         listProjectTickets(projectSlug),
         fetchJson<{ sessions: WorkspaceSession[] }>(`/api/sessions?projectSlug=${encodedSlug}&limit=100`),
@@ -195,6 +201,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
+        fetchJson<{ members: WorkspaceBoardMember[] }>(`/api/projects/${encodedSlug}/board/members`),
         fetchJson<{ workflow?: WorkspaceWorkflow; codex?: CodexReadiness }>(`/api/projects/${encodedSlug}/workflow`),
       ]);
       if (activeSlugRef.current !== projectSlug) return;
@@ -205,6 +212,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setWorktrees(worktreeData.worktrees ?? []);
       setPreviews(previewData.previews ?? []);
       setEvents(eventData.events ?? []);
+      setBoardMembers(boardData.members ?? []);
       setWorkflow(workflowData.workflow ?? null);
       setCodex(workflowData.codex ?? null);
       setError("");
@@ -728,6 +736,18 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               </form>
               {workflowMessage && <p className="text-muted-foreground">{workflowMessage}</p>}
             </div>
+          </WorkspacePanel>
+          <WorkspacePanel title="Shared board">
+            {boardMembers.length > 0 ? boardMembers.map((member) => (
+              <div key={member.userId} className="flex items-center justify-between gap-2 py-2 text-xs">
+                <span className="min-w-0 truncate font-medium">{member.userId}</span>
+                <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                  {member.role ?? "viewer"}
+                </span>
+              </div>
+            )) : (
+              <p className="py-2 text-xs text-muted-foreground">No teammates</p>
+            )}
           </WorkspacePanel>
           <WorkspacePanel title="Sessions" icon={<PanelRightOpenIcon className="size-3.5" />}>
             <form onSubmit={startAgent} className="mb-3 space-y-2 rounded-md border border-border p-2">

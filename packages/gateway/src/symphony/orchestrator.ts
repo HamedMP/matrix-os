@@ -102,6 +102,7 @@ export function createMatrixSymphonyOrchestrator(options: {
   statusHub?: SymphonyStatusHub;
   loadWorkflow?: (input: { homePath: string; projectSlug: string }) => Promise<WorkflowContract>;
   codexReadiness?: () => Promise<CodexReadiness>;
+  authorizeTicketClaim?: (input: { ownerId: string; actorId: string; ticket: TrackedTicket }) => Promise<boolean>;
 }) {
   const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const pollLocks = new Map<string, Promise<{ matchedTickets: number; dispatched: number; skipped: number }>>();
@@ -399,6 +400,15 @@ export function createMatrixSymphonyOrchestrator(options: {
 
   return {
     async assignTicket(ownerId: string, ticket: TrackedTicket, actorId?: string) {
+      if (actorId && options.authorizeTicketClaim) {
+        let allowed = false;
+        try {
+          allowed = await options.authorizeTicketClaim({ ownerId, actorId, ticket });
+        } catch (err: unknown) {
+          console.warn("[symphony] Ticket claim authorization failed:", err instanceof Error ? err.message : String(err));
+        }
+        if (!allowed) return null;
+      }
       const snapshot = await options.repository.getSnapshot(ownerId);
       const installation = snapshot.installation;
       if (!installation) return null;

@@ -230,18 +230,18 @@
 
 ### Tests for User Story 7
 
-- [ ] T102 [P] [US7] Write failing shared board membership tests in `tests/gateway/shared-board-membership.test.ts`
-- [ ] T103 [P] [US7] Write failing shared board authorization tests in `tests/gateway/shared-board-auth.test.ts`
-- [ ] T104 [P] [US7] Write failing shared board UI tests in `tests/shell/shared-board.test.tsx`
+- [X] T102 [P] [US7] Write failing shared board membership tests in `tests/gateway/shared-board-membership.test.ts`
+- [X] T103 [P] [US7] Write failing shared board authorization tests in `tests/gateway/shared-board-auth.test.ts`
+- [X] T104 [P] [US7] Write failing shared board UI tests in `tests/shell/shared-board.test.tsx`
 
 ### Implementation for User Story 7
 
-- [ ] T105 [US7] Create shared board contracts in `packages/gateway/src/boards/contracts.ts`
-- [ ] T106 [US7] Create board membership service in `packages/gateway/src/boards/membership.ts`
-- [ ] T107 [US7] Create board membership routes in `packages/gateway/src/boards/routes.ts`
-- [ ] T108 [US7] Wire shared board authorization into ticket routes in `packages/gateway/src/tickets/routes.ts`
-- [ ] T109 [US7] Wire per-user Symphony claim authorization into `packages/gateway/src/symphony/orchestrator.ts`
-- [ ] T110 [US7] Add shared board UI affordances in `shell/src/components/workspace/WorkspaceApp.tsx`
+- [X] T105 [US7] Create shared board contracts in `packages/gateway/src/boards/contracts.ts`
+- [X] T106 [US7] Create board membership service in `packages/gateway/src/boards/membership.ts`
+- [X] T107 [US7] Create board membership routes in `packages/gateway/src/boards/routes.ts`
+- [X] T108 [US7] Wire shared board authorization into ticket routes in `packages/gateway/src/tickets/routes.ts`
+- [X] T109 [US7] Wire per-user Symphony claim authorization into `packages/gateway/src/symphony/orchestrator.ts`
+- [X] T110 [US7] Add shared board UI affordances in `shell/src/components/workspace/WorkspaceApp.tsx`
 
 **Checkpoint**: Shared team-board authorization and per-user Symphony claims are ready for broader validation.
 

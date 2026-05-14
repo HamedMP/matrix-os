@@ -142,6 +142,8 @@ import { createTicketAutomationRoutes } from "./tickets/automation-routes.js";
 import { KyselyTicketAutomationRepository } from "./tickets/automation-repository.js";
 import { KyselyTicketRepository } from "./tickets/internal-repository.js";
 import { createTicketStatusHub } from "./tickets/status-hub.js";
+import { createBoardMembershipRoutes } from "./boards/routes.js";
+import { KyselyBoardMembershipService, type BoardMembershipService } from "./boards/membership.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -1290,6 +1292,21 @@ export async function createGateway(config: GatewayConfig) {
     repository: createFileWorkflowRepository({ homePath }),
     codexReadiness: async () => ({ status: process.env.CODEX_AUTH_TOKEN ? "valid" : "unknown" }),
   }));
+  const boardMembershipService: BoardMembershipService | null = kyselyInstance
+    ? new KyselyBoardMembershipService(kyselyInstance as Kysely<any>)
+    : null;
+  if (boardMembershipService?.bootstrap) await boardMembershipService.bootstrap();
+  if (boardMembershipService) {
+    app.route("/api/projects", createBoardMembershipRoutes({
+      service: boardMembershipService,
+    }));
+  } else {
+    const unavailableBoardMembers = new Hono();
+    unavailableBoardMembers.get("/:projectSlug/board/members", (c) => c.json({ members: [] }));
+    unavailableBoardMembers.all("/:projectSlug/board/members", (c) => c.json({ error: { code: "boards_unavailable", message: "Shared boards are unavailable" } }, 503));
+    unavailableBoardMembers.all("/:projectSlug/board/members/*", (c) => c.json({ error: { code: "boards_unavailable", message: "Shared boards are unavailable" } }, 503));
+    app.route("/api/projects", unavailableBoardMembers);
+  }
   if (kyselyInstance) {
     const ticketRepository = new KyselyTicketRepository(kyselyInstance as Kysely<any>);
     await ticketRepository.bootstrap();
@@ -1301,6 +1318,12 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/projects", createTicketRoutes({
       repository: ticketRepository,
       statusHub: createTicketStatusHub(),
+      authorizeProjectAccess: async ({ ownerId, principalUserId, projectSlug, action }) => {
+        if (!ownerId || !boardMembershipService) return ownerId === principalUserId;
+        return action === "read"
+          ? await boardMembershipService.canReadBoard(ownerId, projectSlug, principalUserId)
+          : await boardMembershipService.canWriteBoard(ownerId, projectSlug, principalUserId);
+      },
     }));
   } else {
     const unavailableTickets = new Hono();
@@ -2384,6 +2407,11 @@ export async function createGateway(config: GatewayConfig) {
       worktreeManager,
       agentSessionManager,
       statusHub: matrixSymphonyStatusHub,
+      authorizeTicketClaim: async ({ ownerId, actorId, ticket }) => {
+        if (ownerId === actorId) return true;
+        if (!boardMembershipService || !ticket.projectSlug) return false;
+        return await boardMembershipService.canWriteBoard(ownerId, ticket.projectSlug, actorId);
+      },
       codexReadiness: async () => ({
         status: process.env.CODEX_AUTH_TOKEN ? "valid" : "unknown",
         lastCheckedAt: new Date().toISOString(),
