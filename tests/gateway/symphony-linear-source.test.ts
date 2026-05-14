@@ -89,6 +89,11 @@ describe("Symphony Linear source", () => {
       expect(init.signal).toBeTruthy();
       expect(init.headers).toMatchObject({ Authorization: "lin_api_secret" });
       const body = JSON.parse(String(init.body));
+      expect(body.query).toContain("$teamId: ID!");
+      expect(body.query).toContain("$projectId: ID!");
+      expect(body.query).toContain("$assigneeId: ID!");
+      expect(body.query).toContain("$state: String!");
+      expect(body.query).toContain("$labelName: String!");
       expect(body.variables.assigneeId).toBe("assignee_1");
       return new Response(JSON.stringify({
         data: {
@@ -121,7 +126,7 @@ describe("Symphony Linear source", () => {
     }) as unknown as typeof fetch;
     const source = createLinearSource({ fetch: fetchMock });
 
-    const result = await source.previewTickets(rule, "lin_api_secret", { limit: 10 });
+    const result = await source.previewTickets({ ...rule, projectId: "project_1" }, "lin_api_secret", { limit: 10 });
 
     expect(result.tickets).toEqual([
       expect.objectContaining({ externalId: "issue_1", identifier: "MAT-1", assigneeId: "assignee_1" }),

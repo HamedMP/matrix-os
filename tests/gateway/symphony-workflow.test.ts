@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,9 +38,25 @@ describe("Symphony workflow", () => {
     });
   });
 
+  it("creates a default workflow contract in registered projects when none exists", async () => {
+    const workflow = await loadWorkflowContract({ homePath, projectSlug: "matrix-os" });
+
+    expect(workflow).toMatchObject({
+      projectSlug: "matrix-os",
+      path: join(repoPath, "WORKFLOW.md"),
+    });
+    expect(workflow.body).toContain("Matrix Symphony workflow");
+    await expect(readFile(join(repoPath, "WORKFLOW.md"), "utf8")).resolves.toContain("Matrix Symphony workflow");
+  });
+
   it("rejects workflow paths outside the Matrix project", async () => {
     await expect(loadWorkflowContract({ homePath, projectSlug: "matrix-os", workflowPath: "../secret.md" }))
       .rejects.toBeInstanceOf(SymphonyWorkflowError);
+  });
+
+  it("reports a clear setup error when a custom workflow path is missing", async () => {
+    await expect(loadWorkflowContract({ homePath, projectSlug: "matrix-os", workflowPath: "docs/WORKFLOW.md" }))
+      .rejects.toMatchObject({ code: "workflow_missing" });
   });
 
   it("composes prompt from workflow and ticket context without secrets", () => {

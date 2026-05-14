@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { PROJECT_SLUG_REGEX } from "../project-manager.js";
 import { readJsonFile } from "../state-ops.js";
@@ -20,6 +20,17 @@ export class SymphonyWorkflowError extends Error {
   }
 }
 
+const DEFAULT_WORKFLOW = `# Matrix Symphony workflow
+
+You are running as a Matrix-managed coding agent for a claimed Linear ticket.
+
+- Read the ticket context before changing code.
+- Keep changes scoped to the requested worktree.
+- Follow the repository agent instructions and existing project conventions.
+- Run the focused tests for the files you touched before handing off.
+- Do not print provider credentials or secrets.
+`;
+
 function escapeTemplate(value: string): string {
   return value.replace(/[{}]/g, "");
 }
@@ -30,6 +41,16 @@ async function pathExists(path: string): Promise<boolean> {
     return true;
   } catch (err: unknown) {
     if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+async function createDefaultWorkflow(path: string): Promise<void> {
+  await mkdir(resolve(path, ".."), { recursive: true });
+  try {
+    await writeFile(path, DEFAULT_WORKFLOW, { flag: "wx" });
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") return;
     throw err;
   }
 }
@@ -53,12 +74,19 @@ export async function loadWorkflowContract(input: {
   const project = await readProject(input.homePath, input.projectSlug);
   if (!project) throw new SymphonyWorkflowError("workflow_missing");
   const projectRoot = resolve(project.localPath);
-  const workflowPath = resolve(input.workflowPath ? join(projectRoot, input.workflowPath) : join(projectRoot, "WORKFLOW.md"));
+  const hasCustomWorkflowPath = Boolean(input.workflowPath);
+  const workflowPath = resolve(hasCustomWorkflowPath ? join(projectRoot, input.workflowPath!) : join(projectRoot, "WORKFLOW.md"));
   if (workflowPath !== projectRoot && !workflowPath.startsWith(`${projectRoot}/`)) {
     throw new SymphonyWorkflowError("invalid_workflow_path");
   }
   if (!await pathExists(workflowPath)) {
-    throw new SymphonyWorkflowError("workflow_missing");
+    if (hasCustomWorkflowPath) throw new SymphonyWorkflowError("workflow_missing");
+    try {
+      await createDefaultWorkflow(workflowPath);
+    } catch (err: unknown) {
+      console.warn("[symphony] Failed to create default workflow:", err instanceof Error ? err.message : String(err));
+      throw new SymphonyWorkflowError("workflow_read_failed");
+    }
   }
   try {
     const body = (await readFile(workflowPath, "utf8")).trim();

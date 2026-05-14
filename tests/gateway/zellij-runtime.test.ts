@@ -6,6 +6,22 @@ import { join } from "node:path";
 import { createZellijRuntime } from "../../packages/gateway/src/zellij-runtime.js";
 import type { AgentLaunchSpec } from "../../packages/gateway/src/agent-launcher.js";
 
+function createPty() {
+  const handlers: Array<(event: { exitCode: number; signal?: number }) => void> = [];
+  return {
+    process: {
+      kill: vi.fn(),
+      onExit: vi.fn((handler: (event: { exitCode: number; signal?: number }) => void) => {
+        handlers.push(handler);
+        return { dispose: vi.fn() };
+      }),
+    },
+    exit(event: { exitCode: number; signal?: number }) {
+      for (const handler of handlers) handler(event);
+    },
+  };
+}
+
 describe("zellij-runtime", () => {
   let homePath: string;
   const launch: AgentLaunchSpec = {
@@ -21,6 +37,7 @@ describe("zellij-runtime", () => {
 
   afterEach(() => {
     rmSync(homePath, { recursive: true, force: true });
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -31,15 +48,18 @@ describe("zellij-runtime", () => {
 
     expect(result.layoutPath).toBe(join(homePath, "system", "zellij", "layouts", "sess_abc123.kdl"));
     const layout = await readFile(result.layoutPath, "utf-8");
-    expect(layout).toContain('command "codex"');
+    expect(layout).toContain('pane cwd="/home/matrixos/home/projects/repo/worktrees/wt_123" command="codex" {');
     expect(layout).toContain('args "--sandbox" "workspace-write" "--" "fix tests; rm -rf /"');
-    expect(layout).toContain('cwd "/home/matrixos/home/projects/repo/worktrees/wt_123"');
+    expect(layout).not.toContain('pane cwd "');
+    expect(layout).not.toContain('command "codex" {');
     expect(layout).not.toContain("sh -c");
   });
 
-  it("starts, attaches, observes, and kills sessions through argv arrays", async () => {
+  it("starts zellij through a retained PTY, then attaches, observes, and kills by argv", async () => {
     const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
-    const runtime = createZellijRuntime({ homePath, runCommand });
+    const pty = createPty();
+    const spawnPty = vi.fn(() => pty.process);
+    const runtime = createZellijRuntime({ homePath, runCommand, spawnPty, startupDelayMs: 1 });
 
     const started = await runtime.start({ sessionId: "sess_abc123", launch });
     expect(started).toMatchObject({
@@ -47,19 +67,107 @@ describe("zellij-runtime", () => {
       sessionName: "matrix-sess_abc123",
       status: "running",
     });
-    expect(runCommand).toHaveBeenCalledWith(
+    expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["--session", "matrix-sess_abc123", "--layout", started.layoutPath],
-      expect.any(Object),
+      ["--session", "matrix-sess_abc123", "--new-session-with-layout", started.layoutPath],
+      expect.objectContaining({
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd: launch.cwd,
+        env: expect.objectContaining(launch.env),
+      }),
     );
+    expect(runCommand).not.toHaveBeenCalledWith("zellij", expect.arrayContaining(["--layout"]), expect.any(Object));
 
     expect(runtime.attachCommand("sess_abc123")).toEqual(["zellij", "attach", "matrix-sess_abc123"]);
     expect(runtime.observeCommand("sess_abc123")).toEqual(["zellij", "attach", "matrix-sess_abc123", "--index", "0"]);
 
     await expect(runtime.kill("sess_abc123")).resolves.toEqual({ ok: true });
+    expect(pty.process.kill).toHaveBeenCalledTimes(1);
     expect(runCommand).toHaveBeenCalledWith(
       "zellij",
       ["kill-session", "matrix-sess_abc123"],
+      expect.any(Object),
+    );
+  });
+
+  it("passes only safe process environment keys plus explicit launch env to zellij", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://secret");
+    vi.stubEnv("LINEAR_API_KEY", "lin_api_secret");
+    vi.stubEnv("PATH", "/usr/bin");
+    vi.stubEnv("LANG", "en_US.UTF-8");
+    vi.stubEnv("LC_ALL", "C.UTF-8");
+    const pty = createPty();
+    const spawnPty = vi.fn(() => pty.process);
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn(), spawnPty, startupDelayMs: 1 });
+
+    await runtime.start({
+      sessionId: "sess_env",
+      launch: { ...launch, env: { MATRIX_EXPLICIT: "allowed" } },
+    });
+
+    const env = spawnPty.mock.calls[0]?.[2].env;
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "C.UTF-8",
+      MATRIX_EXPLICIT: "allowed",
+    });
+    expect(env).not.toHaveProperty("DATABASE_URL");
+    expect(env).not.toHaveProperty("LINEAR_API_KEY");
+  });
+
+  it("evicts stale retained PTYs before starting another session", async () => {
+    let nowMs = 0;
+    const oldPty = createPty();
+    const newPty = createPty();
+    const spawnPty = vi.fn()
+      .mockReturnValueOnce(oldPty.process)
+      .mockReturnValueOnce(newPty.process);
+    const runtime = createZellijRuntime({
+      homePath,
+      runCommand: vi.fn(),
+      spawnPty,
+      startupDelayMs: 1,
+      retainedPtyTtlMs: 10,
+      nowMs: () => nowMs,
+    });
+
+    await runtime.start({ sessionId: "sess_old", launch });
+    nowMs = 11;
+    await runtime.start({ sessionId: "sess_new", launch });
+
+    expect(oldPty.process.kill).toHaveBeenCalledTimes(1);
+    expect(newPty.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("fails startup if the zellij PTY exits before the startup delay", async () => {
+    const pty = createPty();
+    const spawnPty = vi.fn(() => {
+      setTimeout(() => pty.exit({ exitCode: 1 }), 0);
+      return pty.process;
+    });
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn(), spawnPty, startupDelayMs: 10 });
+
+    await expect(runtime.start({ sessionId: "sess_exits", launch })).rejects.toThrow("zellij_start_failed");
+  });
+
+  it("lets kill reach a session during the startup delay", async () => {
+    const pty = createPty();
+    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    let runtime: ReturnType<typeof createZellijRuntime>;
+    const spawnPty = vi.fn(() => {
+      setTimeout(() => void runtime.kill("sess_cancel"), 0);
+      return pty.process;
+    });
+    runtime = createZellijRuntime({ homePath, runCommand, spawnPty, startupDelayMs: 10 });
+
+    await expect(runtime.start({ sessionId: "sess_cancel", launch })).rejects.toThrow("zellij_start_cancelled");
+    expect(pty.process.kill).toHaveBeenCalledTimes(1);
+    expect(runCommand).toHaveBeenCalledWith(
+      "zellij",
+      ["kill-session", "matrix-sess_cancel"],
       expect.any(Object),
     );
   });
