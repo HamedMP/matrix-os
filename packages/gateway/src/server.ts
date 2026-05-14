@@ -137,6 +137,9 @@ import { createSettingsRoutes } from "./routes/settings.js";
 import { createDesktopRoutes } from "./desktop/routes.js";
 import { createWorkflowRoutes } from "./workflow/routes.js";
 import { createFileWorkflowRepository } from "./workflow/repository.js";
+import { createTicketRoutes } from "./tickets/routes.js";
+import { KyselyTicketRepository } from "./tickets/internal-repository.js";
+import { createTicketStatusHub } from "./tickets/status-hub.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -1284,6 +1287,19 @@ export async function createGateway(config: GatewayConfig) {
     repository: createFileWorkflowRepository({ homePath }),
     codexReadiness: async () => ({ status: process.env.CODEX_AUTH_TOKEN ? "valid" : "unknown" }),
   }));
+  if (kyselyInstance) {
+    const ticketRepository = new KyselyTicketRepository(kyselyInstance as Kysely<any>);
+    await ticketRepository.bootstrap();
+    app.route("/api/projects", createTicketRoutes({
+      repository: ticketRepository,
+      statusHub: createTicketStatusHub(),
+    }));
+  } else {
+    const unavailableTickets = new Hono();
+    unavailableTickets.get("/:projectSlug/tickets", (c) => c.json({ tickets: [], nextCursor: null }));
+    unavailableTickets.all("/:projectSlug/tickets/*", (c) => c.json({ error: { code: "tickets_unavailable", message: "Tickets are unavailable" } }, 503));
+    app.route("/api/projects", unavailableTickets);
+  }
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,

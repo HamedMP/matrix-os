@@ -113,6 +113,12 @@ export { createFileWorkflowRepository, createMemoryWorkflowRepository } from "./
 export type { WorkflowRepository } from "./workflow/repository.js";
 export { createPreviewRef, validatePreviewUrl } from "./workflow/preview-policy.js";
 export type { PreviewPolicyInput, PreviewPolicyResult, PreviewRefInput } from "./workflow/preview-policy.js";
+export { createTicketRoutes } from "./tickets/routes.js";
+export { KyselyTicketRepository } from "./tickets/internal-repository.js";
+export type { TicketRepository } from "./tickets/internal-repository.js";
+export { syncLinearTickets } from "./tickets/linear-sync.js";
+export { createTicketStatusHub } from "./tickets/status-hub.js";
+export type { TicketListPage, TicketSyncSummary, TrackedTicket } from "./tickets/contracts.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";

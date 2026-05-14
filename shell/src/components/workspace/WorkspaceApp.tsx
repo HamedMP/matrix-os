@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
+import { listProjectTickets, type UnifiedTicket } from "@/lib/tickets";
 
 const GATEWAY_URL = getGatewayUrl();
 const FETCH_TIMEOUT_MS = 10_000;
 const TASK_RENDER_LIMIT = 80;
+const TICKET_RENDER_LIMIT = 80;
 const PROJECT_RENDER_LIMIT = 100;
 
 interface ProjectSummary {
@@ -120,6 +122,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState(initialProjectSlug ?? "");
   const [tasks, setTasks] = useState<WorkspaceTask[]>([]);
+  const [tickets, setTickets] = useState<UnifiedTicket[]>([]);
   const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
   const [reviews, setReviews] = useState<WorkspaceReview[]>([]);
   const [worktrees, setWorktrees] = useState<WorkspaceWorktree[]>([]);
@@ -172,8 +175,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     if (!projectSlug) return;
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
-      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData, workflowData] = await Promise.all([
+      const [taskData, ticketData, sessionData, reviewData, worktreeData, previewData, eventData, workflowData] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
+        listProjectTickets(projectSlug),
         fetchJson<{ sessions: WorkspaceSession[] }>(`/api/sessions?projectSlug=${encodedSlug}&limit=100`),
         fetchJson<{ reviews: WorkspaceReview[] }>(`/api/reviews?projectSlug=${encodedSlug}&limit=20`),
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
@@ -183,6 +187,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       ]);
       if (activeSlugRef.current !== projectSlug) return;
       setTasks(taskData.tasks ?? []);
+      setTickets(ticketData.tickets ?? []);
       setSessions(sessionData.sessions ?? []);
       setReviews(reviewData.reviews ?? []);
       setWorktrees(worktreeData.worktrees ?? []);
@@ -436,6 +441,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
 
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);
+  const visibleTickets = tickets.slice(0, TICKET_RENDER_LIMIT);
   const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
   const visibleSessions = sessions.filter((session) => {
     if (!normalizedSessionSearch) return true;
@@ -540,10 +546,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               <div>
                 <h2 className="text-sm font-semibold">{projectLabel(selectedProject ?? {})}</h2>
                 <p className="text-xs text-muted-foreground">
-                  Showing {formatCount(visibleTasks.length)} of {formatCount(tasks.length)} tasks
+                  {tickets.length > 0
+                    ? `${formatCount(tickets.length)} unified tickets`
+                    : `Showing ${formatCount(visibleTasks.length)} of ${formatCount(tasks.length)} tasks`}
                 </p>
               </div>
-              <span className="text-xs text-muted-foreground">{formatCount(tasks.length)} tasks</span>
+              <span className="text-xs text-muted-foreground">
+                {tickets.length > 0 ? `${formatCount(tickets.length)} tickets` : `${formatCount(tasks.length)} tasks`}
+              </span>
             </div>
           </section>
           {!selectedProject ? (
@@ -555,22 +565,49 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               </div>
             </section>
           ) : (
-            <section
-              data-testid="workspace-task-grid"
-              className="grid grid-cols-1 gap-px bg-border md:grid-cols-2 xl:grid-cols-3"
-            >
-              {visibleTasks.map((task) => (
-                <article key={task.id} className="min-h-[96px] bg-background p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="line-clamp-2 text-sm font-medium">{task.title ?? task.id}</h3>
-                    <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                      {task.priority ?? "normal"}
-                    </span>
-                  </div>
-                  <p className="mt-3 text-xs text-muted-foreground">{task.status ?? "todo"}</p>
-                </article>
-              ))}
-            </section>
+            <>
+              {tickets.length > 0 && (
+                <section className="border-b border-border px-4 py-3">
+                  <h2 className="text-sm font-semibold">Unified tickets</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Showing {formatCount(visibleTickets.length)} of {formatCount(tickets.length)} tickets
+                  </p>
+                </section>
+              )}
+              <section
+                data-testid="workspace-task-grid"
+                className="grid grid-cols-1 gap-px bg-border md:grid-cols-2 xl:grid-cols-3"
+              >
+                {tickets.length > 0 ? visibleTickets.map((ticket) => (
+                  <article key={ticket.id} className="min-h-[112px] bg-background p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-medium text-muted-foreground">{ticket.identifier ?? ticket.id}</div>
+                        <h3 className="line-clamp-2 text-sm font-medium">{ticket.title ?? ticket.id}</h3>
+                      </div>
+                      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        {ticket.sourceKind === "linear" ? "Linear" : "Matrix"}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>{ticket.status ?? "Todo"}</span>
+                      <span>{ticket.priority ?? "medium"}</span>
+                      <span>{ticket.syncStatus ?? "local"}</span>
+                    </div>
+                  </article>
+                )) : visibleTasks.map((task) => (
+                  <article key={task.id} className="min-h-[96px] bg-background p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="line-clamp-2 text-sm font-medium">{task.title ?? task.id}</h3>
+                      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        {task.priority ?? "normal"}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">{task.status ?? "todo"}</p>
+                  </article>
+                ))}
+              </section>
+            </>
           )}
         </main>
 

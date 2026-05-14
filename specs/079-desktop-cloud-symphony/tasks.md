@@ -116,22 +116,22 @@
 
 ### Tests for User Story 3
 
-- [ ] T050 [P] [US3] Write failing ticket repository tests in `tests/gateway/tickets-repository.test.ts`
-- [ ] T051 [P] [US3] Write failing Linear sync deduplication and 100-ticket scale tests in `tests/gateway/tickets-linear-sync.test.ts`
-- [ ] T052 [P] [US3] Write failing internal ticket route tests in `tests/gateway/tickets-routes.test.ts`
-- [ ] T053 [P] [US3] Write failing unified ticket UI and 200-ticket board scale tests in `tests/shell/unified-tickets.test.tsx`
+- [X] T050 [P] [US3] Write failing ticket repository tests in `tests/gateway/tickets-repository.test.ts`
+- [X] T051 [P] [US3] Write failing Linear sync deduplication and 100-ticket scale tests in `tests/gateway/tickets-linear-sync.test.ts`
+- [X] T052 [P] [US3] Write failing internal ticket route tests in `tests/gateway/tickets-routes.test.ts`
+- [X] T053 [P] [US3] Write failing unified ticket UI and 200-ticket board scale tests in `tests/shell/unified-tickets.test.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T054 [US3] Create ticket contracts and Zod schemas in `packages/gateway/src/tickets/contracts.ts`
-- [ ] T055 [US3] Create Kysely ticket repository in `packages/gateway/src/tickets/internal-repository.ts`
-- [ ] T056 [US3] Create Linear sync service in `packages/gateway/src/tickets/linear-sync.ts`
-- [ ] T057 [US3] Create bounded ticket status hub in `packages/gateway/src/tickets/status-hub.ts`
-- [ ] T058 [US3] Create ticket REST routes in `packages/gateway/src/tickets/routes.ts`
-- [ ] T059 [US3] Wire ticket routes into `packages/gateway/src/server.ts`
-- [ ] T060 [US3] Add unified ticket client helpers in `shell/src/lib/tickets.ts`
-- [ ] T061 [US3] Add unified ticket board/list surface in `shell/src/components/workspace/WorkspaceApp.tsx`
-- [ ] T062 [US3] Add ticket source/status display coverage in `tests/shell/unified-tickets.test.tsx`
+- [X] T054 [US3] Create ticket contracts and Zod schemas in `packages/gateway/src/tickets/contracts.ts`
+- [X] T055 [US3] Create Kysely ticket repository in `packages/gateway/src/tickets/internal-repository.ts`
+- [X] T056 [US3] Create Linear sync service in `packages/gateway/src/tickets/linear-sync.ts`
+- [X] T057 [US3] Create bounded ticket status hub in `packages/gateway/src/tickets/status-hub.ts`
+- [X] T058 [US3] Create ticket REST routes in `packages/gateway/src/tickets/routes.ts`
+- [X] T059 [US3] Wire ticket routes into `packages/gateway/src/server.ts`
+- [X] T060 [US3] Add unified ticket client helpers in `shell/src/lib/tickets.ts`
+- [X] T061 [US3] Add unified ticket board/list surface in `shell/src/components/workspace/WorkspaceApp.tsx`
+- [X] T062 [US3] Add ticket source/status display coverage in `tests/shell/unified-tickets.test.tsx`
 
 **Checkpoint**: Linear and Matrix-native tickets share one desktop workbench surface.
 
