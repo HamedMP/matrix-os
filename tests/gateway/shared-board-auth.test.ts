@@ -49,6 +49,23 @@ describe("shared board authorization", () => {
     expect(listTickets).toHaveBeenCalledWith("owner_1", "repo", expect.objectContaining({ source: "all" }));
   });
 
+  it("rejects ticket owner scopes that board membership cannot represent", async () => {
+    const listTickets = vi.fn(async () => ({ tickets: [], nextCursor: null }));
+    const authorizeProjectAccess = vi.fn(async () => true);
+    const app = new Hono();
+    app.route("/api/projects", createTicketRoutes({
+      repository: { listTickets } as any,
+      getPrincipal: () => ({ userId: "user_2", source: "dev-default" }),
+      authorizeProjectAccess,
+    }));
+
+    const res = await app.request("/api/projects/repo/tickets?ownerId=owner=1");
+
+    expect(res.status).toBe(400);
+    expect(authorizeProjectAccess).not.toHaveBeenCalled();
+    expect(listTickets).not.toHaveBeenCalled();
+  });
+
   it("lets teammates read but not manage board members in the requested owner scope", async () => {
     const service = {
       canReadBoard: vi.fn(async () => true),

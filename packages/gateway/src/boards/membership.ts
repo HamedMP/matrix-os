@@ -73,12 +73,13 @@ export function createMemoryBoardMembershipService(): BoardMembershipService {
       if (!members.has(parsed.userId) && members.size >= BOARD_MEMBER_LIMIT) {
         throw new BoardMemberLimitExceededError();
       }
+      const existing = members.get(parsed.userId);
       const member: BoardMember = {
         projectSlug,
         userId: parsed.userId,
         role: parsed.role,
         addedBy: ownerId,
-        addedAt: nowIso(),
+        addedAt: existing?.addedAt ?? nowIso(),
       };
       members.set(member.userId, member);
       return member;
@@ -145,7 +146,7 @@ export class KyselyBoardMembershipService implements BoardMembershipService {
 
   async addMember(ownerId: string, projectSlug: string, input: AddBoardMemberInput): Promise<BoardMember> {
     const parsed = AddBoardMemberSchema.parse(input);
-    const member: BoardMember = {
+    let member: BoardMember = {
       projectSlug,
       userId: parsed.userId,
       role: parsed.role,
@@ -167,12 +168,17 @@ export class KyselyBoardMembershipService implements BoardMembershipService {
         .executeTakeFirst();
       const existing = await trx
         .selectFrom("shared_board_members")
-        .select(["user_id"])
+        .select(["user_id", "member"])
         .where("owner_id", "=", ownerId)
         .where("project_slug", "=", projectSlug)
         .where("user_id", "=", member.userId)
-        .executeTakeFirst();
-      if (!existing) {
+        .executeTakeFirst() as Record<string, unknown> | undefined;
+      if (existing) {
+        member = {
+          ...member,
+          addedAt: rowMember(existing).addedAt,
+        };
+      } else {
         const countRow = await trx
           .selectFrom("shared_board_members")
           .select(({ fn }) => fn.countAll<number>().as("count"))

@@ -738,8 +738,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
             </div>
           </WorkspacePanel>
           <WorkspacePanel title="Shared board">
-            {boardMembers.length > 0 ? boardMembers.map((member) => (
-              <div key={member.userId} className="flex items-center justify-between gap-2 py-2 text-xs">
+            {boardMembers.length > 0 ? boardMembers.map((member, index) => (
+              <div key={member.userId ?? `member-${index}`} className="flex items-center justify-between gap-2 py-2 text-xs">
                 <span className="min-w-0 truncate font-medium">{member.userId}</span>
                 <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
                   {member.role ?? "viewer"}

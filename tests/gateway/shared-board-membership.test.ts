@@ -12,10 +12,15 @@ describe("shared board membership", () => {
   it("lets a board owner add and revoke teammates with bounded roles", async () => {
     const service = createMemoryBoardMembershipService();
 
-    await expect(service.addMember("owner_1", "repo", {
+    const added = await service.addMember("owner_1", "repo", {
       userId: "user_2",
       role: "editor",
-    })).resolves.toMatchObject({ projectSlug: "repo", userId: "user_2", role: "editor" });
+    });
+    expect(added).toMatchObject({ projectSlug: "repo", userId: "user_2", role: "editor" });
+    await expect(service.addMember("owner_1", "repo", {
+      userId: "user_2",
+      role: "viewer",
+    })).resolves.toMatchObject({ userId: "user_2", role: "viewer", addedAt: added.addedAt });
     await expect(service.canReadBoard("owner_1", "repo", "user_2")).resolves.toBe(true);
 
     await service.removeMember("owner_1", "repo", "user_2");
@@ -40,6 +45,30 @@ describe("shared board membership", () => {
         userId: "user_0",
         role: "editor",
       })).resolves.toMatchObject({ userId: "user_0", role: "editor" });
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("preserves Postgres member addedAt when updating a role", async () => {
+    const instance = await KyselyPGlite.create();
+    const db = new Kysely<any>({ dialect: instance.dialect });
+    const service = new KyselyBoardMembershipService(db);
+    try {
+      await service.bootstrap();
+      const added = await service.addMember("owner_1", "repo", {
+        userId: "user_2",
+        role: "viewer",
+      });
+      const updated = await service.addMember("owner_1", "repo", {
+        userId: "user_2",
+        role: "editor",
+      });
+
+      expect(updated).toMatchObject({ userId: "user_2", role: "editor", addedAt: added.addedAt });
+      await expect(service.listMembers("owner_1", "repo")).resolves.toMatchObject([
+        { userId: "user_2", role: "editor", addedAt: added.addedAt },
+      ]);
     } finally {
       await db.destroy();
     }

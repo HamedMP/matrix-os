@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
+import { BoardUserIdSchema } from "../boards/contracts.js";
 import { requestHasBody } from "../http-body.js";
 import { PROJECT_SLUG_REGEX } from "../project-manager.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal, type RequestPrincipal } from "../request-principal.js";
@@ -39,7 +40,7 @@ export interface TicketRoutesDeps {
 
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const OwnerScopeQuerySchema = z.object({
-  ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_@:.=-]+$/).optional(),
+  ownerId: BoardUserIdSchema.optional(),
 }).passthrough();
 
 function status(code: number): ContentfulStatusCode {
