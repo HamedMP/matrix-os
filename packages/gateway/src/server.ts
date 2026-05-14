@@ -80,6 +80,8 @@ import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
   checkForSystemUpdate,
+  listSystemReleases,
+  parseInternalUpgradeTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
   writeInternalUpgradeTrigger,
@@ -3378,6 +3380,20 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
+  app.get("/api/system/releases", async (c) => {
+    const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    const result = await listSystemReleases({
+      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
+      channel,
+    });
+    return c.json(result);
+  });
+
   app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
     const token = process.env.MATRIX_SYSTEM_BACKUP_TOKEN;
     if (!token) {
@@ -3400,30 +3416,40 @@ export async function createGateway(config: GatewayConfig) {
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
-    const requestedChannel =
-      body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
     const info = getSystemInfo(homePath);
-    const channel = resolveSystemUpdateChannel(requestedChannel, {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    const parsedTarget = parseInternalUpgradeTarget(body);
+    if (!parsedTarget.ok) return c.json({ error: parsedTarget.error }, 400);
+    const target = parsedTarget.target ?? (() => {
+      const channel = resolveSystemUpdateChannel(undefined, {
+        envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+        installedChannel: info.release?.channel,
+      });
+      return channel ? { type: "channel" as const, value: channel } : null;
+    })();
+    if (!target) return c.json({ error: "Invalid update channel" }, 400);
 
-    const result = await startSystemUpdate({ channel });
+    const result = await startSystemUpdate({ target });
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
     void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
       distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
       properties: {
-        channel,
+        targetType: target.type,
+        targetValue: target.value,
+        channel: target.type === "channel" ? target.value : undefined,
         handle: process.env.MATRIX_HANDLE,
       },
     }).catch((err: unknown) => {
       const kind = err instanceof Error ? err.name : typeof err;
       console.warn(`[posthog] Failed to queue system update event: ${kind}`);
     });
-    return c.json({ ok: true, status: result.status, channel }, 202);
+    return c.json({
+      ok: true,
+      status: result.status,
+      target,
+      ...(target.type === "channel" ? { channel: target.value } : { version: target.value }),
+    }, 202);
   }
 
   app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);

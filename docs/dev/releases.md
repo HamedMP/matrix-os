@@ -116,7 +116,7 @@ Release metadata also records:
    matrix-update v0.X.0
    ```
 
-   The VPS sync agent asks the platform for DB-backed release metadata and downloads the bundle through a short-lived signed R2 URL.
+   Users can do the same from Matrix Settings -> System -> Updates: select `stable`, `canary`, `beta`, or `dev`, inspect the releases published for that channel, then install the latest release or any listed version for an upgrade or downgrade. The VPS sync agent asks the platform for DB-backed release metadata and downloads the bundle through a short-lived signed R2 URL.
 
 8. Grafana scrapes `/metrics`.
 
@@ -198,7 +198,7 @@ Or configure Vercel to deploy on tag push via GitHub webhook.
 matrix-update v0.X.0
 ```
 
-Channel rollback is a platform operation: promote `stable` back to a known-good version, then users on `stable` can update/downgrade to that release.
+Channel rollback can be platform-driven by promoting `stable` back to a known-good version, or user-driven from Matrix Settings by selecting a previous release in the current channel list.
 
 ## Tag Naming Examples
 

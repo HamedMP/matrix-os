@@ -272,9 +272,11 @@ function isObjectNotFoundError(err: unknown): boolean {
 function hostBundleReleaseResponse(
   release: HostBundleReleaseRecord,
   url?: string,
+  channel?: string,
 ): Record<string, unknown> {
   return {
     version: release.version,
+    channel: channel ?? release.channel,
     gitCommit: release.gitCommit,
     gitRef: release.gitRef,
     buildTime: release.buildTime,
@@ -1047,9 +1049,16 @@ export function createApp(deps: {
   }
 
   app.get('/system-bundles/releases', async (c) => {
+    const channel = c.req.query('channel');
+    if (channel !== undefined && !HOST_BUNDLE_CHANNEL_PATTERN.test(channel)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
     try {
-      const releases = await listHostBundleReleases(db, 100);
-      return c.json({ releases: releases.map((release) => hostBundleReleaseResponse(release)) });
+      const releases = await listHostBundleReleases(db, 100, channel);
+      return c.json({
+        generatedAt: new Date().toISOString(),
+        releases: releases.map((release) => hostBundleReleaseResponse(release)),
+      });
     } catch (err: unknown) {
       logPlatformRouteError('/system-bundles/releases', err);
       return c.json({ error: 'Host bundle unavailable' }, 502);
@@ -1175,7 +1184,7 @@ export function createApp(deps: {
           return c.json({ error: 'Not found' }, 404);
         }
         const url = await getSignedBundleUrl(release);
-        return c.json(hostBundleReleaseResponse(release, url), 200, {
+        return c.json(hostBundleReleaseResponse(release, url, channel), 200, {
           'cache-control': 'private, max-age=30',
         });
       } catch (err: unknown) {
@@ -1236,7 +1245,7 @@ export function createApp(deps: {
     if (file.endsWith('.json')) {
       try {
         const url = await getSignedBundleUrl(release);
-        return c.json(hostBundleReleaseResponse(release, url), 200, {
+        return c.json(hostBundleReleaseResponse(release, url, isChannelAlias ? imageVersion : undefined), 200, {
           'cache-control': 'private, max-age=30',
         });
       } catch (err: unknown) {
@@ -1293,7 +1302,7 @@ export function createApp(deps: {
         return c.json({ error: 'Not found' }, 404);
       }
       const url = await getSignedBundleUrl(release);
-      return c.json(hostBundleReleaseResponse(release, url), 200, {
+      return c.json(hostBundleReleaseResponse(release, url, channel), 200, {
         'cache-control': 'private, max-age=30',
       });
     } catch (err: unknown) {

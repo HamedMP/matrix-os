@@ -38,6 +38,7 @@ interface UserMachinesTable {
 
 interface HostBundleReleasesTable {
   version: string;
+  channel: string | null;
   git_commit: string;
   git_ref: string | null;
   build_time: string;
@@ -55,6 +56,12 @@ interface HostBundleChannelsTable {
   channel: string;
   version: string;
   updated_at: string;
+}
+
+interface HostBundleReleaseChannelsTable {
+  channel: string;
+  version: string;
+  promoted_at: string;
 }
 
 interface ProviderDeletionQueueTable {
@@ -166,6 +173,7 @@ export interface PlatformDatabase {
   user_machines: UserMachinesTable;
   host_bundle_releases: HostBundleReleasesTable;
   host_bundle_channels: HostBundleChannelsTable;
+  host_bundle_release_channels: HostBundleReleaseChannelsTable;
   provider_deletion_queue: ProviderDeletionQueueTable;
   port_assignments: PortAssignmentsTable;
   device_codes: DeviceCodesTable;
@@ -229,6 +237,7 @@ export interface UserMachineRecord {
 
 export interface HostBundleReleaseRecord {
   version: string;
+  channel: string | null;
   gitCommit: string;
   gitRef: string | null;
   buildTime: string;
@@ -244,6 +253,7 @@ export interface HostBundleReleaseRecord {
 
 export interface NewHostBundleRelease {
   version: string;
+  channel?: string | null;
   gitCommit: string;
   gitRef?: string | null;
   buildTime: string;
@@ -382,6 +392,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS host_bundle_releases (
       version TEXT PRIMARY KEY,
+      channel TEXT,
       git_commit TEXT NOT NULL,
       git_ref TEXT,
       build_time TEXT NOT NULL,
@@ -395,6 +406,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       created_at TEXT NOT NULL
     )
   `.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS channel TEXT`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_channel ON host_bundle_releases(channel)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_created_at ON host_bundle_releases(created_at)`.execute(db);
 
   await sql`
@@ -405,6 +418,29 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_channels_version ON host_bundle_channels(version)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS host_bundle_release_channels (
+      channel TEXT NOT NULL,
+      version TEXT NOT NULL REFERENCES host_bundle_releases(version),
+      promoted_at TEXT NOT NULL,
+      PRIMARY KEY (channel, version)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_release_channels_version ON host_bundle_release_channels(version)`.execute(db);
+  await sql`
+    INSERT INTO host_bundle_release_channels(channel, version, promoted_at)
+    SELECT channel, version, created_at
+    FROM host_bundle_releases
+    WHERE channel IS NOT NULL
+    ON CONFLICT (channel, version) DO NOTHING
+  `.execute(db);
+  await sql`
+    INSERT INTO host_bundle_release_channels(channel, version, promoted_at)
+    SELECT channel, version, updated_at
+    FROM host_bundle_channels
+    ON CONFLICT (channel, version) DO UPDATE SET promoted_at = EXCLUDED.promoted_at
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provider_deletion_queue (
@@ -693,6 +729,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
 function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRecord {
   return {
     version: row.version,
+    channel: row.channel,
     gitCommit: row.git_commit,
     gitRef: row.git_ref,
     buildTime: row.build_time,
@@ -711,6 +748,7 @@ function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleRelease
   const now = new Date().toISOString();
   return {
     version: record.version,
+    channel: record.channel ?? null,
     git_commit: record.gitCommit,
     git_ref: record.gitRef ?? null,
     build_time: record.buildTime,
@@ -1054,29 +1092,31 @@ export async function upsertHostBundleRelease(
 ): Promise<HostBundleReleaseRecord> {
   await db.ready;
   const row = toHostBundleReleaseRow(record);
-  const saved = await db.executor
-    .insertInto('host_bundle_releases')
-    .values(row)
-    .onConflict((oc) =>
-      oc.column('version').doUpdateSet({
-        git_commit: row.git_commit,
-        git_ref: row.git_ref,
-        build_time: row.build_time,
-        severity: row.severity,
-        update_type: row.update_type,
-        changelog: row.changelog,
-      })
-        .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
-        .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
-        .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
-        .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
-    )
-    .returningAll()
-    .executeTakeFirst();
-  if (!saved) {
-    throw new HostBundleReleaseConflictError(row.version);
-  }
-  return mapHostBundleRelease(saved);
+  return db.executor.transaction().execute(async (trx) => {
+    const saved = await trx
+      .insertInto('host_bundle_releases')
+      .values(row)
+      .onConflict((oc) =>
+        oc.column('version').doUpdateSet({
+          git_commit: row.git_commit,
+          git_ref: row.git_ref,
+          build_time: row.build_time,
+          severity: row.severity,
+          update_type: row.update_type,
+          changelog: row.changelog,
+        })
+          .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
+          .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
+          .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
+          .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
+      )
+      .returningAll()
+      .executeTakeFirst();
+    if (!saved) {
+      throw new HostBundleReleaseConflictError(row.version);
+    }
+    return mapHostBundleRelease(saved);
+  });
 }
 
 export async function getHostBundleRelease(
@@ -1095,8 +1135,20 @@ export async function getHostBundleRelease(
 export async function listHostBundleReleases(
   db: PlatformDB,
   limit = 50,
+  channel?: string,
 ): Promise<HostBundleReleaseRecord[]> {
   await db.ready;
+  if (channel) {
+    const rows = await db.executor
+      .selectFrom('host_bundle_release_channels')
+      .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_release_channels.version')
+      .selectAll('host_bundle_releases')
+      .where('host_bundle_release_channels.channel', '=', channel)
+      .orderBy('host_bundle_releases.created_at', 'desc')
+      .limit(limit)
+      .execute();
+    return rows.map(mapHostBundleRelease);
+  }
   const rows = await db.executor
     .selectFrom('host_bundle_releases')
     .selectAll()
@@ -1113,22 +1165,35 @@ export async function promoteHostBundleChannel(
   updatedAt = new Date().toISOString(),
 ): Promise<HostBundleChannelRecord> {
   await db.ready;
-  const release = await getHostBundleRelease(db, version);
-  if (!release) {
-    throw new Error('Cannot promote unknown host bundle release');
-  }
-  const row = await db.executor
-    .insertInto('host_bundle_channels')
-    .values({ channel, version, updated_at: updatedAt })
-    .onConflict((oc) =>
-      oc.column('channel').doUpdateSet({
-        version,
-        updated_at: updatedAt,
-      }),
-    )
-    .returningAll()
-    .executeTakeFirstOrThrow();
-  return mapHostBundleChannel(row);
+  return db.executor.transaction().execute(async (trx) => {
+    const release = await trx
+      .selectFrom('host_bundle_releases')
+      .selectAll()
+      .where('version', '=', version)
+      .executeTakeFirst();
+    if (!release) {
+      throw new Error('Cannot promote unknown host bundle release');
+    }
+    const row = await trx
+      .insertInto('host_bundle_channels')
+      .values({ channel, version, updated_at: updatedAt })
+      .onConflict((oc) =>
+        oc.column('channel').doUpdateSet({
+          version,
+          updated_at: updatedAt,
+        }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await trx
+      .insertInto('host_bundle_release_channels')
+      .values({ channel, version, promoted_at: updatedAt })
+      .onConflict((oc) => oc.columns(['channel', 'version']).doUpdateSet({
+        promoted_at: updatedAt,
+      }))
+      .executeTakeFirst();
+    return mapHostBundleChannel(row);
+  });
 }
 
 export async function getHostBundleChannel(
