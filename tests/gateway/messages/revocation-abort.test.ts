@@ -91,4 +91,35 @@ describe("permission revocation abort behavior", () => {
       cancelReason: "permission_revoked",
     });
   });
+  it("does not cancel replies that were already sent", async () => {
+    const granted = await repository.updatePermission({
+      ownerId,
+      roomId,
+      baseRevision: 1,
+      readEnabled: true,
+      replyEnabled: true,
+      automationEnabled: false,
+      mentionOnly: false,
+      grantedBy: ownerId,
+    });
+    const sent = await repository.createReply({
+      ownerId,
+      roomId,
+      source: "user",
+      status: "sent",
+      body: "Already sent",
+      permissionRevision: granted.revision,
+      clientTxnId: "txn_sent",
+    });
+
+    await expect(repository.cancelReply({
+      ownerId,
+      replyId: sent.id,
+      reason: "user_cancelled",
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.getReply({ ownerId, replyId: sent.id })).resolves.toMatchObject({
+      status: "sent",
+    });
+  });
+
 });

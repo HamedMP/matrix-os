@@ -109,6 +109,15 @@ export interface CreateReplyInput {
   clientTxnId: string;
 }
 
+export interface CreateReplyAfterPermissionCheckInput {
+  ownerId: string;
+  roomId: string;
+  source: OutgoingReplySource;
+  body: string;
+  mode: "send_if_allowed" | "draft_if_not_allowed" | "approval_required";
+  clientTxnId: string;
+}
+
 export interface ApproveReplyInput {
   ownerId: string;
   replyId: string;
@@ -156,9 +165,11 @@ export interface MessagingRepository {
   upsertConversation(input: UpsertConversationInput): Promise<MatrixConversation>;
   upsertConversationMapping(input: UpsertConversationMappingInput): Promise<ConversationMapping>;
   getPermission(scope: MessagingOwnerScope, roomId: string): Promise<HermesPermission | null>;
+  getPermissions(scope: MessagingOwnerScope, roomIds: string[]): Promise<Record<string, HermesPermission>>;
   updatePermission(input: UpdatePermissionInput): Promise<HermesPermission>;
   ingestBridgeEvent(input: IngestBridgeEventInput): Promise<IngestBridgeEventResult>;
   createReply(input: CreateReplyInput): Promise<OutgoingReply>;
+  createReplyAfterPermissionCheck(input: CreateReplyAfterPermissionCheckInput): Promise<ReplySendResult>;
   markReplySending(input: { ownerId: string; replyId: string }): Promise<OutgoingReply>;
   markReplySent(input: { ownerId: string; replyId: string; matrixEventId: string }): Promise<OutgoingReply>;
   markReplyFailed(input: { ownerId: string; replyId: string; failureCode: NonNullable<OutgoingReply["failureCode"]> }): Promise<OutgoingReply>;
@@ -907,6 +918,18 @@ export class MessagingKyselyRepository implements MessagingRepository {
     return row ? toPermission(row) : null;
   }
 
+  async getPermissions(scope: MessagingOwnerScope, roomIds: string[]): Promise<Record<string, HermesPermission>> {
+    const uniqueRoomIds = [...new Set(roomIds)].slice(0, 100);
+    if (uniqueRoomIds.length === 0) return {};
+    const rows = await this.kysely
+      .selectFrom("messaging_permissions")
+      .selectAll()
+      .where("owner_id", "=", scope.ownerId)
+      .where("room_id", "in", uniqueRoomIds)
+      .execute();
+    return Object.fromEntries(rows.map((row) => [row.room_id, toPermission(row)]));
+  }
+
   async updatePermission(input: UpdatePermissionInput): Promise<HermesPermission> {
     return this.kysely.transaction().execute(async (trx) => {
       const now = new Date().toISOString();
@@ -1025,6 +1048,46 @@ export class MessagingKyselyRepository implements MessagingRepository {
     return toReply(row);
   }
 
+  async createReplyAfterPermissionCheck(input: CreateReplyAfterPermissionCheckInput): Promise<ReplySendResult> {
+    return this.kysely.transaction().execute(async (trx) => {
+      const permission = await trx
+        .selectFrom("messaging_permissions")
+        .selectAll()
+        .where("owner_id", "=", input.ownerId)
+        .where("room_id", "=", input.roomId)
+        .forUpdate()
+        .executeTakeFirst();
+      const allowed = Boolean(permission?.reply_enabled);
+      if (!allowed && input.mode === "send_if_allowed") {
+        throw new MessagingError("forbidden", "reply permission missing", 403);
+      }
+      const status: OutgoingReplyStatus = allowed && input.mode !== "approval_required" ? "sent" : "approval_required";
+      const matrixEventId = status === "sent" ? `$${input.clientTxnId}:matrixos.local` : null;
+      const row = await trx
+        .insertInto("messaging_outgoing_replies")
+        .values({
+          id: prefixedId("reply"),
+          owner_id: input.ownerId,
+          room_id: input.roomId,
+          source: input.source,
+          status,
+          body: input.body,
+          permission_revision: permission?.revision ?? 1,
+          client_txn_id: input.clientTxnId,
+          matrix_event_id: matrixEventId,
+          failure_code: null,
+          cancel_reason: null,
+        })
+        .onConflict((oc) => oc
+          .columns(["owner_id", "client_txn_id"])
+          .doUpdateSet({ updated_at: new Date().toISOString() }))
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const reply = toReply(row);
+      return { replyId: reply.id, status: reply.status, matrixEventId: reply.matrixEventId };
+    });
+  }
+
   async markReplySending(input: { ownerId: string; replyId: string }): Promise<OutgoingReply> {
     return this.updateReplyStatus(input.ownerId, input.replyId, { status: "sending" });
   }
@@ -1048,7 +1111,7 @@ export class MessagingKyselyRepository implements MessagingRepository {
       .selectFrom("messaging_outgoing_replies")
       .selectAll()
       .where("owner_id", "=", scope.ownerId)
-      .where("status", "=", "approval_required");
+      .where("status", "in", ["draft", "approval_required"]);
     if (options.roomId) {
       query = query.where("room_id", "=", options.roomId);
     }
@@ -1088,7 +1151,7 @@ export class MessagingKyselyRepository implements MessagingRepository {
       if (!permission?.reply_enabled) throw new MessagingError("conflict", "reply permission missing", 409);
       return toReply(await trx
         .updateTable("messaging_outgoing_replies")
-        .set({ status: "sent", matrix_event_id: `$${existing.client_txn_id}:matrixos.local`, updated_at: new Date().toISOString() })
+        .set({ status: "sending", updated_at: new Date().toISOString() })
         .where("owner_id", "=", input.ownerId)
         .where("id", "=", input.replyId)
         .where("status", "=", input.baseStatus)
@@ -1099,10 +1162,21 @@ export class MessagingKyselyRepository implements MessagingRepository {
   }
 
   async cancelReply(input: CancelReplyInput): Promise<ReplySendResult> {
-    const reply = await this.updateReplyStatus(input.ownerId, input.replyId, {
-      status: "cancelled",
-      cancel_reason: input.reason,
-    });
+    const existing = await this.getReply({ ownerId: input.ownerId, replyId: input.replyId });
+    if (!existing) throw new MessagingError("not_found", "reply not found", 404);
+    if (!["draft", "approval_required"].includes(existing.status)) {
+      throw new MessagingError("conflict", "reply cannot be cancelled", 409);
+    }
+    const row = await this.kysely
+      .updateTable("messaging_outgoing_replies")
+      .set({ status: "cancelled", cancel_reason: input.reason, updated_at: new Date().toISOString() })
+      .where("owner_id", "=", input.ownerId)
+      .where("id", "=", input.replyId)
+      .where("status", "in", ["draft", "approval_required"])
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new MessagingError("conflict", "reply cannot be cancelled", 409);
+    const reply = toReply(row);
     return { replyId: reply.id, status: reply.status };
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  constantTimeEqual,
   createHermesCapabilityToken,
   verifyHermesCapabilityToken,
 } from "../../../packages/gateway/src/messages/hermes-capability.js";
@@ -61,4 +62,9 @@ describe("Hermes capability tokens", () => {
       nowMs: 10_000,
     })).toBeNull();
   });
+  it("normalizes token comparisons before timing-safe equality", () => {
+    expect(constantTimeEqual("short", "much-longer")).toBe(false);
+    expect(constantTimeEqual("same", "same")).toBe(true);
+  });
+
 });

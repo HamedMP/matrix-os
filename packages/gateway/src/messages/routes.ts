@@ -24,13 +24,15 @@ import {
 } from "./schemas.js";
 import { mapMessagingError, MessagingError, redactMessagingErrorDetail } from "./errors.js";
 import type { MessagingRepository } from "./repository.js";
-import { constantTimeEqual } from "./hermes-capability.js";
+import { HERMES_REPLY_SCOPE, constantTimeEqual, createHermesCapabilityReplayCache, verifyHermesCapabilityToken } from "./hermes-capability.js";
 import { MESSAGING_APP_SERVICE_BODY_LIMIT } from "./constants.js";
 
 export interface MessagingRouteDeps {
   repository: MessagingRepository;
   getOwnerId: (c: Context) => string;
   appserviceToken?: string;
+  appserviceOwnerId?: string;
+  hermesCapabilitySecret?: string;
 }
 
 function bodyTooLarge(c: Context) {
@@ -41,6 +43,11 @@ function getOwnerIdOrThrow(deps: MessagingRouteDeps, c: Context): string {
   const ownerId = deps.getOwnerId(c);
   if (!ownerId) throw new MessagingError("unauthorized", "missing owner", 401);
   return ownerId;
+}
+
+function getAppserviceOwnerIdOrThrow(deps: MessagingRouteDeps): string {
+  if (!deps.appserviceOwnerId) throw new MessagingError("misconfigured", "missing appservice owner", 503);
+  return deps.appserviceOwnerId;
 }
 
 function handleMessagingRouteError(c: Context, err: unknown) {
@@ -56,6 +63,7 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
   const routeBodyLimit = bodyLimit({ maxSize: MESSAGING_ROUTE_BODY_LIMIT, onError: bodyTooLarge });
   const deleteBodyLimit = bodyLimit({ maxSize: MESSAGING_DELETE_BODY_LIMIT, onError: bodyTooLarge });
   const appserviceBodyLimit = bodyLimit({ maxSize: MESSAGING_APP_SERVICE_BODY_LIMIT, onError: bodyTooLarge });
+  const hermesReplayCache = createHermesCapabilityReplayCache();
 
   app.get("/", (c) => c.json({ ok: true, module: "messages" }));
 
@@ -117,12 +125,13 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
         cursor: c.req.query("cursor"),
       });
       const result = await deps.repository.listConversations({ ownerId }, parsed);
+      const permissions = await deps.repository.getPermissions({ ownerId }, result.items.map((conversation) => conversation.roomId));
       return c.json({
         ...result,
-        items: await Promise.all(result.items.map(async (conversation) => ({
+        items: result.items.map((conversation) => ({
           ...conversation,
-          permissions: await deps.repository.getPermission({ ownerId }, conversation.roomId),
-        }))),
+          permissions: permissions[conversation.roomId] ?? null,
+        })),
       });
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
@@ -154,7 +163,7 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
         throw new MessagingError("unauthorized", "invalid appservice token", 401);
       }
       const networkSlug = MessagingNetworkSlugSchema.parse(c.req.param("network"));
-      const ownerId = getOwnerIdOrThrow(deps, c);
+      const ownerId = getAppserviceOwnerIdOrThrow(deps);
       const parsed = AppserviceEventsRequestSchema.parse(await c.req.json());
       let accepted = 0;
       let ignored = 0;
@@ -180,33 +189,34 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
 
   app.post("/conversations/:roomId/reply", routeBodyLimit, async (c) => {
     try {
-      const ownerId = getOwnerIdOrThrow(deps, c);
       const roomId = MatrixRoomIdSchema.parse(c.req.param("roomId"));
       const parsed = ReplyRequestSchema.parse(await c.req.json());
-      const permission = await deps.repository.getPermission({ ownerId }, roomId);
-      const allowed = Boolean(permission?.replyEnabled);
-      if (!allowed && parsed.mode === "send_if_allowed") {
-        throw new MessagingError("forbidden", "reply permission missing", 403);
+      let ownerId: string;
+      if (parsed.source === "user") {
+        ownerId = getOwnerIdOrThrow(deps, c);
+      } else {
+        const token = c.req.header("X-Matrix-OS-Hermes-Capability") ?? c.req.header("x-matrix-os-hermes-capability") ?? "";
+        const secret = deps.hermesCapabilitySecret;
+        const claims = secret ? verifyHermesCapabilityToken({
+          token,
+          secret,
+          roomId,
+          scope: HERMES_REPLY_SCOPE,
+        }) : null;
+        if (!claims || !hermesReplayCache.consume(claims)) {
+          throw new MessagingError("forbidden", "reply capability missing", 403);
+        }
+        ownerId = claims.ownerId;
       }
-      const status = allowed && parsed.mode !== "approval_required" ? "sent" : "approval_required";
-      const reply = await deps.repository.createReply({
+      const result = await deps.repository.createReplyAfterPermissionCheck({
         ownerId,
         roomId,
         source: parsed.source,
-        status,
         body: parsed.body,
-        permissionRevision: permission?.revision ?? 1,
+        mode: parsed.mode,
         clientTxnId: parsed.clientTxnId ?? `txn_${randomUUID().replaceAll("-", "")}`,
       });
-      if (status === "sent") {
-        const sent = await deps.repository.markReplySent({
-          ownerId,
-          replyId: reply.id,
-          matrixEventId: `$${reply.clientTxnId}:matrixos.local`,
-        });
-        return c.json({ replyId: sent.id, status: sent.status, matrixEventId: sent.matrixEventId }, 202);
-      }
-      return c.json({ replyId: reply.id, status: reply.status }, 202);
+      return c.json(result, 202);
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
     }

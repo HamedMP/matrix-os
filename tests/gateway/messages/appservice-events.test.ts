@@ -8,7 +8,7 @@ describe("appservice event ingestion", () => {
       .mockResolvedValueOnce({ accepted: true, effect: "stored_only" })
       .mockResolvedValueOnce({ accepted: false, effect: "ignored" });
     const repository = createRepositoryMock({ ingestBridgeEvent });
-    const app = createMessagingTestApp(repository);
+    const app = createMessagingTestApp(repository, null);
 
     const body = {
       events: [{

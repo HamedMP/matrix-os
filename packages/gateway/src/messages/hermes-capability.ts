@@ -24,7 +24,7 @@ export interface CreateHermesCapabilityTokenInput {
 export interface VerifyHermesCapabilityTokenInput {
   token: string;
   secret: string;
-  ownerId: string;
+  ownerId?: string;
   roomId: string;
   scope: HermesCapabilityScope;
   nowMs?: number;
@@ -39,10 +39,41 @@ function sign(payload: string, secret: string): string {
 }
 
 export function constantTimeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
+  const key = Buffer.alloc(32);
+  const left = createHmac("sha256", key).update(a).digest();
+  const right = createHmac("sha256", key).update(b).digest();
   return timingSafeEqual(left, right);
+}
+
+const DEFAULT_HERMES_CAPABILITY_REPLAY_CACHE_SIZE = 2_048;
+
+export interface HermesCapabilityReplayCache {
+  consume(claims: Pick<HermesCapabilityClaims, "jti" | "exp">, nowMs?: number): boolean;
+}
+
+export function createHermesCapabilityReplayCache(maxSize = DEFAULT_HERMES_CAPABILITY_REPLAY_CACHE_SIZE): HermesCapabilityReplayCache {
+  const seen = new Map<string, number>();
+  const cappedSize = Math.max(1, maxSize);
+  function prune(nowSeconds: number): void {
+    for (const [jti, exp] of seen) {
+      if (exp <= nowSeconds) seen.delete(jti);
+    }
+    while (seen.size > cappedSize) {
+      const oldest = seen.keys().next().value;
+      if (!oldest) break;
+      seen.delete(oldest);
+    }
+  }
+  return {
+    consume(claims, nowMs = Date.now()) {
+      const nowSeconds = Math.floor(nowMs / 1000);
+      prune(nowSeconds);
+      if (claims.exp <= nowSeconds || seen.has(claims.jti)) return false;
+      seen.set(claims.jti, claims.exp);
+      prune(nowSeconds);
+      return true;
+    },
+  };
 }
 
 export function createHermesCapabilityToken(input: CreateHermesCapabilityTokenInput): string {
@@ -73,9 +104,13 @@ export function verifyHermesCapabilityToken(input: VerifyHermesCapabilityTokenIn
     return null;
   }
 
+  if (typeof claims.ownerId !== "string" || claims.ownerId.length === 0) return null;
+  if (typeof claims.roomId !== "string" || typeof claims.scope !== "string") return null;
+  if (typeof claims.jti !== "string" || claims.jti.length === 0) return null;
+  if (typeof claims.exp !== "number") return null;
   const nowSeconds = Math.floor((input.nowMs ?? Date.now()) / 1000);
   if (claims.exp <= nowSeconds) return null;
-  if (claims.ownerId !== input.ownerId) return null;
+  if (input.ownerId !== undefined && claims.ownerId !== input.ownerId) return null;
   if (claims.roomId !== input.roomId) return null;
   if (claims.scope !== input.scope) return null;
   return claims;

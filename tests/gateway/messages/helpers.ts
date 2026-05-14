@@ -73,9 +73,11 @@ export function createRepositoryMock(overrides: Partial<MessagingRepository> = {
       createdAt: now,
       updatedAt: now,
     }),
+    getPermissions: vi.fn().mockResolvedValue({}),
     updatePermission: vi.fn(),
     ingestBridgeEvent: vi.fn(),
     createReply: vi.fn(),
+    createReplyAfterPermissionCheck: vi.fn(),
     markReplySending: vi.fn(),
     markReplySent: vi.fn(),
     markReplyFailed: vi.fn(),
@@ -87,15 +89,21 @@ export function createRepositoryMock(overrides: Partial<MessagingRepository> = {
   };
 }
 
-export function createMessagingTestApp(repository: MessagingRepository, resolvedOwnerId: string | null = ownerId) {
+export function createMessagingTestApp(
+  repository: MessagingRepository,
+  resolvedOwnerId: string | null = ownerId,
+  overrides: Partial<MessagingRouteDeps> = {},
+) {
   const app = new Hono();
   app.route("/api/messages", createMessagingRoutes({
     repository,
     appserviceToken: "test-appservice-token",
+    appserviceOwnerId: ownerId,
     getOwnerId: () => {
       if (!resolvedOwnerId) return "";
       return resolvedOwnerId;
     },
+    ...overrides,
   }));
   return app;
 }

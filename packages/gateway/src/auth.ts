@@ -84,6 +84,8 @@ const APP_IFRAME_PREFIXES = ["/apps/"];
 const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
+const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
+const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/onboarding", "/ws/vocal"];
 const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/];
 
@@ -166,6 +168,18 @@ export function authMiddleware(
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    // Matrix bridge/appservice callbacks and Hermes reply delivery use scoped
+    // internal tokens checked by their route handlers. Bypass bearer auth only
+    // for those token-bearing paths, while still rate-limiting failed attempts.
+    const hasHermesReplyToken = Boolean(c.req.header("X-Matrix-OS-Hermes-Capability"));
+    if (normalizedPath.startsWith(MESSAGE_APPSERVICE_PREFIX) || (MESSAGE_HERMES_REPLY_PATH.test(normalizedPath) && hasHermesReplyToken)) {
+      const ip = getClientIp(c);
+      if (!webhookRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
       return nextWithReady(c, next);
     }
 
