@@ -98,9 +98,9 @@ describe('customer VPS host bundle', () => {
     expect(updater).toContain('/opt/matrix/app/.update-version');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
-    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*');
+    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|<version>]');
+    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|v<version>|main-<build>]');
   });
 
   it('sync agent replaces the app tree with root permissions', () => {

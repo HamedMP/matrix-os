@@ -6,6 +6,7 @@ import {
   checkForSystemUpdate,
   compareHostBundleVersions,
   isAutoApplyUpdate,
+  listSystemReleases,
   parseUpdateChannel,
   parseInternalUpgradeTarget,
   parseUpdateVersion,
@@ -154,6 +155,28 @@ describe("system update checks", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
+
+  it("lists releases for the selected channel from the platform", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      generatedAt: "2026-05-14T00:00:00.000Z",
+      releases: [
+        { version: "main-new", channel: "dev", gitCommit: "new-sha" },
+        { version: "main-old", channel: "dev", gitCommit: "old-sha" },
+      ],
+    })));
+
+    const result = await listSystemReleases({
+      platformUrl: "https://app.matrix-os.com",
+      channel: "dev",
+      fetchImpl,
+    });
+
+    expect(result.releases.map((release) => release.version)).toEqual(["main-new", "main-old"]);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/system-bundles/releases?channel=dev",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
 });
 
 describe("two-lane update severity", () => {
@@ -237,6 +260,30 @@ describe("system update start", () => {
       expect(spawnImpl).toHaveBeenCalledWith(
         "sudo",
         ["-n", updateCommand, "stable"],
+        expect.objectContaining({ detached: true, stdio: "ignore" }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("starts the local VPS updater with an explicit version for downgrades", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "matrix-update-"));
+    const updateCommand = join(dir, "matrix-update");
+    writeFileSync(updateCommand, "#!/bin/sh\n", { mode: 0o755 });
+    const spawnImpl = vi.fn().mockReturnValue({ unref: vi.fn() });
+
+    try {
+      const result = await startSystemUpdate({
+        target: { type: "version", value: "v2026.05.12-1" },
+        updateCommand,
+        spawnImpl,
+      });
+
+      expect(result).toEqual({ ok: true, status: "started" });
+      expect(spawnImpl).toHaveBeenCalledWith(
+        "sudo",
+        ["-n", updateCommand, "v2026.05.12-1"],
         expect.objectContaining({ detached: true, stdio: "ignore" }),
       );
     } finally {
