@@ -45,7 +45,7 @@ interface SetupOptions {
   linear: {
     teams: Array<{ id: string; key: string; name: string }>;
     projects: Array<{ id: string; name: string; slug?: string; teamIds: string[] }>;
-    users: Array<{ id: string; name: string; displayName?: string; email?: string; active?: boolean }>;
+    users: Array<{ id: string; name: string; displayName?: string; active?: boolean }>;
   };
 }
 
@@ -253,6 +253,7 @@ export default function App() {
 
   const loadSetupOptions = useCallback(async () => {
     setSetupLoading(true);
+    setError(null);
     try {
       const options = await fetchJson<SetupOptions>("/api/symphony/setup-options");
       setSetupOptions(options);
@@ -544,7 +545,7 @@ export default function App() {
                 <div className="max-h-44 space-y-2 overflow-auto rounded-md border bg-white p-2">
                   {(setupOptions?.linear.users ?? []).length === 0 ? (
                     <div className="px-1 py-2 text-muted-foreground">{setupLoading ? "Loading members..." : "Any matching assignee"}</div>
-                  ) : setupOptions!.linear.users.map((user) => (
+                  ) : setupOptions!.linear.users.filter((user) => user.active !== false).map((user) => (
                     <label key={user.id} className="flex items-center gap-2 rounded px-1 py-1">
                       <input type="checkbox" checked={form.assigneeIds.includes(user.id)} onChange={() => toggleAssignee(user.id)} />
                       <span className="min-w-0 flex-1 truncate">{user.displayName ?? user.name}</span>

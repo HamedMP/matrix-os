@@ -123,7 +123,6 @@ export interface LinearUserOption {
   id: string;
   name: string;
   displayName?: string;
-  email?: string;
   active?: boolean;
 }
 

@@ -19,9 +19,10 @@ describe("Symphony Linear source", () => {
       expect(init.headers).toMatchObject({ Authorization: "lin_api_secret" });
       const body = JSON.parse(String(init.body));
       expect(body.query).toContain("MatrixSymphonySetupOptions");
+      expect(body.query).not.toContain("email");
       return new Response(JSON.stringify({
         data: {
-          teams: { nodes: [{ id: "team_123", key: "MAT", name: "Matrix" }] },
+          teams: { nodes: [{ id: "team_123", key: "MAT", name: "Matrix" }], pageInfo: { hasNextPage: false, endCursor: null } },
           projects: {
             nodes: [{
               id: "linear_project_1",
@@ -29,8 +30,9 @@ describe("Symphony Linear source", () => {
               slugId: "matrix-os",
               teams: { nodes: [{ id: "team_123", key: "MAT", name: "Matrix" }] },
             }],
+            pageInfo: { hasNextPage: false, endCursor: null },
           },
-          users: { nodes: [{ id: "user_1", name: "Hamed", displayName: "Hamed", email: "hamed@example.com", active: true }] },
+          users: { nodes: [{ id: "user_1", name: "Hamed", displayName: "Hamed", active: true }], pageInfo: { hasNextPage: false, endCursor: null } },
         },
       }));
     }) as unknown as typeof fetch;
@@ -41,9 +43,45 @@ describe("Symphony Linear source", () => {
     expect(result).toEqual({
       teams: [{ id: "team_123", key: "MAT", name: "Matrix" }],
       projects: [{ id: "linear_project_1", name: "Matrix OS", slug: "matrix-os", teamIds: ["team_123"] }],
-      users: [{ id: "user_1", name: "Hamed", displayName: "Hamed", email: "hamed@example.com", active: true }],
+      users: [{ id: "user_1", name: "Hamed", displayName: "Hamed", active: true }],
     });
     expect(JSON.stringify(result)).not.toContain("lin_api_secret");
+    expect(JSON.stringify(result)).not.toContain("hamed@example.com");
+  });
+
+  it("pages through Linear setup options before returning selectors", async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (body.variables.usersAfter === null) {
+        return new Response(JSON.stringify({
+          data: {
+            teams: { nodes: [{ id: "team_123", key: "MAT", name: "Matrix" }], pageInfo: { hasNextPage: false, endCursor: null } },
+            projects: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+            users: { nodes: [{ id: "user_1", name: "First" }], pageInfo: { hasNextPage: true, endCursor: "user_cursor_1" } },
+          },
+        }));
+      }
+      expect(body.variables).toMatchObject({
+        includeTeams: false,
+        includeProjects: false,
+        includeUsers: true,
+        usersAfter: "user_cursor_1",
+      });
+      return new Response(JSON.stringify({
+        data: {
+          users: { nodes: [{ id: "user_2", name: "Second" }], pageInfo: { hasNextPage: false, endCursor: null } },
+        },
+      }));
+    }) as unknown as typeof fetch;
+    const source = createLinearSource({ fetch: fetchMock });
+
+    const result = await source.discoverSetupOptions("lin_api_secret");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.users).toEqual([
+      { id: "user_1", name: "First", displayName: undefined, active: undefined },
+      { id: "user_2", name: "Second", displayName: undefined, active: undefined },
+    ]);
   });
 
   it("filters by assignee and required labels without exposing the credential", async () => {

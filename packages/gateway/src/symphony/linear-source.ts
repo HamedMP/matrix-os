@@ -17,6 +17,8 @@ export interface LinearSource {
 type FetchLike = typeof fetch;
 const MAX_LINEAR_PREVIEW_REQUESTS = 20;
 const MAX_SCAN_OFFSETS = 100;
+const LINEAR_SETUP_PAGE_SIZE = 100;
+const MAX_LINEAR_SETUP_PAGES = 50;
 
 interface LinearIssueNode {
   id?: string;
@@ -46,7 +48,10 @@ interface LinearIssuesPayload {
 
 interface LinearSetupPayload {
   data?: {
-    teams?: { nodes?: Array<{ id?: string; key?: string; name?: string }> };
+    teams?: {
+      nodes?: Array<{ id?: string; key?: string; name?: string }>;
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+    };
     projects?: {
       nodes?: Array<{
         id?: string;
@@ -54,43 +59,55 @@ interface LinearSetupPayload {
         slugId?: string | null;
         teams?: { nodes?: Array<{ id?: string; key?: string; name?: string }> };
       }>;
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
     };
-    users?: { nodes?: Array<{ id?: string; name?: string; displayName?: string | null; email?: string | null; active?: boolean }> };
+    users?: {
+      nodes?: Array<{ id?: string; name?: string; displayName?: string | null; active?: boolean }>;
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+    };
   };
   errors?: unknown[];
 }
 
-function normalizeSetupOptions(payload: LinearSetupPayload): LinearSetupOptions {
-  const teams: LinearTeamOption[] = [];
-  for (const node of payload.data?.teams?.nodes ?? []) {
-    if (!node.id || !node.key || !node.name) continue;
-    teams.push({ id: node.id, key: node.key, name: node.name });
+function normalizeSetupOptions(payloads: LinearSetupPayload[]): LinearSetupOptions {
+  const teams = new Map<string, LinearTeamOption>();
+  const projects = new Map<string, LinearProjectOption>();
+  const users = new Map<string, LinearUserOption>();
+
+  for (const payload of payloads) {
+    for (const node of payload.data?.teams?.nodes ?? []) {
+      if (!node.id || !node.key || !node.name) continue;
+      teams.set(node.id, { id: node.id, key: node.key, name: node.name });
+    }
+
+    for (const node of payload.data?.projects?.nodes ?? []) {
+      if (!node.id || !node.name) continue;
+      const teamIds = Array.from(new Set((node.teams?.nodes ?? []).map((team) => team.id).filter((id): id is string => Boolean(id))));
+      const existing = projects.get(node.id);
+      projects.set(node.id, {
+        id: node.id,
+        name: node.name,
+        slug: node.slugId ?? existing?.slug,
+        teamIds: Array.from(new Set([...(existing?.teamIds ?? []), ...teamIds])),
+      });
+    }
+
+    for (const node of payload.data?.users?.nodes ?? []) {
+      if (!node.id || !node.name) continue;
+      users.set(node.id, {
+        id: node.id,
+        name: node.name,
+        displayName: node.displayName ?? undefined,
+        active: node.active,
+      });
+    }
   }
 
-  const projects: LinearProjectOption[] = [];
-  for (const node of payload.data?.projects?.nodes ?? []) {
-    if (!node.id || !node.name) continue;
-    projects.push({
-      id: node.id,
-      name: node.name,
-      slug: node.slugId ?? undefined,
-      teamIds: Array.from(new Set((node.teams?.nodes ?? []).map((team) => team.id).filter((id): id is string => Boolean(id)))),
-    });
-  }
-
-  const users: LinearUserOption[] = [];
-  for (const node of payload.data?.users?.nodes ?? []) {
-    if (!node.id || !node.name) continue;
-    users.push({
-      id: node.id,
-      name: node.name,
-      displayName: node.displayName ?? undefined,
-      email: node.email ?? undefined,
-      active: node.active,
-    });
-  }
-
-  return { teams, projects, users };
+  return {
+    teams: Array.from(teams.values()),
+    projects: Array.from(projects.values()),
+    users: Array.from(users.values()),
+  };
 }
 
 function normalizeIssue(node: LinearIssueNode): TrackedTicket | null {
@@ -166,20 +183,31 @@ function buildIssuesQuery(input: { projectId?: string; state?: string; labelName
 }
 
 const SETUP_OPTIONS_QUERY = `
-  query MatrixSymphonySetupOptions($first: Int!) {
-    teams(first: $first) {
+  query MatrixSymphonySetupOptions(
+    $first: Int!
+    $teamsAfter: String
+    $projectsAfter: String
+    $usersAfter: String
+    $includeTeams: Boolean!
+    $includeProjects: Boolean!
+    $includeUsers: Boolean!
+  ) {
+    teams(first: $first, after: $teamsAfter) @include(if: $includeTeams) {
       nodes { id key name }
+      pageInfo { hasNextPage endCursor }
     }
-    projects(first: $first) {
+    projects(first: $first, after: $projectsAfter) @include(if: $includeProjects) {
       nodes {
         id
         name
         slugId
         teams { nodes { id key name } }
       }
+      pageInfo { hasNextPage endCursor }
     }
-    users(first: $first) {
-      nodes { id name displayName email active }
+    users(first: $first, after: $usersAfter) @include(if: $includeUsers) {
+      nodes { id name displayName active }
+      pageInfo { hasNextPage endCursor }
     }
   }
 `;
@@ -216,28 +244,66 @@ export function createLinearSource(options: {
 
   return {
     async discoverSetupOptions(credential: string): Promise<LinearSetupOptions> {
-      const response = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: {
-          "Authorization": credential,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: SETUP_OPTIONS_QUERY,
-          variables: { first: 100 },
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!response.ok) {
-        console.warn("[symphony] Linear setup discovery failed with status", response.status);
-        throw new Error("linear_setup_failed");
+      const payloads: LinearSetupPayload[] = [];
+      let teamsAfter: string | null = null;
+      let projectsAfter: string | null = null;
+      let usersAfter: string | null = null;
+      let includeTeams = true;
+      let includeProjects = true;
+      let includeUsers = true;
+
+      for (let page = 0; includeTeams || includeProjects || includeUsers; page += 1) {
+        if (page >= MAX_LINEAR_SETUP_PAGES) {
+          console.warn("[symphony] Linear setup discovery exceeded page cap");
+          throw new Error("linear_setup_failed");
+        }
+
+        const response = await fetchImpl(endpoint, {
+          method: "POST",
+          headers: {
+            "Authorization": credential,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: SETUP_OPTIONS_QUERY,
+            variables: {
+              first: LINEAR_SETUP_PAGE_SIZE,
+              teamsAfter,
+              projectsAfter,
+              usersAfter,
+              includeTeams,
+              includeProjects,
+              includeUsers,
+            },
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+          console.warn("[symphony] Linear setup discovery failed with status", response.status);
+          throw new Error("linear_setup_failed");
+        }
+        const payload = await response.json() as LinearSetupPayload;
+        if (payload.errors) {
+          console.warn("[symphony] Linear setup discovery returned GraphQL errors");
+          throw new Error("linear_setup_failed");
+        }
+        payloads.push(payload);
+
+        const teamsPage = payload.data?.teams?.pageInfo;
+        const projectsPage = payload.data?.projects?.pageInfo;
+        const usersPage = payload.data?.users?.pageInfo;
+        includeTeams = includeTeams && Boolean(teamsPage?.hasNextPage);
+        includeProjects = includeProjects && Boolean(projectsPage?.hasNextPage);
+        includeUsers = includeUsers && Boolean(usersPage?.hasNextPage);
+        teamsAfter = teamsPage?.endCursor ?? null;
+        projectsAfter = projectsPage?.endCursor ?? null;
+        usersAfter = usersPage?.endCursor ?? null;
+        if ((includeTeams && !teamsAfter) || (includeProjects && !projectsAfter) || (includeUsers && !usersAfter)) {
+          console.warn("[symphony] Linear setup discovery returned an invalid pagination cursor");
+          throw new Error("linear_setup_failed");
+        }
       }
-      const payload = await response.json() as LinearSetupPayload;
-      if (payload.errors) {
-        console.warn("[symphony] Linear setup discovery returned GraphQL errors");
-        throw new Error("linear_setup_failed");
-      }
-      return normalizeSetupOptions(payload);
+      return normalizeSetupOptions(payloads);
     },
 
     async previewTickets(rule: TicketSourceRule, credential: string, input: { limit?: number; state?: string } = {}) {

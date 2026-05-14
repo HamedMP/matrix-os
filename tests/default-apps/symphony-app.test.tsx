@@ -106,7 +106,10 @@ describe("Symphony app", () => {
           linear: {
             teams: [{ id: "team_1", key: "MAT", name: "Matrix" }],
             projects: [{ id: "linear_project_1", name: "Matrix OS", slug: "matrix-os", teamIds: ["team_1"] }],
-            users: [{ id: "linear_user", name: "Hamed", displayName: "Hamed", active: true }],
+            users: [
+              { id: "linear_user", name: "Hamed", displayName: "Hamed", active: true },
+              { id: "inactive_user", name: "Former teammate", displayName: "Former teammate", active: false },
+            ],
           },
         });
       }
@@ -192,6 +195,16 @@ describe("Symphony app", () => {
       installation: { authorizedOperators: ["user_456"], pollIntervalMs: 120000 },
       rule: { teamId: "team_1", teamKey: "MAT", projectId: "linear_project_1", projectSlug: "matrix-os", assigneeIds: ["linear_user"] },
     });
+  });
+
+  it("hides inactive Linear users from the assignee selector", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Setup")[0]);
+    await waitFor(() => expect(screen.getByLabelText("Hamed")).toBeTruthy());
+
+    expect(screen.queryByLabelText("Former teammate")).toBeNull();
   });
 
   it("runs dashboard actions without shell commands or raw GraphQL", async () => {
