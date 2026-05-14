@@ -375,6 +375,9 @@ export function createMatrixSymphonyOrchestrator(options: {
       if (killFailureCode) return markRunBlockedAfterKillFailure(ownerId, run, killFailureCode, actorId);
       const updated = await options.repository.updateRun(ownerId, runId, {
         status: "stopped",
+        sessionId: undefined,
+        worktreeId: undefined,
+        worktreePath: undefined,
         lastEvent: "Run stopped",
         finishedAt: nowIso(),
       }, { allowedStatuses: ["queued", "running", "retrying", "blocked"] });
@@ -398,6 +401,9 @@ export function createMatrixSymphonyOrchestrator(options: {
       if (killFailureCode) return markRunBlockedAfterKillFailure(ownerId, run, killFailureCode, actorId);
       const updated = await options.repository.updateRun(ownerId, runId, {
         status: "queued",
+        sessionId: undefined,
+        worktreeId: undefined,
+        worktreePath: undefined,
         attempt: run.attempt + 1,
         lastEvent: "Run queued for retry",
         lastErrorCode: undefined,

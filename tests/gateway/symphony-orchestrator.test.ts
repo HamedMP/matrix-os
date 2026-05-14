@@ -568,6 +568,8 @@ describe("Matrix Symphony orchestrator", () => {
       projectSlug: "matrix-os",
       claimKey: "linear:issue_1",
       sessionId: "sess_existing",
+      worktreeId: "wt_existing",
+      worktreePath: "/repo/wt-existing",
       lastEvent: "Agent session started",
       updatedAt: "2026-05-13T00:00:00.000Z",
     }];
@@ -591,6 +593,9 @@ describe("Matrix Symphony orchestrator", () => {
     await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
       status: "queued",
       attempt: 2,
+      sessionId: undefined,
+      worktreeId: undefined,
+      worktreePath: undefined,
     });
   });
 
@@ -709,6 +714,43 @@ describe("Matrix Symphony orchestrator", () => {
     await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
       status: "blocked",
       lastErrorCode: "runtime_unavailable",
+    });
+  });
+
+  it("clears runtime pointers after stopping a live run", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "running",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      sessionId: "sess_existing",
+      worktreeId: "wt_existing",
+      worktreePath: "/repo/wt-existing",
+      lastEvent: "Agent session started",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: { previewTickets: vi.fn() },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn(async () => undefined) },
+    });
+
+    await expect(orchestrator.stopRun("user_123", "run_existing", "user_123")).resolves.toMatchObject({
+      status: "stopped",
+      sessionId: undefined,
+      worktreeId: undefined,
+      worktreePath: undefined,
     });
   });
 

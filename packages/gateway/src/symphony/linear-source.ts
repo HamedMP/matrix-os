@@ -122,9 +122,14 @@ export function createLinearSource(options: {
       const tickets: TrackedTicket[] = [];
       let truncated = false;
 
-      for (const state of states) {
-        for (const assigneeId of assigneeIds) {
-          if (tickets.length >= limit) break;
+      for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
+        const state = states[stateIndex];
+        for (let assigneeIndex = 0; assigneeIndex < assigneeIds.length; assigneeIndex += 1) {
+          const assigneeId = assigneeIds[assigneeIndex];
+          if (tickets.length >= limit) {
+            truncated = true;
+            break;
+          }
           let after: string | null = null;
           let hasNextPage = false;
           do {
@@ -182,7 +187,7 @@ export function createLinearSource(options: {
           if (hasNextPage && tickets.length >= limit) truncated = true;
         }
       }
-      return { tickets: tickets.slice(0, limit), truncated: truncated || tickets.length >= limit };
+      return { tickets: tickets.slice(0, limit), truncated };
     },
   };
 }

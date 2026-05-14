@@ -71,6 +71,31 @@ describe("Symphony Linear source", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("does not mark an exact-limit exhaustive preview as truncated", async () => {
+    const nodes = Array.from({ length: 100 }, (_unused, index) => ({
+      id: `issue_${index}`,
+      identifier: `MAT-${index}`,
+      title: `Ticket ${index}`,
+      assignee: { id: "assignee_1" },
+      state: { name: "Todo" },
+      labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
+    }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        issues: {
+          nodes,
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    }))) as unknown as typeof fetch;
+    const source = createLinearSource({ fetch: fetchMock });
+
+    const result = await source.previewTickets(rule, "lin_api_secret", { limit: 100 });
+
+    expect(result.tickets).toHaveLength(100);
+    expect(result.truncated).toBe(false);
+  });
+
   it("pages through Linear results before applying remaining label filters", async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
