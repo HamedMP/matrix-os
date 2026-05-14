@@ -251,18 +251,18 @@
 
 **Purpose**: Document Slay parity, cloud-only differences, and run required gates.
 
-- [ ] T111 [P] Add desktop setup documentation in `docs/dev/desktop.md`
-- [ ] T112 [P] Add public desktop user docs in `www/content/docs/desktop.mdx`
-- [ ] T113 [P] Update Symphony docs for desktop assignment in `www/content/docs/symphony.mdx`
-- [ ] T114 [P] Update developer Symphony docs in `docs/dev/symphony.md`
-- [ ] T115 [P] Add Slay Zone parity map in `docs/dev/desktop-slay-parity.md`
-- [ ] T116 [P] Add desktop release documentation in `docs/dev/desktop-release.md`
-- [ ] T117 Run `bun run typecheck` from repository root
-- [ ] T118 Run `bun run check:patterns:diff` from repository root
-- [ ] T119 Run focused test suites from `specs/079-desktop-cloud-symphony/quickstart.md`
+- [X] T111 [P] Add desktop setup documentation in `docs/dev/desktop.md`
+- [X] T112 [P] Add public desktop user docs in `www/content/docs/desktop.mdx`
+- [X] T113 [P] Update Symphony docs for desktop assignment in `www/content/docs/symphony.mdx`
+- [X] T114 [P] Update developer Symphony docs in `docs/dev/symphony.md`
+- [X] T115 [P] Add Slay Zone parity map in `docs/dev/desktop-slay-parity.md`
+- [X] T116 [P] Add desktop release documentation in `docs/dev/desktop-release.md`
+- [X] T117 Run `bun run typecheck` from repository root
+- [X] T118 Run `bun run check:patterns:diff` from repository root
+- [X] T119 Run focused test suites from `specs/079-desktop-cloud-symphony/quickstart.md`
 - [ ] T120 Run desktop app smoke flow from `specs/079-desktop-cloud-symphony/quickstart.md`
-- [ ] T121 Run desktop release dry-run workflow or local equivalent and record artifact results
-- [ ] T122 Record residual gaps and validation notes in `specs/079-desktop-cloud-symphony/quickstart.md`
+- [X] T121 Run desktop release dry-run workflow or local equivalent and record artifact results
+- [X] T122 Record residual gaps and validation notes in `specs/079-desktop-cloud-symphony/quickstart.md`
 
 ---
 

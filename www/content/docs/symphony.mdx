@@ -5,10 +5,10 @@ description: Run assigned Linear tickets with Matrix-owned coding agents and wor
 
 # Symphony
 
-Symphony turns selected Linear tickets into Matrix-owned coding-agent runs. You
-choose which team, labels, states, and assignees Symphony can react to. Matrix
-creates the worktree, starts the agent session, and shows the status in one
-dashboard.
+Symphony turns selected Linear or Matrix-native tickets into Matrix-owned
+coding-agent runs. You choose which team, labels, states, and assignees Symphony
+can react to. Matrix creates the worktree, starts the cloud agent session, and
+shows the status in one dashboard.
 
 ## Set Up Linear
 
@@ -29,11 +29,15 @@ Linear token.
 ## Run Tickets
 
 After setup, Symphony previews eligible tickets. Press **Start** to let Symphony
-poll Linear and claim work.
+poll Linear and claim work, or assign a Matrix-native ticket from Workspace.
 
 For every eligible ticket, Symphony creates or reuses one Matrix worktree,
 acquires the worktree lease, starts one agent session, and records the run in
 the dashboard. Duplicate active claims for the same ticket are rejected.
+
+Matrix Desktop uses the same Symphony routes. The desktop app can show run
+status, open the related Workspace context, and observe or take over the cloud
+session, but it does not start a local coding agent.
 
 ## Operate Runs
 
@@ -49,3 +53,10 @@ shows a generic attention state while detailed errors stay in server logs.
 Repository instructions stay in `WORKFLOW.md` inside the selected Matrix
 project. Matrix stores runtime rules and credentials separately so teams can
 version coding policy without putting secrets in the repo.
+
+## Shared Boards
+
+Project owners can share ticket boards with authorized Matrix users. Shared
+board permission controls whether a teammate can read tickets or claim work with
+their Symphony runner. Removing a teammate blocks future ticket and run control
+without revealing private ticket, credential, repository, or filesystem details.

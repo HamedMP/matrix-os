@@ -21,7 +21,27 @@
 2. Run focused desktop and gateway tests:
 
    ```bash
-   bun run test tests/desktop tests/gateway/tickets.test.ts tests/gateway/symphony-orchestrator.test.ts
+   pnpm test --fileParallelism=false \
+     tests/desktop/runtime-policy.test.ts \
+     tests/desktop/navigation-policy.test.ts \
+     tests/desktop/app-launch.test.ts \
+     tests/desktop/window-state.test.ts \
+     tests/shell/desktop-app-launcher.test.tsx \
+     tests/shell/workspace-cloud-runtime.test.tsx \
+     tests/shell/unified-tickets.test.tsx \
+     tests/shell/shared-board.test.tsx \
+     tests/gateway/workspace-cloud-only.test.ts \
+     tests/gateway/workspace-desktop-contract.test.ts \
+     tests/gateway/project-workflow.test.ts \
+     tests/gateway/project-previews.test.ts \
+     tests/gateway/tickets-repository.test.ts \
+     tests/gateway/tickets-linear-sync.test.ts \
+     tests/gateway/tickets-routes.test.ts \
+     tests/gateway/symphony-ticket-assignment.test.ts \
+     tests/gateway/symphony-claim-idempotency.test.ts \
+     tests/gateway/symphony-desktop-recovery.test.ts \
+     tests/gateway/shared-board-auth.test.ts \
+     tests/gateway/shared-board-membership.test.ts
    ```
 
 3. Run typecheck and pattern checks:
@@ -94,6 +114,33 @@
    - Desktop-visible responses contain no provider secrets, raw DB errors, raw provider errors, filesystem paths, or cloud runner secrets.
    - Invalid external URLs are rejected.
    - Local-agent execution controls are absent and direct local-mode requests are rejected.
+
+## Validation Notes
+
+Latest local validation for the current stack:
+
+- `pnpm test --fileParallelism=false tests/desktop/runtime-policy.test.ts tests/desktop/navigation-policy.test.ts tests/desktop/app-launch.test.ts tests/desktop/window-state.test.ts tests/shell/desktop-app-launcher.test.tsx tests/shell/workspace-cloud-runtime.test.tsx tests/shell/unified-tickets.test.tsx tests/shell/shared-board.test.tsx tests/gateway/workspace-cloud-only.test.ts tests/gateway/workspace-desktop-contract.test.ts tests/gateway/project-workflow.test.ts tests/gateway/project-previews.test.ts tests/gateway/tickets-repository.test.ts tests/gateway/tickets-linear-sync.test.ts tests/gateway/tickets-routes.test.ts tests/gateway/symphony-ticket-assignment.test.ts tests/gateway/symphony-claim-idempotency.test.ts tests/gateway/symphony-desktop-recovery.test.ts tests/gateway/shared-board-auth.test.ts tests/gateway/shared-board-membership.test.ts`: passed.
+- `bun run typecheck`: passed.
+- `bun run check:patterns:diff`: passed with warnings only; no violations.
+- `pnpm --dir apps/desktop build`: passed.
+- `pnpm --dir apps/desktop build:linux`: passed after allowing Electron downloads
+  and adding required package metadata. Local macOS cross-host output produced
+  `Matrix Desktop-0.9.0-arm64.AppImage` and `Matrix Desktop-0.9.0-arm64.deb`;
+  validate Linux packaging again on the GitHub Linux runner before publishing.
+- `node scripts/release/desktop/write-manifest.mjs apps/desktop/dist dev`: passed
+  and wrote `desktop-release-manifest.json` with SHA-256 checksums.
+- Desktop smoke flow: not run in this headless implementation pass. Use
+  `bun run dev` plus `bun run dev:desktop` and verify steps 6-13 before marking
+  the desktop build ready for production review.
+
+## Residual Gaps
+
+- Shared board membership and authorization are implemented, but rich teammate
+  assignment controls need a dedicated UI iteration.
+- The release workflow writes manifests/checksums, but stable publishing still
+  requires live signing/notarization secret verification.
+- Slay Zone parity is workflow-oriented; automated import from Slay data is not
+  implemented.
 
 ## Stacked PR Flow
 

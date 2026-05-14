@@ -1,0 +1,66 @@
+---
+title: Matrix Desktop
+description: Use Matrix as a native desktop workbench for cloud coding, tickets, and Symphony runs.
+---
+
+# Matrix Desktop
+
+Matrix Desktop opens your Matrix shell as a native workbench. It keeps the app
+launcher, Workspace, Symphony, terminal/session views, files, settings, and
+installed apps in one desktop window.
+
+Coding agents run in your Matrix cloud runtime, not on your laptop.
+
+## What You Can Do
+
+- Open Matrix shell, Canvas/Desktop mode, and installed apps.
+- Manage cloud projects, worktrees, sessions, previews, and activity.
+- Sync Linear tickets and create Matrix-native tickets in one board.
+- Assign tickets to Symphony so Matrix starts cloud worktrees and agent sessions.
+- Observe, take over, retry, or stop cloud sessions from the desktop app.
+- Share project boards with authorized Matrix users.
+
+## Cloud-Only Agents
+
+Matrix Desktop does not start local Claude, Codex, OpenCode, or Pi processes.
+The gateway enforces cloud-only execution, and the desktop bridge exposes no
+local agent runner API.
+
+Use Workspace or Symphony to start cloud work. Matrix records the session,
+worktree, ticket, and run state so reconnecting from desktop, web, or another
+shell shows the same work.
+
+## Tickets And Symphony
+
+Workspace shows Linear and Matrix-native tickets in one surface. Each ticket
+keeps its source identity, status, priority, labels, assignments, and related
+artifacts.
+
+Symphony can claim eligible tickets, create or reuse a cloud worktree, start an
+agent session, and report run status back to Matrix. Duplicate active claims for
+the same ticket are rejected.
+
+## Shared Boards
+
+Project owners can share a board with teammates. Shared board permissions
+control who can read tickets and who can route work to Symphony. Removing a
+teammate blocks future ticket and run control without exposing private ticket,
+credential, repository, or filesystem details.
+
+## Security
+
+Desktop-visible responses never include provider tokens, Linear API keys,
+Pipedream secrets, raw database errors, raw provider errors, filesystem paths,
+or cloud runner secrets.
+
+Preview and browser URLs are checked server-side before Matrix exposes them to
+the desktop app.
+
+## Current Limitations
+
+- Shared board membership exists, but richer teammate assignment controls are
+  still being expanded.
+- Desktop release automation is in place, with production signing and
+  notarization expected before stable publication.
+- Automated Slay data import is not included; Matrix provides workflow mapping
+  and migration guidance first.
