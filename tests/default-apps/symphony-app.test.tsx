@@ -50,7 +50,7 @@ describe("Symphony app", () => {
             projectSlug: "matrix-os",
             enabled: false,
             credentialConfigured: false,
-            pollIntervalMs: 30000,
+            pollIntervalMs: 120000,
             maxConcurrentAgents: 3,
             defaultAgent: "codex",
             authorizedOperators: ["user_456"],
@@ -145,7 +145,7 @@ describe("Symphony app", () => {
     expect(configCall).toBeTruthy();
     expect(String(configCall?.init?.body)).not.toContain("lin_api_secret");
     expect(JSON.parse(String(configCall?.init?.body))).toMatchObject({
-      installation: { authorizedOperators: ["user_456"] },
+      installation: { authorizedOperators: ["user_456"], pollIntervalMs: 120000 },
       rule: { projectId: "linear_project_1", projectSlug: "matrix-os" },
     });
   });

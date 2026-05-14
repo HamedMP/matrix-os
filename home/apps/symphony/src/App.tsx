@@ -202,7 +202,7 @@ export default function App() {
         body: JSON.stringify({
           installation: {
             projectSlug: form.projectSlug,
-            pollIntervalMs: 30_000,
+            pollIntervalMs: config?.installation?.pollIntervalMs ?? 30_000,
             maxConcurrentAgents: Number(form.maxConcurrentAgents),
             defaultAgent: form.defaultAgent,
             authorizedOperators: config?.installation?.authorizedOperators ?? [],
