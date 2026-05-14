@@ -158,6 +158,15 @@ bun run typecheck
 bun run test
 ```
 
+Native Expo Go smoke validation on 2026-05-14:
+
+```bash
+export EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=<clerk-publishable-key>
+pnpm --dir apps/mobile exec expo start --tunnel --clear
+```
+
+Result: the Expo Go crash path was traced to SDK 54 native package drift and missing mobile auth configuration. `react-native-worklets` is pinned to `0.5.1`, `react-native-webview` is pinned to `13.15.0`, and the root mobile layout now passes `publishableKey` to `ClerkProvider` or shows a safe setup screen instead of throwing. `pnpm --dir apps/mobile exec tsc --noEmit`, the focused native mobile Jest slice, and `pnpm --dir apps/mobile exec expo export --platform ios --clear` passed after the fix. Expo Go still warns that remote push notifications from `expo-notifications` require a development build; that is expected and does not block launcher, chat, terminal, or runtime-app testing.
+
 ## Manual Mobile Checks
 
 1. Open Matrix on a phone-sized viewport after sign-in.

@@ -25,6 +25,10 @@ import { colors, fonts } from "@/lib/theme";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+const clerkPublishableKey =
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 const tokenCache = {
   async getToken(key: string) {
     return SecureStore.getItemAsync(key);
@@ -106,10 +110,26 @@ export default function RootLayout() {
     );
   }
 
+  if (!clerkPublishableKey) {
+    return <MissingClerkConfigScreen />;
+  }
+
   return (
-    <ClerkProvider tokenCache={tokenCache}>
+    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
       <GatewayShell />
     </ClerkProvider>
+  );
+}
+
+function MissingClerkConfigScreen() {
+  return (
+    <View style={styles.loadingContainer}>
+      <Text style={styles.loadingTitle}>Matrix OS</Text>
+      <Text style={styles.configTitle}>Missing mobile auth config</Text>
+      <Text style={styles.configBody}>
+        Set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY before starting Expo.
+      </Text>
+    </View>
   );
 }
 
@@ -296,5 +316,19 @@ const styles = StyleSheet.create({
   },
   loadingSpinner: {
     marginTop: 24,
+  },
+  configTitle: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 16,
+    color: colors.light.foreground,
+    marginTop: 16,
+  },
+  configBody: {
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+    marginTop: 8,
+    maxWidth: 300,
+    textAlign: "center",
   },
 });
