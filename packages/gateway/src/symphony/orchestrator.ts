@@ -18,6 +18,7 @@ type WorktreeManager = Pick<ReturnType<typeof createWorktreeManager>, "createWor
 type AgentSessionManager = Pick<ReturnType<typeof createAgentSessionManager>, "startSession" | "killSession">;
 
 const RETRYABLE_RUN_STATUSES: SymphonyRun["status"][] = ["queued", "running", "retrying", "blocked", "failed", "stopped"];
+const RETRYABLE_RUN_STATUSES_WITHOUT_RUNNING: SymphonyRun["status"][] = RETRYABLE_RUN_STATUSES.filter((status) => status !== "running");
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -270,14 +271,22 @@ export function createMatrixSymphonyOrchestrator(options: {
       return { matchedTickets: 0, dispatched: 0, skipped: 0 };
     }
     const preview = await options.linearSource.previewTickets(rule, credential, { limit: 100 });
-    const activeRuns = await options.repository.listRuns(ownerId, { status: "running", limit: 100 });
+    const latestSnapshot = await options.repository.getSnapshot(ownerId);
+    if (!latestSnapshot.installation?.enabled) {
+      return { matchedTickets: preview.tickets.length, dispatched: 0, skipped: preview.tickets.length };
+    }
+    const [activeRuns, blockedRuns] = await Promise.all([
+      options.repository.listRuns(ownerId, { status: "running", limit: 100 }),
+      options.repository.listRuns(ownerId, { status: "blocked", limit: 100 }),
+    ]);
+    const blockedLiveRuns = blockedRuns.filter((run) => Boolean(run.sessionId));
     const eligibleTickets = preview.tickets.filter((ticket) => shouldDispatch(ticket, rule));
     const eligibleClaimKeys = new Set(eligibleTickets.map((ticket) => claimKey(ticket)));
     if (!preview.truncated) await reconcileIneligibleRunningRuns(ownerId, installation, activeRuns, eligibleClaimKeys);
     const countedRunning = preview.truncated
       ? activeRuns.length
       : activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
-    const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - countedRunning);
+    const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - countedRunning - blockedLiveRuns.length);
     let dispatched = 0;
     for (const ticket of preview.tickets) {
       if (dispatched >= capacity) break;
@@ -393,7 +402,7 @@ export function createMatrixSymphonyOrchestrator(options: {
         lastEvent: "Run queued for retry",
         lastErrorCode: undefined,
         nextRetryAt: undefined,
-      }, { allowedStatuses: RETRYABLE_RUN_STATUSES });
+      }, { allowedStatuses: run.sessionId ? RETRYABLE_RUN_STATUSES : RETRYABLE_RUN_STATUSES_WITHOUT_RUNNING });
       if (!updated) return await options.repository.getRun(ownerId, runId);
       await append(ownerId, {
         installationId: run.installationId,

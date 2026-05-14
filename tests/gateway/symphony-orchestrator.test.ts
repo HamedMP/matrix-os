@@ -268,6 +268,80 @@ describe("Matrix Symphony orchestrator", () => {
     expect(linearSource.previewTickets).toHaveBeenCalledTimes(1);
   });
 
+  it("does not dispatch when Symphony is stopped during an in-flight poll", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    let snapshots = 0;
+    vi.mocked(repository.getSnapshot).mockImplementation(async () => {
+      snapshots += 1;
+      return {
+        ...structuredClone(baseSnapshot),
+        installation: { ...baseSnapshot.installation!, enabled: snapshots === 1 },
+        runs: [],
+      };
+    });
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: "wt_late", path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.poll("user_123")).resolves.toMatchObject({ dispatched: 0, skipped: 1 });
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+  });
+
+  it("counts blocked live sessions against dispatch capacity", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.installation = { ...snapshot.installation!, maxConcurrentAgents: 1 };
+    snapshot.runs = [{
+      id: "run_blocked",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_0",
+      ticketIdentifier: "MAT-0",
+      ticketTitle: "Blocked live",
+      status: "blocked",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_0",
+      sessionId: "sess_blocked",
+      lastEvent: "Session could not be stopped",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: "wt_next", path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.poll("user_123")).resolves.toMatchObject({ dispatched: 0 });
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+  });
+
   it("dispatches queued retry claims instead of leaving them inert", async () => {
     const snapshot = structuredClone(baseSnapshot);
     snapshot.runs = [{
@@ -556,6 +630,48 @@ describe("Matrix Symphony orchestrator", () => {
       expect(agentSessionManager.killSession).not.toHaveBeenCalled();
       expect(repository.updateRun).not.toHaveBeenCalled();
     }
+  });
+
+  it("does not requeue a queued run that becomes running during retry", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "queued",
+      attempt: 1,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      lastEvent: "Queued",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const originalUpdateRun = vi.mocked(repository.updateRun).getMockImplementation();
+    if (!originalUpdateRun) throw new Error("missing updateRun mock implementation");
+    vi.mocked(repository.updateRun).mockImplementation(async (ownerId, runId, patch, options) => {
+      if (patch.status === "queued") {
+        await originalUpdateRun(ownerId, runId, { status: "running", sessionId: "sess_concurrent", lastEvent: "Agent session started" });
+      }
+      return originalUpdateRun(ownerId, runId, patch, options);
+    });
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: { previewTickets: vi.fn() },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.retryRun("user_123", "run_existing", "user_123")).resolves.toMatchObject({
+      status: "running",
+      sessionId: "sess_concurrent",
+    });
+
+    expect(repository.appendEvent).not.toHaveBeenCalled();
   });
 
   it("keeps a stopped run in attention state when session kill fails", async () => {
