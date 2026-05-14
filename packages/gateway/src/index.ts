@@ -99,6 +99,12 @@ export { createSymphonyRunner, SymphonyConfigSchema, SymphonyConfigUpdateSchema,
 export type { SymphonyConfig, SymphonyConfigUpdate, SymphonyStatus, SymphonyStartResult } from "./symphony-runner.js";
 export { createSymphonyRoutes } from "./symphony-routes.js";
 export * from "./symphony/index.js";
+export { DesktopRuntimePolicySchema } from "./desktop/contracts.js";
+export type { DesktopRuntimePolicyResponse } from "./desktop/contracts.js";
+export { createDesktopRoutes } from "./desktop/routes.js";
+export type { DesktopRouteDeps } from "./desktop/routes.js";
+export { assertCloudAgentRuntime, createGatewayDesktopRuntimePolicy } from "./desktop/runtime-policy.js";
+export type { AgentRuntimeRequest, GatewayDesktopRuntimePolicyInput } from "./desktop/runtime-policy.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";

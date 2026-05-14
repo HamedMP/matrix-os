@@ -1,0 +1,23 @@
+{
+  "name": "@matrix-os/desktop",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "pnpm run typecheck && electron-vite build",
+    "build:mac": "pnpm run build && electron-builder --mac --publish never",
+    "build:linux": "pnpm run build && electron-builder --linux --publish never",
+    "build:win": "pnpm run build && electron-builder --win --publish never",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "electron": "^41.0.3",
+    "electron-builder": "~25.1.8",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.6"
+  }
+}

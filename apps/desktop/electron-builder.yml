@@ -1,0 +1,62 @@
+appId: com.matrixos.desktop
+productName: Matrix Desktop
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**/*
+  - package.json
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{README.md,CHANGELOG.md,tsconfig.json,tsconfig.node.json}"
+  - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+
+asar: true
+npmRebuild: true
+nativeRebuilder: sequential
+
+mac:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  executableName: matrix-desktop
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+
+nsis:
+  artifactName: ${productName}-setup-${version}-${arch}.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+
+linux:
+  executableName: matrix-desktop
+  maintainer: Matrix OS
+  category: Development
+  target:
+    - AppImage
+    - deb
+
+deb:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.${ext}

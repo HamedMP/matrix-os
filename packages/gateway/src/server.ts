@@ -134,6 +134,7 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { createDesktopRoutes } from "./desktop/routes.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -1270,6 +1271,13 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api/desktop", createDesktopRoutes({
+    instance: {
+      shellUrl: process.env.SHELL_ORIGIN ?? "http://localhost:3000",
+      gatewayUrl: process.env.GATEWAY_ORIGIN ?? `http://localhost:${port}`,
+      version: process.env.MATRIX_BUILD_SHA ?? "dev",
+    },
+  }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
