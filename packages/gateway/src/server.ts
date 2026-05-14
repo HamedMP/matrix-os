@@ -135,6 +135,8 @@ import {
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { createDesktopRoutes } from "./desktop/routes.js";
+import { createWorkflowRoutes } from "./workflow/routes.js";
+import { createFileWorkflowRepository } from "./workflow/repository.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -1277,6 +1279,10 @@ export async function createGateway(config: GatewayConfig) {
       gatewayUrl: process.env.GATEWAY_ORIGIN ?? `http://localhost:${port}`,
       version: process.env.MATRIX_BUILD_SHA ?? "dev",
     },
+  }));
+  app.route("/api/projects", createWorkflowRoutes({
+    repository: createFileWorkflowRepository({ homePath }),
+    codexReadiness: async () => ({ status: process.env.CODEX_AUTH_TOKEN ? "valid" : "unknown" }),
   }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,

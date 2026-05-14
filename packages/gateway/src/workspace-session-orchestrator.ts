@@ -38,6 +38,7 @@ export interface StartWorkspaceSessionRequest {
   kind: "shell" | "agent";
   agent?: SupportedAgent;
   prompt?: string;
+  runtimeMode?: "cloud";
   runtimePreference?: "zellij";
   adminSandboxOverride?: boolean;
 }

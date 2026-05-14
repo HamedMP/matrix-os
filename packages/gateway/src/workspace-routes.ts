@@ -20,7 +20,7 @@ import { createPreviewManager } from "./preview-manager.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
-import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import { createWorkspaceSessionOrchestrator, type StartWorkspaceSessionRequest, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
 import { requestHasBody } from "./http-body.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
@@ -84,6 +84,7 @@ const StartSessionSchema = z.object({
   kind: z.enum(["shell", "agent"]),
   agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
   prompt: PromptContentSchema.optional(),
+  runtimeMode: z.enum(["cloud", "local"]).optional(),
   runtimePreference: z.enum(["zellij"]).optional(),
   adminSandboxOverride: z.boolean().optional(),
 });
@@ -405,15 +406,22 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/sessions", limited, async (c) => {
     const body = await parseJson(c, StartSessionSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    if (body.value.runtimeMode === "local") {
+      return c.json(errorBody("cloud_runtime_required", "Cloud agent runtime required"), 400);
+    }
     let ownerScope: OwnerScope;
     try {
       ownerScope = getOwnerScope(c);
     } catch (err: unknown) {
       return principalError(c, err);
     }
+    const request: StartWorkspaceSessionRequest = {
+      ...body.value,
+      runtimeMode: body.value.runtimeMode === "cloud" ? "cloud" : undefined,
+    };
     const result = await sessionOrchestrator.startSession({
       ownerScope,
-      request: body.value,
+      request,
     });
     if (!result.ok) {
       if ("sandboxStatus" in result) {

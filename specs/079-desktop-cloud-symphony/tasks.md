@@ -84,25 +84,25 @@
 
 ### Tests for User Story 2
 
-- [ ] T034 [P] [US2] Write failing workspace cloud-only test in `tests/gateway/workspace-cloud-only.test.ts`
-- [ ] T035 [P] [US2] Write failing worktree/session desktop contract test in `tests/gateway/workspace-desktop-contract.test.ts`
-- [ ] T036 [P] [US2] Write failing workspace UI cloud runtime test in `tests/shell/workspace-cloud-runtime.test.tsx`
-- [ ] T037 [P] [US2] Write failing repository workflow setup tests in `tests/gateway/project-workflow.test.ts`
-- [ ] T038 [P] [US2] Write failing cloud preview/browser URL, SSRF, and redirect policy tests in `tests/gateway/project-previews.test.ts`
+- [X] T034 [P] [US2] Write failing workspace cloud-only test in `tests/gateway/workspace-cloud-only.test.ts`
+- [X] T035 [P] [US2] Write failing worktree/session desktop contract test in `tests/gateway/workspace-desktop-contract.test.ts`
+- [X] T036 [P] [US2] Write failing workspace UI cloud runtime test in `tests/shell/workspace-cloud-runtime.test.tsx`
+- [X] T037 [P] [US2] Write failing repository workflow setup tests in `tests/gateway/project-workflow.test.ts`
+- [X] T038 [P] [US2] Write failing cloud preview/browser URL, SSRF, and redirect policy tests in `tests/gateway/project-previews.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Extend workspace session request schemas with cloud-only policy checks in `packages/gateway/src/workspace-routes.ts`
-- [ ] T040 [US2] Add cloud runtime policy enforcement to `packages/gateway/src/workspace-session-orchestrator.ts`
-- [ ] T041 [US2] Add safe cloud session status projection in `packages/gateway/src/workspace-event-publisher.ts`
-- [ ] T042 [US2] Update workspace UI to show cloud runtime state in `shell/src/components/workspace/WorkspaceApp.tsx`
-- [ ] T043 [US2] Add cloud session attach/observe controls in `shell/src/components/workspace/WorkspaceApp.tsx`
-- [ ] T044 [US2] Add disconnected/reconnecting cloud state handling in `shell/src/components/ConnectionIndicator.tsx`
-- [ ] T045 [US2] Create project workflow contracts in `packages/gateway/src/workflow/contracts.ts`
-- [ ] T046 [US2] Create project workflow repository/service in `packages/gateway/src/workflow/repository.ts`
-- [ ] T047 [US2] Create project workflow routes in `packages/gateway/src/workflow/routes.ts`
-- [ ] T048 [US2] Add preview/browser URL policy, SSRF filtering, redirect validation, timeouts, and sanitized preview refs in `packages/gateway/src/workflow/preview-policy.ts`
-- [ ] T049 [US2] Add workflow setup UI to `shell/src/components/workspace/WorkspaceApp.tsx`
+- [X] T039 [US2] Extend workspace session request schemas with cloud-only policy checks in `packages/gateway/src/workspace-routes.ts`
+- [X] T040 [US2] Add cloud runtime policy enforcement to `packages/gateway/src/workspace-session-orchestrator.ts`
+- [X] T041 [US2] Add safe cloud session status projection in `packages/gateway/src/workspace-event-publisher.ts`
+- [X] T042 [US2] Update workspace UI to show cloud runtime state in `shell/src/components/workspace/WorkspaceApp.tsx`
+- [X] T043 [US2] Add cloud session attach/observe controls in `shell/src/components/workspace/WorkspaceApp.tsx`
+- [X] T044 [US2] Add disconnected/reconnecting cloud state handling in `shell/src/components/ConnectionIndicator.tsx`
+- [X] T045 [US2] Create project workflow contracts in `packages/gateway/src/workflow/contracts.ts`
+- [X] T046 [US2] Create project workflow repository/service in `packages/gateway/src/workflow/repository.ts`
+- [X] T047 [US2] Create project workflow routes in `packages/gateway/src/workflow/routes.ts`
+- [X] T048 [US2] Add preview/browser URL policy, SSRF filtering, redirect validation, timeouts, and sanitized preview refs in `packages/gateway/src/workflow/preview-policy.ts`
+- [X] T049 [US2] Add workflow setup UI to `shell/src/components/workspace/WorkspaceApp.tsx`
 
 **Checkpoint**: Cloud development workbench is usable without local coding-agent binaries.
 

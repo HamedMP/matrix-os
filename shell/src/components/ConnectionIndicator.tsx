@@ -3,8 +3,15 @@
 import { useConnectionHealth } from "@/hooks/useConnectionHealth";
 import { manualReconnect } from "@/hooks/useSocket";
 
+export function connectionIndicatorCopy(state: "connected" | "reconnecting" | "disconnected"): string | null {
+  if (state === "connected") return null;
+  if (state === "reconnecting") return "Cloud runtime reconnecting...";
+  return "Cloud runtime disconnected";
+}
+
 export function ConnectionIndicator() {
   const state = useConnectionHealth((s) => s.state);
+  const copy = connectionIndicatorCopy(state);
 
   if (state === "connected") return null;
 
@@ -15,7 +22,7 @@ export function ConnectionIndicator() {
         title="Reconnecting to server..."
       >
         <span className="size-2 rounded-full bg-yellow-500 animate-pulse" />
-        Reconnecting...
+        {copy}
       </div>
     );
   }
@@ -27,7 +34,7 @@ export function ConnectionIndicator() {
       title="Connection lost. Click to reconnect."
     >
       <span className="size-2 rounded-full bg-red-500" />
-      Disconnected
+      {copy}
     </button>
   );
 }

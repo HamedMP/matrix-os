@@ -27,4 +27,13 @@ describe("ConnectionHealth store", () => {
     useConnectionHealth.setState({ state: "reconnecting" });
     expect(useConnectionHealth.getState().state).toBe("reconnecting");
   });
+
+  it("uses cloud-runtime copy for reconnect states", async () => {
+    const { connectionIndicatorCopy } = await import(
+      "../../shell/src/components/ConnectionIndicator.js"
+    );
+    expect(connectionIndicatorCopy("connected")).toBeNull();
+    expect(connectionIndicatorCopy("reconnecting")).toBe("Cloud runtime reconnecting...");
+    expect(connectionIndicatorCopy("disconnected")).toBe("Cloud runtime disconnected");
+  });
 });

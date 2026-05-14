@@ -13,6 +13,49 @@ type PublishFailure = {
   error: WorkspaceError;
 };
 
+export interface SafeCloudSessionProjection {
+  id?: string;
+  kind?: string;
+  agent?: string;
+  projectSlug?: string;
+  taskId?: string;
+  worktreeId?: string;
+  pr?: number;
+  cloudRuntime: {
+    mode: "cloud";
+    status?: string;
+    type?: string;
+  };
+  attach: {
+    observe: boolean;
+    takeOver: boolean;
+  };
+}
+
+export function createSafeCloudSessionProjection(session: Pick<
+  WorkspaceSessionView,
+  "id" | "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "runtime"
+>): SafeCloudSessionProjection {
+  return {
+    id: session.id,
+    kind: session.kind,
+    agent: session.agent,
+    projectSlug: session.projectSlug,
+    taskId: session.taskId,
+    worktreeId: session.worktreeId,
+    pr: session.pr,
+    cloudRuntime: {
+      mode: "cloud",
+      status: session.runtime.status,
+      type: session.runtime.type,
+    },
+    attach: {
+      observe: true,
+      takeOver: true,
+    },
+  };
+}
+
 function isPublishFailure(result: unknown): result is PublishFailure {
   return typeof result === "object" &&
     result !== null &&

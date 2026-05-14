@@ -33,6 +33,7 @@ interface WorkspaceSession {
   pr?: number;
   agent?: string;
   runtime?: { status?: string };
+  cloudRuntime?: { mode?: string; status?: string; type?: string };
   nativeAttachCommand?: string[];
 }
 
@@ -60,6 +61,19 @@ interface WorkspaceEvent {
   id?: string;
   type?: string;
   createdAt?: string;
+}
+
+interface WorkspaceWorkflow {
+  setupConfigured?: boolean;
+  liveConfigured?: boolean;
+  validationConfigured?: boolean;
+  allowedPreviewPorts?: number[];
+  codexRequired?: boolean;
+}
+
+interface CodexReadiness {
+  status?: string;
+  lastCheckedAt?: string;
 }
 
 interface WorkspaceAppProps {
@@ -111,6 +125,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [worktrees, setWorktrees] = useState<WorkspaceWorktree[]>([]);
   const [previews, setPreviews] = useState<WorkspacePreview[]>([]);
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
+  const [workflow, setWorkflow] = useState<WorkspaceWorkflow | null>(null);
+  const [codex, setCodex] = useState<CodexReadiness | null>(null);
   const [attachMessage, setAttachMessage] = useState("");
   const [sessionSearch, setSessionSearch] = useState("");
   const [newProjectUrl, setNewProjectUrl] = useState("");
@@ -121,9 +137,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentMessage, setAgentMessage] = useState("");
   const [worktreeMessage, setWorktreeMessage] = useState("");
+  const [workflowSetupCommand, setWorkflowSetupCommand] = useState("");
+  const [workflowLiveCommand, setWorkflowLiveCommand] = useState("");
+  const [workflowPorts, setWorkflowPorts] = useState("");
+  const [workflowMessage, setWorkflowMessage] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingWorktree, setCreatingWorktree] = useState(false);
   const [startingAgent, setStartingAgent] = useState(false);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [error, setError] = useState("");
 
   const selectedProject = useMemo(
@@ -151,13 +172,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     if (!projectSlug) return;
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
-      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData] = await Promise.all([
+      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData, workflowData] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
         fetchJson<{ sessions: WorkspaceSession[] }>(`/api/sessions?projectSlug=${encodedSlug}&limit=100`),
         fetchJson<{ reviews: WorkspaceReview[] }>(`/api/reviews?projectSlug=${encodedSlug}&limit=20`),
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
+        fetchJson<{ workflow?: WorkspaceWorkflow; codex?: CodexReadiness }>(`/api/projects/${encodedSlug}/workflow`),
       ]);
       if (activeSlugRef.current !== projectSlug) return;
       setTasks(taskData.tasks ?? []);
@@ -166,6 +188,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setWorktrees(worktreeData.worktrees ?? []);
       setPreviews(previewData.previews ?? []);
       setEvents(eventData.events ?? []);
+      setWorkflow(workflowData.workflow ?? null);
+      setCodex(workflowData.codex ?? null);
       setError("");
     } catch (err: unknown) {
       if (activeSlugRef.current !== projectSlug) return;
@@ -189,6 +213,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setWorktreeMessage("");
     setCreatingWorktree(false);
     setStartingAgent(false);
+    setWorkflowMessage("");
   }, [activeSlug]);
 
   useEffect(() => {
@@ -238,6 +263,43 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     });
     await loadProjectDetail(activeSlug);
   }, [activeSlug, loadProjectDetail]);
+
+  const saveWorkflow = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSlug) return;
+    const setupCommand = workflowSetupCommand.trim();
+    const liveCommand = workflowLiveCommand.trim();
+    const allowedPreviewPorts = workflowPorts
+      .split(",")
+      .map((port) => Number.parseInt(port.trim(), 10))
+      .filter((port) => Number.isInteger(port) && port > 0 && port <= 65_535);
+
+    setSavingWorkflow(true);
+    try {
+      const data = await fetchJson<{ workflow?: WorkspaceWorkflow; codex?: CodexReadiness }>(`/api/projects/${encodeURIComponent(activeSlug)}/workflow`, {
+        method: "POST",
+        body: JSON.stringify({
+          setupCommands: setupCommand ? [{ name: "Setup", command: setupCommand }] : [],
+          liveCommands: liveCommand ? [{ name: "Dev", command: liveCommand, ports: allowedPreviewPorts }] : [],
+          validationCommands: [],
+          allowedPreviewPorts,
+          codexRequired: true,
+        }),
+      });
+      if (activeSlugRef.current === activeSlug) {
+        setWorkflow(data.workflow ?? null);
+        setCodex(data.codex ?? null);
+        setWorkflowMessage("Workflow saved");
+        setError("");
+      }
+    } catch (err: unknown) {
+      if (activeSlugRef.current === activeSlug) {
+        setError(err instanceof Error ? err.message : "Workflow save failed");
+      }
+    } finally {
+      setSavingWorkflow(false);
+    }
+  }, [activeSlug, workflowLiveCommand, workflowPorts, workflowSetupCommand]);
 
   const createProject = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -512,6 +574,53 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         </main>
 
         <aside className="min-h-0 overflow-auto border-t border-border lg:border-l lg:border-t-0">
+          <WorkspacePanel title="Workflow setup" icon={<CodeIcon className="size-3.5" />}>
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Codex</span>
+                <span>{codex?.status ?? "unknown"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Setup</span>
+                <span>{workflow?.setupConfigured ? "configured" : "missing"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Preview ports</span>
+                <span>{workflow?.allowedPreviewPorts?.join(", ") || "none"}</span>
+              </div>
+              <form onSubmit={saveWorkflow} className="space-y-2 pt-2">
+                <input
+                  aria-label="Workflow setup command"
+                  value={workflowSetupCommand}
+                  onChange={(event) => setWorkflowSetupCommand(event.target.value)}
+                  placeholder="pnpm install --frozen-lockfile"
+                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+                <input
+                  aria-label="Workflow live command"
+                  value={workflowLiveCommand}
+                  onChange={(event) => setWorkflowLiveCommand(event.target.value)}
+                  placeholder="pnpm dev"
+                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+                <input
+                  aria-label="Workflow preview ports"
+                  value={workflowPorts}
+                  onChange={(event) => setWorkflowPorts(event.target.value)}
+                  placeholder="3000, 4000"
+                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                />
+                <button
+                  type="submit"
+                  disabled={savingWorkflow || !activeSlug}
+                  className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingWorkflow ? "Saving" : "Save workflow"}
+                </button>
+              </form>
+              {workflowMessage && <p className="text-muted-foreground">{workflowMessage}</p>}
+            </div>
+          </WorkspacePanel>
           <WorkspacePanel title="Sessions" icon={<PanelRightOpenIcon className="size-3.5" />}>
             <form onSubmit={startAgent} className="mb-3 space-y-2 rounded-md border border-border p-2">
               <div className="grid grid-cols-2 gap-2">
@@ -559,7 +668,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
                 className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <PlayIcon className="size-3.5" />
-                {startingAgent ? "Starting" : "Start agent"}
+                {startingAgent ? "Starting" : "Start cloud agent"}
               </button>
             </form>
             <label className="mb-2 block text-xs text-muted-foreground">
@@ -577,7 +686,10 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
                   <div className="min-w-0">
                     <div className="truncate font-medium">{session.id}</div>
                     <div className="text-muted-foreground">{session.status ?? "unknown"} · {session.agent ?? "shell"}</div>
-                    <div className="text-muted-foreground">{session.runtime?.status ?? session.status ?? "unknown"} health</div>
+                    <div className="text-muted-foreground">Cloud runtime</div>
+                    <div className="text-muted-foreground">
+                      cloud only · {session.cloudRuntime?.status ?? session.runtime?.status ?? session.status ?? "unknown"} health
+                    </div>
                   </div>
                 </div>
                 {session.nativeAttachCommand && (
