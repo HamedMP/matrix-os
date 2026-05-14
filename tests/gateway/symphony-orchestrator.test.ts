@@ -39,7 +39,8 @@ function memoryRepo(snapshot: SymphonySnapshot): SymphonyRepository {
     getRun: vi.fn(async (_ownerId, runId) => runs.get(runId) ?? null),
     findActiveRunByClaim: vi.fn(async (_ownerId, claimKey) =>
       Array.from(runs.values()).find((run) => run.claimKey === claimKey && ["queued", "running", "retrying", "blocked"].includes(run.status)) ?? null),
-    listRuns: vi.fn(async () => Array.from(runs.values())),
+    listRuns: vi.fn(async (_ownerId, input) =>
+      Array.from(runs.values()).filter((run) => !input?.status || run.status === input.status)),
     appendEvent: vi.fn(async (_ownerId, event) => ({
       id: "evt_1",
       createdAt: "2026-05-13T00:00:00.000Z",
@@ -644,6 +645,7 @@ describe("Matrix Symphony orchestrator", () => {
 
     await orchestrator.poll("user_123");
 
+    expect(repository.listRuns).toHaveBeenCalledWith("user_123", { status: "running", limit: 100 });
     expect(agentSessionManager.killSession).not.toHaveBeenCalled();
     await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
       status: "running",

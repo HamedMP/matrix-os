@@ -70,4 +70,52 @@ describe("Symphony Linear source", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
   });
+
+  it("pages through Linear results before applying remaining label filters", async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (body.variables.after === null) {
+        return new Response(JSON.stringify({
+          data: {
+            issues: {
+              nodes: [{
+                id: "issue_1",
+                identifier: "MAT-1",
+                title: "Wrong label first page",
+                assignee: { id: "assignee_1" },
+                state: { name: "Todo" },
+                labels: { nodes: [{ name: "symphony" }] },
+              }],
+              pageInfo: { hasNextPage: true, endCursor: "cursor_1" },
+            },
+          },
+        }));
+      }
+      expect(body.variables.after).toBe("cursor_1");
+      return new Response(JSON.stringify({
+        data: {
+          issues: {
+            nodes: [{
+              id: "issue_2",
+              identifier: "MAT-2",
+              title: "Eligible second page",
+              assignee: { id: "assignee_1" },
+              state: { name: "Todo" },
+              labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
+            }],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        },
+      }));
+    }) as unknown as typeof fetch;
+    const source = createLinearSource({ fetch: fetchMock });
+
+    const result = await source.previewTickets(rule, "lin_api_secret", { limit: 10 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      truncated: false,
+      tickets: [expect.objectContaining({ externalId: "issue_2", identifier: "MAT-2" })],
+    });
+  });
 });

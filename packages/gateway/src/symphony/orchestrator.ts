@@ -246,8 +246,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       return { matchedTickets: 0, dispatched: 0, skipped: 0 };
     }
     const preview = await options.linearSource.previewTickets(rule, credential, { limit: 100 });
-    const activeRuns = (await options.repository.listRuns(ownerId, { limit: 100 }))
-      .filter((run) => run.status === "running");
+    const activeRuns = await options.repository.listRuns(ownerId, { status: "running", limit: 100 });
     const eligibleTickets = preview.tickets.filter((ticket) => shouldDispatch(ticket, rule));
     const eligibleClaimKeys = new Set(eligibleTickets.map((ticket) => claimKey(ticket)));
     if (!preview.truncated) await reconcileIneligibleRunningRuns(ownerId, installation, activeRuns, eligibleClaimKeys);

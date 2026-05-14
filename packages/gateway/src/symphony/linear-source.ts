@@ -22,6 +22,16 @@ interface LinearIssueNode {
   project?: { id?: string; name?: string; slugId?: string } | null;
 }
 
+interface LinearIssuesPayload {
+  data?: {
+    issues?: {
+      nodes?: LinearIssueNode[];
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+    };
+  };
+  errors?: unknown[];
+}
+
 function normalizeIssue(node: LinearIssueNode): TrackedTicket | null {
   if (!node.id || !node.identifier || !node.title || !node.state?.name) return null;
   return {
@@ -115,53 +125,61 @@ export function createLinearSource(options: {
       for (const state of states) {
         for (const assigneeId of assigneeIds) {
           if (tickets.length >= limit) break;
-          const response = await fetchImpl(endpoint, {
-            method: "POST",
-            headers: {
-              "Authorization": credential,
-              "Content-Type": "application/json",
-            },
-          body: JSON.stringify({
-              query: buildIssuesQuery({
-                projectId: rule.projectId,
-                state,
-                labelName: labelForServer,
-                assigneeId,
-              }),
-              variables: {
-                first: Math.min(limit, 100),
-                after: null,
-                teamId: rule.teamId,
-                ...(rule.projectId ? { projectId: rule.projectId } : {}),
-                ...(state ? { state } : {}),
-                ...(labelForServer ? { labelName: labelForServer } : {}),
-                ...(assigneeId ? { assigneeId } : {}),
+          let after: string | null = null;
+          let hasNextPage = false;
+          do {
+            const response = await fetchImpl(endpoint, {
+              method: "POST",
+              headers: {
+                "Authorization": credential,
+                "Content-Type": "application/json",
               },
-            }),
-            signal: AbortSignal.timeout(timeoutMs),
-          });
-          if (!response.ok) {
-            console.warn("[symphony] Linear preview failed with status", response.status);
-            throw new Error("linear_preview_failed");
-          }
-          const payload = await response.json() as {
-            data?: { issues?: { nodes?: LinearIssueNode[]; pageInfo?: { hasNextPage?: boolean } } };
-            errors?: unknown[];
-          };
-          if (payload.errors) {
-            console.warn("[symphony] Linear preview returned GraphQL errors");
-            throw new Error("linear_preview_failed");
-          }
-          const nodes = payload.data?.issues?.nodes ?? [];
-          for (const node of nodes) {
-            const ticket = normalizeIssue(node);
-            if (!ticket) continue;
-            if (!includesAllLabels(ticket, rule.requiredLabels)) continue;
-            if (rule.assigneeIds.length > 0 && (!ticket.assigneeId || !rule.assigneeIds.includes(ticket.assigneeId))) continue;
-            tickets.push(ticket);
-            if (tickets.length >= limit) break;
-          }
-          truncated ||= Boolean(payload.data?.issues?.pageInfo?.hasNextPage);
+              body: JSON.stringify({
+                query: buildIssuesQuery({
+                  projectId: rule.projectId,
+                  state,
+                  labelName: labelForServer,
+                  assigneeId,
+                }),
+                variables: {
+                  first: Math.min(MAX_PREVIEW_TICKETS, 100),
+                  after,
+                  teamId: rule.teamId,
+                  ...(rule.projectId ? { projectId: rule.projectId } : {}),
+                  ...(state ? { state } : {}),
+                  ...(labelForServer ? { labelName: labelForServer } : {}),
+                  ...(assigneeId ? { assigneeId } : {}),
+                },
+              }),
+              signal: AbortSignal.timeout(timeoutMs),
+            });
+            if (!response.ok) {
+              console.warn("[symphony] Linear preview failed with status", response.status);
+              throw new Error("linear_preview_failed");
+            }
+            const payload = await response.json() as LinearIssuesPayload;
+            if (payload.errors) {
+              console.warn("[symphony] Linear preview returned GraphQL errors");
+              throw new Error("linear_preview_failed");
+            }
+            const nodes = payload.data?.issues?.nodes ?? [];
+            for (const node of nodes) {
+              const ticket = normalizeIssue(node);
+              if (!ticket) continue;
+              if (!includesAllLabels(ticket, rule.requiredLabels)) continue;
+              if (rule.assigneeIds.length > 0 && (!ticket.assigneeId || !rule.assigneeIds.includes(ticket.assigneeId))) continue;
+              tickets.push(ticket);
+              if (tickets.length >= limit) break;
+            }
+            const pageInfo = payload.data?.issues?.pageInfo;
+            hasNextPage = Boolean(pageInfo?.hasNextPage);
+            after = pageInfo?.endCursor ?? null;
+            if (hasNextPage && !after) {
+              truncated = true;
+              break;
+            }
+          } while (hasNextPage && after && tickets.length < limit);
+          if (hasNextPage && tickets.length >= limit) truncated = true;
         }
       }
       return { tickets: tickets.slice(0, limit), truncated: truncated || tickets.length >= limit };
