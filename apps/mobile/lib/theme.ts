@@ -4,7 +4,7 @@ export const colors = {
   light: {
     background: "#FAFAF9",
     foreground: "#1c1917",
-    card: "#FFFFFF",
+    card: "#ffffff",
     cardForeground: "#1c1917",
     primary: "#8CC7BE",
     primaryForeground: "#141614",

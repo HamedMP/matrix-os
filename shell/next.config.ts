@@ -27,8 +27,36 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
+        source: "/gateway/:path*",
+        destination: `${gatewayUrl}/:path*`,
+      },
+      {
+        source: "/api/:path*",
+        destination: `${gatewayUrl}/api/:path*`,
+      },
+      {
         source: "/icons/:path*",
         destination: `${gatewayUrl}/files/system/icons/:path*`,
+      },
+      {
+        source: "/files/:path*",
+        destination: `${gatewayUrl}/files/:path*`,
+      },
+      {
+        source: "/modules/:path*",
+        destination: `${gatewayUrl}/modules/:path*`,
+      },
+      {
+        source: "/apps/:path*",
+        destination: `${gatewayUrl}/apps/:path*`,
+      },
+      {
+        source: "/ws",
+        destination: `${gatewayUrl}/ws`,
+      },
+      {
+        source: "/ws/:path*",
+        destination: `${gatewayUrl}/ws/:path*`,
       },
     ];
   },

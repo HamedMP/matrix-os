@@ -53,6 +53,7 @@ interface ChatAppProps {
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
+  mobile?: boolean;
 }
 
 function groupConversationsByTime(conversations: ConversationMeta[]) {
@@ -91,8 +92,9 @@ export function ChatApp({
   onNewChat,
   onSwitchConversation,
   onSubmit,
+  mobile = false,
 }: ChatAppProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
   const grouped = useMemo(() => groupMessages(messages), [messages]);
 
@@ -122,11 +124,13 @@ export function ChatApp({
   const isEmpty = messages.length === 0 && !busy;
 
   return (
-    <div className="flex h-full bg-background">
+    <div className="relative flex h-full bg-background">
       {/* Sidebar */}
       <aside
-        className={`flex flex-col border-r border-border/50 bg-muted/30 transition-all duration-200 ease-out ${
-          sidebarOpen ? "w-[260px]" : "w-0 overflow-hidden"
+        className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
+          sidebarOpen
+            ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
+            : "w-0 overflow-hidden"
         }`}
       >
         <div className="flex items-center justify-between p-3 pb-2">
@@ -234,11 +238,11 @@ export function ChatApp({
 
         {/* Empty state or conversation */}
         {isEmpty ? (
-          <EmptyState onSubmit={onSubmit} connected={connected} suggestions={suggestions} />
+          <EmptyState onSubmit={onSubmit} connected={connected} suggestions={suggestions} mobile={mobile} />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
             <Conversation>
-              <ConversationContent className="gap-5 px-4 py-6 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
                 {grouped.map((group, i) => {
                   if (group.type === "tool_group") {
                     return <ToolCallGroup key={`tg-${i}`} tools={group.messages} />;
@@ -277,7 +281,7 @@ export function ChatApp({
             </Conversation>
 
             {/* Suggestions + Input */}
-            <div className="mx-auto w-full max-w-[720px] px-4 md:px-0 pb-4 pt-2">
+            <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
               {!busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
@@ -299,10 +303,12 @@ function EmptyState({
   onSubmit,
   connected,
   suggestions,
+  mobile,
 }: {
   onSubmit: (text: string) => void;
   connected: boolean;
   suggestions: string[];
+  mobile: boolean;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4">
@@ -315,7 +321,7 @@ function EmptyState({
         </div>
 
         {/* Input */}
-        <ChatInput connected={connected} busy={false} onSubmit={onSubmit} autoFocus />
+        <ChatInput connected={connected} busy={false} onSubmit={onSubmit} autoFocus={!mobile} />
 
         {/* Suggestions */}
         {suggestions.length > 0 && (

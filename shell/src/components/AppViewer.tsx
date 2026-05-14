@@ -32,14 +32,14 @@ function appNameFromPath(path: string): string {
 }
 
 export function extractSlug(path: string): string | null {
-  // Only treat a path as a slug-route when it targets the top-level app
-  // directory: "apps/{slug}", "apps/{slug}/", or "apps/{slug}/index.html".
-  // Nested paths like "apps/games/2048/index.html" must fall back to the
-  // legacy /files/ route -- they share a parent slug but are not runtime-
-  // managed apps, so routing them through /apps/:slug/ would serve the
-  // parent app's index.html instead of the requested file.
-  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
-  return match ? match[1] : null;
+  const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
+  if (topLevel) return topLevel[1];
+
+  // Older saved layouts used filesystem paths for nested bundled apps such as
+  // apps/games/backgammon/index.html. Those apps now have first-class runtime
+  // slugs, so route them through /apps/:slug/ instead of loading source HTML.
+  const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
+  return nestedIndex ? nestedIndex[1] : null;
 }
 
 export function shouldRenderAppIframe(path: string): boolean {

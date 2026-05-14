@@ -16,6 +16,15 @@ afterEach(async () => {
 });
 
 describe("phase 1: static + vite runtime", () => {
+  it("returns an empty websocket token response in open direct-gateway development mode", async () => {
+    const res = await gateway.app.request("/api/auth/ws-token", {
+      headers: { Authorization: `Bearer ${gateway.token}` },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ token: null, expiresAt: 0 });
+  });
+
   it("installs and serves a static app via the unified /apps/:slug/ dispatcher", async () => {
     await gateway.installAppFromFixture("calculator-static");
     const cookie = await gateway.openAppSession("calculator-static");
@@ -87,6 +96,42 @@ describe("phase 1: static + vite runtime", () => {
     });
     expect(appRes.status).toBe(200);
     expect(await appRes.text()).toContain("Calculator");
+  });
+
+  it("returns the 075 mobile session-token contract shape without cacheable credentials", async () => {
+    await gateway.installAppFromFixture("calculator-static");
+    const res = await gateway.app.request("/api/apps/calculator-static/session-token", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${gateway.token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const body = await res.json() as { token?: unknown; launchUrl?: unknown; expiresAt?: unknown };
+    expect(typeof body.token).toBe("string");
+    expect(typeof body.launchUrl).toBe("string");
+    expect(typeof body.expiresAt).toBe("number");
+    expect(body.launchUrl).toBe(`/apps/calculator-static/?session=${encodeURIComponent(body.token as string)}`);
+  });
+
+  it("returns generic safe errors for invalid mobile session-token requests", async () => {
+    const invalidRes = await gateway.app.request("/api/apps/-bad/session-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gateway.token}` },
+    });
+    expect(invalidRes.status).toBe(400);
+    expect(await invalidRes.json()).toEqual({ error: "invalid slug" });
+
+    const missingRes = await gateway.app.request("/api/apps/missing/session-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gateway.token}` },
+    });
+    expect(missingRes.status).toBe(404);
+    expect(await missingRes.json()).toEqual({ error: "not found" });
   });
 
   it("rejects replayed or cross-app mobile session tokens", async () => {

@@ -17,6 +17,29 @@ vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ mode: "dark", colors: {}, fonts: {} }),
 }));
 
+vi.mock("@/stores/terminal-settings", () => {
+  const state = {
+    themeId: "system",
+    fontSize: 13,
+    fontFamily: "JetBrains Mono",
+    ligatures: true,
+    cursorStyle: "block",
+    smoothScroll: true,
+    cursorBlink: true,
+    setThemeId: vi.fn(),
+    setFontSize: vi.fn(),
+    setFontFamily: vi.fn(),
+    setLigatures: vi.fn(),
+    setCursorStyle: vi.fn(),
+    setSmoothScroll: vi.fn(),
+    setCursorBlink: vi.fn(),
+  };
+
+  return {
+    useTerminalSettings: (selector: (value: typeof state) => unknown) => selector(state),
+  };
+});
+
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
 
 class ResizeObserverMock {
@@ -66,6 +89,18 @@ describe("TerminalApp", () => {
       type: "pane",
       sessionId: "canvas-session-123",
     });
+  });
+
+  it("keeps the active cwd visible in the mobile terminal chrome", async () => {
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("~/projects")).toBeTruthy();
+    expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
   });
 
   it("persists attached session ids in the saved layout", async () => {

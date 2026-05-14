@@ -23,6 +23,7 @@ import {
   mergeNativeAndRemoteApps,
   type MatrixAppEntry,
 } from "@/lib/apps";
+import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
 
 function AppGlyph({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: string }) {
@@ -49,7 +50,17 @@ function AppGlyph({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: strin
   );
 }
 
-function AppCard({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: string }) {
+function AppCard({
+  app,
+  gatewayUrl,
+  active,
+  onOpen,
+}: {
+  app: MatrixAppEntry;
+  gatewayUrl?: string;
+  active: boolean;
+  onOpen: (slug: string) => void;
+}) {
   const slug = getAppSlug(app);
   const nativeRoute = getNativeAppRoute(app);
   const runtimeLabel = useMemo(
@@ -61,6 +72,7 @@ function AppCard({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: string
     <Link href={(nativeRoute ?? appRuntimeHref(slug)) as any} asChild>
       <Pressable
         onPress={() => {
+          onOpen(slug);
           if (process.env.EXPO_OS === "ios") {
             Haptics.selectionAsync();
           }
@@ -141,7 +153,81 @@ function AppCard({ app, gatewayUrl }: { app: MatrixAppEntry; gatewayUrl?: string
               {runtimeLabel}
             </Text>
           ) : null}
+          {active ? (
+            <View
+              accessibilityLabel="Open"
+              style={{
+                marginTop: 6,
+                width: 8,
+                height: 8,
+                borderRadius: 999,
+                backgroundColor: colors.light.primary,
+              }}
+            />
+          ) : null}
         </View>
+      </Pressable>
+    </Link>
+  );
+}
+
+function ContinueAppCard({
+  app,
+  gatewayUrl,
+  onOpen,
+}: {
+  app: MatrixAppEntry;
+  gatewayUrl?: string;
+  onOpen: (slug: string) => void;
+}) {
+  const slug = getAppSlug(app);
+  const nativeRoute = getNativeAppRoute(app);
+
+  return (
+    <Link href={(nativeRoute ?? appRuntimeHref(slug)) as any} asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Continue ${app.name}`}
+        onPress={() => onOpen(slug)}
+        style={({ pressed }) => ({
+          marginHorizontal: spacing.lg,
+          marginBottom: spacing.md,
+          minHeight: 74,
+          borderRadius: radius.lg,
+          borderCurve: "continuous",
+          borderWidth: 1,
+          borderColor: colors.light.primary,
+          backgroundColor: colors.light.card,
+          padding: spacing.md,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.md,
+          opacity: pressed ? 0.82 : 1,
+          transform: [{ scale: pressed ? 0.98 : 1 }],
+        })}
+      >
+        <View
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 14,
+            borderCurve: "continuous",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.light.secondary,
+          }}
+        >
+          <AppGlyph app={app} gatewayUrl={gatewayUrl} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.light.primary }}>
+            Continue
+          </Text>
+          <Text numberOfLines={1} style={{ marginTop: 2, fontFamily: fonts.sansBold, fontSize: 17, color: colors.light.foreground }}>
+            {app.name}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={colors.light.primary} />
       </Pressable>
     </Link>
   );
@@ -153,6 +239,7 @@ export default function AppsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [lastActiveAppSlug, setLastActiveAppSlug] = useState<string | null>(null);
 
   const fetchApps = useCallback(async () => {
     if (!client) {
@@ -176,6 +263,28 @@ export default function AppsScreen() {
     fetchApps();
   }, [fetchApps]);
 
+  useEffect(() => {
+    loadMobileShellState()
+      .then((state) => setLastActiveAppSlug(state.lastActiveAppSlug))
+      .catch((err: unknown) => {
+        console.warn("[mobile] failed to load app open state", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  const handleOpenApp = useCallback((slug: string) => {
+    setLastActiveAppSlug(slug);
+    loadMobileShellState()
+      .then((state) => saveMobileShellState({
+        ...state,
+        mode: "app",
+        lastActiveAppSlug: slug,
+        updatedAt: new Date().toISOString(),
+      }))
+      .catch((err: unknown) => {
+        console.warn("[mobile] failed to save app open state", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
   const filteredApps = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return apps;
@@ -185,6 +294,11 @@ export default function AppsScreen() {
     });
   }, [apps, query]);
 
+  const lastActiveApp = useMemo(() => {
+    if (!lastActiveAppSlug) return null;
+    return apps.find((app) => getAppSlug(app) === lastActiveAppSlug) ?? null;
+  }, [apps, lastActiveAppSlug]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchApps();
@@ -193,9 +307,14 @@ export default function AppsScreen() {
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<MatrixAppEntry>) => (
-      <AppCard app={item} gatewayUrl={client?.httpUrl} />
+      <AppCard
+        app={item}
+        gatewayUrl={client?.httpUrl}
+        active={lastActiveAppSlug === getAppSlug(item)}
+        onOpen={handleOpenApp}
+      />
     ),
-    [client],
+    [client, handleOpenApp, lastActiveAppSlug],
   );
 
   return (
@@ -241,51 +360,56 @@ export default function AppsScreen() {
           <ActivityIndicator color={colors.light.primary} />
         </View>
       ) : (
-        <FlatList
-          data={filteredApps}
-          renderItem={renderItem}
-          keyExtractor={(item) => getAppSlug(item)}
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 112, gap: spacing.md }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
-          }
-          ListEmptyComponent={
-            <View style={{ alignItems: "center", paddingVertical: 72, paddingHorizontal: spacing.xl }}>
-              <View
-                style={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: 18,
-                  borderCurve: "continuous",
-                  backgroundColor: colors.light.card,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderWidth: 1,
-                  borderColor: colors.light.border,
-                  marginBottom: spacing.lg,
-                }}
-              >
-                <Ionicons name="apps-outline" size={36} color={colors.light.primary} />
+        <>
+          {lastActiveApp ? (
+            <ContinueAppCard app={lastActiveApp} gatewayUrl={client?.httpUrl} onOpen={handleOpenApp} />
+          ) : null}
+          <FlatList
+            data={filteredApps}
+            renderItem={renderItem}
+            keyExtractor={(item) => getAppSlug(item)}
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 112, gap: spacing.md }}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
+            }
+            ListEmptyComponent={
+              <View style={{ alignItems: "center", paddingVertical: 72, paddingHorizontal: spacing.xl }}>
+                <View
+                  style={{
+                    width: 72,
+                    height: 72,
+                    borderRadius: 18,
+                    borderCurve: "continuous",
+                    backgroundColor: colors.light.card,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderWidth: 1,
+                    borderColor: colors.light.border,
+                    marginBottom: spacing.lg,
+                  }}
+                >
+                  <Ionicons name="apps-outline" size={36} color={colors.light.primary} />
+                </View>
+                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 17, color: colors.light.foreground }}>
+                  {client ? "No apps found" : "Connecting to Matrix OS"}
+                </Text>
+                <Text
+                  style={{
+                    marginTop: spacing.sm,
+                    fontFamily: fonts.sans,
+                    fontSize: 14,
+                    lineHeight: 20,
+                    color: colors.light.mutedForeground,
+                    textAlign: "center",
+                  }}
+                >
+                  Apps returned by your VPS launcher at app.matrix-os.com show up here.
+                </Text>
               </View>
-              <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 17, color: colors.light.foreground }}>
-                {client ? "No apps found" : "Connecting to Matrix OS"}
-              </Text>
-              <Text
-                style={{
-                  marginTop: spacing.sm,
-                  fontFamily: fonts.sans,
-                  fontSize: 14,
-                  lineHeight: 20,
-                  color: colors.light.mutedForeground,
-                  textAlign: "center",
-                }}
-              >
-                Apps returned by your VPS launcher at app.matrix-os.com show up here.
-              </Text>
-            </View>
-          }
-        />
+            }
+          />
+        </>
       )}
     </View>
   );

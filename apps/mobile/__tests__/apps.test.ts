@@ -28,11 +28,28 @@ describe("mobile app helpers", () => {
     expect(getAppSlug(app({ file: "calculator.html" }))).toBe("calculator");
   });
 
+  it("normalizes slugs from gateway paths with casing, duplicate slashes, and cache params", () => {
+    expect(getAppSlug(app({
+      name: "Notes",
+      file: "/files/apps//Notes/index.html?v=abc#top",
+      path: "/files/apps//Notes/index.html?v=abc#top",
+    }))).toBe("notes");
+  });
+
+  it("falls back to a safe name slug for unsafe app paths", () => {
+    expect(getAppSlug(app({
+      name: "Internal Secrets",
+      file: "../system/secrets/index.html",
+      path: "/files/apps/../system/secrets/index.html",
+    }))).toBe("internal-secrets");
+  });
+
   it("routes known Matrix apps to native screens", () => {
     expect(getNativeAppRoute(app({ name: "Task Manager", file: "task-manager/index.html" }))).toBe(
       "/(tabs)/mission-control",
     );
     expect(getNativeAppRoute(app({ name: "Chat", file: "chat/index.html" }))).toBe("/(tabs)/chat");
+    expect(getNativeAppRoute(app({ name: "Terminal", file: "terminal/index.html" }))).toBe("/terminal");
   });
 
   it("leaves generated apps on native detail screens before browser fallback", () => {
@@ -105,18 +122,47 @@ describe("mobile app helpers", () => {
     });
   });
 
+  it("routes non-native launcher apps to the full-screen runtime surface", () => {
+    const workout = app({ name: "Workout Tracker", file: "workout/index.html" });
+
+    expect(getNativeAppRoute(workout)).toBeNull();
+    expect(appRuntimeHref(getAppSlug(workout))).toEqual({
+      pathname: "/runtime/[...slug]",
+      params: { slug: ["workout"] },
+    });
+  });
+
+  it("keeps missing generated apps on runtime routes so the screen can show a safe fallback", () => {
+    const missing = app({ name: "Missing App", file: "missing/index.html" });
+
+    expect(getNativeAppRoute(missing)).toBeNull();
+    expect(getRuntimeSlug(missing)).toBe("missing");
+  });
+
+  it("encodes normalized app runtime URLs without leaking unsafe paths", () => {
+    expect(buildGatewayAppUrl(
+      "https://app.matrix-os.com/",
+      app({ name: "Internal Secrets", file: "../system/secrets/index.html" }),
+    )).toBe("https://app.matrix-os.com/apps/internal-secrets/");
+  });
+
   it("selects useful native symbols for app cards", () => {
     expect(getAppIconName(app({ name: "Pomodoro", category: "productivity" }))).toBe("timer");
     expect(getAppIconName(app({ name: "Snake", category: "game" }))).toBe("game-controller");
+    expect(getAppIconName(app({ name: "Terminal", category: "system" }))).toBe("terminal");
   });
 
   it("keeps native Matrix apps visible when the VPS app list is empty", () => {
     const apps = mergeNativeAndRemoteApps([]);
-    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Tasks", "Settings"]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings"]);
   });
 
   it("appends remote apps after native Matrix apps", () => {
     const apps = mergeNativeAndRemoteApps([app({ name: "Workout Tracker", file: "workout/index.html" })]);
-    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Tasks", "Settings", "Workout Tracker"]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings", "Workout Tracker"]);
+  });
+
+  it("routes Canvas to the native explicit Canvas entry screen", () => {
+    expect(getNativeAppRoute(app({ name: "Canvas", slug: "canvas", file: "canvas/index.html" }))).toBe("/canvas");
   });
 });

@@ -48,6 +48,10 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
   // Auth middleware
   app.use("*", authMiddleware(TEST_TOKEN));
 
+  app.get("/api/auth/ws-token", (c) => c.json({ token: null, expiresAt: 0 }, 200, {
+    "Cache-Control": "no-store",
+  }));
+
   // Manifest API
   app.get("/api/apps/:slug/manifest", async (c) => {
     const slug = c.req.param("slug");
@@ -148,10 +152,16 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
       }
     }
     const { token, expiresAt } = mobileSessionTokens.mint(slug);
-    return c.json({
+    return new Response(JSON.stringify({
       token,
       expiresAt,
       launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
+    }), {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json; charset=UTF-8",
+      },
     });
   });
 

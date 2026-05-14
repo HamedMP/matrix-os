@@ -38,6 +38,37 @@ jest.mock("expo-clipboard", () => ({
   getStringAsync: jest.fn(() => Promise.resolve("")),
 }));
 
+class MatrixMockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  readyState = MatrixMockWebSocket.CONNECTING;
+  sent = [];
+  onopen = null;
+  onmessage = null;
+  onerror = null;
+  onclose = null;
+
+  constructor(url, protocols, options) {
+    this.url = url;
+    this.protocols = protocols;
+    this.options = options;
+  }
+
+  send(data) {
+    this.sent.push(data);
+  }
+
+  close() {
+    this.readyState = MatrixMockWebSocket.CLOSED;
+    this.onclose?.({ code: 1000, reason: "" });
+  }
+}
+
+global.WebSocket = MatrixMockWebSocket;
+
 jest.mock("expo-secure-store", () => ({
   getItemAsync: jest.fn(() => Promise.resolve(null)),
   setItemAsync: jest.fn(() => Promise.resolve()),

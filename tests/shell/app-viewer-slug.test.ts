@@ -10,11 +10,13 @@ describe("AppViewer extractSlug (spec 063 regression)", () => {
     expect(extractSlug("apps/games/index.html")).toBe("games");
   });
 
-  it("returns null for nested paths (e.g. games/2048)", () => {
-    // Nested paths must NOT route through /apps/{slug}/ — they'd hit the
-    // parent app's dispatcher and get the wrong index.html.
-    expect(extractSlug("apps/games/2048/index.html")).toBeNull();
-    expect(extractSlug("apps/games/backgammon/index.html")).toBeNull();
+  it("extracts leaf slugs from legacy nested runtime app paths", () => {
+    expect(extractSlug("apps/games/2048/index.html")).toBe("2048");
+    expect(extractSlug("apps/games/backgammon/index.html")).toBe("backgammon");
+    expect(extractSlug("apps/tools/api-tester/index.html")).toBe("api-tester");
+  });
+
+  it("returns null for nested non-index app paths", () => {
     expect(extractSlug("apps/foo/bar")).toBeNull();
   });
 

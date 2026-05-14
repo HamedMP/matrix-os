@@ -17,9 +17,10 @@ import { QuickLook } from "./QuickLook";
 
 interface FileBrowserProps {
   windowId: string;
+  mobile?: boolean;
 }
 
-export function FileBrowser({ windowId }: FileBrowserProps) {
+export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showingTrash, setShowingTrash] = useState(false);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -273,12 +274,14 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <FileBrowserToolbar />
+      <FileBrowserToolbar mobile={mobile} />
       <div className="flex flex-1 min-h-0">
-        <FileBrowserSidebar
-          onTrashClick={() => setShowingTrash(!showingTrash)}
-          showingTrash={showingTrash}
-        />
+        {!mobile && (
+          <FileBrowserSidebar
+            onTrashClick={() => setShowingTrash(!showingTrash)}
+            showingTrash={showingTrash}
+          />
+        )}
         <FileContextMenu onOpenFile={openFile}>
           <div className="flex-1 min-w-0 overflow-auto">
             {showingTrash ? (
@@ -295,9 +298,9 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
             )}
           </div>
         </FileContextMenu>
-        <PreviewPanel />
+        {!mobile && <PreviewPanel />}
       </div>
-      <StatusBar />
+      {!mobile && <StatusBar />}
       <QuickLook />
     </div>
   );

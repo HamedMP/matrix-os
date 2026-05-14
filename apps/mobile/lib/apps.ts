@@ -9,17 +9,24 @@ export type NativeAppRoute =
   | "/(tabs)/chat"
   | "/(tabs)/mission-control"
   | "/(tabs)/apps"
-  | "/(tabs)/settings";
+  | "/(tabs)/settings"
+  | "/canvas"
+  | "/terminal";
 
 const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
   chat: "/(tabs)/chat",
+  terminal: "/terminal",
   tasks: "/(tabs)/mission-control",
   todo: "/(tabs)/mission-control",
   "task-manager": "/(tabs)/mission-control",
   "mission-control": "/(tabs)/mission-control",
   apps: "/(tabs)/apps",
   settings: "/(tabs)/settings",
+  canvas: "/canvas",
+  whiteboard: "/canvas",
 };
+
+const SAFE_APP_SLUG_SEGMENT = /^[a-z0-9][a-z0-9_-]*$/;
 
 export const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
@@ -35,6 +42,22 @@ export const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
     category: "System",
     file: "apps/index.html",
     path: "/files/apps/apps/index.html",
+  },
+  {
+    name: "Terminal",
+    description: "Open a Matrix VPS shell session.",
+    category: "System",
+    slug: "terminal",
+    file: "terminal/index.html",
+    path: "/files/apps/terminal/index.html",
+  },
+  {
+    name: "Canvas",
+    description: "Open your workspace canvas when spatial context helps.",
+    category: "System",
+    slug: "canvas",
+    file: "canvas/index.html",
+    path: "/files/apps/canvas/index.html",
   },
   {
     name: "Tasks",
@@ -53,12 +76,9 @@ export const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
 ];
 
 export function getAppSlug(app: Pick<MatrixAppEntry, "file" | "path" | "name" | "slug">): string {
-  const source = app.slug || app.file || app.path || app.name;
-  return source
-    .replace(/^\/?(files\/)?apps\//, "")
-    .replace(/\/index\.html$/, "")
-    .replace(/\.html$/, "")
-    .toLowerCase();
+  const source = app.slug || app.file || app.path;
+  const normalized = source ? normalizeAppSlug(source) : null;
+  return normalized ?? slugifyName(app.name);
 }
 
 export function getRuntimeSlug(app: Pick<MatrixAppEntry, "file" | "path" | "name" | "slug">): string {
@@ -119,6 +139,7 @@ export function getGatewayAppUrlLabel(
 export function getAppIconName(app: Pick<MatrixAppEntry, "category" | "name">): string {
   const label = `${app.category ?? ""} ${app.name}`.toLowerCase();
   if (label.includes("game")) return "game-controller";
+  if (label.includes("terminal") || label.includes("shell")) return "terminal";
   if (label.includes("chat") || label.includes("social")) return "chatbubble";
   if (label.includes("task") || label.includes("todo")) return "checkmark-circle";
   if (label.includes("note")) return "document-text";
@@ -127,6 +148,32 @@ export function getAppIconName(app: Pick<MatrixAppEntry, "category" | "name">): 
   if (label.includes("calculator")) return "calculator";
   if (label.includes("whiteboard") || label.includes("canvas")) return "brush";
   return "apps";
+}
+
+function normalizeAppSlug(source: string): string | null {
+  const withoutCacheParams = source.split(/[?#]/, 1)[0] ?? "";
+  const normalizedPath = withoutCacheParams
+    .replace(/\\/g, "/")
+    .replace(/^https?:\/\/[^/]+/i, "")
+    .replace(/^\/+/, "")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^(files\/)?apps\//i, "")
+    .replace(/\/index\.html$/i, "")
+    .replace(/\.html$/i, "")
+    .toLowerCase();
+
+  const parts = normalizedPath.split("/").filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.some((part) => !SAFE_APP_SLUG_SEGMENT.test(part))) return null;
+  return parts.join("/");
+}
+
+function slugifyName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "app";
 }
 
 export function appDetailHref(slug: string): Href {

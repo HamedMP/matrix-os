@@ -230,7 +230,9 @@ function GatewayShell() {
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="apps" options={{ headerShown: false }} />
+          <Stack.Screen name="terminal" options={{ headerShown: false }} />
           <Stack.Screen name="runtime" options={{ headerShown: false }} />
+          <Stack.Screen name="canvas" options={{ headerShown: false }} />
           <Stack.Screen
             name="connect"
             options={{

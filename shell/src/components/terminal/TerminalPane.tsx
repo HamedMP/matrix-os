@@ -66,6 +66,12 @@ function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: strin
   return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
 }
 
+function displayCwd(cwd: string): string {
+  if (cwd === "projects") return "~/projects";
+  if (cwd.startsWith("projects/")) return `~/${cwd}`;
+  return cwd;
+}
+
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
   | { type: "output"; data: string; seq: number | null }
@@ -277,6 +283,7 @@ export function TerminalPane({
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
+    (termRef.current as { focus?: () => void } | null)?.focus?.();
   }, [paneId, onFocus]);
 
   useEffect(() => {
@@ -353,45 +360,31 @@ export function TerminalPane({
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
 
-      const attachWebglContextLostHandler = () => {
-        detachWebglContextLostHandler();
-        const canvas = container.querySelector("canvas");
-        if (!(canvas instanceof HTMLCanvasElement)) {
+      const refitAndFocus = () => {
+        if (disposed) {
           return;
         }
-
-        const onWebglContextLost = async () => {
-          if (disposed) {
-            return;
+        try {
+          fitAddon.fit();
+          if (isFocusedRef.current) {
+            term.focus();
           }
+        } catch (err: unknown) {
+          log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
+        }
+      };
 
-          try {
-            (webglAddon as { dispose?: () => void } | null)?.dispose?.();
-          } catch (_err: unknown) {
-            // Ignore disposal errors and fall back to 2D rendering.
-          }
-
-          try {
-            const { WebglAddon } = await import("@xterm/addon-webgl");
-            if (disposed) {
-              return;
-            }
-            const nextWebglAddon = new WebglAddon();
-            term.loadAddon(nextWebglAddon);
-            webglAddon = nextWebglAddon;
-          } catch (_err: unknown) {
-            // Canvas 2D fallback is acceptable if WebGL re-init fails.
-          }
-        };
-
-        webglCanvasRef.current = canvas;
-        webglContextLostHandlerRef.current = onWebglContextLost;
-        canvas.addEventListener("webglcontextlost", onWebglContextLost);
+      const scheduleStableFit = () => {
+        requestAnimationFrame(refitAndFocus);
+        window.setTimeout(refitAndFocus, 80);
+        window.setTimeout(refitAndFocus, 250);
       };
 
       if (canReuseCachedTerminal && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
         if (termElement) {
+          termElement.style.width = "100%";
+          termElement.style.height = "100%";
           container.appendChild(termElement);
         }
         term = cached.terminal;
@@ -405,6 +398,7 @@ export function TerminalPane({
         wsRef.current = cached.ws;
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
+        scheduleStableFit();
       } else {
         // Cache miss — create fresh terminal
         const { Terminal: XTerm } = await import("@xterm/xterm");
@@ -435,6 +429,8 @@ export function TerminalPane({
         xterm.open(container);
         const xtermElement = (xterm as { element?: HTMLElement }).element;
         if (xtermElement) {
+          xtermElement.style.width = "100%";
+          xtermElement.style.height = "100%";
           xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
         }
         nextFitAddon.fit();
@@ -443,14 +439,7 @@ export function TerminalPane({
         fitAddon = nextFitAddon;
         termRef.current = xterm;
         fitAddonRef.current = nextFitAddon;
-
-        // WebGL addon
-        try {
-          const { WebglAddon } = await import("@xterm/addon-webgl");
-          const addon = new WebglAddon();
-          xterm.loadAddon(addon);
-          webglAddon = addon;
-        } catch (_e: unknown) { /* canvas 2D fallback */ }
+        scheduleStableFit();
 
         // Search addon
         try {
@@ -537,7 +526,6 @@ export function TerminalPane({
         }
       }
 
-      attachWebglContextLostHandler();
       if (isFocusedRef.current) {
         requestAnimationFrame(() => {
           if (!disposed) {
@@ -931,7 +919,7 @@ export function TerminalPane({
       });
 
       const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit();
+        requestAnimationFrame(refitAndFocus);
       });
       resizeObserver.observe(container);
 
@@ -1059,8 +1047,24 @@ export function TerminalPane({
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
       }}
+      onPointerDown={handleFocus}
       onClick={handleFocus}
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-2 top-1 z-10 flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] leading-none text-foreground shadow-sm backdrop-blur-sm"
+      >
+        <span>{displayCwd(cwd)}</span>
+        <span
+          className={isFocused ? "opacity-100" : "opacity-45"}
+          style={{
+            display: "inline-block",
+            width: 5,
+            height: 10,
+            background: "currentColor",
+          }}
+        />
+      </div>
       {authUrl && (
         <div
           style={{

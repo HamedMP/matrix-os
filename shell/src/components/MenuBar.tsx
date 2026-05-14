@@ -56,9 +56,14 @@ function MenuBarClock() {
 }
 
 function MenuBarUser() {
+  const [mounted, setMounted] = useState(false);
   const { isLoaded, isSignedIn } = useAuth();
 
-  if (!isLoaded || !isSignedIn) {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted || !isLoaded || !isSignedIn) {
     return (
       <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
         <UserIcon className="size-[14px] text-foreground/70" />
