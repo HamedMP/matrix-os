@@ -81,7 +81,7 @@ find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -t
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/zellij"
+chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/zellij"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
