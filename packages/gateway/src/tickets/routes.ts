@@ -198,7 +198,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     if (!parsed.ok) return parsed.response;
     if (!deps.linearSyncSource) return c.json(ticketError("linear_sync_unavailable", "Linear sync is unavailable"), status(503));
     const source = await deps.linearSyncSource({
-      ownerId: principal.userId,
+      ownerId: owner.ownerId,
       projectSlug: project.projectSlug,
       sourceId: parsed.value.sourceId,
       mode: parsed.value.mode,
@@ -207,7 +207,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
       return c.json({ tickets: source.tickets, truncated: source.truncated, sourceId: parsed.value.sourceId });
     }
     const summary = await syncLinearTickets(deps.repository, {
-      ownerId: principal.userId,
+      ownerId: owner.ownerId,
       projectSlug: project.projectSlug,
       sourceId: parsed.value.sourceId,
       tickets: source.tickets,
@@ -215,7 +215,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     });
     statusHub.publish({
       id: `evt_${randomUUID()}`,
-      ownerId: principal.userId,
+      ownerId: owner.ownerId,
       projectSlug: project.projectSlug,
       ticketId: parsed.value.sourceId,
       type: "ticket.sync.completed",
@@ -231,7 +231,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     if (!owner.ok) return owner.response;
     const unauthorized = await authorizeProjectAccess(c, deps, principal, owner.ownerId, project.projectSlug, "read");
     if (unauthorized) return unauthorized;
-    return c.json({ events: statusHub.recent(principal.userId, project.projectSlug, 100) });
+    return c.json({ events: statusHub.recent(owner.ownerId, project.projectSlug, 100) });
   }));
 
   return app;

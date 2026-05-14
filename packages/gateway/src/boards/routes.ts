@@ -40,6 +40,18 @@ function readProjectSlug(c: Context): { ok: true; projectSlug: string } | { ok: 
   return { ok: true, projectSlug: parsed.data };
 }
 
+const OwnerScopeQuerySchema = z.object({
+  ownerId: BoardUserIdSchema.optional(),
+}).passthrough();
+
+function readOwnerId(c: Context, principal: RequestPrincipal): { ok: true; ownerId: string } | { ok: false; response: Response } {
+  const parsed = OwnerScopeQuerySchema.safeParse(c.req.query());
+  if (!parsed.success) {
+    return { ok: false, response: c.json(boardError("invalid_query", "Request query is invalid"), status(400)) };
+  }
+  return { ok: true, ownerId: parsed.data.ownerId ?? principal.userId };
+}
+
 async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
   { ok: true; value: T } | { ok: false; response: Response }
 > {
@@ -67,21 +79,25 @@ export function createBoardMembershipRoutes(deps: BoardMembershipRouteDeps) {
   app.get("/:projectSlug/board/members", (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    const canRead = await deps.service.canReadBoard(principal.userId, project.projectSlug, principal.userId);
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
+    const canRead = await deps.service.canReadBoard(owner.ownerId, project.projectSlug, principal.userId);
     if (!canRead) return c.json(boardError("unauthorized", "Unauthorized"), status(401));
-    return c.json({ members: await deps.service.listMembers(principal.userId, project.projectSlug) });
+    return c.json({ members: await deps.service.listMembers(owner.ownerId, project.projectSlug) });
   }));
 
   app.post("/:projectSlug/board/members", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
     const parsed = await parseJson(c, AddBoardMemberSchema);
     if (!parsed.ok) return parsed.response;
-    const canWrite = await deps.service.canWriteBoard(principal.userId, project.projectSlug, principal.userId);
+    const canWrite = await deps.service.canWriteBoard(owner.ownerId, project.projectSlug, principal.userId);
     if (!canWrite) return c.json(boardError("unauthorized", "Unauthorized"), status(401));
     let member;
     try {
-      member = await deps.service.addMember(principal.userId, project.projectSlug, parsed.value);
+      member = await deps.service.addMember(owner.ownerId, project.projectSlug, parsed.value);
     } catch (err: unknown) {
       if (err instanceof BoardMemberLimitExceededError) {
         return c.json(boardError("member_limit_exceeded", "Board member limit exceeded"), status(409));
@@ -94,11 +110,13 @@ export function createBoardMembershipRoutes(deps: BoardMembershipRouteDeps) {
   app.delete("/:projectSlug/board/members/:userId", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
+    const owner = readOwnerId(c, principal);
+    if (!owner.ok) return owner.response;
     const userId = BoardUserIdSchema.safeParse(c.req.param("userId"));
     if (!userId.success) return c.json(boardError("invalid_user_id", "User id is invalid"), status(400));
-    const canWrite = await deps.service.canWriteBoard(principal.userId, project.projectSlug, principal.userId);
+    const canWrite = await deps.service.canWriteBoard(owner.ownerId, project.projectSlug, principal.userId);
     if (!canWrite) return c.json(boardError("unauthorized", "Unauthorized"), status(401));
-    await deps.service.removeMember(principal.userId, project.projectSlug, userId.data);
+    await deps.service.removeMember(owner.ownerId, project.projectSlug, userId.data);
     return c.json({ ok: true });
   }));
 

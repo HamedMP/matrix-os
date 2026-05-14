@@ -71,8 +71,7 @@ export function createMemoryBoardMembershipService(): BoardMembershipService {
       const parsed = AddBoardMemberSchema.parse(input);
       const members = touchBoard(ownerId, projectSlug);
       if (!members.has(parsed.userId) && members.size >= BOARD_MEMBER_LIMIT) {
-        const oldestUserId = members.keys().next().value;
-        if (typeof oldestUserId === "string") members.delete(oldestUserId);
+        throw new BoardMemberLimitExceededError();
       }
       const member: BoardMember = {
         projectSlug,

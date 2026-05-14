@@ -44,4 +44,17 @@ describe("shared board membership", () => {
       await db.destroy();
     }
   });
+
+  it("rejects new memory board members once the board is full without evicting existing members", async () => {
+    const service = createMemoryBoardMembershipService();
+    for (let i = 0; i < BOARD_MEMBER_LIMIT; i += 1) {
+      await service.addMember("owner_1", "repo", { userId: `user_${i}`, role: "viewer" });
+    }
+
+    await expect(service.addMember("owner_1", "repo", {
+      userId: "user_over_limit",
+      role: "viewer",
+    })).rejects.toBeInstanceOf(BoardMemberLimitExceededError);
+    await expect(service.canReadBoard("owner_1", "repo", "user_0")).resolves.toBe(true);
+  });
 });
