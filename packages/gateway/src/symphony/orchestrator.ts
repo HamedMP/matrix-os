@@ -248,7 +248,7 @@ export function createMatrixSymphonyOrchestrator(options: {
         status: "blocked",
         lastErrorCode: code,
         lastEvent: "Symphony dispatch needs attention",
-      }) ?? run;
+      }, { allowedStatuses: ["queued", "retrying"] }) ?? await options.repository.getRun(ownerId, run.id) ?? run;
     }
   }
 

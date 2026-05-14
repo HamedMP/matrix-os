@@ -449,6 +449,37 @@ describe("Matrix Symphony orchestrator", () => {
     expect(runs[0]).toMatchObject({ status: "blocked", lastErrorCode: "workflow_missing" });
   });
 
+  it("does not overwrite stopped runs with blocked dispatch failures", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    const originalUpdateRun = vi.mocked(repository.updateRun).getMockImplementation();
+    if (!originalUpdateRun) throw new Error("missing updateRun mock implementation");
+    vi.mocked(repository.updateRun).mockImplementation(async (ownerId, runId, patch, options) => {
+      if (patch.status === "blocked") {
+        await originalUpdateRun(ownerId, runId, { status: "stopped", lastEvent: "Run stopped" });
+        return null;
+      }
+      return originalUpdateRun(ownerId, runId, patch, options);
+    });
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath: "/tmp/matrix",
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager: { createWorktree: vi.fn() },
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await orchestrator.poll("user_123");
+
+    const runs = await repository.listRuns("user_123");
+    expect(runs[0]).toMatchObject({ status: "stopped", lastEvent: "Run stopped" });
+  });
+
   it("kills an existing running session before retrying a run", async () => {
     const snapshot = structuredClone(baseSnapshot);
     snapshot.runs = [{
