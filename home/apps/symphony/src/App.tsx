@@ -303,6 +303,18 @@ export default function App() {
     }));
   }
 
+  function resetLinearSelection(next: Partial<FormState> = {}) {
+    setForm((current) => ({
+      ...current,
+      teamId: "",
+      teamKey: "",
+      linearProjectId: "",
+      linearProjectSlug: "",
+      assigneeIds: [],
+      ...next,
+    }));
+  }
+
   async function saveLinearCredential() {
     if (!form.linearSecret.trim()) return;
     setBusy("credential");
@@ -312,7 +324,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ kind: "api_key", secret: form.linearSecret.trim() }),
       });
-      setForm((current) => ({ ...current, linearSecret: "" }));
+      resetLinearSelection({ linearSecret: "" });
       await loadSetupOptions();
       await load({ hydrateForm: false });
     } catch (err: unknown) {
@@ -332,7 +344,9 @@ export default function App() {
           method: "POST",
           body: JSON.stringify({ kind: "api_key", secret: form.linearSecret.trim() }),
         });
+        resetLinearSelection({ linearSecret: "" });
         await loadSetupOptions();
+        return;
       }
       await fetchJson("/api/symphony/config", {
         method: "POST",
