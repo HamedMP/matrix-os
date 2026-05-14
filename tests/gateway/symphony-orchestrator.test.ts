@@ -470,6 +470,54 @@ describe("Matrix Symphony orchestrator", () => {
     expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
   });
 
+  it("blocks retrying dispatch claims after the retry limit", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      id: "run_existing",
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "retrying",
+      attempt: 3,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      lastEvent: "Worktree could not be created",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager: {
+        createWorktree: vi.fn(async () => ({
+          ok: false as const,
+          status: 502,
+          error: { code: "checkout_failed", message: "Worktree checkout failed" },
+        })),
+      },
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await orchestrator.poll("user_123");
+
+    await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
+      status: "blocked",
+      attempt: 4,
+      lastErrorCode: "checkout_failed",
+      lastEvent: "Worktree could not be created; retry limit reached",
+      nextRetryAt: undefined,
+    });
+  });
+
   it("keeps recurring poll timers isolated per owner", async () => {
     vi.useFakeTimers();
     try {

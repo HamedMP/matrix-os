@@ -386,7 +386,7 @@ export class KyselySymphonyRepository implements SymphonyRepository {
   }
 
   private async insertEvent(
-    executor: Pick<Kysely<any>, "insertInto">,
+    executor: Pick<Kysely<any>, "insertInto" | "deleteFrom">,
     ownerId: string,
     event: Omit<OperatorEvent, "id" | "createdAt"> & { id?: string; createdAt?: string },
   ): Promise<OperatorEvent> {
@@ -405,7 +405,25 @@ export class KyselySymphonyRepository implements SymphonyRepository {
         event: JSON.stringify(record),
       })
       .execute();
+    await this.pruneEvents(executor, ownerId);
     return record;
+  }
+
+  private async pruneEvents(
+    executor: Pick<Kysely<any>, "deleteFrom">,
+    ownerId: string,
+  ): Promise<void> {
+    await executor
+      .deleteFrom("symphony_events")
+      .where("owner_id", "=", ownerId)
+      .where("id", "not in", (eb: any) => eb
+        .selectFrom("symphony_events")
+        .select("id")
+        .where("owner_id", "=", ownerId)
+        .orderBy("created_at", "desc")
+        .orderBy("id", "desc")
+        .limit(MAX_EVENTS))
+      .execute();
   }
 
   private async replaceOperators(

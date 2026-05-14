@@ -19,6 +19,8 @@ type AgentSessionManager = Pick<ReturnType<typeof createAgentSessionManager>, "s
 
 const RETRYABLE_RUN_STATUSES: SymphonyRun["status"][] = ["queued", "running", "retrying", "blocked", "failed", "stopped"];
 const RETRYABLE_RUN_STATUSES_WITHOUT_RUNNING: SymphonyRun["status"][] = RETRYABLE_RUN_STATUSES.filter((status) => status !== "running");
+const MAX_DISPATCH_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 60_000;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -47,6 +49,26 @@ function isRetryBackoffActive(run: SymphonyRun, nowMs = Date.now()): boolean {
   if (run.status !== "retrying" || !run.nextRetryAt) return false;
   const retryAt = Date.parse(run.nextRetryAt);
   return Number.isFinite(retryAt) && retryAt > nowMs;
+}
+
+function dispatchFailurePatch(run: SymphonyRun, code: string, message: string): Partial<SymphonyRun> {
+  const attempt = run.attempt + 1;
+  if (attempt > MAX_DISPATCH_ATTEMPTS) {
+    return {
+      status: "blocked",
+      attempt,
+      lastErrorCode: code,
+      lastEvent: `${message}; retry limit reached`,
+      nextRetryAt: undefined,
+    };
+  }
+  return {
+    status: "retrying",
+    attempt,
+    lastErrorCode: code,
+    lastEvent: message,
+    nextRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+  };
 }
 
 function failedKillCode(result: unknown): string | null {
@@ -174,10 +196,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       });
       if (!worktreeResult.ok) {
         return await options.repository.updateRun(ownerId, run.id, {
-          status: "retrying",
-          lastErrorCode: worktreeResult.error.code,
-          lastEvent: "Worktree could not be created",
-          nextRetryAt: new Date(Date.now() + 60_000).toISOString(),
+          ...dispatchFailurePatch(run, worktreeResult.error.code, "Worktree could not be created"),
         }, { allowedStatuses: ["queued", "retrying"] }) ?? run;
       }
       const prompt = composeSymphonyPrompt({ workflow, ticket, attempt: run.attempt });
@@ -193,12 +212,9 @@ export function createMatrixSymphonyOrchestrator(options: {
       });
       if (!sessionResult.ok) {
         return await options.repository.updateRun(ownerId, run.id, {
-          status: "retrying",
+          ...dispatchFailurePatch(run, sessionResult.error.code, "Agent session could not be started"),
           worktreeId: worktreeResult.worktree.id,
           worktreePath: worktreeResult.worktree.path,
-          lastErrorCode: sessionResult.error.code,
-          lastEvent: "Agent session could not be started",
-          nextRetryAt: new Date(Date.now() + 60_000).toISOString(),
         }, { allowedStatuses: ["queued", "retrying"] }) ?? run;
       }
       const running = await options.repository.updateRun(ownerId, run.id, {

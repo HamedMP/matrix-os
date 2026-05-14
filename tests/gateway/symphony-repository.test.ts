@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import { Kysely } from "kysely";
 import { KyselySymphonyRepository } from "../../packages/gateway/src/symphony/repository.js";
+import { MAX_EVENTS } from "../../packages/gateway/src/symphony/contracts.js";
 
 describe("Symphony repository", () => {
   let instance: InstanceType<typeof KyselyPGlite>;
@@ -100,6 +101,44 @@ describe("Symphony repository", () => {
     await expect(repository.getRun("user_123", "run_1")).resolves.toMatchObject({
       status: "stopped",
     });
+  });
+
+  it("prunes stored events per owner after inserts", async () => {
+    await repository.appendEvent("owner_other", {
+      id: "evt_other",
+      installationId: "sym_owner_other",
+      type: "symphony.poll.completed",
+      message: "Other owner event",
+      severity: "info",
+      createdAt: "2026-05-13T00:00:00.000Z",
+    });
+    for (let index = 0; index < MAX_EVENTS + 5; index += 1) {
+      await repository.appendEvent("user_123", {
+        id: `evt_${index.toString().padStart(3, "0")}`,
+        installationId: "sym_user_123",
+        type: "symphony.poll.completed",
+        message: `Poll ${index}`,
+        severity: "info",
+        createdAt: new Date(Date.UTC(2026, 4, 13, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const ownerCount = await db
+      .selectFrom("symphony_events")
+      .select(({ fn }) => fn.count<number>("id").as("count"))
+      .where("owner_id", "=", "user_123")
+      .executeTakeFirstOrThrow();
+    const otherCount = await db
+      .selectFrom("symphony_events")
+      .select(({ fn }) => fn.count<number>("id").as("count"))
+      .where("owner_id", "=", "owner_other")
+      .executeTakeFirstOrThrow();
+    const snapshot = await repository.getSnapshot("user_123");
+
+    expect(Number(ownerCount.count)).toBe(MAX_EVENTS);
+    expect(Number(otherCount.count)).toBe(1);
+    expect(snapshot.events).toHaveLength(MAX_EVENTS);
+    expect(snapshot.events[0]).toMatchObject({ id: "evt_005" });
   });
 
   it("resolves authorized operators from the indexed operator table", async () => {
