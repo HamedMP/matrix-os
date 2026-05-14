@@ -39,8 +39,8 @@ export function TicketResourcesPanel({
             <span className="ml-2 text-muted-foreground">{artifact.kind}</span>
           </div>
         ))}
-        {previews.map((preview) => (
-          <a key={preview.id ?? preview.url} href={preview.url} target="_blank" rel="noreferrer" className="block rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
+        {previews.map((preview, index) => (
+          <a key={preview.id ?? preview.url ?? `preview-${index}`} href={preview.url} target="_blank" rel="noreferrer" className="block rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
             <span className="font-medium">{preview.label ?? preview.url}</span>
             <span className="ml-2 text-muted-foreground">{preview.lastStatus ?? "unknown"}</span>
           </a>

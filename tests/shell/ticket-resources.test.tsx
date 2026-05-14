@@ -17,4 +17,15 @@ describe("TicketResourcesPanel", () => {
     expect(screen.getByText("Patch")).toBeTruthy();
     expect(screen.getByText("Dev server")).toBeTruthy();
   });
+
+  it("keeps preview rows renderable when preview identifiers are absent", () => {
+    render(<TicketResourcesPanel
+      ticket={{ id: "ticket_1", identifier: "MAT-1", title: "Preview work" }}
+      artifacts={[]}
+      previews={[{ label: "First preview" }, { label: "Second preview" }]}
+    />);
+
+    expect(screen.getByText("First preview")).toBeTruthy();
+    expect(screen.getByText("Second preview")).toBeTruthy();
+  });
 });
