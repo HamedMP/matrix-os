@@ -51,6 +51,11 @@ function counts(runs: SymphonyRun[]) {
   };
 }
 
+function publicRun(run: SymphonyRun): Omit<SymphonyRun, "worktreePath"> {
+  const { worktreePath: _worktreePath, ...safeRun } = run;
+  return safeRun;
+}
+
 async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
   { ok: true; value: T } | { ok: false; response: Response }
 > {
@@ -228,7 +233,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     const query = RunsQuerySchema.safeParse(queryWithoutOwnerScope(c));
     if (!query.success) return c.json(genericSymphonyError("invalid_request", "Request query is invalid"), status(400));
     const runs = await deps.repository.listRuns(auth.ownerId, query.data);
-    return c.json({ runs, nextCursor: null });
+    return c.json({ runs: runs.map(publicRun), nextCursor: null });
   }));
 
   app.post("/start", emptyLimited, (c) => withPrincipal(c, deps, async (principal) => {
@@ -264,13 +269,13 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (parsed.value.type === "open_workspace") {
       const run = await deps.repository.getRun(auth.ownerId, runId);
       if (!run) return c.json(genericSymphonyError("not_found", "Run was not found"), status(404));
-      return c.json({ run, workspacePath: run.worktreeId ? `/workspace/${run.projectSlug}/worktrees/${run.worktreeId}` : null });
+      return c.json({ run: publicRun(run), workspacePath: run.worktreeId ? `/workspace/${run.projectSlug}/worktrees/${run.worktreeId}` : null });
     }
     const run = parsed.value.type === "stop"
       ? await deps.orchestrator.stopRun(auth.ownerId, runId, principal.userId)
       : await deps.orchestrator.retryRun(auth.ownerId, runId, principal.userId);
     if (!run) return c.json(genericSymphonyError("not_found", "Run was not found"), status(404));
-    return c.json({ run });
+    return c.json({ run: publicRun(run) });
   }));
 
   app.get("/events", (c) => withPrincipal(c, deps, async (principal) => {

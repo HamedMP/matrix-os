@@ -118,6 +118,9 @@ export function createMatrixSymphonyOrchestrator(options: {
       }
       const stopped = await options.repository.updateRun(ownerId, run.id, {
         status: "stopped",
+        sessionId: undefined,
+        worktreeId: undefined,
+        worktreePath: undefined,
         lastEvent: "Ticket no longer matches Symphony rule",
         finishedAt: nowIso(),
       }, { allowedStatuses: ["running"] });

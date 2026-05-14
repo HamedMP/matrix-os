@@ -990,6 +990,9 @@ describe("Matrix Symphony orchestrator", () => {
     expect(agentSessionManager.killSession).toHaveBeenCalledWith("sess_existing");
     await expect(repository.getRun("user_123", "run_existing")).resolves.toMatchObject({
       status: "stopped",
+      sessionId: undefined,
+      worktreeId: undefined,
+      worktreePath: undefined,
       lastEvent: "Ticket no longer matches Symphony rule",
     });
   });

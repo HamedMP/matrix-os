@@ -148,6 +148,9 @@ const baseSnapshot: SymphonySnapshot = {
     agent: "codex",
     projectSlug: "matrix-os",
     claimKey: "linear:issue_1",
+    sessionId: "sess_1",
+    worktreeId: "wt_1",
+    worktreePath: "/home/matrix/home/projects/matrix-os/.worktrees/wt_1",
     lastEvent: "Agent session started",
     updatedAt: "2026-05-13T00:00:00.000Z",
   }],
@@ -254,6 +257,18 @@ describe("Matrix Symphony routes", () => {
     expect(JSON.stringify(await res.json())).not.toContain("MAT-1");
   });
 
+  it("omits local worktree paths from run list responses", async () => {
+    const { app } = deps(structuredClone(baseSnapshot));
+
+    const res = await app.request("/runs");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.runs[0]).toMatchObject({ id: "run_1", worktreeId: "wt_1" });
+    expect(body.runs[0]).not.toHaveProperty("worktreePath");
+    expect(JSON.stringify(body)).not.toContain("/home/matrix");
+  });
+
   it("previews tickets through the server-side credential", async () => {
     const { app, linearSource } = deps(structuredClone(baseSnapshot));
 
@@ -271,7 +286,9 @@ describe("Matrix Symphony routes", () => {
 
     expect(res.status).toBe(200);
     expect(orchestrator.stopRun).toHaveBeenCalledWith("user_123", "run_1", "user_123");
-    expect(await res.json()).toMatchObject({ run: { status: "stopped" } });
+    const body = await res.json();
+    expect(body).toMatchObject({ run: { status: "stopped" } });
+    expect(body.run).not.toHaveProperty("worktreePath");
   });
 
   it("lets operators target a delegated owner after creating their own installation", async () => {
