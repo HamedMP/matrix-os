@@ -229,12 +229,19 @@ describe("Matrix Symphony routes", () => {
   });
 
   it("stores Linear credentials server-side and returns only presence", async () => {
-    const { app, credentialStore } = deps(structuredClone(baseSnapshot));
+    const { app, credentialStore, statusHub } = deps(structuredClone(baseSnapshot));
 
     const res = await app.request(jsonRequest("/credentials/linear", "POST", { kind: "api_key", secret: "lin_api_secret" }));
 
     expect(res.status).toBe(200);
     expect(credentialStore.writeLinearCredential).toHaveBeenCalledWith("user_123", "lin_api_secret");
+    expect(statusHub.publishOperatorEvent).toHaveBeenCalledWith("user_123", expect.objectContaining({
+      installationId: "sym_user_123",
+      type: "symphony.credential.updated",
+      message: "Linear credential updated",
+      severity: "info",
+      actorId: "user_123",
+    }));
     expect(await res.json()).toEqual({ credentialConfigured: true, accountLabel: "Linear" });
   });
 

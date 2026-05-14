@@ -96,6 +96,22 @@ function queryWithoutOwnerScope(c: Context): Record<string, string> {
   return rest;
 }
 
+async function publishSimpleOperatorEvent(
+  deps: MatrixSymphonyRouteDeps,
+  ownerId: string,
+  input: { installationId: string; type: string; message: string; actorId: string },
+): Promise<void> {
+  await deps.statusHub?.publishOperatorEvent(ownerId, {
+    id: `evt_${randomUUID()}`,
+    installationId: input.installationId,
+    type: input.type,
+    message: input.message,
+    severity: "info",
+    actorId: input.actorId,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 async function requireOperator(c: Context, deps: MatrixSymphonyRouteDeps, principal: RequestPrincipal) {
   const ownerScope = OwnerScopeQuerySchema.safeParse(c.req.query());
   if (!ownerScope.success) {
@@ -144,14 +160,11 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (!parsed.ok) return parsed.response;
     const credentialConfigured = await deps.credentialStore.hasLinearCredential(principal.userId);
     const saved = await deps.repository.saveConfig(principal.userId, parsed.value, principal.userId, credentialConfigured);
-    await deps.statusHub?.publishOperatorEvent(principal.userId, {
-      id: `evt_${randomUUID()}`,
+    await publishSimpleOperatorEvent(deps, principal.userId, {
       installationId: saved.installation.id,
       type: "symphony.config.updated",
       message: "Symphony configuration updated",
-      severity: "info",
       actorId: principal.userId,
-      createdAt: new Date().toISOString(),
     });
     return c.json({ installation: saved.installation, rule: saved.rule });
   }));
@@ -164,6 +177,12 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     try {
       await deps.credentialStore.writeLinearCredential(principal.userId, parsed.value.secret);
       await deps.repository.setCredentialConfigured(principal.userId, true, principal.userId);
+      await publishSimpleOperatorEvent(deps, principal.userId, {
+        installationId: snapshot.installation?.id ?? `sym_${principal.userId}`,
+        type: "symphony.credential.updated",
+        message: "Linear credential updated",
+        actorId: principal.userId,
+      });
       return c.json({ credentialConfigured: true, accountLabel: "Linear" });
     } catch (err: unknown) {
       console.error("[symphony] Linear credential write failed:", err);
@@ -178,6 +197,12 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (!parsed.ok) return parsed.response;
     await deps.credentialStore.deleteLinearCredential(principal.userId);
     await deps.repository.setCredentialConfigured(principal.userId, false, principal.userId);
+    await publishSimpleOperatorEvent(deps, principal.userId, {
+      installationId: snapshot.installation?.id ?? `sym_${principal.userId}`,
+      type: "symphony.credential.deleted",
+      message: "Linear credential removed",
+      actorId: principal.userId,
+    });
     return c.json({ credentialConfigured: false });
   }));
 

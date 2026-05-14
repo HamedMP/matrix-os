@@ -6,6 +6,7 @@ export interface LinearSource {
 
 type FetchLike = typeof fetch;
 const MAX_LINEAR_PREVIEW_REQUESTS = 20;
+const MAX_SCAN_OFFSETS = 100;
 
 interface LinearIssueNode {
   id?: string;
@@ -113,6 +114,27 @@ export function createLinearSource(options: {
   const endpoint = options.endpoint ?? "https://api.linear.app/graphql";
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const scanOffsets = new Map<string, number>();
+
+  function scanKey(rule: TicketSourceRule, states: string[], assigneeIds: Array<string | undefined>): string {
+    return JSON.stringify({
+      teamId: rule.teamId,
+      projectId: rule.projectId ?? null,
+      label: rule.requiredLabels[0] ?? null,
+      states,
+      assigneeIds,
+    });
+  }
+
+  function rememberScanOffset(key: string, offset: number): void {
+    if (scanOffsets.has(key)) scanOffsets.delete(key);
+    scanOffsets.set(key, offset);
+    while (scanOffsets.size > MAX_SCAN_OFFSETS) {
+      const oldest = scanOffsets.keys().next().value as string | undefined;
+      if (!oldest) break;
+      scanOffsets.delete(oldest);
+    }
+  }
 
   return {
     async previewTickets(rule: TicketSourceRule, credential: string, input: { limit?: number; state?: string } = {}) {
@@ -120,85 +142,76 @@ export function createLinearSource(options: {
       const states = input.state ? [input.state] : rule.activeStates;
       const labelForServer = rule.requiredLabels[0];
       const assigneeIds = rule.assigneeIds.length > 0 ? rule.assigneeIds : [undefined];
-      const combinationCount = states.length * assigneeIds.length;
-      const useBroadServerQuery = combinationCount > MAX_LINEAR_PREVIEW_REQUESTS;
-      const statesToQuery: Array<string | undefined> = useBroadServerQuery ? [undefined] : states;
-      const assigneeIdsToQuery: Array<string | undefined> = useBroadServerQuery ? [undefined] : assigneeIds;
       const activeStateNames = new Set(states.map((state) => state.toLowerCase()));
+      const combinations = states.flatMap((state) => assigneeIds.map((assigneeId) => ({ state, assigneeId })));
+      const key = scanKey(rule, states, assigneeIds);
+      const startOffset = combinations.length > 0 ? (scanOffsets.get(key) ?? 0) % combinations.length : 0;
+      const rotated = combinations.slice(startOffset).concat(combinations.slice(0, startOffset));
+      const queue = rotated.map((combination) => ({ ...combination, after: null as string | null }));
       const tickets: TrackedTicket[] = [];
       let truncated = false;
       let requests = 0;
 
-      for (let stateIndex = 0; stateIndex < statesToQuery.length; stateIndex += 1) {
-        const state = statesToQuery[stateIndex];
-        for (let assigneeIndex = 0; assigneeIndex < assigneeIdsToQuery.length; assigneeIndex += 1) {
-          const assigneeId = assigneeIdsToQuery[assigneeIndex];
-          if (tickets.length >= limit) {
-            truncated = true;
-            break;
-          }
-          let after: string | null = null;
-          let hasNextPage = false;
-          do {
-            if (requests >= MAX_LINEAR_PREVIEW_REQUESTS) {
-              return { tickets: tickets.slice(0, limit), truncated: true };
-            }
-            requests += 1;
-            const response = await fetchImpl(endpoint, {
-              method: "POST",
-              headers: {
-                "Authorization": credential,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                query: buildIssuesQuery({
-                  projectId: rule.projectId,
-                  state,
-                  labelName: labelForServer,
-                  assigneeId,
-                }),
-                variables: {
-                  first: Math.min(MAX_PREVIEW_TICKETS, 100),
-                  after,
-                  teamId: rule.teamId,
-                  ...(rule.projectId ? { projectId: rule.projectId } : {}),
-                  ...(state ? { state } : {}),
-                  ...(labelForServer ? { labelName: labelForServer } : {}),
-                  ...(assigneeId ? { assigneeId } : {}),
-                },
-              }),
-              signal: AbortSignal.timeout(timeoutMs),
-            });
-            if (!response.ok) {
-              console.warn("[symphony] Linear preview failed with status", response.status);
-              throw new Error("linear_preview_failed");
-            }
-            const payload = await response.json() as LinearIssuesPayload;
-            if (payload.errors) {
-              console.warn("[symphony] Linear preview returned GraphQL errors");
-              throw new Error("linear_preview_failed");
-            }
-            const nodes = payload.data?.issues?.nodes ?? [];
-            for (const node of nodes) {
-              const ticket = normalizeIssue(node);
-              if (!ticket) continue;
-              if (activeStateNames.size > 0 && !activeStateNames.has(ticket.stateName.toLowerCase())) continue;
-              if (!includesAllLabels(ticket, rule.requiredLabels)) continue;
-              if (rule.assigneeIds.length > 0 && (!ticket.assigneeId || !rule.assigneeIds.includes(ticket.assigneeId))) continue;
-              tickets.push(ticket);
-              if (tickets.length >= limit) break;
-            }
-            const pageInfo = payload.data?.issues?.pageInfo;
-            hasNextPage = Boolean(pageInfo?.hasNextPage);
-            after = pageInfo?.endCursor ?? null;
-            if (hasNextPage && !after) {
-              truncated = true;
-              break;
-            }
-          } while (hasNextPage && after && tickets.length < limit);
-          if (hasNextPage && tickets.length >= limit) truncated = true;
+      while (queue.length > 0 && tickets.length < limit) {
+        if (requests >= MAX_LINEAR_PREVIEW_REQUESTS) {
+          truncated = true;
+          rememberScanOffset(key, (startOffset + requests) % Math.max(combinations.length, 1));
+          return { tickets: tickets.slice(0, limit), truncated };
         }
+        const item = queue.shift()!;
+        requests += 1;
+        const response = await fetchImpl(endpoint, {
+          method: "POST",
+          headers: {
+            "Authorization": credential,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: buildIssuesQuery({
+              projectId: rule.projectId,
+              state: item.state,
+              labelName: labelForServer,
+              assigneeId: item.assigneeId,
+            }),
+            variables: {
+              first: Math.min(MAX_PREVIEW_TICKETS, 100),
+              after: item.after,
+              teamId: rule.teamId,
+              ...(rule.projectId ? { projectId: rule.projectId } : {}),
+              ...(item.state ? { state: item.state } : {}),
+              ...(labelForServer ? { labelName: labelForServer } : {}),
+              ...(item.assigneeId ? { assigneeId: item.assigneeId } : {}),
+            },
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+          console.warn("[symphony] Linear preview failed with status", response.status);
+          throw new Error("linear_preview_failed");
+        }
+        const payload = await response.json() as LinearIssuesPayload;
+        if (payload.errors) {
+          console.warn("[symphony] Linear preview returned GraphQL errors");
+          throw new Error("linear_preview_failed");
+        }
+        const nodes = payload.data?.issues?.nodes ?? [];
+        for (const node of nodes) {
+          const ticket = normalizeIssue(node);
+          if (!ticket) continue;
+          if (activeStateNames.size > 0 && !activeStateNames.has(ticket.stateName.toLowerCase())) continue;
+          if (!includesAllLabels(ticket, rule.requiredLabels)) continue;
+          if (rule.assigneeIds.length > 0 && (!ticket.assigneeId || !rule.assigneeIds.includes(ticket.assigneeId))) continue;
+          tickets.push(ticket);
+          if (tickets.length >= limit) break;
+        }
+        const pageInfo = payload.data?.issues?.pageInfo;
+        const hasNextPage = Boolean(pageInfo?.hasNextPage);
+        const after = pageInfo?.endCursor ?? null;
+        if (hasNextPage && !after) truncated = true;
+        if (hasNextPage && after && tickets.length < limit) queue.push({ state: item.state, assigneeId: item.assigneeId, after });
       }
+      if (queue.length > 0) truncated = true;
+      rememberScanOffset(key, queue.length > 0 ? (startOffset + requests) % Math.max(combinations.length, 1) : 0);
       return { tickets: tickets.slice(0, limit), truncated };
     },
   };

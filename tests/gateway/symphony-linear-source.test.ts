@@ -96,32 +96,22 @@ describe("Symphony Linear source", () => {
     expect(result.truncated).toBe(false);
   });
 
-  it("uses one broad Linear query for large state and assignee rule sets", async () => {
+  it("rotates broad rule scans beyond the per-poll request cap", async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
-      expect(body.variables).not.toHaveProperty("state");
-      expect(body.variables).not.toHaveProperty("assigneeId");
+      const state = body.variables.state;
       return new Response(JSON.stringify({
       data: {
         issues: {
-          nodes: [
+          nodes: state === "State 20" ? [
             {
               id: "issue_late",
               identifier: "MAT-999",
               title: "Eligible later combination",
-              assignee: { id: "assignee_49" },
-              state: { name: "State 19" },
+              state: { name: "State 20" },
               labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
             },
-            {
-              id: "issue_wrong_state",
-              identifier: "MAT-998",
-              title: "Wrong state",
-              assignee: { id: "assignee_49" },
-              state: { name: "Backlog" },
-              labels: { nodes: [{ name: "symphony" }, { name: "urgent" }] },
-            },
-          ],
+          ] : [],
           pageInfo: { hasNextPage: false, endCursor: null },
         },
       },
@@ -129,15 +119,19 @@ describe("Symphony Linear source", () => {
     }) as unknown as typeof fetch;
     const source = createLinearSource({ fetch: fetchMock });
 
-    const result = await source.previewTickets({
+    const broadRule = {
       ...rule,
-      activeStates: Array.from({ length: 20 }, (_unused, index) => `State ${index}`),
-      assigneeIds: Array.from({ length: 50 }, (_unused, index) => `assignee_${index}`),
-    }, "lin_api_secret", { limit: 100 });
+      activeStates: Array.from({ length: 21 }, (_unused, index) => `State ${index}`),
+      assigneeIds: [],
+    };
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({
-      truncated: false,
+    const first = await source.previewTickets(broadRule, "lin_api_secret", { limit: 100 });
+    const second = await source.previewTickets(broadRule, "lin_api_secret", { limit: 100 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(40);
+    expect(first).toMatchObject({ tickets: [], truncated: true });
+    expect(second).toMatchObject({
+      truncated: true,
       tickets: [expect.objectContaining({ externalId: "issue_late", identifier: "MAT-999" })],
     });
   });
