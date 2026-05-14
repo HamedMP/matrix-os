@@ -89,6 +89,19 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function gitRefExists(runCommand: CommandRunner, cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runCommand("git", ["rev-parse", "--verify", "--quiet", ref], {
+      cwd,
+      timeout: DEFAULT_TIMEOUT_MS,
+    });
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error) return false;
+    throw err;
+  }
+}
+
 function isErrnoCode(err: unknown, code: string): boolean {
   return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === code;
 }
@@ -156,6 +169,8 @@ export function createWorktreeManager(options: {
     async createWorktree(input: {
       projectSlug: string;
       branch?: string;
+      createBranch?: boolean;
+      baseRef?: string;
       pr?: number;
     }): Promise<{ ok: true; status: 201 | 200; worktree: WorktreeRecord } | Failure> {
       if (!SlugSchema.safeParse(input.projectSlug).success) {
@@ -165,6 +180,9 @@ export function createWorktreeManager(options: {
         return failure(400, "invalid_ref", "Exactly one branch or PR reference is required");
       }
       if (input.branch && !BranchSchema.safeParse(input.branch).success) {
+        return failure(400, "invalid_ref", "Branch or PR reference is invalid");
+      }
+      if (input.baseRef && !BranchSchema.safeParse(input.baseRef).success) {
         return failure(400, "invalid_ref", "Branch or PR reference is invalid");
       }
       if (typeof input.pr === "number" && (!Number.isSafeInteger(input.pr) || input.pr < 1)) {
@@ -178,6 +196,8 @@ export function createWorktreeManager(options: {
         const id = worktreeId(input.projectSlug, source);
         const path = worktreePath(homePath, input.projectSlug, id);
         const currentBranch = typeof input.pr === "number" ? `pr-${input.pr}` : input.branch!;
+        const configuredBaseRef = input.baseRef ?? project.defaultBranch ?? "main";
+        const baseRef = BranchSchema.safeParse(configuredBaseRef).success ? configuredBaseRef : "main";
         const existing = await readWorktree(homePath, input.projectSlug, id);
         if (existing) return { ok: true, status: 200, worktree: existing };
 
@@ -188,7 +208,18 @@ export function createWorktreeManager(options: {
               timeout: DEFAULT_TIMEOUT_MS,
             });
           }
-          await runCommand("git", ["worktree", "add", "--", path, currentBranch], {
+          let addArgs = ["worktree", "add", "--", path, currentBranch];
+          if (input.branch && input.createBranch) {
+            const branchExists = await gitRefExists(runCommand, project.localPath, `refs/heads/${currentBranch}`);
+            if (!branchExists) {
+              const remoteRef = `refs/remotes/origin/${currentBranch}`;
+              const remoteBranchExists = await gitRefExists(runCommand, project.localPath, remoteRef);
+              addArgs = remoteBranchExists
+                ? ["worktree", "add", "-b", currentBranch, "--track", "--", path, `origin/${currentBranch}`]
+                : ["worktree", "add", "-b", currentBranch, "--", path, baseRef];
+            }
+          }
+          await runCommand("git", addArgs, {
             cwd: project.localPath,
             timeout: DEFAULT_TIMEOUT_MS,
           });

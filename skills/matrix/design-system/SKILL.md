@@ -39,6 +39,8 @@ Four brand colors + warm sand shades for gradient depth:
 
 ```css
 :root {
+  --matrix-bg: #FAFAF5;
+  --app-bg: #FAFAF5;
   --bg: #FAFAF5;
   --fg: #32352E;
   --primary: #434E3F;
@@ -211,6 +213,11 @@ Animate width from 0 to target on mount: `transition: width 0.6s cubic-bezier(0.
 - Always respect `prefers-reduced-motion`
 
 ## Component Patterns
+
+Use shadcn-style primitives for app interiors whenever the repo already exposes
+them: Button, Card, Input, Select, Tabs, Tooltip, Badge, Dialog, and related
+unstyled composition helpers. Skin those primitives with Matrix tokens instead
+of inventing one-off controls.
 
 ### Buttons
 
