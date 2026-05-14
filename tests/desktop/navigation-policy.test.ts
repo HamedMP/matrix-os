@@ -4,6 +4,7 @@ import {
   isAllowedExternalUrl,
   isAllowedShellNavigation,
   normalizeMatrixDesktopUrl,
+  openAllowedExternalUrl,
 } from "../../apps/desktop/src/main/security.js";
 
 describe("desktop navigation policy", () => {
@@ -45,5 +46,18 @@ describe("desktop navigation policy", () => {
 
     expect(await handler({ url: "https://matrix-os.com/docs" })).toEqual({ action: "deny" });
     expect(openExternal).toHaveBeenCalledWith("https://matrix-os.com/docs");
+  });
+
+  it("reports whether desktop IPC external opens were allowed and completed", async () => {
+    const openExternal = vi.fn(async () => {});
+
+    await expect(openAllowedExternalUrl("https://matrix-os.com/docs", { openExternal })).resolves.toBe(true);
+    expect(openExternal).toHaveBeenCalledWith("https://matrix-os.com/docs");
+
+    await expect(openAllowedExternalUrl("file:///tmp/secret", { openExternal })).resolves.toBe(false);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+
+    openExternal.mockRejectedValueOnce(new Error("OS denied"));
+    await expect(openAllowedExternalUrl("https://matrix-os.com/fail", { openExternal })).resolves.toBe(false);
   });
 });

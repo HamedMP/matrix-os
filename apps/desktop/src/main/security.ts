@@ -6,9 +6,11 @@ export interface WindowOpenResult {
   action: "deny";
 }
 
-export interface WindowOpenHandlerDeps {
+export interface ExternalOpenDeps {
   openExternal: (url: string) => Promise<void>;
 }
+
+export type WindowOpenHandlerDeps = ExternalOpenDeps;
 
 const DESKTOP_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
@@ -43,16 +45,23 @@ export function isAllowedExternalUrl(rawUrl: string): boolean {
   return Boolean(parsed && EXTERNAL_PROTOCOLS.has(parsed.protocol));
 }
 
+export async function openAllowedExternalUrl(rawUrl: string, deps: ExternalOpenDeps): Promise<boolean> {
+  const parsed = parseUrl(rawUrl);
+  if (!parsed || !isAllowedExternalUrl(parsed.toString())) {
+    return false;
+  }
+  try {
+    await deps.openExternal(parsed.toString());
+    return true;
+  } catch (err: unknown) {
+    console.warn("[desktop] Failed to open external URL", err instanceof Error ? err.name : "UnknownError");
+    return false;
+  }
+}
+
 export function createWindowOpenHandler(deps: WindowOpenHandlerDeps) {
   return async (request: WindowOpenRequest): Promise<WindowOpenResult> => {
-    const parsed = parseUrl(request.url);
-    if (parsed && isAllowedExternalUrl(parsed.toString())) {
-      try {
-        await deps.openExternal(parsed.toString());
-      } catch (err: unknown) {
-        console.warn("[desktop] Failed to open external URL", err instanceof Error ? err.name : "UnknownError");
-      }
-    }
+    await openAllowedExternalUrl(request.url, deps);
     return { action: "deny" };
   };
 }

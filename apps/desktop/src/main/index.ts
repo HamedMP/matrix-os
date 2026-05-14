@@ -9,7 +9,7 @@ import {
   saveDesktopWindowState,
   type DesktopWindowState,
 } from "./config.js";
-import { createWindowOpenHandler, isAllowedShellNavigation } from "./security.js";
+import { createWindowOpenHandler, isAllowedShellNavigation, openAllowedExternalUrl } from "./security.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,9 +23,7 @@ function registerDesktopIpc(): void {
   ipcMain.handle("matrix-desktop:get-runtime-policy", () => desktopRuntimePolicy);
   ipcMain.handle("matrix-desktop:open-external", async (_event, url: unknown) => {
     if (typeof url !== "string") return { ok: false };
-    const openWindow = createWindowOpenHandler({ openExternal: shell.openExternal });
-    await openWindow({ url });
-    return { ok: true };
+    return { ok: await openAllowedExternalUrl(url, { openExternal: shell.openExternal }) };
   });
 }
 

@@ -77,7 +77,7 @@ export function safeDesktopClientError(value: unknown): string {
   return DESKTOP_ERROR_ALLOWLIST.has(value.message) ? value.message : SAFE_CLIENT_ERROR;
 }
 
-export async function getDesktopRuntimePolicy(): Promise<DesktopRuntimePolicy | null> {
+export async function getDesktopRuntimePolicy(): Promise<DesktopRuntimePolicy> {
   if (typeof window !== "undefined" && window.matrixDesktop) {
     return window.matrixDesktop.getRuntimePolicy();
   }
