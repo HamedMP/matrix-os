@@ -16,12 +16,19 @@ import {
   ticketError,
 } from "./contracts.js";
 import type { TicketRepository } from "./internal-repository.js";
+import { syncLinearTickets, type LinearTicketLike } from "./linear-sync.js";
 import { createTicketStatusHub, type TicketStatusHub } from "./status-hub.js";
 
 export interface TicketRoutesDeps {
   repository: TicketRepository;
   statusHub?: TicketStatusHub;
   getPrincipal?: (c: Context) => RequestPrincipal;
+  linearSyncSource?: (input: {
+    ownerId: string;
+    projectSlug: string;
+    sourceId: string;
+    mode: "preview" | "sync";
+  }) => Promise<{ tickets: LinearTicketLike[]; truncated: boolean }>;
 }
 
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
@@ -95,6 +102,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     const ticket = await deps.repository.createInternalTicket(principal.userId, project.projectSlug, parsed.value);
     statusHub.publish({
       id: `evt_${randomUUID()}`,
+      ownerId: principal.userId,
       projectSlug: project.projectSlug,
       ticketId: ticket.id,
       type: "ticket.created",
@@ -115,6 +123,7 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     if (!ticket) return c.json(ticketError("revision_conflict", "Ticket was updated by another request"), status(409));
     statusHub.publish({
       id: `evt_${randomUUID()}`,
+      ownerId: principal.userId,
       projectSlug: project.projectSlug,
       ticketId: ticket.id,
       type: "ticket.updated",
@@ -124,18 +133,43 @@ export function createTicketRoutes(deps: TicketRoutesDeps) {
     return c.json({ ticket });
   }));
 
-  app.post("/:projectSlug/tickets/sync/linear", limited, (c) => withPrincipal(c, deps, async () => {
+  app.post("/:projectSlug/tickets/sync/linear", limited, (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
     const parsed = await parseJson(c, LinearSyncSchema);
     if (!parsed.ok) return parsed.response;
-    return c.json({ created: 0, updated: 0, unchanged: 0, truncated: false, sourceId: parsed.value.sourceId });
+    if (!deps.linearSyncSource) return c.json(ticketError("linear_sync_unavailable", "Linear sync is unavailable"), status(503));
+    const source = await deps.linearSyncSource({
+      ownerId: principal.userId,
+      projectSlug: project.projectSlug,
+      sourceId: parsed.value.sourceId,
+      mode: parsed.value.mode,
+    });
+    if (parsed.value.mode === "preview") {
+      return c.json({ tickets: source.tickets, truncated: source.truncated, sourceId: parsed.value.sourceId });
+    }
+    const summary = await syncLinearTickets(deps.repository, {
+      ownerId: principal.userId,
+      projectSlug: project.projectSlug,
+      sourceId: parsed.value.sourceId,
+      tickets: source.tickets,
+      truncated: source.truncated,
+    });
+    statusHub.publish({
+      id: `evt_${randomUUID()}`,
+      ownerId: principal.userId,
+      projectSlug: project.projectSlug,
+      ticketId: parsed.value.sourceId,
+      type: "ticket.sync.completed",
+      createdAt: new Date().toISOString(),
+    });
+    return c.json({ ...summary, sourceId: parsed.value.sourceId });
   }));
 
-  app.get("/:projectSlug/tickets/events", (c) => withPrincipal(c, deps, async () => {
+  app.get("/:projectSlug/tickets/events", (c) => withPrincipal(c, deps, async (principal) => {
     const project = readProjectSlug(c);
     if (!project.ok) return project.response;
-    return c.json({ events: statusHub.recent(project.projectSlug, 100) });
+    return c.json({ events: statusHub.recent(principal.userId, project.projectSlug, 100) });
   }));
 
   return app;

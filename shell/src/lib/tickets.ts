@@ -17,7 +17,7 @@ export interface UnifiedTicket {
 
 export async function listProjectTickets(projectSlug: string): Promise<{ tickets: UnifiedTicket[]; nextCursor: string | null }> {
   const response = await fetch(`${getGatewayUrl()}/api/projects/${encodeURIComponent(projectSlug)}/tickets?source=all&limit=200`, {
-    headers: { "Content-Type": "application/json" },
+    headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {

@@ -28,6 +28,18 @@ describe("Ticket routes", () => {
     app.route("/api/projects", createTicketRoutes({
       repository,
       getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+      linearSyncSource: async () => ({
+        truncated: false,
+        tickets: [{
+          identifier: "LIN-1",
+          externalId: "issue_1",
+          title: "Linear ticket",
+          status: "Todo",
+          priority: "medium",
+          assigneeIds: [],
+          labels: ["symphony"],
+        }],
+      }),
     }));
   });
 
@@ -70,5 +82,24 @@ describe("Ticket routes", () => {
 
     const invalid = await app.request(jsonRequest("/api/projects/-bad/tickets", "POST", { title: "Bad" }));
     expect(invalid.status).toBe(400);
+  });
+
+  it("syncs Linear tickets through the route and scopes events by owner", async () => {
+    const sync = await app.request(jsonRequest("/api/projects/repo/tickets/sync/linear", "POST", {
+      sourceId: "linear_main",
+      mode: "sync",
+    }));
+    expect(sync.status).toBe(200);
+    await expect(sync.json()).resolves.toMatchObject({ created: 1, updated: 0, unchanged: 0, sourceId: "linear_main" });
+
+    const list = await app.request("/api/projects/repo/tickets?source=linear&limit=20");
+    await expect(list.json()).resolves.toMatchObject({
+      tickets: [expect.objectContaining({ sourceKind: "linear", sourceId: "issue_1" })],
+    });
+
+    const events = await app.request("/api/projects/repo/tickets/events");
+    await expect(events.json()).resolves.toMatchObject({
+      events: [expect.objectContaining({ ownerId: "user_123", type: "ticket.sync.completed" })],
+    });
   });
 });

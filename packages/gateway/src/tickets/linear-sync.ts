@@ -41,9 +41,16 @@ export async function syncLinearTickets(
   let updated = 0;
   let unchanged = 0;
 
-  for (const ticket of input.tickets) {
-    const normalized = normalizeLinearTicket(ticket);
-    const before = await repository.findBySource(input.ownerId, input.projectSlug, "linear", normalized.sourceId);
+  const normalizedTickets = input.tickets.map(normalizeLinearTicket);
+  const existingBySource = await repository.findManyBySource(
+    input.ownerId,
+    input.projectSlug,
+    "linear",
+    normalizedTickets.map((ticket) => ticket.sourceId),
+  );
+
+  await Promise.all(normalizedTickets.map(async (normalized) => {
+    const before = existingBySource.get(normalized.sourceId) ?? null;
     const after = await repository.upsertExternalTicket(input.ownerId, input.projectSlug, normalized);
     if (!before) {
       created += 1;
@@ -52,7 +59,7 @@ export async function syncLinearTickets(
     } else {
       updated += 1;
     }
-  }
+  }));
 
   return { created, updated, unchanged, truncated: input.truncated };
 }

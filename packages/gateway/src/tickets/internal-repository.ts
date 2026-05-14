@@ -15,6 +15,7 @@ export interface TicketRepository {
   createInternalTicket(ownerId: string, projectSlug: string, input: CreateInternalTicketInput): Promise<TrackedTicket>;
   upsertExternalTicket(ownerId: string, projectSlug: string, input: ExternalTicketInput): Promise<TrackedTicket>;
   findBySource(ownerId: string, projectSlug: string, sourceKind: TicketSourceKind, sourceId: string): Promise<TrackedTicket | null>;
+  findManyBySource(ownerId: string, projectSlug: string, sourceKind: TicketSourceKind, sourceIds: string[]): Promise<Map<string, TrackedTicket>>;
   listTickets(ownerId: string, projectSlug: string, query: TicketListQuery): Promise<TicketListPage>;
   updateTicket(ownerId: string, projectSlug: string, ticketId: string, input: UpdateTicketInput): Promise<TrackedTicket | null>;
 }
@@ -119,6 +120,8 @@ export class KyselyTicketRepository implements TicketRepository {
         status: ticket.status,
         revision: ticket.revision,
         ticket: JSON.stringify(ticket),
+        created_at: timestamp,
+        updated_at: timestamp,
       }).execute();
       return ticket;
     });
@@ -135,6 +138,21 @@ export class KyselyTicketRepository implements TicketRepository {
       .where("deleted_at", "is", null)
       .executeTakeFirst() as Record<string, unknown> | undefined;
     return row ? ticketFromRow(row) : null;
+  }
+
+  async findManyBySource(ownerId: string, projectSlug: string, sourceKind: TicketSourceKind, sourceIds: string[]): Promise<Map<string, TrackedTicket>> {
+    const uniqueSourceIds = Array.from(new Set(sourceIds)).slice(0, 500);
+    if (uniqueSourceIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom("tracked_tickets")
+      .select(["source_id", "ticket"])
+      .where("owner_id", "=", ownerId)
+      .where("project_slug", "=", projectSlug)
+      .where("source_kind", "=", sourceKind)
+      .where("source_id", "in", uniqueSourceIds)
+      .where("deleted_at", "is", null)
+      .execute() as Record<string, unknown>[];
+    return new Map(rows.map((row) => [String(row.source_id), ticketFromRow(row)]));
   }
 
   async upsertExternalTicket(ownerId: string, projectSlug: string, input: ExternalTicketInput): Promise<TrackedTicket> {
@@ -172,7 +190,7 @@ export class KyselyTicketRepository implements TicketRepository {
           status: ticket.status,
           revision: ticket.revision,
           ticket: JSON.stringify(ticket),
-          updated_at: sql`now()`,
+          updated_at: timestamp,
         })
         .where("id", "=", existing.id)
         .where("revision", "=", existing.revision)
@@ -214,6 +232,8 @@ export class KyselyTicketRepository implements TicketRepository {
       status: ticket.status,
       revision: ticket.revision,
       ticket: JSON.stringify(ticket),
+      created_at: timestamp,
+      updated_at: timestamp,
     }).onConflict((oc) => oc
       .columns(["owner_id", "project_slug", "source_kind", "source_id"])
       .doNothing()
@@ -224,20 +244,37 @@ export class KyselyTicketRepository implements TicketRepository {
   async listTickets(ownerId: string, projectSlug: string, query: TicketListQuery): Promise<TicketListPage> {
     let builder = this.db
       .selectFrom("tracked_tickets")
-      .select(["ticket", "updated_at"])
+      .select(["id", "ticket", "updated_at"])
       .where("owner_id", "=", ownerId)
       .where("project_slug", "=", projectSlug)
       .where("deleted_at", "is", null);
     if (!query.includeArchived) builder = builder.where("archived_at", "is", null);
     if (query.source !== "all") builder = builder.where("source_kind", "=", query.source);
     if (query.status) builder = builder.where("status", "=", query.status);
+    if (query.assigneeId) {
+      builder = builder.where(sql<boolean>`ticket->'assigneeIds' ? ${query.assigneeId}`);
+    }
+    if (query.cursor) {
+      const [cursorUpdatedAt, cursorId] = query.cursor.split("|", 2);
+      const cursorDate = new Date(cursorUpdatedAt);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        builder = cursorId
+          ? builder.where(sql<boolean>`(updated_at, id) < (${cursorDate}, ${cursorId})`)
+          : builder.where("updated_at", "<", cursorDate);
+      }
+    }
     const rows = await builder
       .orderBy("updated_at", "desc")
-      .limit(query.limit)
+      .orderBy("id", "desc")
+      .limit(query.limit + 1)
       .execute() as Record<string, unknown>[];
-    const tickets = rows.map(ticketFromRow)
-      .filter((ticket) => !query.assigneeId || ticket.assigneeIds.includes(query.assigneeId));
-    return { tickets, nextCursor: null };
+    const pageRows = rows.slice(0, query.limit);
+    const tickets = pageRows.map(ticketFromRow);
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor = rows.length > query.limit && lastRow
+      ? `${new Date(String(lastRow.updated_at)).toISOString()}|${String(lastRow.id)}`
+      : null;
+    return { tickets, nextCursor };
   }
 
   async updateTicket(ownerId: string, projectSlug: string, ticketIdValue: string, input: UpdateTicketInput): Promise<TrackedTicket | null> {
@@ -265,7 +302,7 @@ export class KyselyTicketRepository implements TicketRepository {
         status: ticket.status,
         revision: ticket.revision,
         ticket: JSON.stringify(ticket),
-        updated_at: sql`now()`,
+        updated_at: timestamp,
       })
       .where("owner_id", "=", ownerId)
       .where("project_slug", "=", projectSlug)

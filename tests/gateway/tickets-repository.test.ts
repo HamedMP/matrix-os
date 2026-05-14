@@ -76,4 +76,42 @@ describe("Ticket repository", () => {
     expect(listed.tickets).toHaveLength(1);
     expect(second).toMatchObject({ id: first.id, title: "Synced title", status: "Ready", revision: 2 });
   });
+
+  it("applies assignee filters before pagination and returns a cursor", async () => {
+    let tick = 0;
+    repository = new KyselyTicketRepository(db, () => new Date(Date.UTC(2026, 4, 14, 18, 0, tick++)).toISOString());
+    await repository.bootstrap();
+    for (let i = 0; i < 5; i += 1) {
+      await repository.createInternalTicket("user_123", "repo", {
+        title: `Ticket ${i}`,
+        description: "",
+        status: "Todo",
+        priority: "medium",
+        assigneeIds: i < 3 ? ["agent_1"] : ["agent_2"],
+        labelIds: [],
+        dependencyIds: [],
+        artifactIds: [],
+      });
+    }
+
+    const firstPage = await repository.listTickets("user_123", "repo", {
+      source: "all",
+      assigneeId: "agent_1",
+      limit: 2,
+      includeArchived: false,
+    });
+    expect(firstPage.tickets).toHaveLength(2);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await repository.listTickets("user_123", "repo", {
+      source: "all",
+      assigneeId: "agent_1",
+      cursor: firstPage.nextCursor ?? undefined,
+      limit: 2,
+      includeArchived: false,
+    });
+    expect(secondPage.tickets).toHaveLength(1);
+    expect(secondPage.tickets[0].assigneeIds).toContain("agent_1");
+    expect(secondPage.nextCursor).toBeNull();
+  });
 });
