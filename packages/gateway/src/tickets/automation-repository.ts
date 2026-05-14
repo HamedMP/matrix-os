@@ -103,11 +103,14 @@ export class KyselyTicketAutomationRepository implements TicketAutomationReposit
   async listRules(ownerId: string, projectSlug: string): Promise<TicketAutomationRule[]> {
     const rows = await this.db
       .selectFrom("ticket_automation_rules")
-      .select(["rule"])
+      .select(["enabled", "rule"])
       .where("owner_id", "=", ownerId)
       .where("project_slug", "=", projectSlug)
       .orderBy("created_at", "desc")
       .execute() as Array<Record<string, unknown>>;
-    return rows.map((row) => rowJson<TicketAutomationRule>(row, "rule"));
+    return rows.map((row) => ({
+      ...rowJson<TicketAutomationRule>(row, "rule"),
+      enabled: row.enabled === true,
+    }));
   }
 }

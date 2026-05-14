@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { Kysely } from "kysely";
+import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { createTicketAutomationRoutes } from "../../packages/gateway/src/tickets/automation-routes.js";
 import { KyselyTicketAutomationRepository } from "../../packages/gateway/src/tickets/automation-repository.js";
@@ -122,6 +122,28 @@ describe("Ticket automation repository", () => {
     await restarted.bootstrap();
     await expect(restarted.listRules("user_123", "repo")).resolves.toMatchObject([
       { name: "Second", ownerId: "user_123", projectSlug: "repo", enabled: true },
+    ]);
+  });
+
+  it("reads the current enabled column when listing automation rules", async () => {
+    const repository = new KyselyTicketAutomationRepository(db);
+    await repository.bootstrap();
+    const saved = await repository.saveRule({
+      ownerId: "user_123",
+      projectSlug: "repo",
+      name: "Toggle me",
+      trigger: { type: "ticket.status.changed", statuses: ["Ready"] },
+      action: { type: "assign_to_symphony", runtimeMode: "cloud" },
+      enabled: true,
+    });
+    await sql`
+      UPDATE ticket_automation_rules
+      SET enabled = false
+      WHERE id = ${saved.id}
+    `.execute(db);
+
+    await expect(repository.listRules("user_123", "repo")).resolves.toMatchObject([
+      { id: saved.id, enabled: false },
     ]);
   });
 });
