@@ -69,6 +69,7 @@
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.45.1",
     "lucide-react": "^0.563.0",
+    "node-gyp": "^12.3.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "tsx": "^4.21.0",
