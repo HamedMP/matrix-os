@@ -45,11 +45,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
@@ -77,11 +77,11 @@ jobs:
       pkg_path: ${{ steps.build.outputs.pkg_path }}
       pkg_name: ${{ steps.build.outputs.pkg_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
@@ -150,7 +150,7 @@ jobs:
         run: ./scripts/notarise-macos.sh "$PKG_PATH"
 
       - name: Upload pkg artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: macos-pkg
           path: ${{ steps.build.outputs.pkg_path }}
@@ -167,11 +167,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
@@ -200,17 +200,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Download macOS pkg (if built)
         if: ${{ needs.build-macos.result == 'success' }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: macos-pkg
           path: dist/macos
 
       - name: Create release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: cli-v${{ inputs.version }}
           name: cli-v${{ inputs.version }}
@@ -228,7 +228,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           repository: FinnaAI/homebrew-tap
           token: ${{ secrets.TAP_PUSH_TOKEN }}
