@@ -62,6 +62,8 @@ interface WorkspacePreview {
   url?: string;
   lastStatus?: string;
   ticketId?: string;
+  taskId?: string;
+  sessionId?: string;
 }
 
 interface WorkspaceEvent {
@@ -473,8 +475,15 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setWorkbenchSnapshot(store.snapshot());
   }, [activeSlug, sessions, visibleTickets]);
   const activeTicket = tickets.find((ticket) => ticket.id === workbenchSnapshot.activeTabId) ?? null;
+  const activeTicketArtifactIds = activeTicket?.artifactIds ?? [];
+  const activeTicketArtifactSet = new Set(activeTicketArtifactIds);
   const activeTicketPreviews = activeTicket
-    ? previews.filter((preview) => preview.ticketId === activeTicket.id)
+    ? previews.filter((preview) =>
+      preview.ticketId === activeTicket.id ||
+      (typeof preview.taskId === "string" && activeTicketArtifactSet.has(preview.taskId)) ||
+      (typeof preview.sessionId === "string" && activeTicketArtifactSet.has(preview.sessionId)) ||
+      (typeof preview.id === "string" && activeTicketArtifactSet.has(preview.id))
+    )
     : [];
   const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
   const visibleSessions = sessions.filter((session) => {
@@ -666,7 +675,11 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
           <CloudAgentStatusPanel sessions={sessions} />
           <TicketResourcesPanel
             ticket={activeTicket}
-            artifacts={(activeTicket?.labelIds ?? []).map((label) => ({ id: `label_${label}`, label, kind: "label" }))}
+            artifacts={activeTicketArtifactIds.map((artifactId) => ({
+              id: artifactId,
+              label: artifactId,
+              kind: artifactId.startsWith("task_") ? "task" : artifactId.startsWith("sess_") ? "session" : artifactId.startsWith("prev_") ? "preview" : "artifact",
+            }))}
             previews={activeTicketPreviews}
           />
           <WorkspacePanel title="Workflow setup" icon={<CodeIcon className="size-3.5" />}>

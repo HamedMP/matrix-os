@@ -13,6 +13,7 @@ export interface UnifiedTicket {
   revision?: number;
   labelIds?: string[];
   assigneeIds?: string[];
+  artifactIds?: string[];
 }
 
 export async function listProjectTickets(projectSlug: string): Promise<{ tickets: UnifiedTicket[]; nextCursor: string | null }> {

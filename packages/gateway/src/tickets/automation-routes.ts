@@ -16,11 +16,29 @@ function status(code: number): ContentfulStatusCode {
 }
 
 export function createTicketAutomationRoutes(deps: {
-  repository: Pick<TicketAutomationRepository, "saveRule">;
+  repository: Pick<TicketAutomationRepository, "saveRule" | "listRules">;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }) {
   const app = new Hono();
   const limited = bodyLimit({ maxSize: 32 * 1024 });
+
+  app.get("/:projectSlug/tickets/automations", async (c) => {
+    const projectSlug = ProjectSlugSchema.safeParse(c.req.param("projectSlug"));
+    if (!projectSlug.success) return c.json(ticketError("invalid_project_slug", "Project slug is invalid"), status(400));
+    try {
+      const principal = deps.getPrincipal?.(c) ?? requireRequestPrincipal(c, { requireAuthContextReady: false });
+      const automations = await deps.repository.listRules(principal.userId, projectSlug.data);
+      return c.json({ automations });
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Ticket automation request failed");
+        if (mapped.log) console.error("[tickets] Automation principal resolution failed:", err);
+        return c.json(ticketError("unauthorized", mapped.body.error), status(mapped.status));
+      }
+      console.error("[tickets] Automation list failed:", err);
+      return c.json(ticketError("automation_list_failed", "Ticket automations could not be loaded"), status(500));
+    }
+  });
 
   app.post("/:projectSlug/tickets/automations", limited, async (c) => {
     const projectSlug = ProjectSlugSchema.safeParse(c.req.param("projectSlug"));

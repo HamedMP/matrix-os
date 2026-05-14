@@ -26,6 +26,15 @@ export class KyselyTicketAutomationRepository implements TicketAutomationReposit
 
   async bootstrap(): Promise<void> {
     await sql`
+      CREATE TABLE IF NOT EXISTS ticket_automation_projects (
+        owner_id text NOT NULL,
+        project_slug text NOT NULL,
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now(),
+        PRIMARY KEY (owner_id, project_slug)
+      )
+    `.execute(this.db);
+    await sql`
       CREATE TABLE IF NOT EXISTS ticket_automation_rules (
         id text PRIMARY KEY,
         owner_id text NOT NULL,
@@ -44,6 +53,18 @@ export class KyselyTicketAutomationRepository implements TicketAutomationReposit
 
   async saveRule(rule: Omit<TicketAutomationRule, "id" | "enabled"> & { enabled?: boolean }): Promise<TicketAutomationRule> {
     return await this.db.transaction().execute(async (trx) => {
+      await trx
+        .insertInto("ticket_automation_projects")
+        .values({ owner_id: rule.ownerId, project_slug: rule.projectSlug })
+        .onConflict((oc) => oc.columns(["owner_id", "project_slug"]).doUpdateSet({ updated_at: sql`now()` }))
+        .execute();
+      await trx
+        .selectFrom("ticket_automation_projects")
+        .select(["owner_id"])
+        .where("owner_id", "=", rule.ownerId)
+        .where("project_slug", "=", rule.projectSlug)
+        .forUpdate()
+        .executeTakeFirst();
       const countRow = await trx
         .selectFrom("ticket_automation_rules")
         .select(({ fn }) => fn.count<number>("id").as("count"))

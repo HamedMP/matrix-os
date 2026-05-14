@@ -131,6 +131,56 @@ describe("WorkspaceApp", () => {
     expect(screen.queryByRole("button", { name: "Close codex" })).toBeNull();
   });
 
+  it("renders ticket artifacts and previews from gateway-linked resource ids", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [{ slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } }] });
+      }
+      if (url.includes("/api/projects/repo/tickets")) {
+        return json({
+          tickets: [{
+            id: "ticket_1",
+            identifier: "MAT-1",
+            title: "Preview work",
+            sourceKind: "matrix",
+            status: "Todo",
+            priority: "medium",
+            syncStatus: "local",
+            artifactIds: ["task_1", "sess_1", "prev_direct"],
+            labelIds: ["not-an-artifact"],
+          }],
+          nextCursor: null,
+        });
+      }
+      if (url.includes("/api/projects/repo/previews")) {
+        return json({
+          previews: [
+            { id: "prev_task", taskId: "task_1", label: "Task preview", url: "http://localhost:3000", lastStatus: "ok" },
+            { id: "prev_session", sessionId: "sess_1", label: "Session preview", url: "http://localhost:3001", lastStatus: "ok" },
+            { id: "prev_direct", label: "Direct preview", url: "http://localhost:3002", lastStatus: "ok" },
+            { id: "prev_project", label: "Project preview", url: "http://localhost:3003", lastStatus: "ok" },
+          ],
+        });
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ tasks: [], sessions: [], reviews: [], worktrees: [], events: [], members: [], workflow: {}, codex: {} });
+      }
+      return json({});
+    }));
+
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getByText("MAT-1")).toBeTruthy());
+    expect(screen.getByText("task_1")).toBeTruthy();
+    expect(screen.getByText("sess_1")).toBeTruthy();
+    expect(screen.queryByText("not-an-artifact")).toBeNull();
+    expect(screen.getAllByText("Task preview").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Session preview").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Direct preview").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Project preview")).toHaveLength(1);
+  });
+
   it("converges from workspace events and controls running sessions through /api/sessions", async () => {
     render(<WorkspaceApp initialProjectSlug="repo" />);
 

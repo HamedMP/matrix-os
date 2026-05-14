@@ -7,7 +7,10 @@ import { KyselyTicketAutomationRepository } from "../../packages/gateway/src/tic
 
 describe("Ticket automation routes", () => {
   it("validates automation rules and keeps execution scoped to cloud runtime", async () => {
-    const repository = { saveRule: vi.fn(async (rule) => ({ ...rule, id: "automation_1", enabled: true })) };
+    const repository = {
+      saveRule: vi.fn(async (rule) => ({ ...rule, id: "automation_1", enabled: true })),
+      listRules: vi.fn(async () => []),
+    };
     const app = new Hono();
     app.route("/api/projects", createTicketAutomationRoutes({
       repository,
@@ -30,7 +33,10 @@ describe("Ticket automation routes", () => {
   });
 
   it("returns generic errors and logs when automation persistence fails", async () => {
-    const repository = { saveRule: vi.fn(async () => { throw new Error("postgres://secret@example.test/path"); }) };
+    const repository = {
+      saveRule: vi.fn(async () => { throw new Error("postgres://secret@example.test/path"); }),
+      listRules: vi.fn(async () => []),
+    };
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const app = new Hono();
     app.route("/api/projects", createTicketAutomationRoutes({
@@ -53,6 +59,32 @@ describe("Ticket automation routes", () => {
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
+
+  it("lists persisted automation rules for the authenticated owner", async () => {
+    const repository = {
+      saveRule: vi.fn(),
+      listRules: vi.fn(async () => [{
+        id: "automation_1",
+        ownerId: "user_123",
+        projectSlug: "repo",
+        name: "Ready to Symphony",
+        trigger: { type: "ticket.status.changed" as const, statuses: ["Ready"] },
+        action: { type: "assign_to_symphony" as const, runtimeMode: "cloud" as const },
+        enabled: true,
+      }]),
+    };
+    const app = new Hono();
+    app.route("/api/projects", createTicketAutomationRoutes({
+      repository,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    }));
+
+    const res = await app.request("/api/projects/repo/tickets/automations");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ automations: [{ id: "automation_1", name: "Ready to Symphony" }] });
+    expect(repository.listRules).toHaveBeenCalledWith("user_123", "repo");
+  });
 });
 
 describe("Ticket automation repository", () => {
@@ -68,7 +100,7 @@ describe("Ticket automation repository", () => {
     await db.destroy();
   });
 
-  it("persists automation rules across repository instances and caps project scope", async () => {
+  it("persists automation rules across repository instances and serializes capped project scope", async () => {
     const first = new KyselyTicketAutomationRepository(db, 1);
     await first.bootstrap();
     await first.saveRule({
