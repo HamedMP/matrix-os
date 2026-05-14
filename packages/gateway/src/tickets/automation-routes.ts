@@ -4,9 +4,10 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod/v4";
 import { requestHasBody } from "../http-body.js";
 import { PROJECT_SLUG_REGEX } from "../project-manager.js";
-import { requireRequestPrincipal, type RequestPrincipal } from "../request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { TicketAutomationRuleSchema, type TicketAutomationRule } from "./automation-contracts.js";
 import { ticketError } from "./contracts.js";
+import type { TicketAutomationRepository } from "./automation-repository.js";
 
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 
@@ -15,7 +16,7 @@ function status(code: number): ContentfulStatusCode {
 }
 
 export function createTicketAutomationRoutes(deps: {
-  saveRule: (rule: Omit<TicketAutomationRule, "id" | "enabled"> & { enabled?: boolean }) => Promise<TicketAutomationRule>;
+  repository: Pick<TicketAutomationRepository, "saveRule">;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }) {
   const app = new Hono();
@@ -29,20 +30,32 @@ export function createTicketAutomationRoutes(deps: {
       try {
         raw = await c.req.json();
       } catch (err: unknown) {
-        if (err instanceof Error && err.name === "BodyLimitError") return c.json(ticketError("payload_too_large", "Request body is too large"), status(413));
+        if (!(err instanceof SyntaxError)) {
+          console.error("[tickets] Failed to parse automation body:", err);
+        }
         return c.json(ticketError("invalid_json", "Request body must be valid JSON"), status(400));
       }
     }
     const parsed = TicketAutomationRuleSchema.safeParse(raw);
     if (!parsed.success) return c.json(ticketError("invalid_request", "Request body is invalid"), status(400));
-    const principal = deps.getPrincipal?.(c) ?? requireRequestPrincipal(c, { requireAuthContextReady: false });
-    const automation = await deps.saveRule({
-      ...parsed.data,
-      ownerId: principal.userId,
-      projectSlug: projectSlug.data,
-      enabled: true,
-    });
-    return c.json({ automation }, status(201));
+    try {
+      const principal = deps.getPrincipal?.(c) ?? requireRequestPrincipal(c, { requireAuthContextReady: false });
+      const automation = await deps.repository.saveRule({
+        ...parsed.data,
+        ownerId: principal.userId,
+        projectSlug: projectSlug.data,
+        enabled: true,
+      });
+      return c.json({ automation }, status(201));
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Ticket automation request failed");
+        if (mapped.log) console.error("[tickets] Automation principal resolution failed:", err);
+        return c.json(ticketError("unauthorized", mapped.body.error), status(mapped.status));
+      }
+      console.error("[tickets] Automation save failed:", err);
+      return c.json(ticketError("automation_save_failed", "Ticket automation could not be saved"), status(500));
+    }
   });
 
   return app;

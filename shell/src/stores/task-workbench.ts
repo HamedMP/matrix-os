@@ -25,6 +25,13 @@ export function createTaskWorkbenchStore(initial: TaskWorkbenchSnapshot = { tabs
         activeTabId: tab.id,
       };
     },
+    ensureTab(tab: TaskWorkbenchTab) {
+      if (state.tabs.some((entry) => entry.id === tab.id)) return;
+      state = {
+        tabs: [...state.tabs, tab],
+        activeTabId: state.activeTabId ?? tab.id,
+      };
+    },
     activate(tabId: string) {
       if (!state.tabs.some((tab) => tab.id === tabId)) return;
       state = { ...state, activeTabId: tabId };

@@ -107,9 +107,28 @@ describe("WorkspaceApp", () => {
     expect(screen.queryByText("Task 999")).toBeNull();
     expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0);
     expect(screen.getByText(/Round 2/)).toBeTruthy();
+    expect(screen.getAllByText("Local app")).toHaveLength(1);
     expect(screen.getByText("Local app").closest("a")?.getAttribute("href")).toBe("http://localhost:3000");
     expect(screen.getByText("Open IDE").getAttribute("href")).toContain("code.matrix-os.com");
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions"), expect.anything());
+  });
+
+  it("keeps closed workbench tabs closed after workspace refresh", async () => {
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close codex" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close codex" }));
+    });
+    expect(screen.queryByRole("button", { name: "Close codex" })).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /refresh workspace/i }));
+    });
+
+    await waitFor(() => expect(screen.getAllByText("Repo").length).toBeGreaterThan(0));
+    expect(screen.queryByRole("button", { name: "Close codex" })).toBeNull();
   });
 
   it("converges from workspace events and controls running sessions through /api/sessions", async () => {
@@ -117,7 +136,7 @@ describe("WorkspaceApp", () => {
 
     await waitFor(() => expect(screen.getByText("task.updated")).toBeTruthy());
     expect(screen.getByText("zellij attach matrix-sess_abc123")).toBeTruthy();
-    expect(screen.getByText("running health")).toBeTruthy();
+    expect(screen.getByText(/running health/)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "task_0" } });
     expect(screen.getByText("sess_abc123")).toBeTruthy();
@@ -224,7 +243,7 @@ describe("WorkspaceApp", () => {
     fireEvent.change(screen.getByLabelText("Agent prompt"), { target: { value: "Implement MAT-5" } });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /start agent/i }));
+      fireEvent.click(screen.getByRole("button", { name: /start cloud agent/i }));
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -278,7 +297,7 @@ describe("WorkspaceApp", () => {
     fireEvent.change(screen.getByLabelText("Agent prompt"), { target: { value: "Implement MAT-5" } });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /start agent/i }));
+      fireEvent.click(screen.getByRole("button", { name: /start cloud agent/i }));
     });
     expect(screen.getByRole("button", { name: /starting/i })).toBeTruthy();
 
@@ -287,7 +306,7 @@ describe("WorkspaceApp", () => {
     });
 
     await waitFor(() => expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0));
-    expect(screen.getByRole("button", { name: /start agent/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /start cloud agent/i })).toBeTruthy();
     resolveSession(json({ session: { id: "sess_agent123", status: "starting" } }));
     await act(async () => {
       await pendingSession;

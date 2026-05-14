@@ -5,12 +5,17 @@ export interface CloudAgentStatusSession {
   agent?: string;
   status?: string;
   taskId?: string;
+  runtime?: { status?: string };
   cloudRuntime?: { status?: string };
 }
 
+function effectiveRuntimeStatus(session: CloudAgentStatusSession): string {
+  return session.cloudRuntime?.status ?? session.runtime?.status ?? session.status ?? "";
+}
+
 export function CloudAgentStatusPanel({ sessions }: { sessions: CloudAgentStatusSession[] }) {
-  const running = sessions.filter((session) => session.status === "running" || session.cloudRuntime?.status === "running").length;
-  const attention = sessions.filter((session) => ["blocked", "failed", "attention"].includes(session.status ?? "") || session.cloudRuntime?.status === "attention").length;
+  const running = sessions.filter((session) => effectiveRuntimeStatus(session) === "running").length;
+  const attention = sessions.filter((session) => ["blocked", "failed", "attention"].includes(effectiveRuntimeStatus(session))).length;
 
   return (
     <section className="border-b border-border px-4 py-3">

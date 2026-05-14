@@ -139,7 +139,7 @@ import { createWorkflowRoutes } from "./workflow/routes.js";
 import { createFileWorkflowRepository } from "./workflow/repository.js";
 import { createTicketRoutes } from "./tickets/routes.js";
 import { createTicketAutomationRoutes } from "./tickets/automation-routes.js";
-import type { TicketAutomationRule } from "./tickets/automation-contracts.js";
+import { KyselyTicketAutomationRepository } from "./tickets/automation-repository.js";
 import { KyselyTicketRepository } from "./tickets/internal-repository.js";
 import { createTicketStatusHub } from "./tickets/status-hub.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
@@ -1293,21 +1293,10 @@ export async function createGateway(config: GatewayConfig) {
   if (kyselyInstance) {
     const ticketRepository = new KyselyTicketRepository(kyselyInstance as Kysely<any>);
     await ticketRepository.bootstrap();
-    const ticketAutomationRules = new Map<string, TicketAutomationRule>();
+    const ticketAutomationRepository = new KyselyTicketAutomationRepository(kyselyInstance as Kysely<any>, MAX_TICKET_AUTOMATION_RULES);
+    await ticketAutomationRepository.bootstrap();
     app.route("/api/projects", createTicketAutomationRoutes({
-      saveRule: async (rule) => {
-        if (ticketAutomationRules.size >= MAX_TICKET_AUTOMATION_RULES) {
-          const oldestRuleId = ticketAutomationRules.keys().next().value;
-          if (typeof oldestRuleId === "string") ticketAutomationRules.delete(oldestRuleId);
-        }
-        const automation: TicketAutomationRule = {
-          ...rule,
-          id: `automation_${randomBytes(8).toString("hex")}`,
-          enabled: rule.enabled ?? true,
-        };
-        ticketAutomationRules.set(automation.id, automation);
-        return automation;
-      },
+      repository: ticketAutomationRepository,
     }));
     app.route("/api/projects", createTicketRoutes({
       repository: ticketRepository,

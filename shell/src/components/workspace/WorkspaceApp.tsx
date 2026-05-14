@@ -61,6 +61,7 @@ interface WorkspacePreview {
   label?: string;
   url?: string;
   lastStatus?: string;
+  ticketId?: string;
 }
 
 interface WorkspaceEvent {
@@ -153,7 +154,11 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [startingAgent, setStartingAgent] = useState(false);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [error, setError] = useState("");
-  const [activeWorkbenchTabId, setActiveWorkbenchTabId] = useState<string | null>(null);
+  const workbenchStoreRef = useRef<ReturnType<typeof createTaskWorkbenchStore> | null>(null);
+  const closedWorkbenchTabsRef = useRef<Set<string>>(new Set());
+  const workbenchProjectRef = useRef("");
+  if (!workbenchStoreRef.current) workbenchStoreRef.current = createTaskWorkbenchStore();
+  const [workbenchSnapshot, setWorkbenchSnapshot] = useState(() => workbenchStoreRef.current!.snapshot());
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.slug === selectedSlug) ?? projects[0],
@@ -444,22 +449,33 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     }
   }, [activeSlug, agentPrompt, loadProjectDetail, selectedAgent, selectedWorktreeId, worktrees]);
 
-  const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
-  const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);
-  const visibleTickets = tickets.slice(0, TICKET_RENDER_LIMIT);
-  const workbenchStore = useMemo(() => {
-    const store = createTaskWorkbenchStore();
+  const visibleProjects = useMemo(() => projects.slice(0, PROJECT_RENDER_LIMIT), [projects]);
+  const visibleTasks = useMemo(() => tasks.slice(0, TASK_RENDER_LIMIT), [tasks]);
+  const visibleTickets = useMemo(() => tickets.slice(0, TICKET_RENDER_LIMIT), [tickets]);
+  useEffect(() => {
+    if (workbenchProjectRef.current !== activeSlug) {
+      workbenchStoreRef.current = createTaskWorkbenchStore();
+      closedWorkbenchTabsRef.current.clear();
+      workbenchProjectRef.current = activeSlug;
+    }
+    const store = workbenchStoreRef.current;
+    if (!store) return;
     for (const ticket of visibleTickets.slice(0, 8)) {
-      if (ticket.id) store.openTab({ id: ticket.id, kind: "ticket", title: ticket.identifier ?? ticket.title ?? ticket.id, projectSlug: activeSlug });
+      if (ticket.id && !closedWorkbenchTabsRef.current.has(ticket.id)) {
+        store.ensureTab({ id: ticket.id, kind: "ticket", title: ticket.identifier ?? ticket.title ?? ticket.id, projectSlug: activeSlug });
+      }
     }
     for (const session of sessions.slice(0, 4)) {
-      if (session.id) store.openTab({ id: session.id, kind: "session", title: session.agent ?? session.id, projectSlug: activeSlug });
+      if (session.id && !closedWorkbenchTabsRef.current.has(session.id)) {
+        store.ensureTab({ id: session.id, kind: "session", title: session.agent ?? session.id, projectSlug: activeSlug });
+      }
     }
-    if (activeWorkbenchTabId) store.activate(activeWorkbenchTabId);
-    return store;
-  }, [activeSlug, activeWorkbenchTabId, sessions, visibleTickets]);
-  const workbenchSnapshot = workbenchStore.snapshot();
-  const activeTicket = tickets.find((ticket) => ticket.id === workbenchSnapshot.activeTabId) ?? tickets[0] ?? null;
+    setWorkbenchSnapshot(store.snapshot());
+  }, [activeSlug, sessions, visibleTickets]);
+  const activeTicket = tickets.find((ticket) => ticket.id === workbenchSnapshot.activeTabId) ?? null;
+  const activeTicketPreviews = activeTicket
+    ? previews.filter((preview) => preview.ticketId === activeTicket.id)
+    : [];
   const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
   const visibleSessions = sessions.filter((session) => {
     if (!normalizedSessionSearch) return true;
@@ -563,8 +579,17 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
             tabs={workbenchSnapshot.tabs}
             activeTabId={workbenchSnapshot.activeTabId}
             onActivate={(tabId) => {
+              const workbenchStore = workbenchStoreRef.current;
+              if (!workbenchStore) return;
               workbenchStore.activate(tabId);
-              setActiveWorkbenchTabId(tabId);
+              setWorkbenchSnapshot(workbenchStore.snapshot());
+            }}
+            onClose={(tabId) => {
+              const workbenchStore = workbenchStoreRef.current;
+              if (!workbenchStore) return;
+              closedWorkbenchTabsRef.current.add(tabId);
+              workbenchStore.close(tabId);
+              setWorkbenchSnapshot(workbenchStore.snapshot());
             }}
           />
           <section className="border-b border-border px-4 py-3">
@@ -642,7 +667,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
           <TicketResourcesPanel
             ticket={activeTicket}
             artifacts={(activeTicket?.labelIds ?? []).map((label) => ({ id: `label_${label}`, label, kind: "label" }))}
-            previews={previews}
+            previews={activeTicketPreviews}
           />
           <WorkspacePanel title="Workflow setup" icon={<CodeIcon className="size-3.5" />}>
             <div className="space-y-2 text-xs">

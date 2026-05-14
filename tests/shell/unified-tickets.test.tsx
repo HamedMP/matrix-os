@@ -59,7 +59,7 @@ describe("WorkspaceApp unified tickets", () => {
     expect(screen.getByText("Showing 80 of 200 tickets")).toBeTruthy();
     expect(screen.getAllByText("Linear").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Matrix").length).toBeGreaterThan(0);
-    expect(screen.getByText("LIN-1")).toBeTruthy();
-    expect(screen.getByText("MAT-2")).toBeTruthy();
+    expect(screen.getAllByText("LIN-1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("MAT-2").length).toBeGreaterThan(0);
   });
 });

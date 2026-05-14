@@ -17,4 +17,14 @@ describe("CloudAgentStatusPanel", () => {
     expect(screen.getByText("1 needs attention")).toBeTruthy();
     expect(screen.queryByText(/local runtime/i)).toBeNull();
   });
+
+  it("uses one effective runtime status per session", () => {
+    render(<CloudAgentStatusPanel sessions={[
+      { id: "sess_1", agent: "codex", status: "running", runtime: { status: "running" }, cloudRuntime: { status: "failed" } },
+      { id: "sess_2", agent: "codex", status: "queued", runtime: { status: "running" } },
+    ]} />);
+
+    expect(screen.getByText("1 running")).toBeTruthy();
+    expect(screen.getByText("1 needs attention")).toBeTruthy();
+  });
 });
