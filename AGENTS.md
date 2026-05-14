@@ -252,6 +252,11 @@ bun run test                # unit tests
 
 - **> 3000 additions or > 50 files**: split the PR
 - Split along: gateway, platform, sync-client, shell, docs/deploy
+- For multi-slice features, prefer Graphite stacked PRs over one oversized PR.
+  Follow `docs/dev/stacked-prs.md`: create each layer with `gt create`, update
+  layers with `gt modify`, restack with `gt restack`, and publish with
+  `gt submit --stack` or `gt ss -np`. Do not flatten a stack unless explicitly
+  asked.
 
 ### PR Body: Mandatory Invariants
 
@@ -286,6 +291,7 @@ Do not request review while still pushing commits. Either declare a review commi
 Read these on demand, not every session:
 
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
+- `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
