@@ -1302,7 +1302,7 @@ export async function createGateway(config: GatewayConfig) {
     }));
   } else {
     const unavailableBoardMembers = new Hono();
-    unavailableBoardMembers.get("/:projectSlug/board/members", (c) => c.json({ members: [] }));
+    unavailableBoardMembers.get("/:projectSlug/board/members", (c) => c.json({ error: { code: "boards_unavailable", message: "Shared boards are unavailable" } }, 503));
     unavailableBoardMembers.all("/:projectSlug/board/members", (c) => c.json({ error: { code: "boards_unavailable", message: "Shared boards are unavailable" } }, 503));
     unavailableBoardMembers.all("/:projectSlug/board/members/*", (c) => c.json({ error: { code: "boards_unavailable", message: "Shared boards are unavailable" } }, 503));
     app.route("/api/projects", unavailableBoardMembers);

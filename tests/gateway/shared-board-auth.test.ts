@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { createBoardMembershipRoutes } from "../../packages/gateway/src/boards/routes.js";
 import { createTicketRoutes } from "../../packages/gateway/src/tickets/routes.js";
 import { createMatrixSymphonyOrchestrator } from "../../packages/gateway/src/symphony/orchestrator.js";
 
 describe("shared board authorization", () => {
+  it("keeps unavailable shared-board fallback aligned with authenticated route failure semantics", async () => {
+    const server = await readFile("packages/gateway/src/server.ts", "utf-8");
+    expect(server).toContain("unavailableBoardMembers.get(\"/:projectSlug/board/members\", (c) => c.json({ error: { code: \"boards_unavailable\"");
+    expect(server).not.toContain("unavailableBoardMembers.get(\"/:projectSlug/board/members\", (c) => c.json({ members: [] }))");
+  });
+
   it("denies ticket reads before repository access for unauthorized teammates", async () => {
     const listTickets = vi.fn();
     const app = new Hono();
