@@ -175,20 +175,20 @@
 
 ### Tests for User Story 5
 
-- [ ] T077 [P] [US5] Write failing task workbench tab tests in `tests/shell/task-workbench-tabs.test.tsx`
-- [ ] T078 [P] [US5] Write failing agent status panel tests in `tests/shell/cloud-agent-status-panel.test.tsx`
-- [ ] T079 [P] [US5] Write failing ticket artifacts/previews tests in `tests/shell/ticket-resources.test.tsx`
-- [ ] T080 [P] [US5] Write failing automation route tests in `tests/gateway/ticket-automations.test.ts`
+- [X] T077 [P] [US5] Write failing task workbench tab tests in `tests/shell/task-workbench-tabs.test.tsx`
+- [X] T078 [P] [US5] Write failing agent status panel tests in `tests/shell/cloud-agent-status-panel.test.tsx`
+- [X] T079 [P] [US5] Write failing ticket artifacts/previews tests in `tests/shell/ticket-resources.test.tsx`
+- [X] T080 [P] [US5] Write failing automation route tests in `tests/gateway/ticket-automations.test.ts`
 
 ### Implementation for User Story 5
 
-- [ ] T081 [US5] Create serializable task workbench store in `shell/src/stores/task-workbench.ts`
-- [ ] T082 [US5] Create task workbench tab UI in `shell/src/components/workspace/TaskWorkbenchTabs.tsx`
-- [ ] T083 [US5] Create cloud agent status panel in `shell/src/components/workspace/CloudAgentStatusPanel.tsx`
-- [ ] T084 [US5] Add ticket artifacts/previews panel in `shell/src/components/workspace/TicketResourcesPanel.tsx`
-- [ ] T085 [US5] Create ticket automation contracts in `packages/gateway/src/tickets/automation-contracts.ts`
-- [ ] T086 [US5] Create ticket automation routes in `packages/gateway/src/tickets/automation-routes.ts`
-- [ ] T087 [US5] Wire Slay-like workbench panels into `shell/src/components/workspace/WorkspaceApp.tsx`
+- [X] T081 [US5] Create serializable task workbench store in `shell/src/stores/task-workbench.ts`
+- [X] T082 [US5] Create task workbench tab UI in `shell/src/components/workspace/TaskWorkbenchTabs.tsx`
+- [X] T083 [US5] Create cloud agent status panel in `shell/src/components/workspace/CloudAgentStatusPanel.tsx`
+- [X] T084 [US5] Add ticket artifacts/previews panel in `shell/src/components/workspace/TicketResourcesPanel.tsx`
+- [X] T085 [US5] Create ticket automation contracts in `packages/gateway/src/tickets/automation-contracts.ts`
+- [X] T086 [US5] Create ticket automation routes in `packages/gateway/src/tickets/automation-routes.ts`
+- [X] T087 [US5] Wire Slay-like workbench panels into `shell/src/components/workspace/WorkspaceApp.tsx`
 
 **Checkpoint**: Desktop has the core Slay-like command-center workflows.
 

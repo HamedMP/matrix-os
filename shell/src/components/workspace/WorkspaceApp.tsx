@@ -5,6 +5,10 @@ import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
 import { listProjectTickets, type UnifiedTicket } from "@/lib/tickets";
+import { CloudAgentStatusPanel } from "./CloudAgentStatusPanel";
+import { TaskWorkbenchTabs } from "./TaskWorkbenchTabs";
+import { TicketResourcesPanel } from "./TicketResourcesPanel";
+import { createTaskWorkbenchStore } from "@/stores/task-workbench";
 
 const GATEWAY_URL = getGatewayUrl();
 const FETCH_TIMEOUT_MS = 10_000;
@@ -149,6 +153,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [startingAgent, setStartingAgent] = useState(false);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [error, setError] = useState("");
+  const [activeWorkbenchTabId, setActiveWorkbenchTabId] = useState<string | null>(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.slug === selectedSlug) ?? projects[0],
@@ -442,6 +447,19 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);
   const visibleTickets = tickets.slice(0, TICKET_RENDER_LIMIT);
+  const workbenchStore = useMemo(() => {
+    const store = createTaskWorkbenchStore();
+    for (const ticket of visibleTickets.slice(0, 8)) {
+      if (ticket.id) store.openTab({ id: ticket.id, kind: "ticket", title: ticket.identifier ?? ticket.title ?? ticket.id, projectSlug: activeSlug });
+    }
+    for (const session of sessions.slice(0, 4)) {
+      if (session.id) store.openTab({ id: session.id, kind: "session", title: session.agent ?? session.id, projectSlug: activeSlug });
+    }
+    if (activeWorkbenchTabId) store.activate(activeWorkbenchTabId);
+    return store;
+  }, [activeSlug, activeWorkbenchTabId, sessions, visibleTickets]);
+  const workbenchSnapshot = workbenchStore.snapshot();
+  const activeTicket = tickets.find((ticket) => ticket.id === workbenchSnapshot.activeTabId) ?? tickets[0] ?? null;
   const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
   const visibleSessions = sessions.filter((session) => {
     if (!normalizedSessionSearch) return true;
@@ -541,6 +559,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         </aside>
 
         <main className="min-h-0 overflow-auto">
+          <TaskWorkbenchTabs
+            tabs={workbenchSnapshot.tabs}
+            activeTabId={workbenchSnapshot.activeTabId}
+            onActivate={(tabId) => {
+              workbenchStore.activate(tabId);
+              setActiveWorkbenchTabId(tabId);
+            }}
+          />
           <section className="border-b border-border px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -612,6 +638,12 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         </main>
 
         <aside className="min-h-0 overflow-auto border-t border-border lg:border-l lg:border-t-0">
+          <CloudAgentStatusPanel sessions={sessions} />
+          <TicketResourcesPanel
+            ticket={activeTicket}
+            artifacts={(activeTicket?.labelIds ?? []).map((label) => ({ id: `label_${label}`, label, kind: "label" }))}
+            previews={previews}
+          />
           <WorkspacePanel title="Workflow setup" icon={<CodeIcon className="size-3.5" />}>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between gap-2">
