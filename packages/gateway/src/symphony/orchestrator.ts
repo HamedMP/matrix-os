@@ -164,15 +164,15 @@ export function createMatrixSymphonyOrchestrator(options: {
     ticket: TrackedTicket,
     existing?: SymphonyRun | null,
   ): Promise<SymphonyRun> {
-    const active = existing === undefined
-      ? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket))
-      : existing;
+    const id = runIdFor(ownerId, ticket);
+    const active = existing ?? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+    const current = active ?? await options.repository.getRun(ownerId, id);
     const timestamp = nowIso();
-    if (active && isRetryBackoffActive(active)) return active;
-    if (active && active.status !== "queued" && active.status !== "retrying") return active;
+    if (current && isRetryBackoffActive(current)) return current;
+    if (current && current.status !== "queued" && current.status !== "retrying") return current;
 
-    const run: SymphonyRun = active ?? {
-      id: runIdFor(ownerId, ticket),
+    const run: SymphonyRun = current ?? {
+      id,
       installationId: installation.id,
       ticketExternalId: ticket.externalId,
       ticketIdentifier: ticket.identifier,

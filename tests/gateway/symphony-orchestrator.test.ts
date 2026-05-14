@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -427,6 +428,48 @@ describe("Matrix Symphony orchestrator", () => {
       status: "running",
       sessionId: "sess_retry",
       attempt: 2,
+    });
+  });
+
+  it("does not requeue terminal runs whose tickets still match", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    const runId = `run_${createHash("sha256").update("user_123:issue_1").digest("hex").slice(0, 16)}`;
+    snapshot.runs = [{
+      id: runId,
+      installationId: "sym_user_123",
+      ticketExternalId: "issue_1",
+      ticketIdentifier: "MAT-1",
+      ticketTitle: "One",
+      status: "completed",
+      attempt: 2,
+      agent: "codex",
+      projectSlug: "matrix-os",
+      claimKey: "linear:issue_1",
+      lastEvent: "Run completed",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const repository = memoryRepo(snapshot);
+    const worktreeManager = { createWorktree: vi.fn() };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.poll("user_123")).resolves.toMatchObject({ dispatched: 0 });
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+    await expect(repository.getRun("user_123", runId)).resolves.toMatchObject({
+      status: "completed",
+      lastEvent: "Run completed",
     });
   });
 
