@@ -23,6 +23,8 @@ describe("project preview/browser URL policy", () => {
       "http://127.0.0.1:3000",
       "http://169.254.169.254/latest/meta-data",
       "http://10.0.0.5:3000",
+      "http://[fc00::1]:3000",
+      "http://[::ffff:127.0.0.1]:3000",
       "http://localhost:9999",
       "https://example.com/redirect?to=http://localhost:3000",
     ]) {

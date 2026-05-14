@@ -295,6 +295,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     } catch (err: unknown) {
       if (activeSlugRef.current === activeSlug) {
         setError(err instanceof Error ? err.message : "Workflow save failed");
+        setWorkflowMessage("");
       }
     } finally {
       setSavingWorkflow(false);

@@ -34,13 +34,12 @@ function emptyWorkflow(projectSlug: string): ProjectWorkflowConfig & {
 
 function hasUnsafeCommand(config: ProjectWorkflowConfig): boolean {
   const commands = [...config.setupCommands, ...config.liveCommands, ...config.validationCommands];
+  const privateTarget = /(169\.254\.169\.254|metadata\.google\.internal|(?:^|[^\d])10\.\d+\.\d+\.\d+|(?:^|[^\d])192\.168\.\d+\.\d+|(?:^|[^\d])172\.(?:1[6-9]|2\d|3[0-1])\.\d+\.\d+)/i;
   return commands.some((entry) => {
     const command = entry.command.toLowerCase();
     return (
-      command.includes("169.254.169.254") ||
-      command.includes("metadata.google.internal") ||
-      command.includes("curl http://") ||
-      command.includes("wget http://")
+      privateTarget.test(command) ||
+      /\b(?:curl|wget|nc)\b[^\n]*(?:http:\/\/)?(?:10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[0-1])\.\d+\.\d+)/i.test(command)
     );
   });
 }
@@ -77,9 +76,7 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps = {}): Hono {
     try {
       raw = await ctx.req.json();
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === "BodyLimitError") {
-        return ctx.json({ error: "Workflow configuration is too large" }, 413);
-      }
+      console.warn("[workflow] Failed to parse workflow request body:", err);
       return ctx.json({ error: "Workflow configuration is invalid" }, 400);
     }
 

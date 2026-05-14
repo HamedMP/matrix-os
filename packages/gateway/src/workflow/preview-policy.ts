@@ -35,7 +35,12 @@ function parsePreviewUrl(rawUrl: string): URL | null {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
+  const normalized = hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  if (normalized.startsWith("::ffff:")) return true;
+  const ipv4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (ipv4Mapped) {
+    return isPrivateHost(ipv4Mapped[1]);
+  }
   return PRIVATE_HOST_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 

@@ -34,6 +34,7 @@ export function createFileWorkflowRepository(options: {
 }): WorkflowRepository {
   const now = options.now ?? (() => new Date().toISOString());
   const filePath = join(options.homePath, "system", "project-workflows.json");
+  let saveChain = Promise.resolve();
 
   async function readAll(): Promise<Record<string, ProjectWorkflowRecord>> {
     try {
@@ -56,16 +57,20 @@ export function createFileWorkflowRepository(options: {
       return records[projectSlug] ?? null;
     },
     async save(projectSlug, config) {
-      const records = await readAll();
-      const previous = records[projectSlug];
-      const record: ProjectWorkflowRecord = {
-        ...config,
-        projectSlug,
-        revision: (previous?.revision ?? 0) + 1,
-        updatedAt: now(),
-      };
-      await atomicWriteJson(filePath, { ...records, [projectSlug]: record });
-      return record;
+      const operation = saveChain.then(async () => {
+        const records = await readAll();
+        const previous = records[projectSlug];
+        const record: ProjectWorkflowRecord = {
+          ...config,
+          projectSlug,
+          revision: (previous?.revision ?? 0) + 1,
+          updatedAt: now(),
+        };
+        await atomicWriteJson(filePath, { ...records, [projectSlug]: record });
+        return record;
+      });
+      saveChain = operation.then(() => undefined, () => undefined);
+      return operation;
     },
   };
 }

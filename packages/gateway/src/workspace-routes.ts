@@ -19,7 +19,7 @@ import { createTaskManager } from "./task-manager.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrincipal, requireRequestPrincipal } from "./request-principal.js";
-import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
+import { createSafeCloudSessionProjection, createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createWorkspaceSessionOrchestrator, type StartWorkspaceSessionRequest, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
 import { requestHasBody } from "./http-body.js";
 
@@ -429,7 +429,7 @@ export function createWorkspaceRoutes(options: {
       }
       return c.json({ error: result.error }, status(result.status));
     }
-    return c.json({ session: result.session }, status(result.status));
+    return c.json({ session: createSafeCloudSessionProjection(result.session) }, status(result.status));
   });
 
   app.get("/api/sessions", async (c) => {
@@ -444,13 +444,13 @@ export function createWorkspaceRoutes(options: {
       cursor: c.req.query("cursor"),
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
+    return c.json({ sessions: result.sessions.map(createSafeCloudSessionProjection), nextCursor: result.nextCursor });
   });
 
   app.get("/api/sessions/:sessionId", async (c) => {
     const result = await sessionOrchestrator.getSession(c.req.param("sessionId"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session });
+    return c.json({ session: createSafeCloudSessionProjection(result.session) });
   });
 
   app.post("/api/sessions/:sessionId/send", limited, async (c) => {
@@ -458,7 +458,7 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const result = await sessionOrchestrator.sendInput(c.req.param("sessionId"), body.value.input);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session });
+    return c.json({ session: createSafeCloudSessionProjection(result.session) });
   });
 
   app.post("/api/sessions/:sessionId/observe", limited, async (c) => {
@@ -482,7 +482,7 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const result = await sessionOrchestrator.stopSession(c.req.param("sessionId"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session });
+    return c.json({ session: createSafeCloudSessionProjection(result.session) });
   });
 
   app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgents()));

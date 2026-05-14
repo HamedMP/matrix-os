@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import { createWorkflowRoutes } from "../../packages/gateway/src/workflow/routes.js";
-import { createMemoryWorkflowRepository } from "../../packages/gateway/src/workflow/repository.js";
+import { createFileWorkflowRepository, createMemoryWorkflowRepository } from "../../packages/gateway/src/workflow/repository.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("project workflow routes", () => {
   it("saves and reads sanitized workflow configuration", async () => {
@@ -45,7 +48,7 @@ describe("project workflow routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        setupCommands: [{ name: "Bad", command: "curl http://169.254.169.254/latest/meta-data" }],
+        setupCommands: [{ name: "Bad", command: "curl -sS http://10.0.0.1/secrets" }],
         liveCommands: [],
         validationCommands: [],
         allowedPreviewPorts: [3000],
@@ -54,5 +57,30 @@ describe("project workflow routes", () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({ error: "Workflow configuration is invalid" });
+  });
+
+  it("serializes file-backed workflow saves without dropping projects", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-workflows-"));
+    const repository = createFileWorkflowRepository({ homePath });
+
+    await Promise.all([
+      repository.save("repo-a", {
+        setupCommands: [{ name: "Install", command: "pnpm install --frozen-lockfile" }],
+        liveCommands: [],
+        validationCommands: [],
+        allowedPreviewPorts: [],
+        codexRequired: true,
+      }),
+      repository.save("repo-b", {
+        setupCommands: [],
+        liveCommands: [{ name: "Dev", command: "pnpm dev", ports: [3000] }],
+        validationCommands: [],
+        allowedPreviewPorts: [3000],
+        codexRequired: true,
+      }),
+    ]);
+
+    await expect(repository.get("repo-a")).resolves.toMatchObject({ projectSlug: "repo-a" });
+    await expect(repository.get("repo-b")).resolves.toMatchObject({ projectSlug: "repo-b" });
   });
 });

@@ -63,6 +63,13 @@ describe("workspace cloud-only policy", () => {
     });
 
     expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      session: {
+        id: "sess_123",
+        cloudRuntime: { mode: "cloud", status: "running", type: "zellij" },
+        attach: { observe: true, takeOver: true },
+      },
+    });
     expect(sessionOrchestrator.startSession).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({ runtimeMode: "cloud", runtimePreference: "zellij" }),
