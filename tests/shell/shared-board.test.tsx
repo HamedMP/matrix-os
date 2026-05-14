@@ -34,8 +34,8 @@ describe("shared board UI", () => {
   it("shows shared board teammates and roles in the workspace side panel", async () => {
     render(<WorkspaceApp initialProjectSlug="repo" />);
 
-    await waitFor(() => expect(screen.getByText("Shared board")).toBeTruthy());
-    expect(screen.getByText("user_2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("user_2")).toBeTruthy());
+    expect(screen.getByText("Shared board")).toBeTruthy();
     expect(screen.getByText("editor")).toBeTruthy();
   });
 });

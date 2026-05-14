@@ -113,6 +113,34 @@ describe("WorkspaceApp", () => {
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions"), expect.anything());
   });
 
+  it("keeps workspace usable when shared board members are unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [{ slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } }] });
+      }
+      if (url.includes("/api/projects/repo/tasks")) {
+        return json({ tasks: [{ id: "task_0", title: "Task 0", status: "todo", priority: "normal", order: 0 }] });
+      }
+      if (url.includes("/api/projects/repo/board/members")) {
+        return failedJson(503);
+      }
+      if (url.includes("/api/projects/repo/tickets")) {
+        return json({ tickets: [], nextCursor: null });
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ sessions: [], reviews: [], worktrees: [], previews: [], events: [], workflow: {}, codex: {} });
+      }
+      return json({});
+    }));
+
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getByText("Task 0")).toBeTruthy());
+    expect(screen.getByText("No teammates")).toBeTruthy();
+    expect(screen.queryByText("Workspace request failed")).toBeNull();
+  });
+
   it("keeps closed workbench tabs closed after workspace refresh", async () => {
     render(<WorkspaceApp initialProjectSlug="repo" />);
 
@@ -439,5 +467,13 @@ function json(body: unknown): Response {
   return {
     ok: true,
     json: async () => body,
+  } as Response;
+}
+
+function failedJson(status: number): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({}),
   } as Response;
 }

@@ -193,6 +193,11 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     if (!projectSlug) return;
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
+      const boardMembersRequest = fetchJson<{ members: WorkspaceBoardMember[] }>(`/api/projects/${encodedSlug}/board/members`)
+        .catch((err: unknown) => {
+          console.warn("[workspace] Shared board members unavailable", err instanceof Error ? err.name : "UnknownError");
+          return { members: [] };
+        });
       const [taskData, ticketData, sessionData, reviewData, worktreeData, previewData, eventData, boardData, workflowData] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
         listProjectTickets(projectSlug),
@@ -201,7 +206,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
-        fetchJson<{ members: WorkspaceBoardMember[] }>(`/api/projects/${encodedSlug}/board/members`),
+        boardMembersRequest,
         fetchJson<{ workflow?: WorkspaceWorkflow; codex?: CodexReadiness }>(`/api/projects/${encodedSlug}/workflow`),
       ]);
       if (activeSlugRef.current !== projectSlug) return;
