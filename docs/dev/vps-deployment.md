@@ -497,7 +497,7 @@ Legacy shared-container lifecycle:
 - **Provision**: image pulled, ports allocated, volume mounted at `/data/users/{handle}/matrixos`
 - **Running**: 256MB memory, 0.5 CPU, restart unless-stopped
 - **Idle**: lifecycle manager checks every 5 min, stops after 30 min inactive
-- **Wake**: subdomain request -> platform detects stopped -> auto-starts -> proxy
+- **Wake**: `app.matrix-os.com` request -> platform resolves the signed-in user -> detects stopped runtime -> auto-starts -> proxies
 - **Destroy**: container removed, ports released, DB record deleted (data volume kept)
 
 ## Database
@@ -746,7 +746,7 @@ function pickNode(): string {
 ```
 
 **Routing change:**
-The subdomain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
+The session/app-domain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
 ```typescript
 // Instead of:
 fetch(`http://localhost:${record.shellPort}${path}`)
@@ -763,7 +763,7 @@ fetch(`http://${host}:${record.shellPort}${path}`)
 - [ ] Add `node_id` column to `containers` table
 - [ ] Update orchestrator to accept multiple Docker hosts
 - [ ] Add node selection logic (least-loaded)
-- [ ] Update subdomain proxy to route to correct node IP
+- [ ] Update session/app-domain proxy to route to correct node IP
 - [ ] Add `/nodes` admin API endpoints (register, deregister, status)
 - [ ] Build image on each worker (or set up private registry)
 

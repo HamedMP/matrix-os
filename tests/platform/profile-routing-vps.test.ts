@@ -97,6 +97,44 @@ describe('platform/profile-routing-vps', () => {
     expect(docker.getContainer).not.toHaveBeenCalled();
   });
 
+  it('routes public app-domain Twilio webhooks to the matching VPS by handle', async () => {
+    await insertUserMachine(db, {
+      machineId: '0b5d0a5f-52d8-4f4d-aed8-8d2a0ad1a591',
+      clerkUserId: 'user_alice',
+      handle: 'alice',
+      status: 'running',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+      provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: 'platform-secret',
+    });
+
+    const res = await app.request('/voice/webhook/twilio?handle=alice', {
+      method: 'POST',
+      headers: {
+        host: 'app.matrix-os.com',
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-twilio-signature': 'signed',
+      },
+      body: 'CallSid=CA123',
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://203.0.113.10:443/voice/webhook/twilio?handle=alice',
+    );
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get('x-twilio-signature')).toBe('signed');
+    expect(headers.get('authorization')).toBeTruthy();
+    expect(headers.get('x-forwarded-host')).toBe('app.matrix-os.com');
+  });
+
   it('falls back to the legacy container route when no running VPS exists', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
     const docker = stubDocker();

@@ -25,7 +25,6 @@ export default defineConfig({
       "@matrix-os/kernel": path.resolve(__dirname, "packages/kernel/src/index.ts"),
       react: path.resolve(__dirname, "node_modules/react"),
       "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
-      "lucide-react": path.resolve(__dirname, "shell/node_modules/lucide-react"),
       "@aws-sdk/client-s3": path.resolve(__dirname, "node_modules/@aws-sdk/client-s3"),
     },
   },
