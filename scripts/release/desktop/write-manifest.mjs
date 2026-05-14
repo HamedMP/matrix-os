@@ -24,7 +24,7 @@ const artifacts = [];
 for (const file of files) {
   const bytes = await readFile(file);
   artifacts.push({
-    path: relative(distDir, file),
+    path: relative(distDir, file).replaceAll("\\", "/"),
     sha256: createHash("sha256").update(bytes).digest("hex"),
     size: bytes.length,
   });

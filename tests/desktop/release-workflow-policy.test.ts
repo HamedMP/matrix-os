@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -30,6 +30,22 @@ describe("desktop release workflow policy", () => {
         artifacts: Array<{ path: string }>;
       };
       expect(manifest.artifacts).toEqual([expect.objectContaining({ path: "Matrix.dmg" })]);
+    } finally {
+      rmSync(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes nested desktop manifest paths to URL-safe separators", () => {
+    const dist = mkdtempSync(join(tmpdir(), "matrix-desktop-dist-"));
+    try {
+      mkdirSync(join(dist, "win-unpacked"));
+      writeFileSync(join(dist, "win-unpacked", "Matrix.exe"), "windows artifact");
+      execFileSync("node", ["scripts/release/desktop/write-manifest.mjs", dist, "dev"]);
+      const manifest = JSON.parse(readFileSync(join(dist, "desktop-release-manifest.json"), "utf8")) as {
+        artifacts: Array<{ path: string }>;
+      };
+      expect(manifest.artifacts).toEqual([expect.objectContaining({ path: "win-unpacked/Matrix.exe" })]);
+      expect(manifest.artifacts[0]?.path).not.toContain("\\");
     } finally {
       rmSync(dist, { recursive: true, force: true });
     }
