@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BREW_BIN="${HOMEBREW_BIN:-/home/linuxbrew/.linuxbrew/bin/brew}"
+BREW_PREFIX="${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
+INSTALLER_URL="${HOMEBREW_INSTALLER_URL:-https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh}"
+
+if [ "$(id -u)" = "0" ]; then
+  echo "matrix-install-linux-tools: run as the matrix user, not root" >&2
+  exit 1
+fi
+
+if command -v apt-get >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential procps curl file git
+fi
+
+if [ ! -x "$BREW_BIN" ]; then
+  tmp_installer="$(mktemp)"
+  curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 "$INSTALLER_URL" -o "$tmp_installer"
+  NONINTERACTIVE=1 /bin/bash "$tmp_installer"
+  rm -f "$tmp_installer"
+fi
+
+eval "$("$BREW_BIN" shellenv bash)"
+
+if ! "$BREW_BIN" list --versions graphite >/dev/null 2>&1; then
+  "$BREW_BIN" install withgraphite/tap/graphite
+fi
+
+sudo install -d -o root -g root -m 0755 /etc/profile.d
+printf '%s\n' \
+  '# Homebrew on Linux' \
+  'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"' \
+  | sudo tee /etc/profile.d/homebrew.sh >/dev/null
+sudo chmod 0644 /etc/profile.d/homebrew.sh
+
+sudo ln -sf "$BREW_BIN" /usr/local/bin/brew
+if [ -x "$BREW_PREFIX/bin/gt" ]; then
+  sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt
+fi
+
+"$BREW_BIN" --version
+"$BREW_PREFIX/bin/gt" --version

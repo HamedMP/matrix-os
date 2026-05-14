@@ -176,10 +176,13 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
+    expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"');
     expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
@@ -191,7 +194,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
     expect(cloudInit).toContain('sudo');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
@@ -199,6 +202,20 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('loginctl enable-linger matrix');
     expect(cloudInit).toContain('systemctl start "user@$(id -u matrix).service"');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user');
+  });
+
+  it('installs Homebrew and Graphite CLI on customer Linux hosts', () => {
+    const root = process.cwd();
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
+    const bundleScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+
+    expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
+    expect(installer).toContain('NONINTERACTIVE=1 /bin/bash "$tmp_installer"');
+    expect(installer).toContain('"$BREW_BIN" install withgraphite/tap/graphite');
+    expect(installer).toContain('/etc/profile.d/homebrew.sh');
+    expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
+    expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
+    expect(bundleScript).toContain('matrix-install-linux-tools');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {
@@ -293,7 +310,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('permissions: "0750"');
-    expect(cloudInit).toContain('docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('docker.io file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
