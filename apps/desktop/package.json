@@ -1,6 +1,9 @@
 {
   "name": "@matrix-os/desktop",
   "version": "0.9.0",
+  "description": "Native Matrix OS desktop workbench for cloud coding, tickets, and Symphony.",
+  "author": "Matrix OS",
+  "homepage": "https://matrix-os.com",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",

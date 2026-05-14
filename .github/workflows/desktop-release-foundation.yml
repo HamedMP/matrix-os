@@ -12,7 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2025, ubuntu-24.04]
+        include:
+          - os: macos-15
+            package-script: build:mac
+          - os: windows-2025
+            package-script: build:win
+          - os: ubuntu-24.04
+            package-script: build:linux
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +30,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --dir apps/desktop build
+      - run: pnpm --dir apps/desktop run ${{ matrix.package-script }}
         env:
           DESKTOP_RELEASE_CHANNEL: ${{ inputs.channel }}
       - run: node scripts/release/desktop/write-manifest.mjs apps/desktop/dist "${{ inputs.channel }}"
