@@ -133,6 +133,7 @@ export interface LinearSetupOptions {
 }
 
 export interface TrackedTicket {
+  sourceKind?: "linear" | "matrix";
   externalId: string;
   identifier: string;
   title: string;
@@ -155,6 +156,8 @@ export interface SymphonyRun {
   id: string;
   installationId: string;
   ticketExternalId: string;
+  ticketSourceKind?: "linear" | "matrix";
+  trackedTicketId?: string;
   ticketIdentifier: string;
   ticketTitle: string;
   ticketUrl?: string;
@@ -172,6 +175,26 @@ export interface SymphonyRun {
   startedAt?: string;
   updatedAt: string;
   finishedAt?: string;
+}
+
+export const ManualTicketAssignmentSchema = z.object({
+  sourceKind: z.enum(["linear", "matrix"]).default("matrix"),
+  externalId: z.string().trim().min(1).max(256),
+  identifier: z.string().trim().min(1).max(128),
+  title: z.string().trim().min(1).max(300),
+  url: z.string().url().optional(),
+  stateName: z.string().trim().min(1).max(64).default("Todo"),
+  assigneeId: z.string().trim().min(1).max(128).optional(),
+  assigneeName: z.string().trim().max(200).optional(),
+  labels: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
+  branchName: z.string().trim().max(200).optional(),
+}).strict();
+
+export type ManualTicketAssignment = z.infer<typeof ManualTicketAssignmentSchema>;
+
+export interface CodexReadiness {
+  status: "valid" | "missing" | "unknown";
+  lastCheckedAt?: string;
 }
 
 export interface OperatorEvent {

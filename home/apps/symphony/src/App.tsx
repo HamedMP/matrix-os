@@ -50,6 +50,7 @@ interface SetupOptions {
 }
 
 interface Ticket {
+  sourceKind?: "linear" | "matrix";
   externalId: string;
   identifier: string;
   title: string;
@@ -231,6 +232,7 @@ export default function App() {
       "symphony.run.updated",
       "symphony.run.stopped",
       "symphony.run.retry",
+      "symphony.ticket.assigned",
     ];
     for (const type of eventTypes) events.addEventListener(type, refresh);
     events.onerror = () => {
@@ -399,6 +401,46 @@ export default function App() {
     }
   }
 
+  async function previewTickets() {
+    setBusy("preview");
+    setError(null);
+    try {
+      const preview = await fetchJson<{ tickets: Ticket[] }>("/api/symphony/tickets/preview?limit=10");
+      setTickets(preview.tickets);
+    } catch (err: unknown) {
+      console.warn("[symphony] ticket preview failed:", err instanceof Error ? err.message : String(err));
+      setError("Ticket preview failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function assignTicket(ticket: Ticket) {
+    setBusy(`assign:${ticket.externalId}`);
+    setError(null);
+    try {
+      await fetchJson("/api/symphony/tickets/assign", {
+        method: "POST",
+        body: JSON.stringify({
+          sourceKind: ticket.sourceKind ?? "linear",
+          externalId: ticket.externalId,
+          identifier: ticket.identifier,
+          title: ticket.title,
+          url: ticket.url,
+          stateName: ticket.stateName,
+          assigneeName: ticket.assigneeName,
+          labels: ticket.labels,
+        }),
+      });
+      await load({ hydrateForm: false });
+    } catch (err: unknown) {
+      console.warn("[symphony] ticket assignment failed:", err instanceof Error ? err.message : String(err));
+      setError("Ticket assignment failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runAction(run: Run, type: "stop" | "retry" | "open_workspace") {
     if (type === "open_workspace") {
       openWorkspaceInShell();
@@ -487,14 +529,29 @@ export default function App() {
             <StatusLine label="Team" value={config?.rule?.teamKey ?? "Not set"} />
             <StatusLine label="Assignees" value={config?.rule?.assigneeIds.length ? `${config.rule.assigneeIds.length} selected` : "Any matching assignee"} />
           </div>
+          <div className="mt-4 border-t pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Symphony assignments</h3>
+              <Button variant="outline" size="sm" onClick={() => void previewTickets()} disabled={Boolean(busy)}>
+                Preview tickets
+              </Button>
+            </div>
+          </div>
           {tickets.length > 0 && (
-            <div className="mt-4 border-t pt-4">
+            <div className="mt-3">
               <h3 className="text-sm font-semibold">Preview</h3>
               <div className="mt-2 space-y-2">
                 {tickets.slice(0, 4).map((ticket) => (
                   <div key={ticket.externalId} className="rounded-md bg-zinc-50 p-2 text-sm">
-                    <div className="font-medium">{ticket.identifier}</div>
-                    <div className="text-muted-foreground">{ticket.title}</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-medium">{ticket.identifier}</div>
+                        <div className="text-muted-foreground">{ticket.title}</div>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => void assignTicket(ticket)} disabled={Boolean(busy)}>
+                        Assign to Symphony
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

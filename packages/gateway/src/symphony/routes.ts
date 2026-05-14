@@ -10,6 +10,7 @@ import {
   EmptyBodySchema,
   genericSymphonyError,
   LinearCredentialSchema,
+  ManualTicketAssignmentSchema,
   PreviewQuerySchema,
   RunActionSchema,
   RunsQuerySchema,
@@ -256,6 +257,28 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
       console.warn("[symphony] Ticket preview failed:", err instanceof Error ? err.message : String(err));
       return c.json(genericSymphonyError("ticket_preview_failed", "Ticket preview failed"), status(502));
     }
+  }));
+
+  app.get("/codex/readiness", (c) => withPrincipal(c, deps, async (principal) => {
+    const auth = await requireOperator(c, deps, principal);
+    if (!auth.ok) return auth.response;
+    if (!("codexReadiness" in deps.orchestrator) || typeof deps.orchestrator.codexReadiness !== "function") {
+      return c.json({ status: "unknown", lastCheckedAt: new Date().toISOString() });
+    }
+    return c.json(await deps.orchestrator.codexReadiness());
+  }));
+
+  app.post("/tickets/assign", limited, (c) => withPrincipal(c, deps, async (principal) => {
+    const auth = await requireOperator(c, deps, principal);
+    if (!auth.ok) return auth.response;
+    const parsed = await parseJson(c, ManualTicketAssignmentSchema);
+    if (!parsed.ok) return parsed.response;
+    if (!("assignTicket" in deps.orchestrator) || typeof deps.orchestrator.assignTicket !== "function") {
+      return c.json(genericSymphonyError("assignment_unavailable", "Ticket assignment is unavailable"), status(503));
+    }
+    const run = await deps.orchestrator.assignTicket(auth.ownerId, parsed.value, principal.userId);
+    if (!run) return c.json(genericSymphonyError("assignment_unavailable", "Ticket assignment is unavailable"), status(409));
+    return c.json({ run: publicRun(run) }, status(201));
   }));
 
   app.get("/runs", (c) => withPrincipal(c, deps, async (principal) => {

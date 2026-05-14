@@ -145,23 +145,23 @@
 
 ### Tests for User Story 4
 
-- [ ] T063 [P] [US4] Write failing Symphony assignment tests in `tests/gateway/symphony-ticket-assignment.test.ts`
-- [ ] T064 [P] [US4] Write failing duplicate claim tests in `tests/gateway/symphony-claim-idempotency.test.ts`
-- [ ] T065 [P] [US4] Write failing Symphony restart recovery tests in `tests/gateway/symphony-desktop-recovery.test.ts`
-- [ ] T066 [P] [US4] Write failing Symphony desktop UI tests in `tests/default-apps/symphony-desktop-app.test.tsx`
-- [ ] T067 [P] [US4] Write failing Codex readiness tests in `tests/gateway/symphony-codex-readiness.test.ts`
+- [X] T063 [P] [US4] Write failing Symphony assignment tests in `tests/gateway/symphony-ticket-assignment.test.ts`
+- [X] T064 [P] [US4] Write failing duplicate claim tests in `tests/gateway/symphony-claim-idempotency.test.ts`
+- [X] T065 [P] [US4] Write failing Symphony restart recovery tests in `tests/gateway/symphony-desktop-recovery.test.ts`
+- [X] T066 [P] [US4] Write failing Symphony desktop UI tests in `tests/default-apps/symphony-desktop-app.test.tsx`
+- [X] T067 [P] [US4] Write failing Codex readiness tests in `tests/gateway/symphony-codex-readiness.test.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T068 [US4] Extend Symphony contracts for normalized ticket sources in `packages/gateway/src/symphony/contracts.ts`
-- [ ] T069 [US4] Extend Symphony repository for unified ticket run links in `packages/gateway/src/symphony/repository.ts`
-- [ ] T070 [US4] Extend Symphony orchestrator assignment path in `packages/gateway/src/symphony/orchestrator.ts`
-- [ ] T071 [US4] Add manual ticket assignment route in `packages/gateway/src/symphony/routes.ts`
-- [ ] T072 [US4] Add automatic assignment rule routes in `packages/gateway/src/symphony/routes.ts`
-- [ ] T073 [US4] Add duplicate cloud claim prevention in `packages/gateway/src/symphony/orchestrator.ts`
-- [ ] T074 [US4] Add Codex cloud readiness checks to Symphony setup in `packages/gateway/src/symphony/orchestrator.ts`
-- [ ] T075 [US4] Update Symphony app for unified ticket assignment in `home/apps/symphony/src/App.tsx`
-- [ ] T076 [US4] Update Symphony app styles for desktop workbench density in `home/apps/symphony/src/index.css`
+- [X] T068 [US4] Extend Symphony contracts for normalized ticket sources in `packages/gateway/src/symphony/contracts.ts`
+- [X] T069 [US4] Extend Symphony repository for unified ticket run links in `packages/gateway/src/symphony/repository.ts`
+- [X] T070 [US4] Extend Symphony orchestrator assignment path in `packages/gateway/src/symphony/orchestrator.ts`
+- [X] T071 [US4] Add manual ticket assignment route in `packages/gateway/src/symphony/routes.ts`
+- [X] T072 [US4] Add automatic assignment rule routes in `packages/gateway/src/symphony/routes.ts`
+- [X] T073 [US4] Add duplicate cloud claim prevention in `packages/gateway/src/symphony/orchestrator.ts`
+- [X] T074 [US4] Add Codex cloud readiness checks to Symphony setup in `packages/gateway/src/symphony/orchestrator.ts`
+- [X] T075 [US4] Update Symphony app for unified ticket assignment in `home/apps/symphony/src/App.tsx`
+- [X] T076 [US4] Update Symphony app styles for desktop workbench density in `home/apps/symphony/src/index.css`
 
 **Checkpoint**: Symphony can claim Linear and Matrix tickets into cloud work safely.
 

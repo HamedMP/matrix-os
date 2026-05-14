@@ -22,7 +22,7 @@ export class SymphonyWorkflowError extends Error {
 
 const DEFAULT_WORKFLOW = `# Matrix Symphony workflow
 
-You are running as a Matrix-managed coding agent for a claimed Linear ticket.
+You are running as a Matrix-managed coding agent for a claimed Matrix Symphony ticket.
 
 - Read the ticket context before changing code.
 - Keep changes scoped to the requested worktree.

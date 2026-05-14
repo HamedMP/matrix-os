@@ -3,13 +3,14 @@ import type { createAgentSessionManager } from "../agent-session-manager.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import {
   DEFAULT_MAX_CONCURRENT_AGENTS,
+  type CodexReadiness,
   type SymphonyInstallation,
   type SymphonyRun,
   type TicketSourceRule,
   type TrackedTicket,
 } from "./contracts.js";
 import type { LinearSource } from "./linear-source.js";
-import { composeSymphonyPrompt, loadWorkflowContract, SymphonyWorkflowError } from "./prompt.js";
+import { composeSymphonyPrompt, loadWorkflowContract, SymphonyWorkflowError, type WorkflowContract } from "./prompt.js";
 import type { SymphonyRepository } from "./repository.js";
 import type { SymphonyCredentialStore } from "./credential-store.js";
 import type { SymphonyStatusHub } from "./status-hub.js";
@@ -26,12 +27,16 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function claimKey(ticket: Pick<TrackedTicket, "externalId">): string {
-  return `linear:${ticket.externalId}`;
+function sourceKindFor(ticket: Pick<TrackedTicket, "sourceKind">): "linear" | "matrix" {
+  return ticket.sourceKind ?? "linear";
 }
 
-function runIdFor(ownerId: string, ticket: Pick<TrackedTicket, "externalId">): string {
-  return `run_${createHash("sha256").update(`${ownerId}:${ticket.externalId}`).digest("hex").slice(0, 16)}`;
+function claimKey(ticket: Pick<TrackedTicket, "externalId" | "sourceKind">): string {
+  return `${sourceKindFor(ticket)}:${ticket.externalId}`;
+}
+
+function runIdFor(ownerId: string, ticket: Pick<TrackedTicket, "externalId" | "sourceKind">): string {
+  return `run_${createHash("sha256").update(`${ownerId}:${sourceKindFor(ticket)}:${ticket.externalId}`).digest("hex").slice(0, 16)}`;
 }
 
 function branchFor(ticket: TrackedTicket): string {
@@ -87,6 +92,8 @@ export function createMatrixSymphonyOrchestrator(options: {
   worktreeManager: WorktreeManager;
   agentSessionManager: AgentSessionManager;
   statusHub?: SymphonyStatusHub;
+  loadWorkflow?: (input: { homePath: string; projectSlug: string }) => Promise<WorkflowContract>;
+  codexReadiness?: () => Promise<CodexReadiness>;
 }) {
   const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const pollLocks = new Map<string, Promise<{ matchedTickets: number; dispatched: number; skipped: number }>>();
@@ -175,6 +182,8 @@ export function createMatrixSymphonyOrchestrator(options: {
       id,
       installationId: installation.id,
       ticketExternalId: ticket.externalId,
+      ticketSourceKind: sourceKindFor(ticket),
+      trackedTicketId: sourceKindFor(ticket) === "matrix" ? ticket.externalId : undefined,
       ticketIdentifier: ticket.identifier,
       ticketTitle: ticket.title,
       ticketUrl: ticket.url,
@@ -188,7 +197,9 @@ export function createMatrixSymphonyOrchestrator(options: {
     };
     if (!active) await options.repository.upsertRun(ownerId, run);
     try {
-      const workflow = await loadWorkflowContract({ homePath: options.homePath, projectSlug: installation.projectSlug });
+      const workflow = options.loadWorkflow
+        ? await options.loadWorkflow({ homePath: options.homePath, projectSlug: installation.projectSlug })
+        : await loadWorkflowContract({ homePath: options.homePath, projectSlug: installation.projectSlug });
       const worktreeResult = await options.worktreeManager.createWorktree({
         projectSlug: installation.projectSlug,
         branch: branchFor(ticket),
@@ -377,6 +388,37 @@ export function createMatrixSymphonyOrchestrator(options: {
   }
 
   return {
+    async assignTicket(ownerId: string, ticket: TrackedTicket, actorId?: string) {
+      const snapshot = await options.repository.getSnapshot(ownerId);
+      const installation = snapshot.installation;
+      if (!installation) return null;
+      const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+      const rule: TicketSourceRule = snapshot.rule ?? {
+        installationId: installation.id,
+        teamId: "manual",
+        teamKey: "MAT",
+        requiredLabels: [],
+        activeStates: [ticket.stateName],
+        terminalStates: ["Done", "Canceled", "Cancelled", "Duplicate"],
+        assigneeIds: [],
+        updatedAt: nowIso(),
+      };
+      const run = await dispatchTicket(ownerId, installation, rule, ticket, existing);
+      await append(ownerId, {
+        installationId: installation.id,
+        runId: run.id,
+        type: "symphony.ticket.assigned",
+        message: "Ticket assigned to Symphony",
+        severity: "info",
+        actorId,
+      });
+      return run;
+    },
+
+    async codexReadiness() {
+      return options.codexReadiness ? await options.codexReadiness() : { status: "unknown" as const, lastCheckedAt: nowIso() };
+    },
+
     async start(ownerId: string, actorId: string) {
       const installation = await options.repository.setEnabled(ownerId, true, actorId);
       await options.statusHub?.publishOperatorEvent(ownerId, {

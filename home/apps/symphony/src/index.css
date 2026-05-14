@@ -48,6 +48,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  line-height: 1.35;
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
@@ -59,4 +60,8 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button {
+  white-space: nowrap;
 }

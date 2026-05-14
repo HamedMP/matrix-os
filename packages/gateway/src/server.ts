@@ -2376,6 +2376,10 @@ export async function createGateway(config: GatewayConfig) {
       worktreeManager,
       agentSessionManager,
       statusHub: matrixSymphonyStatusHub,
+      codexReadiness: async () => ({
+        status: process.env.CODEX_AUTH_TOKEN ? "valid" : "unknown",
+        lastCheckedAt: new Date().toISOString(),
+      }),
     });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();
     app.route("/api/symphony", createSymphonyRoutes({
