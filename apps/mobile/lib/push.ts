@@ -23,15 +23,15 @@ Notifications.setNotificationHandler({
 });
 
 export async function registerPushNotifications(client: GatewayClient): Promise<string | null> {
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  const existingPermission = await Notifications.getPermissionsAsync();
+  let granted = existingPermission.granted;
 
-  if (existingStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+  if (!granted) {
+    const requestedPermission = await Notifications.requestPermissionsAsync();
+    granted = requestedPermission.granted;
   }
 
-  if (finalStatus !== "granted") {
+  if (!granted) {
     return null;
   }
 
@@ -45,7 +45,7 @@ export async function registerPushNotifications(client: GatewayClient): Promise<
       name: "Matrix OS",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#c2703a",
+      lightColor: "#8CC7BE",
     });
   }
 

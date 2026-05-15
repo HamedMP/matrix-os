@@ -130,7 +130,7 @@ function SwipeableTaskCard({ task, onPress, onComplete, onDelete }: SwipeableTas
 }
 
 export default function MissionControlScreen() {
-  const { client, connectionState } = useGateway();
+  const { client } = useGateway();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [cronJobs, setCronJobs] = useState<unknown[]>([]);
   const [filter, setFilter] = useState<FilterStatus>("all");
@@ -140,7 +140,7 @@ export default function MissionControlScreen() {
   const [newTaskInput, setNewTaskInput] = useState("");
 
   const fetchData = useCallback(async () => {
-    if (!client || connectionState !== "connected") return;
+    if (!client) return;
     try {
       const [tasksData, cronData] = await Promise.all([
         client.getTasks(),
@@ -151,7 +151,7 @@ export default function MissionControlScreen() {
     } catch {
       // silently handle fetch errors
     }
-  }, [client, connectionState]);
+  }, [client]);
 
   useEffect(() => {
     fetchData();

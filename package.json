@@ -56,6 +56,13 @@
       "allowedVersions": {
         "kysely-codegen>kysely": "^0.28.0"
       }
+    },
+    "packageExtensions": {
+      "node-pty@*": {
+        "dependencies": {
+          "node-gyp": "12.3.0"
+        }
+      }
     }
   },
   "devDependencies": {
