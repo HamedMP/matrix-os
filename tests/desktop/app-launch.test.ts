@@ -5,6 +5,16 @@ import {
 } from "../../apps/desktop/src/main/config.js";
 
 describe("desktop app launch planning", () => {
+  it("targets the managed cloud instance by default so packaged desktop does not require local dev", () => {
+    const config = parseMatrixDesktopConfig({});
+    const plan = createDesktopLaunchPlan(config);
+
+    expect(config.shellUrl).toBe("https://app.matrix-os.com/");
+    expect(config.gatewayUrl).toBe("https://app.matrix-os.com/");
+    expect(plan.loadUrl).toBe("https://app.matrix-os.com/");
+    expect(plan.allowedOrigins).toEqual(["https://app.matrix-os.com"]);
+  });
+
   it("loads the configured Matrix shell URL and keeps reconnect metadata separate", () => {
     const config = parseMatrixDesktopConfig({
       MATRIX_DESKTOP_SHELL_URL: "https://matrix.example.com/shell",

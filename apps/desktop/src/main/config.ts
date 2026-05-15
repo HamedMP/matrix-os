@@ -46,8 +46,9 @@ export interface DesktopLaunchPlan {
   };
 }
 
-const DEFAULT_SHELL_URL = "http://localhost:3000";
-const DEFAULT_GATEWAY_URL = "http://localhost:4000";
+const DEFAULT_CLOUD_INSTANCE_URL = "https://app.matrix-os.com";
+const DEFAULT_SHELL_URL = DEFAULT_CLOUD_INSTANCE_URL;
+const DEFAULT_GATEWAY_URL = DEFAULT_CLOUD_INSTANCE_URL;
 const MIN_WINDOW_WIDTH = 960;
 const MIN_WINDOW_HEIGHT = 640;
 const MAX_WINDOW_WIDTH = 7680;
