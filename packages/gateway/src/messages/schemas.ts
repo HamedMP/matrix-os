@@ -37,6 +37,7 @@ export const MessagingSafeErrorCodeSchema = z.enum([
   "body_too_large",
   "provider_unavailable",
   "misconfigured",
+  "not_implemented",
   "internal_error",
 ]);
 export type MessagingSafeErrorCode = z.infer<typeof MessagingSafeErrorCodeSchema>;
@@ -321,6 +322,11 @@ export const AutomationRuleCreateRequestSchema = z.object({
   path: ["scope"],
 });
 export type AutomationRuleCreateRequest = z.infer<typeof AutomationRuleCreateRequestSchema>;
+
+export const RecoveryRequestSchema = z.object({
+  action: z.enum(["recheck", "restart_bridge", "relink"]),
+});
+export type RecoveryRequest = z.infer<typeof RecoveryRequestSchema>;
 
 export const AccountSetupRequestSchema = z.object({
   networkSlug: MessagingNetworkSlugSchema,

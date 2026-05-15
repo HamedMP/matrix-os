@@ -109,9 +109,9 @@ function debouncedSave(state: WindowManagerState) {
     }
 
     fetch(`${gatewayUrl}/api/layout`, {
+      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
       body: JSON.stringify({ windows: layoutWindows }),
     }).catch((err: unknown) => {
       console.warn("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));

@@ -79,7 +79,7 @@ before production enablement.
 - [X] T033 [P] [US1] Write contract tests for account disconnect retention behavior in `tests/gateway/messages/disconnect-routes.test.ts`
 - [X] T034 [P] [US1] Write repository tests for ConnectedAccount, SetupSession, MatrixConversation, and ConversationMapping in `tests/gateway/messages/repository.test.ts`
 - [X] T035 [P] [US1] Write Messages app setup flow test for Telegram and WhatsApp cards in `tests/shell/messages/messages-app-setup.test.tsx`
-- [ ] T036 [P] [US1] Write end-to-end bridge loop test using spike fixtures in `tests/deploy/customer-vps/matrix-messaging-first-loop.test.ts`
+- [ ] T036 [P] [US1] Write end-to-end bridge loop test using spike fixtures in `tests/deploy/customer-vps/matrix-messaging-first-loop.test.ts` (blocked on real Telegram credentials and WhatsApp pairing)
 
 ### Implementation for User Story 1
 
@@ -172,25 +172,25 @@ before production enablement.
 
 ### Tests for User Story 4
 
-- [ ] T081 [P] [US4] Write health route contract tests for coarse statuses and safe error redaction in `tests/gateway/messages/health-routes.test.ts`
-- [ ] T082 [P] [US4] Write recovery route tests for recheck, restart_bridge, and relink actions in `tests/gateway/messages/recovery-routes.test.ts`
-- [ ] T083 [P] [US4] Write customer-VPS systemd unit validation tests for selected homeserver and bridge services in `tests/deploy/customer-vps/messaging-systemd.test.ts`
-- [ ] T084 [P] [US4] Write backup/restore integration test for RPO/RTO and WhatsApp relink status in `tests/deploy/customer-vps/messaging-backup-restore.test.ts`
-- [ ] T085 [P] [US4] Write platform provisioning test for messaging resource floor gating in `tests/platform/messaging-provisioning.test.ts`
+- [X] T081 [P] [US4] Write health route contract tests for coarse statuses and safe error redaction in `tests/gateway/messages/health-routes.test.ts`
+- [X] T082 [P] [US4] Write recovery route tests for recheck, restart_bridge, and relink actions in `tests/gateway/messages/recovery-routes.test.ts`
+- [X] T083 [P] [US4] Write customer-VPS systemd unit validation tests for selected homeserver and bridge services in `tests/deploy/customer-vps/messaging-systemd.test.ts`
+- [X] T084 [P] [US4] Write backup/restore integration test for RPO/RTO and WhatsApp relink status in `tests/deploy/customer-vps/messaging-backup-restore.test.ts`
+- [X] T085 [P] [US4] Write platform provisioning test for messaging resource floor gating in `tests/platform/messaging-provisioning.test.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T086 [US4] Implement coarse bridge and homeserver health service in `packages/gateway/src/messages/bridge-health.ts`
-- [ ] T087 [US4] Implement `GET /api/messages/health` and `POST /api/messages/recovery/:accountId` in `packages/gateway/src/messages/routes.ts`
-- [ ] T088 [US4] Implement customer-VPS messaging resource-floor checks in `packages/platform/src/customer-vps-routes.ts`
-- [ ] T089 [US4] Update Matrix homeserver provisioning hooks for selected split/migration decision in `packages/platform/src/matrix-provisioning.ts`
-- [ ] T090 [US4] Add selected homeserver systemd unit in `distro/customer-vps/systemd/matrix-homeserver.service`
-- [ ] T091 [US4] Add Telegram bridge systemd unit in `distro/customer-vps/systemd/matrix-bridge-telegram.service`
-- [ ] T092 [US4] Add WhatsApp bridge systemd unit in `distro/customer-vps/systemd/matrix-bridge-whatsapp.service`
-- [ ] T093 [US4] Add messaging health helper script in `distro/customer-vps/host-bin/matrix-messaging-health`
-- [ ] T094 [US4] Add messaging backup helper script covering homeserver, bridge DBs, mappings, and permissions in `distro/customer-vps/host-bin/matrix-messaging-backup`
-- [ ] T095 [US4] Add messaging restore helper script with WhatsApp relink detection in `distro/customer-vps/host-bin/matrix-messaging-restore`
-- [ ] T096 [US4] Document production operations, RPO/RTO, relink behavior, and resource floor in `docs/platform/dev/messaging-bridge.md`
+- [X] T086 [US4] Implement coarse bridge and homeserver health service in `packages/gateway/src/messages/bridge-health.ts`
+- [X] T087 [US4] Implement `GET /api/messages/health` and `POST /api/messages/recovery/:accountId` in `packages/gateway/src/messages/routes.ts`
+- [X] T088 [US4] Implement customer-VPS messaging resource-floor checks in `packages/platform/src/customer-vps-routes.ts`
+- [X] T089 [US4] Update Matrix homeserver provisioning hooks for selected split/migration decision in `packages/platform/src/matrix-provisioning.ts`
+- [X] T090 [US4] Add selected homeserver systemd unit in `distro/customer-vps/systemd/matrix-homeserver.service`
+- [X] T091 [US4] Add Telegram bridge systemd unit in `distro/customer-vps/systemd/matrix-bridge-telegram.service`
+- [X] T092 [US4] Add WhatsApp bridge systemd unit in `distro/customer-vps/systemd/matrix-bridge-whatsapp.service`
+- [X] T093 [US4] Add messaging health helper script in `distro/customer-vps/host-bin/matrix-messaging-health`
+- [X] T094 [US4] Add messaging backup helper script covering homeserver, bridge DBs, mappings, and permissions in `distro/customer-vps/host-bin/matrix-messaging-backup`
+- [X] T095 [US4] Add messaging restore helper script with WhatsApp relink detection in `distro/customer-vps/host-bin/matrix-messaging-restore`
+- [X] T096 [US4] Document production operations, RPO/RTO, relink behavior, and resource floor in `docs/platform/dev/messaging-bridge.md`
 
 **Checkpoint**: Private messaging backbone is provisionable, observable, recoverable, and bounded by documented owner-controlled backup/restore behavior.
 
@@ -200,14 +200,14 @@ before production enablement.
 
 **Purpose**: Security hardening, docs, validation, and readiness for review after desired stories are complete.
 
-- [ ] T097 [P] Add user-facing Messages and privacy docs in `www/content/docs/messages.mdx`
-- [ ] T098 [P] Add developer docs for message permissions and bridge architecture in `docs/platform/dev/messaging-bridge.md`
-- [ ] T099 [P] Add quickstart validation notes and commands to `specs/077-matrix-messaging-bridge/quickstart.md`
-- [ ] T100 [P] Add changelog entry for the messaging bridge feature in `specs/077-matrix-messaging-bridge/changelog.md`
-- [ ] T101 Run default app build with `scripts/build-default-apps.mjs` and update generated Messages dist artifacts in `home/apps/messages/dist/index.html`
-- [ ] T102 Run focused messaging tests documented in `tests/gateway/messages/README.md`
-- [ ] T103 Run full pre-PR gates defined in `package.json`
-- [ ] T104 Perform three-pass review against `docs/dev/review-pipeline.md` and record findings in `specs/077-matrix-messaging-bridge/review.md`
+- [X] T097 [P] Add user-facing Messages and privacy docs in `www/content/docs/messages.mdx`
+- [X] T098 [P] Add developer docs for message permissions and bridge architecture in `docs/platform/dev/messaging-bridge.md`
+- [X] T099 [P] Add quickstart validation notes and commands to `specs/077-matrix-messaging-bridge/quickstart.md`
+- [X] T100 [P] Add changelog entry for the messaging bridge feature in `specs/077-matrix-messaging-bridge/changelog.md`
+- [X] T101 Run default app build with `scripts/build-default-apps.mjs` and update generated Messages dist artifacts in `home/apps/messages/dist/index.html`
+- [X] T102 Run focused messaging tests documented in `tests/gateway/messages/README.md`
+- [ ] T103 Run full pre-PR gates defined in `package.json` (typecheck and pattern scanner passed; full `bun run test` hit unrelated long-running platform/integration failures)
+- [X] T104 Perform three-pass review against `docs/dev/review-pipeline.md` and record findings in `specs/077-matrix-messaging-bridge/review.md`
 
 ---
 

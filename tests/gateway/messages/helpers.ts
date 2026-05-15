@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { vi } from "vitest";
 import { createMessagingRoutes } from "../../../packages/gateway/src/messages/routes.js";
 import type { MessagingRepository } from "../../../packages/gateway/src/messages/repository.js";
+import type { MessagingRouteDeps } from "../../../packages/gateway/src/messages/routes.js";
 
 export const ownerId = "user_a";
 export const accountId = "acct_0123456789abcdef0123456789abcdef";
