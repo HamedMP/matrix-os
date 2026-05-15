@@ -11,6 +11,7 @@ system/whatsapp-auth/
 
 # Dependencies
 node_modules/
+.pnpm-store/
 
 # Large media (user can un-ignore specific files)
 *.mp4
