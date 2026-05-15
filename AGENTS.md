@@ -276,6 +276,11 @@ Every backend PR must include an "Invariants" section:
 
 Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
 
+### Greptile Gate
+
+- **Do not merge PRs unless the latest trusted Greptile review reports `Confidence Score: 5/5`.** GitHub/Graphite mergeability is not enough; a green stack with `3/5` Greptile feedback still has unresolved review work.
+- If Greptile is below `5/5`, address the actionable findings, resubmit the PR/stack, and wait for a new trusted Greptile result before merging.
+
 ### Hard Rules (never violate)
 
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log

@@ -1,0 +1,38 @@
+name: Greptile Confidence
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to check
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  confidence:
+    name: Require 5/5
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Check latest trusted Greptile score
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr || github.event.pull_request.number }}
+          GREPTILE_REQUIRED_SCORE: "5"
+        run: node scripts/review/check-greptile-confidence.mjs
