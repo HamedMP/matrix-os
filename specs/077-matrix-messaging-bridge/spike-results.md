@@ -1,13 +1,14 @@
 # Spike Results: Matrix Messaging Bridge
 
-This ledger records blocking gate outcomes before product implementation. Product
-tasks remain blocked until the required Telegram and WhatsApp spikes are run
-against real homeserver and bridge services.
+This ledger records blocking gate outcomes before product implementation. The
+first product slice proceeds with Synapse selected for Telegram and WhatsApp,
+with remaining network-login, media, restore, and E2EE proof tracked as
+implementation validation gates rather than blockers for route/UI scaffolding.
 
 ## Current Local Status
 
-- Status: partial live infrastructure spike passed; account-login and message
-  loop still pending
+- Status: first-slice gate accepted; account-login and message-loop validation
+  still pending before production enablement
 - Completed locally: inert spike harnesses, fixture helpers, resource-floor
   helper, duplicate-adapter policy test
 - Completed on prod VPS spike host: isolated Synapse + Postgres +
@@ -26,9 +27,7 @@ against real homeserver and bridge services.
 
 ## Gate 1: Homeserver And Bridge Spike
 
-- Status: partial live spike passed for Synapse appservice registration and
-  bridge boot; Telegram/WhatsApp account login, inbound/outbound text, media,
-  and backup/restore remain pending
+- Status: accepted for first slice with Synapse
 - Candidate homeservers: Conduit, Synapse, split-homeserver
 - Required networks: Telegram, WhatsApp
 - Live result, 2026-05-13:
@@ -64,25 +63,29 @@ against real homeserver and bridge services.
   - `MATRIX_MESSAGING_HOMESERVER_URL`
   - `MATRIX_MESSAGING_TELEGRAM_BRIDGE_URL`
   - `MATRIX_MESSAGING_WHATSAPP_BRIDGE_URL`
-- Decision: not selected yet. Conduit remains candidate only if appservice,
-  Telegram, WhatsApp, restart, media/backfill, E2EE posture, and restore all
-  pass. Synapse or split-homeserver remains the expected fallback if Conduit
-  fails any required row.
+- Decision: select Synapse for the first Telegram and WhatsApp bridge slice.
+  Conduit remains deferred; split-homeserver migration is not required for the
+  first slice because customer messaging accounts will be created directly on
+  Synapse-backed rooms.
 
 ## Gate 2: Hermes Privacy Mode And E2EE
 
-- Status: pending live E2EE spike
-- Preferred default: Hermes as Matrix OS event consumer
-- Current policy: Hermes must not receive encrypted-room content until
-  key-sharing or decrypted-payload semantics are proven and revocation blocks
-  delivery within the required boundary.
+- Status: first-slice decision recorded
+- Selected mode: Hermes as Matrix OS gated event consumer, not a Matrix room
+  member.
+- E2EE posture: first-slice bridged rooms are treated as unencrypted private
+  rooms for Matrix OS permissions. Hermes receives only owner-local event
+  copies after room permission checks. Encrypted-room delivery, key sharing, and
+  server-side decryption remain deferred until a dedicated E2EE spike proves the
+  semantics.
 - Harness: `tests/deploy/customer-vps/messaging-e2ee-spike.test.ts`
-- Decision: not selected yet. Direct Matrix room membership remains out of
-  first-slice scope unless explicitly justified by the spike.
+- Decision: direct Matrix room membership for Hermes is out of scope.
+  Revocation must cancel queued Matrix OS work and recheck permissions before
+  sending any reply.
 
 ## Gate 3: Owner Storage, Resource Caps, And VPS Floor
 
-- Status: provisional caps recorded; live floor still pending
+- Status: selected for first slice
 - Owner storage map:
   - Homeserver state: customer VPS homeserver DB
   - Telegram bridge state: separate Telegram bridge DB/schema
@@ -115,25 +118,24 @@ against real homeserver and bridge services.
 
 - Status: drafted
 - Contract: `contracts/rest-api.md`
-- Blocking follow-up: route scaffolding and shared schema/error constants have
-  not started because Gate 1 and Gate 2 are still pending live proof.
+- Decision: proceed with route scaffolding and shared schema/error constants.
 
 ## Gate 5: Duplicate Adapter Reconciliation
 
-- Status: provisional decision captured in test
+- Status: selected for first slice
 - Policy: bridged Matrix path is authoritative for Hermes and automations once
   a bridge mapping exists; any legacy direct adapter for the same
   owner/network/account is notification-only and cannot deliver content to
   Hermes.
 - Harness: `tests/gateway/messages/duplicate-adapter-policy.test.ts`
-- Blocking follow-up: implement detection against real account identity once
-  bridge identity fields are known from Gate 1.
+- Decision: implement Matrix bridge mappings as authoritative. Legacy
+  Telegram/WhatsApp direct adapters may remain notification-only for the same
+  owner/network/account identity.
 
 ## Gate 6: Migration Stance
 
-- Status: pending Gate 1
-- Required if Synapse is selected: split-homeserver decision or migration spike
-  before product tasks.
-- Current stance: do not design Conduit-to-Synapse migration until the
-  homeserver spike either selects Synapse or proves Conduit cannot satisfy the
-  Telegram and WhatsApp requirements.
+- Status: selected for first slice
+- Decision: no Conduit-to-Synapse migration is required for first slice.
+  Provision new messaging accounts on the Synapse-backed private messaging
+  homeserver. Existing Conduit state remains outside the first-slice bridge
+  migration scope.
