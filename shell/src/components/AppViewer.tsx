@@ -16,6 +16,15 @@ import { openAppSession } from "@/lib/app-session";
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
+const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
+  "2048",
+  "backgammon",
+  "chess",
+  "minesweeper",
+  "snake",
+  "solitaire",
+  "tetris",
+]);
 export const APP_IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
 
 interface AppViewerProps {
@@ -32,14 +41,16 @@ function appNameFromPath(path: string): string {
 }
 
 export function extractSlug(path: string): string | null {
-  // Only treat a path as a slug-route when it targets the top-level app
-  // directory: "apps/{slug}", "apps/{slug}/", or "apps/{slug}/index.html".
-  // Nested paths like "apps/games/2048/index.html" must fall back to the
-  // legacy /files/ route -- they share a parent slug but are not runtime-
-  // managed apps, so routing them through /apps/:slug/ would serve the
-  // parent app's index.html instead of the requested file.
-  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
-  return match ? match[1] : null;
+  const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
+  if (topLevel) return topLevel[1];
+
+  // Older saved layouts used filesystem paths for migrated bundled games. Only
+  // rewrite known migrated slugs; other nested paths still load as files.
+  const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
+  if (nestedIndex && LEGACY_NESTED_RUNTIME_APP_SLUGS.has(nestedIndex[1])) {
+    return nestedIndex[1];
+  }
+  return null;
 }
 
 export function shouldRenderAppIframe(path: string): boolean {

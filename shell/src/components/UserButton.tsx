@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import {
   Tooltip,
@@ -24,6 +25,20 @@ function Placeholder() {
 }
 
 export function UserButton() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return <Placeholder />;
+  }
+
+  return <MountedUserButton />;
+}
+
+function MountedUserButton() {
   const { isLoaded, isSignedIn } = useAuth();
 
   if (!isLoaded || !isSignedIn) {

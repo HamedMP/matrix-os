@@ -1,4 +1,5 @@
-import { GatewayClient } from "../lib/gateway-client";
+import { GatewayClient, DEFAULT_GATEWAY_FETCH_TIMEOUT_MS } from "../lib/gateway-client";
+import { jsonResponse } from "./mobile-shell-test-utils";
 
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
@@ -106,16 +107,13 @@ describe("GatewayClient", () => {
   });
 
   it("fetches installed apps from the gateway", async () => {
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: jest.fn().mockResolvedValueOnce([
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
         {
           name: "Notes",
           file: "notes/index.html",
           path: "/files/apps/notes/index.html",
         },
-      ]),
-    } as unknown as Response);
+      ]));
 
     const client = new GatewayClient("http://localhost:4000", "token");
     await expect(client.getApps()).resolves.toEqual([
@@ -125,15 +123,13 @@ describe("GatewayClient", () => {
         path: "/files/apps/notes/index.html",
       },
     ]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:4000/api/apps",
-      expect.objectContaining({
-        headers: {
-          Authorization: "Bearer token",
-          "Content-Type": "application/json",
-        },
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/apps", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
       }),
-    );
+      signal: expect.any(Object),
+    }));
 
     fetchMock.mockRestore();
   });
@@ -187,24 +183,22 @@ describe("GatewayClient", () => {
   });
 
   it("fetches per-app manifest details from the gateway", async () => {
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: jest.fn().mockResolvedValueOnce({
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
         manifest: { name: "Notes" },
         runtimeState: { status: "ready" },
-      }),
-    } as unknown as Response);
+      }));
 
     const client = new GatewayClient("http://localhost:4000");
     await expect(client.getAppManifest("notes")).resolves.toEqual({
       manifest: { name: "Notes" },
       runtimeState: { status: "ready" },
     });
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/apps/notes/manifest", {
-      headers: {
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/apps/notes/manifest", expect.objectContaining({
+      headers: expect.objectContaining({
         "Content-Type": "application/json",
-      },
-    });
+      }),
+      signal: expect.any(Object),
+    }));
 
     fetchMock.mockRestore();
   });
@@ -223,11 +217,15 @@ describe("GatewayClient", () => {
       manifest: { name: "Chess" },
       runtimeState: { status: "ready" },
     });
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/apps/games/chess/manifest", {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/apps/games/chess/manifest",
+      expect.objectContaining({
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal: expect.any(Object),
+      }),
+    );
 
     fetchMock.mockRestore();
   });
@@ -262,19 +260,17 @@ describe("GatewayClient", () => {
   });
 
   it("fetches a platform websocket token using bearer auth", async () => {
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: jest.fn().mockResolvedValueOnce({ token: "ws-token" }),
-    } as unknown as Response);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ token: "ws-token" }));
 
     const client = new GatewayClient("https://app.matrix-os.com", "clerk-token");
     await expect(client.getWsToken()).resolves.toBe("ws-token");
-    expect(fetchMock).toHaveBeenCalledWith("https://app.matrix-os.com/api/auth/ws-token", {
-      headers: {
+    expect(fetchMock).toHaveBeenCalledWith("https://app.matrix-os.com/api/auth/ws-token", expect.objectContaining({
+      headers: expect.objectContaining({
         Authorization: "Bearer clerk-token",
         "Content-Type": "application/json",
-      },
-    });
+      }),
+      signal: expect.any(Object),
+    }));
 
     fetchMock.mockRestore();
   });
@@ -334,5 +330,54 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
     global.WebSocket = OriginalWebSocket;
     jest.useRealTimers();
+  });
+
+  it("adds timeout signals to gateway HTTP requests", async () => {
+    const timeoutSpy = jest.spyOn(AbortSignal, "timeout").mockReturnValue("timeout-signal" as unknown as AbortSignal);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([]));
+
+    const client = new GatewayClient("http://localhost:4000");
+    await expect(client.getApps()).resolves.toEqual([]);
+
+    expect(timeoutSpy).toHaveBeenCalledWith(DEFAULT_GATEWAY_FETCH_TIMEOUT_MS);
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/apps", expect.objectContaining({
+      signal: "timeout-signal",
+    }));
+
+    fetchMock.mockRestore();
+    timeoutSpy.mockRestore();
+  });
+
+  it("returns a safe fallback when app inventory fetch fails", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = jest.spyOn(global, "fetch").mockRejectedValueOnce(
+      new Error("network unavailable"),
+    );
+
+    const client = new GatewayClient("http://localhost:4000");
+    await expect(client.getApps()).resolves.toEqual([]);
+
+    expect(warnSpy).toHaveBeenCalledWith("[mobile] /api/apps unavailable", "network unavailable");
+
+    fetchMock.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("returns a generic health error instead of raw network failures", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = jest.spyOn(global, "fetch").mockRejectedValueOnce(
+      new Error("ECONNREFUSED /var/run/provider.sock"),
+    );
+
+    const client = new GatewayClient("http://localhost:4000");
+    await expect(client.healthCheck()).resolves.toEqual({
+      ok: false,
+      error: "Gateway unavailable",
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith("[mobile] gateway health check unavailable");
+
+    fetchMock.mockRestore();
+    warnSpy.mockRestore();
   });
 });

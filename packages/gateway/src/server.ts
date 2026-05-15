@@ -194,6 +194,46 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
   console.info("[terminal-debug][gateway]", event, details);
 }
 
+export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
+
+export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
+
+export function registerTerminalSessionRoutes(
+  app: Hono,
+  options: { homePath: string; sessionRegistry: TerminalSessionRouteRegistry },
+): void {
+  const { homePath, sessionRegistry } = options;
+  const terminalSessionDeleteBodyLimit = bodyLimit({
+    maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  });
+
+  app.get("/api/terminal/sessions", (c) => {
+    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
+      const displayCwd = relative(homePath, session.cwd) || "~";
+      return {
+        sessionId: session.sessionId,
+        cwd: displayCwd,
+        state: session.state,
+        exitCode: session.exitCode,
+        createdAt: session.createdAt,
+        lastAttachedAt: session.lastAttachedAt,
+        attachedClients: session.attachedClients,
+      };
+    });
+    return c.json(publicSessions);
+  });
+
+  app.delete("/api/terminal/sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
+    const id = c.req.param("id");
+    logTerminalDebug("rest-destroy-request", { sessionId: id });
+    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
+    const session = sessionRegistry.getSession(id);
+    if (!session) return c.json({ ok: true }, 200);
+    sessionRegistry.destroy(id);
+    return c.json({ ok: true });
+  });
+}
+
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 
@@ -1270,6 +1310,18 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  // Platform normally owns /api/auth/ws-token before proxying to a customer
+  // VPS. Direct gateway/dev shells have no platform layer, so expose an empty
+  // no-store response in open mode and let WebSocket clients fall back to the
+  // unauthenticated local dev upgrade path.
+  app.get("/api/auth/ws-token", (c) => {
+    if (process.env.MATRIX_AUTH_TOKEN) {
+      return c.json({ error: "WebSocket auth unavailable" }, 503);
+    }
+    return c.json({ token: null, expiresAt: 0 }, 200, {
+      "Cache-Control": "no-store",
+    });
+  });
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -1485,10 +1537,16 @@ export async function createGateway(config: GatewayConfig) {
     const { token, expiresAt } = mobileSessionTokens.mint(slug, Date.now(), {
       routingKey: routingHandle && HANDLE_PATTERN.test(routingHandle) ? routingHandle : undefined,
     });
-    return c.json({
+    return new Response(JSON.stringify({
       token,
       expiresAt,
       launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
+    }), {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json; charset=UTF-8",
+      },
     });
   });
 
@@ -2490,31 +2548,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.get("/api/terminal/sessions", (c) => {
-    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
-      const displayCwd = relative(homePath, session.cwd) || "~";
-      return {
-        sessionId: session.sessionId,
-        cwd: displayCwd,
-        state: session.state,
-        exitCode: session.exitCode,
-        createdAt: session.createdAt,
-        lastAttachedAt: session.lastAttachedAt,
-        attachedClients: session.attachedClients,
-      };
-    });
-    return c.json(publicSessions);
-  });
-
-  app.delete("/api/terminal/sessions/:id", (c) => {
-    const id = c.req.param("id");
-    logTerminalDebug("rest-destroy-request", { sessionId: id });
-    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
-    const session = sessionRegistry.getSession(id);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-    sessionRegistry.destroy(id);
-    return c.json({ ok: true });
-  });
+  registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
     const body = await c.req.json<{

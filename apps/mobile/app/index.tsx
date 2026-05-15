@@ -28,7 +28,7 @@ export default function Index() {
         <View style={styles.heroSection}>
           <View style={styles.iconContainer}>
             <Image
-              source={require("../assets/logo.png")}
+              source={require("../assets/icon.png")}
               style={styles.logo}
               contentFit="contain"
               accessibilityLabel="Matrix OS"

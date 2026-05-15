@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { Hono } from "hono";
 import {
   ClientMessageSchema,
   AttachNewSchema,
@@ -6,7 +7,21 @@ import {
   InputSchema,
   ResizeSchema,
   DetachSchema,
+  DestroySchema,
 } from "../../packages/gateway/src/session-registry.js";
+import {
+  registerTerminalSessionRoutes,
+  TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  type TerminalSessionRouteRegistry,
+} from "../../packages/gateway/src/server.js";
+
+const SESSION_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+function appWithTerminalRegistry(registry: TerminalSessionRouteRegistry, homePath = "/home/matrix/home") {
+  const app = new Hono();
+  registerTerminalSessionRoutes(app, { homePath, sessionRegistry: registry });
+  return app;
+}
 
 describe("Terminal WebSocket Protocol — Zod Schemas", () => {
   describe("AttachNewSchema", () => {
@@ -106,6 +121,13 @@ describe("Terminal WebSocket Protocol — Zod Schemas", () => {
     });
   });
 
+  describe("DestroySchema", () => {
+    it("accepts valid destroy", () => {
+      const msg = { type: "destroy" };
+      expect(DestroySchema.parse(msg)).toEqual(msg);
+    });
+  });
+
   describe("ClientMessageSchema (union)", () => {
     it("parses attach-new", () => {
       const result = ClientMessageSchema.parse({ type: "attach", cwd: "/home" });
@@ -132,6 +154,24 @@ describe("Terminal WebSocket Protocol — Zod Schemas", () => {
       expect(result).toEqual({ type: "detach" });
     });
 
+    it("parses destroy", () => {
+      const result = ClientMessageSchema.parse({ type: "destroy" });
+      expect(result).toEqual({ type: "destroy" });
+    });
+
+    it("parses the mobile attach/input/resize/detach/destroy flow", () => {
+      const frames = [
+        { type: "attach", cwd: "projects" },
+        { type: "input", data: "pwd\r" },
+        { type: "resize", cols: 42, rows: 24 },
+        { type: "detach" },
+        { type: "attach", sessionId: SESSION_ID, fromSeq: 0 },
+        { type: "destroy" },
+      ];
+
+      expect(frames.map((frame) => ClientMessageSchema.parse(frame))).toEqual(frames);
+    });
+
     it("rejects unknown type", () => {
       expect(() => ClientMessageSchema.parse({ type: "unknown" })).toThrow();
     });
@@ -139,5 +179,89 @@ describe("Terminal WebSocket Protocol — Zod Schemas", () => {
     it("rejects missing type", () => {
       expect(() => ClientMessageSchema.parse({ data: "hello" })).toThrow();
     });
+  });
+});
+
+describe("Terminal session REST routes", () => {
+  it("lists terminal sessions with home-relative cwd values", async () => {
+    const registry = {
+      list: () => [{
+        sessionId: SESSION_ID,
+        cwd: "/home/matrix/home/projects/matrix-os",
+        shell: "/bin/bash",
+        state: "running" as const,
+        createdAt: 1,
+        lastAttachedAt: 2,
+        attachedClients: 1,
+      }],
+      getSession: () => null,
+      destroy: () => undefined,
+    };
+    const app = appWithTerminalRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{
+      sessionId: SESSION_ID,
+      cwd: "projects/matrix-os",
+      state: "running",
+      createdAt: 1,
+      lastAttachedAt: 2,
+      attachedClients: 1,
+    }]);
+  });
+
+  it("rejects invalid terminal session delete IDs before touching the registry", async () => {
+    const registry = {
+      list: () => [],
+      getSession: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const app = appWithTerminalRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions/not-a-uuid", { method: "DELETE" });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid session ID" });
+    expect(registry.getSession).not.toHaveBeenCalled();
+    expect(registry.destroy).not.toHaveBeenCalled();
+  });
+
+  it("treats repeated terminal session deletes as idempotent success", async () => {
+    const registry = {
+      list: () => [],
+      getSession: vi.fn(() => null),
+      destroy: vi.fn(),
+    };
+    const app = appWithTerminalRegistry(registry);
+
+    const res = await app.request(`/api/terminal/sessions/${SESSION_ID}`, { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(registry.destroy).not.toHaveBeenCalled();
+  });
+
+  it("caps ignored terminal delete request bodies before registry access", async () => {
+    const registry = {
+      list: () => [],
+      getSession: vi.fn(() => ({ sessionId: SESSION_ID })),
+      destroy: vi.fn(),
+    };
+    const app = appWithTerminalRegistry(registry);
+
+    const res = await app.request(`/api/terminal/sessions/${SESSION_ID}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "text/plain",
+        "Content-Length": String(TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES + 1),
+      },
+      body: "x".repeat(TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES + 1),
+    });
+
+    expect(res.status).toBe(413);
+    expect(registry.getSession).not.toHaveBeenCalled();
+    expect(registry.destroy).not.toHaveBeenCalled();
   });
 });

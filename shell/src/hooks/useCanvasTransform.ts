@@ -45,6 +45,7 @@ interface CanvasTransformActions {
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
   focusOnWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
   setTransform: (zoom: number, panX: number, panY: number) => void;
+  resetForMobileViewport: () => void;
 }
 
 export const useCanvasTransform = create<CanvasTransformState & CanvasTransformActions>()(
@@ -135,5 +136,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     },
 
     setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
+
+    resetForMobileViewport: () => set({ zoom: 1, panX: 0, panY: 0, isScrolling: false, isAnimating: false }),
   })),
 );

@@ -99,6 +99,20 @@ export default function RuntimeScreen() {
       <Stack.Screen
         options={{
           title,
+          headerLeft: () => (
+            <Pressable
+              onPress={() => router.replace("/(tabs)/apps" as any)}
+              style={({ pressed }) => ({
+                minWidth: 34,
+                minHeight: 34,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: pressed ? 0.65 : 1,
+              })}
+            >
+              <Ionicons name="home-outline" size={22} color={colors.light.foreground} />
+            </Pressable>
+          ),
           headerRight: () => (
             <Pressable
               onPress={() => router.push({ pathname: "/apps/[...slug]", params: { slug: slug.split("/") } } as any)}
@@ -172,6 +186,24 @@ export default function RuntimeScreen() {
             >
               <Text style={{ fontFamily: fonts.sansSemiBold, color: colors.light.primaryForeground }}>
                 Retry
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.replace("/(tabs)/apps" as any)}
+              style={({ pressed }) => ({
+                marginTop: spacing.sm,
+                borderRadius: radius.lg,
+                borderCurve: "continuous",
+                borderWidth: 1,
+                borderColor: colors.light.border,
+                backgroundColor: colors.light.card,
+                paddingHorizontal: spacing.xl,
+                paddingVertical: spacing.md,
+                opacity: pressed ? 0.82 : 1,
+              })}
+            >
+              <Text style={{ fontFamily: fonts.sansSemiBold, color: colors.light.foreground }}>
+                Apps
               </Text>
             </Pressable>
           </View>

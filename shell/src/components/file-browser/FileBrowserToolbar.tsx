@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export function FileBrowserToolbar() {
+export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const historyIndex = useFileBrowser((s) => s.historyIndex);
   const history = useFileBrowser((s) => s.history);
@@ -50,7 +50,7 @@ export function FileBrowserToolbar() {
   const pathSegments = currentPath ? currentPath.split("/") : [];
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-background/80">
+    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-background/80 overflow-x-auto">
       <div className="flex items-center gap-0.5">
         <Button
           variant="ghost"
@@ -94,7 +94,7 @@ export function FileBrowserToolbar() {
         ))}
       </div>
 
-      <div className="flex items-center border rounded-md">
+      <div className="flex items-center border rounded-md shrink-0">
         {(
           [
             ["icon", LayoutGridIcon],
@@ -118,7 +118,7 @@ export function FileBrowserToolbar() {
         ))}
       </div>
 
-      <div className="relative w-40">
+      <div className={mobile ? "hidden" : "relative w-40"}>
         <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
         <Input
           className="h-7 pl-7 text-xs"

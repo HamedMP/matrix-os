@@ -1,22 +1,36 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse, type NextRequest } from "next/server";
-import { isGatewayProxyPath, isPublicShellPath } from "./lib/proxy-routes";
+import { NextResponse } from "next/server";
+import {
+  isGatewayProxyPath,
+  isPlatformMobileAppSessionRequest,
+  isPublicShellPath,
+} from "./src/lib/proxy-routes";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
 const platformUpgradeToken = process.env.UPGRADE_TOKEN;
 
+interface ProxyRequestLike {
+  headers: Headers;
+  nextUrl: {
+    host: string;
+    pathname: string;
+    protocol: string;
+    search: string;
+  };
+}
+
 // Direct path check instead of Clerk's createRouteMatcher -- in Next 16's
 // proxy.ts runtime, createRouteMatcher has been observed to return false for
 // paths it should match, causing gateway-bound requests (/api/*, /files/*,
-// /apps/*)
-// to fall through to the 404 page instead of being rewritten to the gateway.
-function isGatewayProxy(request: NextRequest): boolean {
+// /apps/*) to fall through to the 404 page instead of being rewritten to the
+// gateway.
+function isGatewayProxy(request: ProxyRequestLike): boolean {
   return isGatewayProxyPath(request.nextUrl.pathname);
 }
 
-function getPublicOrigin(request: NextRequest) {
+function getPublicOrigin(request: ProxyRequestLike) {
   const host =
     request.headers.get("x-forwarded-host") ??
     request.headers.get("host") ??
@@ -29,7 +43,7 @@ function getPublicOrigin(request: NextRequest) {
   return `${proto}://${host}`;
 }
 
-function rewriteGatewayRequest(request: NextRequest) {
+function rewriteGatewayRequest(request: ProxyRequestLike) {
   const { pathname } = request.nextUrl;
   const target = pathname.startsWith("/gateway/")
     ? pathname.replace("/gateway", "")
@@ -42,7 +56,7 @@ function rewriteGatewayRequest(request: NextRequest) {
   return NextResponse.rewrite(url, { request: { headers } });
 }
 
-function platformVerifiedResponse(request: NextRequest): NextResponse | null {
+function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | null {
   const platformAuthHeader = request.headers.get("authorization");
   const platformBearer = platformAuthHeader?.startsWith("Bearer ")
     ? platformAuthHeader.slice(7)
@@ -52,7 +66,12 @@ function platformVerifiedResponse(request: NextRequest): NextResponse | null {
   }
 
   const platformUserId = request.headers.get("x-platform-user-id");
-  if (expectedClerkUserId && platformUserId !== expectedClerkUserId) {
+  const mobileAppSessionRequest = isPlatformMobileAppSessionRequest(
+    request.nextUrl.pathname,
+    request.nextUrl.search,
+    request.headers.get("cookie"),
+  );
+  if (expectedClerkUserId && platformUserId !== expectedClerkUserId && !mobileAppSessionRequest) {
     return new NextResponse("Forbidden: you do not own this instance", {
       status: 403,
     });
@@ -101,8 +120,8 @@ const withClerk = clerkMiddleware(async (auth, request) => {
 });
 
 export function proxy(
-  request: NextRequest,
-  event: import("next/server").NextFetchEvent,
+  request: Parameters<typeof withClerk>[0],
+  event: Parameters<typeof withClerk>[1],
 ) {
   // E2E screenshot tests run against `next start`, which always serves the
   // built app with production semantics. Use the explicit bypass flag alone so
@@ -119,7 +138,7 @@ export function proxy(
   if (isPublicShellPath(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
-  // All requests — including gateway-proxy paths — flow through Clerk so the
+  // All requests -- including gateway-proxy paths -- flow through Clerk so the
   // admin bearer token is never injected onto an unauthenticated request. The
   // platform-verified fast-path above covers the pre-authenticated
   // backend-to-backend case.
@@ -133,8 +152,10 @@ export const config = {
     "/files/:path*",
     "/modules/:path*",
     "/apps/:path*",
+    "/api/:path*",
+    "/trpc/:path*",
+    "/ws",
     "/ws/:path*",
-    "/(api|trpc)(.*)",
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/((?!_next|.*\\..*).*)",
   ],
 };
