@@ -144,21 +144,21 @@ before production enablement.
 
 ### Tests for User Story 3
 
-- [ ] T069 [P] [US3] Write AutomationRule schema tests for bounded discriminated action payloads in `tests/gateway/messages/automation-schemas.test.ts`
-- [ ] T070 [P] [US3] Write automation evaluator tests for automation permission gating in `tests/gateway/messages/automation-evaluator.test.ts`
-- [ ] T071 [P] [US3] Write automation route contract tests for create, pause, list, and delete in `tests/gateway/messages/automation-routes.test.ts`
-- [ ] T072 [P] [US3] Write integration test for deadline-to-task rule through `/api/bridge/query` in `tests/gateway/messages/automation-task-action.test.ts`
-- [ ] T073 [P] [US3] Write Messages automation UI test in `tests/shell/messages/messages-automation.test.tsx`
+- [X] T069 [P] [US3] Write AutomationRule schema tests for bounded discriminated action payloads in `tests/gateway/messages/automation-schemas.test.ts`
+- [X] T070 [P] [US3] Write automation evaluator tests for automation permission gating in `tests/gateway/messages/automation-evaluator.test.ts`
+- [X] T071 [P] [US3] Write automation route contract tests for create, pause, list, and delete in `tests/gateway/messages/automation-routes.test.ts`
+- [X] T072 [P] [US3] Write integration test for deadline-to-task rule through `/api/bridge/query` in `tests/gateway/messages/automation-task-action.test.ts`
+- [X] T073 [P] [US3] Write Messages automation UI test in `tests/shell/messages/messages-automation.test.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T074 [P] [US3] Implement AutomationRule schemas and bounded action discriminated union in `packages/gateway/src/messages/schemas.ts`
-- [ ] T075 [US3] Implement AutomationRule repository methods and audit append in `packages/gateway/src/messages/repository.ts`
-- [ ] T076 [US3] Implement automation evaluator with nonblocking queue and permission checks in `packages/gateway/src/messages/automation-evaluator.ts`
-- [ ] T077 [US3] Implement task-creation action through scoped bridge API client in `packages/gateway/src/messages/automation-actions.ts`
-- [ ] T078 [US3] Implement automation rule create, list, pause, and delete routes in `packages/gateway/src/messages/routes.ts`
-- [ ] T079 [US3] Integrate automation evaluator with appservice event ingestion after owner display storage in `packages/gateway/src/messages/appservice-events.ts`
-- [ ] T080 [US3] Implement automation settings UI and audit trail display in `home/apps/messages/src/main.tsx`
+- [X] T074 [P] [US3] Implement AutomationRule schemas and bounded action discriminated union in `packages/gateway/src/messages/schemas.ts`
+- [X] T075 [US3] Implement AutomationRule repository methods and audit append in `packages/gateway/src/messages/repository.ts`
+- [X] T076 [US3] Implement automation evaluator with nonblocking queue and permission checks in `packages/gateway/src/messages/automation-evaluator.ts`
+- [X] T077 [US3] Implement task-creation action through scoped bridge API client in `packages/gateway/src/messages/automation-actions.ts`
+- [X] T078 [US3] Implement automation rule create, list, pause, and delete routes in `packages/gateway/src/messages/routes.ts`
+- [X] T079 [US3] Integrate automation evaluator with appservice event ingestion after owner display storage in `packages/gateway/src/messages/appservice-events.ts`
+- [X] T080 [US3] Implement automation settings UI and audit trail display in `home/apps/messages/src/main.tsx`
 
 **Checkpoint**: Automation observes only rooms with automation access and creates audited Matrix OS actions without blocking message sync.
 

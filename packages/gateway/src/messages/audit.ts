@@ -3,6 +3,8 @@ import type { MessagingNetworkSlug } from "./schemas.js";
 export type MessagingAuditActor = "owner" | "hermes" | "automation" | "system" | "operator";
 export type MessagingAuditType =
   | "permission_changed"
+  | "automation_rule_created"
+  | "automation_triggered"
   | "ai_reply_created"
   | "ai_reply_sent"
   | "account_connected"

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
@@ -9,6 +9,8 @@ import {
   AppserviceEventsRequestSchema,
   ApproveDraftRequestSchema,
   AccountSetupRequestSchema,
+  AutomationRuleCreateRequestSchema,
+  AutomationRuleIdSchema,
   CancelDraftRequestSchema,
   CompleteSetupRequestSchema,
   DraftsQuerySchema,
@@ -26,6 +28,8 @@ import { mapMessagingError, MessagingError, redactMessagingErrorDetail } from ".
 import type { MessagingRepository } from "./repository.js";
 import { HERMES_REPLY_SCOPE, constantTimeEqual, createHermesCapabilityReplayCache, verifyHermesCapabilityToken } from "./hermes-capability.js";
 import { MESSAGING_APP_SERVICE_BODY_LIMIT } from "./constants.js";
+import { createAutomationActionRunner } from "./automation-actions.js";
+import { evaluateAutomationRules } from "./automation-evaluator.js";
 
 export interface MessagingRouteDeps {
   repository: MessagingRepository;
@@ -50,6 +54,9 @@ function getAppserviceOwnerIdOrThrow(deps: MessagingRouteDeps): string {
   return deps.appserviceOwnerId;
 }
 
+function automationDraftClientTxnId(eventId: string, ruleId: string): string {
+  return `auto_${createHash("sha256").update(`${eventId}:${ruleId}`).digest("hex")}`;
+}
 function handleMessagingRouteError(c: Context, err: unknown) {
   const mapped = mapMessagingError(err);
   if (mapped.log) {
@@ -180,6 +187,45 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
         });
         if (result.accepted) accepted += 1;
         else ignored += 1;
+        if (result.accepted && result.effect === "automation_queued") {
+          const permission = await deps.repository.getPermission({ ownerId }, event.roomId);
+          const rules = await deps.repository.listAutomationRules({ ownerId }, { roomId: event.roomId, limit: 100 });
+          const permissionRevision = permission?.revision ?? 1;
+          const runAction = createAutomationActionRunner({
+            createTask: async (task) => {
+              const workItem = await deps.repository.enqueueHermesWork({
+                ownerId,
+                roomId: event.roomId,
+                sourceEventId: event.eventId,
+                kind: "automation",
+                permissionRevision,
+                metadata: {
+                  action: "create_task",
+                  ruleTitle: task.title,
+                },
+              });
+              return workItem.id;
+            },
+            createDraft: async (draft) => {
+              const reply = await deps.repository.createReply({
+                ownerId: draft.ownerId,
+                roomId: draft.roomId,
+                source: "automation",
+                status: "approval_required",
+                body: draft.body,
+                permissionRevision,
+                clientTxnId: automationDraftClientTxnId(event.eventId, draft.ruleId),
+              });
+              return reply.id;
+            },
+          });
+          await evaluateAutomationRules({
+            event: { ownerId, roomId: event.roomId, body: event.content.body },
+            permission,
+            rules: rules.items,
+            runAction,
+          });
+        }
       }
       return c.json({ accepted, ignored }, 202);
     } catch (err: unknown) {
@@ -264,6 +310,51 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
       const replyId = MessagingReplyIdSchema.parse(c.req.param("replyId"));
       const parsed = CancelDraftRequestSchema.parse(await c.req.json());
       return c.json(await deps.repository.cancelReply({ ownerId, replyId, ...parsed }));
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.get("/automation/rules", async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const parsed = DraftsQuerySchema.parse({
+        roomId: c.req.query("roomId"),
+        limit: c.req.query("limit"),
+        cursor: c.req.query("cursor"),
+      });
+      const result = await deps.repository.listAutomationRules({ ownerId }, parsed);
+      return c.json({ rules: result.items, nextCursor: result.nextCursor });
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.post("/automation/rules", routeBodyLimit, async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const parsed = AutomationRuleCreateRequestSchema.parse(await c.req.json());
+      return c.json(await deps.repository.createAutomationRule({ ownerId, ...parsed }), 201);
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.post("/automation/rules/:ruleId/pause", routeBodyLimit, async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const ruleId = AutomationRuleIdSchema.parse(c.req.param("ruleId"));
+      return c.json(await deps.repository.pauseAutomationRule({ ownerId, ruleId }));
+    } catch (err: unknown) {
+      return handleMessagingRouteError(c, err);
+    }
+  });
+
+  app.delete("/automation/rules/:ruleId", deleteBodyLimit, async (c) => {
+    try {
+      const ownerId = getOwnerIdOrThrow(deps, c);
+      const ruleId = AutomationRuleIdSchema.parse(c.req.param("ruleId"));
+      return c.json(await deps.repository.deleteAutomationRule({ ownerId, ruleId }));
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
     }

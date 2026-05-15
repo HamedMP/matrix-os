@@ -278,6 +278,34 @@ time {
   margin-top: 16px;
 }
 
+.automation-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.automation-create label {
+  display: grid;
+  gap: 5px;
+  color: #344054;
+  font-size: 12px;
+}
+
+.automation-create input {
+  min-height: 38px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+@media (max-width: 640px) {
+  .automation-create {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
   .messages-app {
     padding: 16px;

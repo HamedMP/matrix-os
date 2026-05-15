@@ -76,6 +76,29 @@ export type HermesWorkItemStatus = z.infer<typeof HermesWorkItemStatusSchema>;
 export const HermesWorkItemKindSchema = z.enum(["summarize", "classify", "draft_reply", "automation"]);
 export type HermesWorkItemKind = z.infer<typeof HermesWorkItemKindSchema>;
 
+export const AutomationRuleIdSchema = z.string().trim().regex(/^auto_[A-Za-z0-9_-]{12,96}$/);
+export const AutomationRuleStatusSchema = z.enum(["enabled", "paused", "disabled"]);
+export const AutomationRuleScopeSchema = z.enum(["room", "network", "account", "all_permitted"]);
+export const AutomationTriggerSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text_contains"),
+    value: z.string().trim().min(1).max(160),
+  }),
+]);
+export type AutomationTrigger = z.infer<typeof AutomationTriggerSchema>;
+
+export const AutomationActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("create_task"),
+    titleTemplate: z.string().trim().min(1).max(160),
+  }),
+  z.object({
+    type: z.literal("draft_reply"),
+    bodyTemplate: z.string().trim().min(1).max(1_000),
+  }),
+]);
+export type AutomationAction = z.infer<typeof AutomationActionSchema>;
+
 export const MessagingNetworkSchema = z.object({
   slug: MessagingNetworkSlugSchema,
   displayName: z.string().trim().min(1).max(80),
@@ -204,10 +227,25 @@ export const HermesWorkItemSchema = z.object({
   status: HermesWorkItemStatusSchema,
   permissionRevision: z.number().int().min(1),
   abortTokenId: z.string().trim().min(1).max(160),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 export type HermesWorkItem = z.infer<typeof HermesWorkItemSchema>;
+
+export const AutomationRuleSchema = z.object({
+  id: AutomationRuleIdSchema,
+  ownerId: z.string().trim().min(1).max(256),
+  name: z.string().trim().min(1).max(120),
+  scope: AutomationRuleScopeSchema,
+  roomId: MatrixRoomIdSchema.optional(),
+  trigger: AutomationTriggerSchema,
+  action: AutomationActionSchema,
+  status: AutomationRuleStatusSchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type AutomationRule = z.infer<typeof AutomationRuleSchema>;
 
 export const ListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -268,6 +306,21 @@ export const CancelDraftRequestSchema = z.object({
   reason: z.enum(["user_cancelled"]).default("user_cancelled"),
 });
 export type CancelDraftRequest = z.infer<typeof CancelDraftRequestSchema>;
+
+export const AutomationRuleCreateRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  scope: AutomationRuleScopeSchema,
+  roomId: MatrixRoomIdSchema.optional(),
+  trigger: AutomationTriggerSchema,
+  action: AutomationActionSchema,
+}).refine((value) => value.scope !== "room" || Boolean(value.roomId), {
+  message: "roomId is required for room automation",
+  path: ["roomId"],
+}).refine((value) => value.scope === "room" || value.scope === "all_permitted", {
+  message: "network and account automation scopes are not available yet",
+  path: ["scope"],
+});
+export type AutomationRuleCreateRequest = z.infer<typeof AutomationRuleCreateRequestSchema>;
 
 export const AccountSetupRequestSchema = z.object({
   networkSlug: MessagingNetworkSlugSchema,
