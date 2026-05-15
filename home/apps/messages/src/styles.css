@@ -218,12 +218,20 @@ time {
   gap: 8px;
 }
 
-.conversation-row {
+.conversation-row,
+.draft-row {
   min-height: 64px;
   padding: 10px 12px;
   border: 1px solid #eaecf0;
   border-radius: 8px;
   background: #fcfcfd;
+}
+
+.draft-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .conversation-row > div {
@@ -244,6 +252,30 @@ time {
 
 .network-dot.green {
   background: #16a163;
+}
+
+.permission-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.permission-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #344054;
+  font-size: 12px;
+}
+
+.permission-toggles input {
+  width: 14px;
+  height: 14px;
+}
+
+.drafts-section {
+  margin-top: 16px;
 }
 
 @media (max-width: 640px) {

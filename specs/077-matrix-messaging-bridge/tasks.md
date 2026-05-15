@@ -109,28 +109,28 @@ before production enablement.
 
 ### Tests for User Story 2
 
-- [ ] T050 [P] [US2] Write permission route contract tests for revision conflicts and default-deny rooms in `tests/gateway/messages/permissions-routes.test.ts`
-- [ ] T051 [P] [US2] Write permission registry tests for read, reply, automation, and mention-only checks in `tests/gateway/messages/permission-registry.test.ts`
-- [ ] T052 [P] [US2] Write appservice event ingestion tests for Matrix `event_id` dedupe and safe event validation in `tests/gateway/messages/appservice-events.test.ts`
-- [ ] T053 [P] [US2] Write Hermes delivery tests for internal capability token scoping and 60-second expiry in `tests/gateway/messages/hermes-delivery.test.ts`
-- [ ] T054 [P] [US2] Write revocation abort tests for queued/running HermesWorkItem and unsent OutgoingReply rows in `tests/gateway/messages/revocation-abort.test.ts`
-- [ ] T055 [P] [US2] Write draft route tests for list, approve, cancel, and final reply permission recheck in `tests/gateway/messages/drafts-routes.test.ts`
-- [ ] T056 [P] [US2] Write Messages permissions UI test for room-level toggles and pending drafts in `tests/shell/messages/messages-permissions.test.tsx`
+- [X] T050 [P] [US2] Write permission route contract tests for revision conflicts and default-deny rooms in `tests/gateway/messages/permissions-routes.test.ts`
+- [X] T051 [P] [US2] Write permission registry tests for read, reply, automation, and mention-only checks in `tests/gateway/messages/permission-registry.test.ts`
+- [X] T052 [P] [US2] Write appservice event ingestion tests for Matrix `event_id` dedupe and safe event validation in `tests/gateway/messages/appservice-events.test.ts`
+- [X] T053 [P] [US2] Write Hermes delivery tests for internal capability token scoping and 60-second expiry in `tests/gateway/messages/hermes-delivery.test.ts`
+- [X] T054 [P] [US2] Write revocation abort tests for queued/running HermesWorkItem and unsent OutgoingReply rows in `tests/gateway/messages/revocation-abort.test.ts`
+- [X] T055 [P] [US2] Write draft route tests for list, approve, cancel, and final reply permission recheck in `tests/gateway/messages/drafts-routes.test.ts`
+- [X] T056 [P] [US2] Write Messages permissions UI test for room-level toggles and pending drafts in `tests/shell/messages/messages-permissions.test.tsx`
 
 ### Implementation for User Story 2
 
-- [ ] T057 [P] [US2] Implement HermesPermission, BridgeEventCursor, OutgoingReply, and HermesWorkItem schemas in `packages/gateway/src/messages/schemas.ts`
-- [ ] T058 [US2] Implement transactional permission update, audit append, and work cancellation methods in `packages/gateway/src/messages/repository.ts`
-- [ ] T059 [US2] Implement permission registry with last-point read/reply/automation checks in `packages/gateway/src/messages/permission-registry.ts`
-- [ ] T060 [US2] Implement trusted appservice event ingestion with Matrix `event_id` idempotency in `packages/gateway/src/messages/appservice-events.ts`
-- [ ] T061 [US2] Implement Hermes event-consumer delivery mode with abort signals in `packages/gateway/src/messages/hermes-delivery.ts`
-- [ ] T062 [US2] Implement internal Hermes reply capability token issuer/verifier in `packages/gateway/src/messages/hermes-capability.ts`
-- [ ] T063 [US2] Implement `PATCH /api/messages/conversations/:roomId/permissions` in `packages/gateway/src/messages/routes.ts`
-- [ ] T064 [US2] Implement `POST /api/messages/appservice/:network/events` in `packages/gateway/src/messages/routes.ts`
-- [ ] T065 [US2] Implement `POST /api/messages/conversations/:roomId/reply` with final permission recheck and `clientTxnId` idempotency in `packages/gateway/src/messages/routes.ts`
-- [ ] T066 [US2] Implement `GET /api/messages/drafts`, approve, and cancel routes in `packages/gateway/src/messages/routes.ts`
-- [ ] T067 [US2] Implement room permission and drafts UI in `home/apps/messages/src/main.tsx`
-- [ ] T068 [US2] Add safe audit summaries for permission and AI reply events in `packages/gateway/src/messages/audit.ts`
+- [X] T057 [P] [US2] Implement HermesPermission, BridgeEventCursor, OutgoingReply, and HermesWorkItem schemas in `packages/gateway/src/messages/schemas.ts`
+- [X] T058 [US2] Implement transactional permission update, audit append, and work cancellation methods in `packages/gateway/src/messages/repository.ts`
+- [X] T059 [US2] Implement permission registry with last-point read/reply/automation checks in `packages/gateway/src/messages/permission-registry.ts`
+- [X] T060 [US2] Implement trusted appservice event ingestion with Matrix `event_id` idempotency in `packages/gateway/src/messages/appservice-events.ts`
+- [X] T061 [US2] Implement Hermes event-consumer delivery mode with abort signals in `packages/gateway/src/messages/hermes-delivery.ts`
+- [X] T062 [US2] Implement internal Hermes reply capability token issuer/verifier in `packages/gateway/src/messages/hermes-capability.ts`
+- [X] T063 [US2] Implement `PATCH /api/messages/conversations/:roomId/permissions` in `packages/gateway/src/messages/routes.ts`
+- [X] T064 [US2] Implement `POST /api/messages/appservice/:network/events` in `packages/gateway/src/messages/routes.ts`
+- [X] T065 [US2] Implement `POST /api/messages/conversations/:roomId/reply` with final permission recheck and `clientTxnId` idempotency in `packages/gateway/src/messages/routes.ts`
+- [X] T066 [US2] Implement `GET /api/messages/drafts`, approve, and cancel routes in `packages/gateway/src/messages/routes.ts`
+- [X] T067 [US2] Implement room permission and drafts UI in `home/apps/messages/src/main.tsx`
+- [X] T068 [US2] Add safe audit summaries for permission and AI reply events in `packages/gateway/src/messages/audit.ts`
 
 **Checkpoint**: Hermes access is room-scoped, default-deny, revocable within 10 seconds for queued/unsent work, and reply sends are protected by final permission checks.
 

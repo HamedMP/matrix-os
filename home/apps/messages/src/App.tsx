@@ -31,8 +31,25 @@ interface SetupSession {
 interface MatrixConversation {
   id: string;
   networkSlug: NetworkSlug;
+  roomId?: string;
   displayName: string;
   lastEventAt?: string;
+  permissions?: {
+    readEnabled: boolean;
+    replyEnabled: boolean;
+    automationEnabled: boolean;
+    mentionOnly: boolean;
+    revision: number;
+  };
+}
+
+interface DraftReply {
+  replyId: string;
+  roomId: string;
+  source: "hermes" | "automation";
+  bodyPreview: string;
+  status: "approval_required";
+  createdAt: string;
 }
 
 const networkTone: Record<NetworkSlug, string> = {
@@ -56,6 +73,7 @@ export default function App() {
   const [networks, setNetworks] = useState<MessagingNetwork[]>([]);
   const [accounts, setAccounts] = useState<MessagingAccount[]>([]);
   const [conversations, setConversations] = useState<MatrixConversation[]>([]);
+  const [drafts, setDrafts] = useState<DraftReply[]>([]);
   const [setupSession, setSetupSession] = useState<SetupSession | null>(null);
   const [activeNetwork, setActiveNetwork] = useState<NetworkSlug | "all">("all");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -64,14 +82,16 @@ export default function App() {
   async function refresh() {
     setStatus("loading");
     try {
-      const [networkResult, accountResult, conversationResult] = await Promise.all([
+      const [networkResult, accountResult, conversationResult, draftsResult] = await Promise.all([
         requestJson<{ networks: MessagingNetwork[] }>("/api/messages/networks"),
         requestJson<{ accounts: MessagingAccount[] }>("/api/messages/accounts"),
         requestJson<{ items: MatrixConversation[] }>("/api/messages/conversations"),
+        requestJson<{ drafts: DraftReply[] }>("/api/messages/drafts"),
       ]);
       setNetworks(networkResult.networks);
       setAccounts(accountResult.accounts);
       setConversations(conversationResult.items);
+      setDrafts(draftsResult.drafts);
       setStatus("ready");
     } catch {
       setStatus("error");
@@ -108,6 +128,26 @@ export default function App() {
       setStatus("error");
     } finally {
       setBusyNetwork(null);
+    }
+  }
+
+  async function updatePermission(conversation: MatrixConversation, patch: Partial<NonNullable<MatrixConversation["permissions"]>>) {
+    if (!conversation.roomId || !conversation.permissions) return;
+    const next = { ...conversation.permissions, ...patch };
+    try {
+      await requestJson(`/api/messages/conversations/${encodeURIComponent(conversation.roomId)}/permissions`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          baseRevision: conversation.permissions.revision,
+          readEnabled: next.readEnabled,
+          replyEnabled: next.replyEnabled,
+          automationEnabled: next.automationEnabled,
+          mentionOnly: next.mentionOnly,
+        }),
+      });
+      await refresh();
+    } catch {
+      setStatus("error");
     }
   }
 
@@ -199,12 +239,62 @@ export default function App() {
                 <div>
                   <h3>{conversation.displayName}</h3>
                   <p>{conversation.networkSlug}</p>
+                  {conversation.permissions ? (
+                    <div className="permission-toggles" aria-label={`${conversation.displayName} permissions`}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={conversation.permissions.readEnabled}
+                          onChange={(event) => void updatePermission(conversation, { readEnabled: event.currentTarget.checked })}
+                        />
+                        Read
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={conversation.permissions.replyEnabled}
+                          onChange={(event) => void updatePermission(conversation, { replyEnabled: event.currentTarget.checked })}
+                        />
+                        Reply
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={conversation.permissions.automationEnabled}
+                          onChange={(event) => void updatePermission(conversation, { automationEnabled: event.currentTarget.checked })}
+                        />
+                        Automate
+                      </label>
+                    </div>
+                  ) : null}
                 </div>
                 <time>{conversation.lastEventAt ? new Date(conversation.lastEventAt).toLocaleDateString() : ""}</time>
               </article>
             ))}
           </div>
         ) : null}
+      </section>
+
+      <section className="conversation-section drafts-section">
+        <div className="section-title">
+          <h2>Pending Drafts</h2>
+          <p>{drafts.length}</p>
+        </div>
+        {drafts.length === 0 ? (
+          <div className="empty-state">No drafts waiting for approval</div>
+        ) : (
+          <div className="conversation-list">
+            {drafts.map((draft) => (
+              <article className="draft-row" key={draft.replyId}>
+                <div>
+                  <h3>{draft.source}</h3>
+                  <p>{draft.bodyPreview}</p>
+                </div>
+                <span className="status-pill">pending</span>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );

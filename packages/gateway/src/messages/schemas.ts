@@ -19,6 +19,8 @@ export const MessagingSetupIdSchema = z.string().trim().regex(/^setup_[A-Za-z0-9
 export const MessagingConversationIdSchema = z.string().trim().regex(/^conv_[A-Za-z0-9_-]{12,96}$/);
 export const MessagingMappingIdSchema = z.string().trim().regex(/^map_[A-Za-z0-9_-]{12,96}$/);
 export const MessagingEventIdSchema = z.string().trim().min(1).max(512);
+export const MessagingReplyIdSchema = z.string().trim().regex(/^reply_[A-Za-z0-9_-]{12,96}$/);
+export const HermesWorkItemIdSchema = z.string().trim().regex(/^work_[A-Za-z0-9_-]{12,96}$/);
 export const MatrixRoomIdSchema = z.string().trim().regex(/^![A-Za-z0-9_-]+:[A-Za-z0-9.-]+$/);
 export const MatrixEventIdSchema = z.string().trim().regex(/^\$[A-Za-z0-9_./=+-]+:[A-Za-z0-9.-]+$/);
 export const MatrixUserIdSchema = z.string().trim().regex(/^@[A-Za-z0-9_.=/-]+:[A-Za-z0-9.-]+$/);
@@ -38,6 +40,41 @@ export const MessagingSafeErrorCodeSchema = z.enum([
   "internal_error",
 ]);
 export type MessagingSafeErrorCode = z.infer<typeof MessagingSafeErrorCodeSchema>;
+
+export const BridgeEventEffectSchema = z.enum([
+  "stored_only",
+  "sent_to_hermes",
+  "automation_queued",
+  "reply_sent",
+  "ignored",
+]);
+export type BridgeEventEffect = z.infer<typeof BridgeEventEffectSchema>;
+
+export const OutgoingReplyStatusSchema = z.enum([
+  "draft",
+  "approval_required",
+  "sending",
+  "sent",
+  "failed",
+  "cancelled",
+]);
+export type OutgoingReplyStatus = z.infer<typeof OutgoingReplyStatusSchema>;
+
+export const OutgoingReplySourceSchema = z.enum(["user", "hermes", "automation"]);
+export type OutgoingReplySource = z.infer<typeof OutgoingReplySourceSchema>;
+
+export const HermesWorkItemStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "cancel_requested",
+  "cancelled",
+  "failed",
+]);
+export type HermesWorkItemStatus = z.infer<typeof HermesWorkItemStatusSchema>;
+
+export const HermesWorkItemKindSchema = z.enum(["summarize", "classify", "draft_reply", "automation"]);
+export type HermesWorkItemKind = z.infer<typeof HermesWorkItemKindSchema>;
 
 export const MessagingNetworkSchema = z.object({
   slug: MessagingNetworkSlugSchema,
@@ -115,10 +152,122 @@ export const ConversationMappingSchema = z.object({
 });
 export type ConversationMapping = z.infer<typeof ConversationMappingSchema>;
 
+export const HermesPermissionSchema = z.object({
+  ownerId: z.string().trim().min(1).max(256),
+  roomId: MatrixRoomIdSchema,
+  readEnabled: z.boolean(),
+  replyEnabled: z.boolean(),
+  automationEnabled: z.boolean(),
+  mentionOnly: z.boolean(),
+  revokedAt: z.string().datetime().optional(),
+  revision: z.number().int().min(1),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type HermesPermission = z.infer<typeof HermesPermissionSchema>;
+
+export const BridgeEventCursorSchema = z.object({
+  ownerId: z.string().trim().min(1).max(256),
+  networkSlug: MessagingNetworkSlugSchema,
+  roomId: MatrixRoomIdSchema.optional(),
+  eventId: MatrixEventIdSchema,
+  externalEventId: z.string().trim().min(1).max(512).optional(),
+  eventHash: z.string().trim().min(1).max(128).optional(),
+  processedAt: z.string().datetime(),
+  effect: BridgeEventEffectSchema,
+});
+export type BridgeEventCursor = z.infer<typeof BridgeEventCursorSchema>;
+
+export const OutgoingReplySchema = z.object({
+  id: MessagingReplyIdSchema,
+  ownerId: z.string().trim().min(1).max(256),
+  roomId: MatrixRoomIdSchema,
+  source: OutgoingReplySourceSchema,
+  status: OutgoingReplyStatusSchema,
+  body: z.string().trim().min(1).max(32_000),
+  permissionRevision: z.number().int().min(1),
+  clientTxnId: ClientTxnIdSchema,
+  matrixEventId: MatrixEventIdSchema.optional(),
+  failureCode: z.enum(["permission_denied", "send_failed", "stale_room_mapping"]).optional(),
+  cancelReason: z.enum(["user_cancelled", "permission_revoked", "send_failed", "stale_room_mapping"]).optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type OutgoingReply = z.infer<typeof OutgoingReplySchema>;
+
+export const HermesWorkItemSchema = z.object({
+  id: HermesWorkItemIdSchema,
+  ownerId: z.string().trim().min(1).max(256),
+  roomId: MatrixRoomIdSchema,
+  sourceEventId: MatrixEventIdSchema,
+  kind: HermesWorkItemKindSchema,
+  status: HermesWorkItemStatusSchema,
+  permissionRevision: z.number().int().min(1),
+  abortTokenId: z.string().trim().min(1).max(160),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type HermesWorkItem = z.infer<typeof HermesWorkItemSchema>;
+
 export const ListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: CursorSchema.optional(),
 });
+
+export const PermissionUpdateRequestSchema = z.object({
+  baseRevision: z.number().int().min(1),
+  readEnabled: z.boolean(),
+  replyEnabled: z.boolean(),
+  automationEnabled: z.boolean(),
+  mentionOnly: z.boolean(),
+});
+export type PermissionUpdateRequest = z.infer<typeof PermissionUpdateRequestSchema>;
+
+export const AppserviceEventSchema = z.object({
+  eventId: MatrixEventIdSchema,
+  externalEventId: z.string().trim().min(1).max(512).optional(),
+  roomId: MatrixRoomIdSchema,
+  accountId: MessagingAccountIdSchema,
+  type: z.literal("message"),
+  sender: z.object({
+    displayName: z.string().trim().min(1).max(160).optional(),
+  }).default({}),
+  content: z.object({
+    kind: z.literal("text"),
+    body: z.string().trim().min(1).max(32_000),
+    mentionsOwner: z.boolean().optional(),
+  }),
+  occurredAt: z.string().datetime(),
+});
+export type AppserviceEvent = z.infer<typeof AppserviceEventSchema>;
+
+export const AppserviceEventsRequestSchema = z.object({
+  events: z.array(AppserviceEventSchema).max(100),
+});
+
+export const ReplyRequestSchema = z.object({
+  source: OutgoingReplySourceSchema,
+  body: z.string().trim().min(1).max(32_000),
+  mode: z.enum(["send_if_allowed", "draft_if_not_allowed", "approval_required"]),
+  clientTxnId: ClientTxnIdSchema.optional(),
+});
+export type ReplyRequest = z.infer<typeof ReplyRequestSchema>;
+
+export const DraftsQuerySchema = z.object({
+  roomId: MatrixRoomIdSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: CursorSchema.optional(),
+});
+
+export const ApproveDraftRequestSchema = z.object({
+  baseStatus: z.literal("approval_required"),
+});
+export type ApproveDraftRequest = z.infer<typeof ApproveDraftRequestSchema>;
+
+export const CancelDraftRequestSchema = z.object({
+  reason: z.enum(["user_cancelled"]).default("user_cancelled"),
+});
+export type CancelDraftRequest = z.infer<typeof CancelDraftRequestSchema>;
 
 export const AccountSetupRequestSchema = z.object({
   networkSlug: MessagingNetworkSlugSchema,

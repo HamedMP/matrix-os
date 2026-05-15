@@ -3553,6 +3553,9 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/messages", createMessagingRoutes({
       repository: messagingRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      appserviceToken: process.env.MATRIX_MESSAGING_APPSERVICE_TOKEN,
+      appserviceOwnerId: process.env.MATRIX_MESSAGING_APPSERVICE_OWNER_ID ?? process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
+      hermesCapabilitySecret: process.env.MATRIX_MESSAGING_HERMES_CAPABILITY_SECRET,
     }));
   } else {
     app.all("/api/messages/*", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));

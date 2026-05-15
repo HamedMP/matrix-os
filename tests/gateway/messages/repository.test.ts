@@ -225,4 +225,80 @@ describe("MessagingKyselyRepository", () => {
     });
   });
 
+  it("lists both draft and approval-required replies", async () => {
+    const roomId = "!room:matrixos.local";
+    await repository.createReply({
+      ownerId,
+      roomId,
+      source: "hermes",
+      status: "draft",
+      body: "Draft body",
+      permissionRevision: 1,
+      clientTxnId: "txn_draft",
+    });
+    await repository.createReply({
+      ownerId,
+      roomId,
+      source: "hermes",
+      status: "approval_required",
+      body: "Approval body",
+      permissionRevision: 1,
+      clientTxnId: "txn_approval",
+    });
+
+    await expect(repository.listDrafts({ ownerId })).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({ status: "approval_required" }),
+        expect.objectContaining({ status: "draft" }),
+      ],
+    });
+  });
+
+  it("moves approved replies to sending without fabricating a Matrix event id", async () => {
+    const roomId = "!room:matrixos.local";
+    const setup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
+    const account = await repository.completeSetupSession({
+      ownerId,
+      setupId: setup.id,
+      externalAccountId: "wa_reply",
+      displayName: "Personal WhatsApp",
+    });
+    await repository.upsertConversation({
+      ownerId,
+      roomId,
+      networkSlug: "whatsapp",
+      accountId: account.id,
+      displayName: "Family",
+    });
+    const permission = await repository.updatePermission({
+      ownerId,
+      roomId,
+      baseRevision: 1,
+      readEnabled: true,
+      replyEnabled: true,
+      automationEnabled: false,
+      mentionOnly: false,
+      grantedBy: ownerId,
+    });
+    const reply = await repository.createReply({
+      ownerId,
+      roomId,
+      source: "hermes",
+      status: "approval_required",
+      body: "Approved body",
+      permissionRevision: permission.revision,
+      clientTxnId: "txn_approved",
+    });
+
+    await expect(repository.approveReply({
+      ownerId,
+      replyId: reply.id,
+      baseStatus: "approval_required",
+    })).resolves.toMatchObject({
+      replyId: reply.id,
+      status: "sending",
+      matrixEventId: undefined,
+    });
+  });
+
 });
