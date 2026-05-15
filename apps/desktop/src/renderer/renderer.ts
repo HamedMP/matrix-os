@@ -2,8 +2,8 @@
 
 import type { DesktopWorkbenchApp, DesktopWorkbenchSnapshot, DesktopWorkbenchTab } from "../main/index.js";
 
-const NORMAL_CHROME_HEIGHT = 108;
-const LAUNCHER_CHROME_HEIGHT = 392;
+const NORMAL_CHROME_HEIGHT = 116;
+const LAUNCHER_CHROME_HEIGHT = 428;
 
 const root = document.getElementById("app");
 const desktop = window.matrixDesktop;
@@ -13,7 +13,25 @@ let snapshot: DesktopWorkbenchSnapshot = { activeTabId: null, chromeHeight: NORM
 let launcherOpen = false;
 let appFilter = "";
 
-function appKindLabel(kind: DesktopWorkbenchApp["kind"]): string {
+const APP_COPY: Record<string, { description: string; action: string; accent: string }> = {
+  shell: { description: "Full Matrix OS canvas and desktop shell.", action: "Open shell", accent: "ivory" },
+  workspace: { description: "Cloud projects, tickets, previews, sessions, and reviews.", action: "Command center", accent: "blue" },
+  terminal: { description: "Persistent Matrix terminal session in a native desktop tab.", action: "New terminal", accent: "amber" },
+  files: { description: "Browse owner-controlled Matrix files and app assets.", action: "Open files", accent: "coral" },
+  chat: { description: "Talk to the Matrix kernel and route work to agents.", action: "Open chat", accent: "violet" },
+  symphony: { description: "Assign tickets to Symphony and monitor cloud agent runs.", action: "Open runner", accent: "mint" },
+  "task-manager": { description: "Kanban board for Linear and Matrix-native tickets.", action: "Open board", accent: "rose" },
+};
+
+function appMeta(app: DesktopWorkbenchApp): { description: string; action: string; accent: string } {
+  return APP_COPY[app.id] ?? {
+    description: app.defaultApp ? "Default Matrix app surface." : "Installed Matrix application.",
+    action: "Open app",
+    accent: "ivory",
+  };
+}
+
+function kindLabel(kind: DesktopWorkbenchApp["kind"] | DesktopWorkbenchTab["kind"]): string {
   if (kind === "file-browser") return "Files";
   return kind[0].toUpperCase() + kind.slice(1);
 }
@@ -23,14 +41,27 @@ function categoryLabel(category: string): string {
 }
 
 function tabLabel(tab: DesktopWorkbenchTab): string {
-  return tab.title.trim() || "Matrix";
+  return tab.title.trim().replace(/^Matrix OS\s*[|-]\s*/i, "") || "Matrix";
+}
+
+function activeTab(): DesktopWorkbenchTab | undefined {
+  return snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
+}
+
+function createEl<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
 
 function createButton(className: string, label: string, onClick: () => void): HTMLButtonElement {
-  const button = document.createElement("button");
+  const button = createEl("button", className, label);
   button.type = "button";
-  button.className = className;
-  button.textContent = label;
   button.addEventListener("click", onClick);
   return button;
 }
@@ -41,18 +72,18 @@ function setLauncherOpen(nextOpen: boolean): void {
   render();
 }
 
+function openWorkbenchTab(title: string, url: string, kind: DesktopWorkbenchTab["kind"]): void {
+  void desktop?.openWorkbenchTab({ title, url, kind }).then(updateSnapshot);
+}
+
 function openApp(app: DesktopWorkbenchApp): void {
-  void desktop?.openWorkbenchTab({ title: app.name, url: app.url, kind: app.kind }).then(updateSnapshot);
+  openWorkbenchTab(app.name, app.url, app.kind);
   setLauncherOpen(false);
 }
 
 function openTerminalTab(): void {
   const session = Date.now().toString(36);
-  void desktop?.openWorkbenchTab({
-    title: "Terminal",
-    url: `/desktop/terminal?session=${session}`,
-    kind: "terminal",
-  }).then(updateSnapshot);
+  openWorkbenchTab("Terminal", `/desktop/terminal?session=${session}`, "terminal");
 }
 
 function updateSnapshot(nextSnapshot: DesktopWorkbenchSnapshot): void {
@@ -63,37 +94,60 @@ function updateSnapshot(nextSnapshot: DesktopWorkbenchSnapshot): void {
 function visibleApps(): DesktopWorkbenchApp[] {
   const query = appFilter.trim().toLowerCase();
   if (!query) return apps;
-  return apps.filter((app) => app.name.toLowerCase().includes(query) || app.category.toLowerCase().includes(query));
+  return apps.filter((app) =>
+    app.name.toLowerCase().includes(query) ||
+    app.category.toLowerCase().includes(query) ||
+    appMeta(app).description.toLowerCase().includes(query));
+}
+
+function appendStatusPill(container: HTMLElement, label: string, value: string, tone = ""): void {
+  const pill = createEl("div", `statusPill ${tone}`);
+  pill.append(createEl("span", "statusLabel", label), createEl("span", "statusValue", value));
+  container.appendChild(pill);
+}
+
+function renderRail(container: HTMLElement): void {
+  const rail = createEl("nav", "rail");
+  rail.appendChild(createEl("div", "railMark", "M"));
+
+  const buttons: Array<{ label: string; title: string; active?: boolean; onClick: () => void }> = [
+    { label: "W", title: "Workspace", onClick: () => openWorkbenchTab("Workspace", "/desktop/workspace", "workspace") },
+    { label: "T", title: "Terminal", active: activeTab()?.kind === "terminal", onClick: openTerminalTab },
+    { label: "S", title: "Symphony", onClick: () => openWorkbenchTab("Symphony", "/desktop/apps/symphony", "app") },
+    { label: "K", title: "Task Manager", onClick: () => openWorkbenchTab("Task Manager", "/desktop/apps/task-manager", "app") },
+  ];
+
+  const buttonWrap = createEl("div", "railButtons");
+  for (const item of buttons) {
+    const button = createButton(item.active ? "railButton active" : "railButton", item.label, item.onClick);
+    button.title = item.title;
+    buttonWrap.appendChild(button);
+  }
+  rail.appendChild(buttonWrap);
+  rail.appendChild(createButton(launcherOpen ? "railButton launcher active" : "railButton launcher", "+", () => setLauncherOpen(!launcherOpen)));
+  container.appendChild(rail);
 }
 
 function renderTabs(container: HTMLElement): void {
-  const tabs = document.createElement("div");
-  tabs.className = "tabs";
+  const tabs = createEl("div", "tabs");
 
   for (const tab of snapshot.tabs) {
-    const tabButton = document.createElement("button");
+    const tabButton = createEl("button", tab.id === snapshot.activeTabId ? `tab active ${tab.kind}` : `tab ${tab.kind}`) as HTMLButtonElement;
     tabButton.type = "button";
-    tabButton.className = tab.id === snapshot.activeTabId ? "tab active" : "tab";
     tabButton.title = tabLabel(tab);
     tabButton.addEventListener("click", () => {
       void desktop?.focusWorkbenchTab(tab.id).then(updateSnapshot);
     });
 
-    const title = document.createElement("span");
-    title.className = "tabTitle";
-    title.textContent = tabLabel(tab);
-    tabButton.appendChild(title);
+    tabButton.appendChild(createEl("span", "tabKind"));
+    const text = createEl("span", "tabText");
+    text.append(createEl("span", "tabTitle", tabLabel(tab)), createEl("span", "tabMeta", kindLabel(tab.kind)));
+    tabButton.appendChild(text);
 
-    if (tab.loading) {
-      const loading = document.createElement("span");
-      loading.className = "tabLoading";
-      tabButton.appendChild(loading);
-    }
+    if (tab.loading) tabButton.appendChild(createEl("span", "tabLoading"));
 
     if (snapshot.tabs.length > 1) {
-      const close = document.createElement("span");
-      close.className = "tabClose";
-      close.textContent = "x";
+      const close = createEl("span", "tabClose", "x");
       close.addEventListener("click", (event) => {
         event.stopPropagation();
         void desktop?.closeWorkbenchTab(tab.id).then(updateSnapshot);
@@ -107,137 +161,114 @@ function renderTabs(container: HTMLElement): void {
   container.appendChild(tabs);
 }
 
+function groupedApps(): Array<{ category: string; entries: DesktopWorkbenchApp[] }> {
+  const groups: Array<{ category: string; entries: DesktopWorkbenchApp[] }> = [];
+  for (const app of visibleApps()) {
+    const existing = groups.find((group) => group.category === app.category);
+    if (existing) existing.entries.push(app);
+    else groups.push({ category: app.category, entries: [app] });
+  }
+  return groups;
+}
+
 function renderLauncher(container: HTMLElement): void {
   if (!launcherOpen) return;
 
-  const launcher = document.createElement("section");
-  launcher.className = "launcher";
+  const launcher = createEl("section", "launcher");
+  const header = createEl("div", "launcherHeader");
+  const copy = createEl("div", "launcherCopy");
+  copy.append(
+    createEl("span", "eyebrow", "Cloud agent command center"),
+    createEl("h2", undefined, "Launch a surface, then keep it alive in its own desktop tab"),
+  );
 
-  const header = document.createElement("div");
-  header.className = "launcherHeader";
-
-  const title = document.createElement("div");
-  title.className = "launcherTitle";
-  title.textContent = "Launcher";
-  header.appendChild(title);
-
-  const search = document.createElement("input");
-  search.className = "launcherSearch";
+  const search = createEl("input", "launcherSearch") as HTMLInputElement;
   search.type = "search";
-  search.placeholder = "Search apps";
+  search.placeholder = "Search apps, terminals, tickets";
   search.value = appFilter;
   search.addEventListener("input", () => {
     appFilter = search.value;
     render();
-    document.querySelector<HTMLInputElement>(".launcherSearch")?.focus();
+    const nextSearch = document.querySelector<HTMLInputElement>(".launcherSearch");
+    nextSearch?.focus();
+    nextSearch?.setSelectionRange(appFilter.length, appFilter.length);
   });
-  header.appendChild(search);
+
+  header.append(copy, search);
   launcher.appendChild(header);
 
-  const groups: Array<{ category: string; entries: DesktopWorkbenchApp[] }> = [];
-  for (const app of visibleApps()) {
-    const existing = groups.find((group) => group.category === app.category);
-    if (existing) {
-      existing.entries.push(app);
-    } else {
-      groups.push({ category: app.category, entries: [app] });
-    }
-  }
+  const body = createEl("div", "launcherBody");
+  for (const { category, entries } of groupedApps()) {
+    const section = createEl("section", "launcherGroup");
+    section.appendChild(createEl("div", "launcherGroupTitle", categoryLabel(category)));
 
-  const grid = document.createElement("div");
-  grid.className = "launcherGrid";
-  for (const { category, entries } of groups) {
-    const section = document.createElement("section");
-    section.className = "launcherGroup";
-
-    const groupTitle = document.createElement("div");
-    groupTitle.className = "launcherGroupTitle";
-    groupTitle.textContent = categoryLabel(category);
-    section.appendChild(groupTitle);
-
-    const appGrid = document.createElement("div");
-    appGrid.className = "appGrid";
+    const grid = createEl("div", "appGrid");
     for (const app of entries) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "appTile";
-      button.addEventListener("click", () => openApp(app));
+      const meta = appMeta(app);
+      const tile = createEl("button", `appTile ${meta.accent}`) as HTMLButtonElement;
+      tile.type = "button";
+      tile.addEventListener("click", () => openApp(app));
 
-      const badge = document.createElement("span");
-      badge.className = `appBadge ${app.kind}`;
-      badge.textContent = app.name.slice(0, 1).toUpperCase();
-      button.appendChild(badge);
+      const icon = createEl("span", "appBadge", app.name.slice(0, 1).toUpperCase());
+      const text = createEl("span", "appCopy");
+      text.append(createEl("span", "appName", app.name), createEl("span", "appDescription", meta.description));
 
-      const copy = document.createElement("span");
-      copy.className = "appCopy";
-
-      const name = document.createElement("span");
-      name.className = "appName";
-      name.textContent = app.name;
-      copy.appendChild(name);
-
-      const meta = document.createElement("span");
-      meta.className = "appMeta";
-      meta.textContent = app.defaultApp ? `${appKindLabel(app.kind)} - Default` : appKindLabel(app.kind);
-      copy.appendChild(meta);
-
-      button.appendChild(copy);
-      appGrid.appendChild(button);
+      const action = createEl("span", "appAction");
+      action.append(createEl("span", "appKind", kindLabel(app.kind)), createEl("span", "appActionLabel", meta.action));
+      tile.append(icon, text, action);
+      grid.appendChild(tile);
     }
 
-    section.appendChild(appGrid);
-    grid.appendChild(section);
+    section.appendChild(grid);
+    body.appendChild(section);
   }
 
-  if (groups.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "emptyLauncher";
-    empty.textContent = "No apps found";
-    grid.appendChild(empty);
-  }
-
-  launcher.appendChild(grid);
+  if (body.childElementCount === 0) body.appendChild(createEl("div", "emptyLauncher", "No matching apps or workflows"));
+  launcher.appendChild(body);
   container.appendChild(launcher);
 }
 
+function renderHeader(container: HTMLElement): void {
+  const header = createEl("div", "topBar");
+  const identity = createEl("div", "identity");
+  identity.append(createEl("div", "brand", "Matrix Desktop"), createEl("div", "tagline", "Cloud-first agent OS"));
+
+  const status = createEl("div", "statusCluster");
+  appendStatusPill(status, "Runtime", "Cloud", "mint");
+  appendStatusPill(status, "Tabs", String(snapshot.tabs.length), "amber");
+  appendStatusPill(status, "Active", activeTab() ? kindLabel(activeTab()!.kind) : "Shell");
+
+  const actions = createEl("div", "actions");
+  actions.append(
+    createButton(launcherOpen ? "toolbarButton active" : "toolbarButton", "Launcher", () => setLauncherOpen(!launcherOpen)),
+    createButton("toolbarButton primary", "New Terminal", openTerminalTab),
+    createButton("toolbarButton", "Shell", () => openWorkbenchTab("Matrix Shell", "/", "shell")),
+  );
+
+  header.append(identity, status, actions);
+  container.appendChild(header);
+}
+
 function renderChrome(): HTMLElement {
-  const chrome = document.createElement("header");
-  chrome.className = launcherOpen ? "chrome launcherOpen" : "chrome";
+  const frame = createEl("div", launcherOpen ? "frame launcherOpen" : "frame");
+  renderRail(frame);
 
-  const topBar = document.createElement("div");
-  topBar.className = "topBar";
+  const chrome = createEl("header", "chrome");
+  renderHeader(chrome);
 
-  const brand = document.createElement("div");
-  brand.className = "brand";
-  brand.textContent = "Matrix";
-  topBar.appendChild(brand);
-
-  const actions = document.createElement("div");
-  actions.className = "actions";
-  actions.appendChild(createButton(launcherOpen ? "toolbarButton active" : "toolbarButton", "Launcher", () => setLauncherOpen(!launcherOpen)));
-  actions.appendChild(createButton("toolbarButton", "Terminal", openTerminalTab));
-  actions.appendChild(createButton("toolbarButton subtle", "Shell", () => {
-    void desktop?.openWorkbenchTab({ title: "Matrix Shell", url: "/", kind: "shell" }).then(updateSnapshot);
-  }));
-  topBar.appendChild(actions);
-
-  chrome.appendChild(topBar);
-
-  const tabRow = document.createElement("div");
-  tabRow.className = "tabRow";
+  const tabRow = createEl("div", "tabRow");
   renderTabs(tabRow);
   chrome.appendChild(tabRow);
   renderLauncher(chrome);
-  return chrome;
+
+  frame.appendChild(chrome);
+  return frame;
 }
 
 function renderFallback(): void {
   if (!root) return;
   root.replaceChildren();
-  const fallback = document.createElement("div");
-  fallback.className = "fallback";
-  fallback.textContent = "Matrix Desktop preload is unavailable.";
-  root.appendChild(fallback);
+  root.appendChild(createEl("div", "fallback", "Matrix Desktop preload is unavailable."));
 }
 
 function render(): void {

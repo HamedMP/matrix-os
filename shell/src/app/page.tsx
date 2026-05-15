@@ -7,6 +7,7 @@ import { useChatState } from "@/hooks/useChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
+import { useWindowManager } from "@/hooks/useWindowManager";
 
 import { Desktop } from "@/components/Desktop";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -22,6 +23,7 @@ export default function Home() {
 
   const chat = useChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const wmOpenWindow = useWindowManager((s) => s.openWindow);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
 
@@ -41,6 +43,31 @@ export default function Home() {
     ]);
     return () => unregister(["action:new-chat"]);
   }, [register, unregister, chat.newChat]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const intent = params.get("matrixDesktopApp");
+    if (!intent) return;
+
+    const requestedPath = params.get("path") ?? "";
+    const safeAppPath = requestedPath.match(/^apps\/[a-z0-9][a-z0-9-]{0,63}\/index\.html$/)?.[0];
+    const intentWindow =
+      intent === "terminal"
+        ? { title: "Terminal", path: "__terminal__" }
+        : intent === "workspace"
+          ? { title: "Workspace", path: "__workspace__" }
+          : intent === "file-browser"
+            ? { title: "Files", path: "__file-browser__" }
+            : intent === "chat"
+              ? { title: "Chat", path: "__chat__" }
+              : safeAppPath
+                ? { title: safeAppPath.split("/")[1] ?? "App", path: safeAppPath }
+                : null;
+
+    if (!intentWindow) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    wmOpenWindow(intentWindow.title, intentWindow.path, 20);
+  }, [wmOpenWindow]);
 
   return (
     <ChatProvider value={chat}>

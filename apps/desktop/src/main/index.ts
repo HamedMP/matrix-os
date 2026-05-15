@@ -44,6 +44,8 @@ export interface DesktopWorkbenchSnapshot {
 
 interface DesktopWorkbenchTabRecord extends DesktopWorkbenchTab {
   view: BrowserView;
+  fallbackUrl?: string;
+  fallbackAttempted: boolean;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -138,7 +140,7 @@ class DesktopWorkbench {
     return {
       activeTabId: this.activeTabId,
       chromeHeight: this.chromeHeight,
-      tabs: [...this.tabs.values()].map(({ view: _view, ...tab }) => tab),
+      tabs: [...this.tabs.values()].map(({ view: _view, fallbackUrl: _fallbackUrl, fallbackAttempted: _fallbackAttempted, ...tab }) => tab),
     };
   }
 
@@ -173,6 +175,8 @@ class DesktopWorkbench {
       kind: input.kind ?? "app",
       loading: true,
       view,
+      fallbackUrl: this.fallbackUrlFor(input, targetUrl),
+      fallbackAttempted: false,
     };
     this.tabs.set(id, tab);
     this.configureView(tab);
@@ -261,6 +265,9 @@ class DesktopWorkbench {
       tab.loading = false;
       this.emitSnapshot();
     });
+    tab.view.webContents.on("did-finish-load", () => {
+      void this.recoverStandaloneRoute404(tab);
+    });
     tab.view.webContents.on("page-title-updated", (_event, title) => {
       if (title && title !== tab.title) {
         tab.title = title;
@@ -309,6 +316,43 @@ class DesktopWorkbench {
         console.warn("[desktop] Failed to parse workbench URL", err instanceof Error ? err.name : "UnknownError");
       }
       return false;
+    }
+  }
+
+  private fallbackUrlFor(input: DesktopWorkbenchTabInput, targetUrl: string): string | undefined {
+    const parsed = new URL(targetUrl);
+    if (!parsed.pathname.startsWith("/desktop/")) return undefined;
+    const fallback = new URL("/", desktopConfig.shellUrl);
+    fallback.searchParams.set("matrixDesktopApp", input.kind ?? "app");
+    if (input.kind === "terminal") {
+      fallback.searchParams.set("session", parsed.searchParams.get("session") ?? Date.now().toString(36));
+    } else if (input.kind === "workspace") {
+      fallback.searchParams.set("path", "__workspace__");
+    } else if (input.kind === "file-browser") {
+      fallback.searchParams.set("path", "__file-browser__");
+    } else if (input.kind === "chat") {
+      fallback.searchParams.set("path", "__chat__");
+    } else {
+      const appSlug = parsed.pathname.match(/^\/desktop\/apps\/([a-z0-9][a-z0-9-]{0,63})$/)?.[1];
+      if (appSlug) fallback.searchParams.set("path", `apps/${appSlug}/index.html`);
+    }
+    return fallback.toString();
+  }
+
+  private async recoverStandaloneRoute404(tab: DesktopWorkbenchTabRecord): Promise<void> {
+    if (!tab.fallbackUrl || tab.fallbackAttempted || !tab.view.webContents.getURL().includes("/desktop/")) return;
+    try {
+      const pageSignal = await tab.view.webContents.executeJavaScript(
+        `({ title: document.title, text: document.body?.innerText?.slice(0, 240) ?? "" })`,
+      ) as { title?: string; text?: string };
+      const content = `${pageSignal.title ?? ""}\n${pageSignal.text ?? ""}`;
+      if (!/\b404\b|could not be found/i.test(content)) return;
+      tab.fallbackAttempted = true;
+      tab.url = tab.fallbackUrl;
+      await tab.view.webContents.loadURL(tab.fallbackUrl);
+      this.emitSnapshot();
+    } catch (err: unknown) {
+      console.warn("[desktop] Failed to recover standalone desktop route", err instanceof Error ? err.name : "UnknownError");
     }
   }
 }
