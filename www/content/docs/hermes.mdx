@@ -1,0 +1,32 @@
+---
+title: Hermes
+description: Configure and use Hermes as your Matrix orchestrator.
+---
+
+Hermes Manager gives you one place inside Matrix to set up Hermes, connect messaging channels, choose the model, chat with Hermes, approve tool actions, and recover common setup issues.
+
+## First Setup
+
+Open **Hermes Manager** from the app launcher. The onboarding panel shows the required steps:
+
+- Hermes installation and gateway reachability
+- Model provider connection
+- Telegram or WhatsApp channel connection
+
+Model and channel secrets are saved server-side. The app only shows redacted status.
+
+## Channels
+
+Telegram and WhatsApp are the first supported setup flows. Each channel can be connected, verified, disabled, re-enabled, or recovered from the channel panel.
+
+## Messaging Hermes
+
+Use the conversation panel to start or resume a Hermes session. Responses, tool activity, and approval requests appear in the same app so you do not need to switch to a terminal for everyday operation.
+
+## Operations
+
+Owners can run health checks, restart the Hermes gateway, update Hermes, export redacted configuration, and recover stale session or channel state from the operations and audit panels.
+
+## Privacy
+
+Hermes Manager does not show provider tokens, gateway secrets, raw command output, stack traces, or filesystem paths in browser responses or exports.

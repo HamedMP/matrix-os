@@ -1,0 +1,24 @@
+{
+  "name": "Hermes Manager",
+  "description": "Configure, message, and operate Hermes as the Matrix orchestrator",
+  "category": "developer",
+  "icon": "hermes-manager",
+  "author": "system",
+  "version": "1.0.0",
+  "runtime": "vite",
+  "slug": "hermes-manager",
+  "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180
+  },
+  "permissions": [
+    "matrix.agents",
+    "matrix.messaging",
+    "matrix.secrets"
+  ],
+  "listingTrust": "first_party"
+}
