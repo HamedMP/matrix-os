@@ -50,7 +50,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
     },
   });
 
-  const windowOpenHandler = createWindowOpenHandler({ openExternal: shell.openExternal });
+  const windowOpenHandler = createWindowOpenHandler({
+    openExternal: shell.openExternal,
+    openAuthUrl: (url) => win.loadURL(url),
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     void windowOpenHandler({ url });
     return { action: "deny" };

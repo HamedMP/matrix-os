@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createWindowOpenHandler,
+  isAllowedDesktopAuthNavigation,
   isAllowedExternalUrl,
   isAllowedShellNavigation,
   normalizeMatrixDesktopUrl,
@@ -24,8 +25,21 @@ describe("desktop navigation policy", () => {
 
     expect(isAllowedShellNavigation("http://localhost:3000/workspace", allowedOrigins)).toBe(true);
     expect(isAllowedShellNavigation("https://matrix.example.com/apps", allowedOrigins)).toBe(true);
+    expect(isAllowedShellNavigation("https://accounts.google.com/o/oauth2/v2/auth", allowedOrigins)).toBe(true);
+    expect(isAllowedShellNavigation("https://clerk.matrix-os.com/v1/oauth_callback", allowedOrigins)).toBe(true);
     expect(isAllowedShellNavigation("https://evil.example.com/apps", allowedOrigins)).toBe(false);
     expect(isAllowedShellNavigation("file:///tmp/secret", allowedOrigins)).toBe(false);
+  });
+
+  it("allows only known desktop auth redirect origins inside Electron", () => {
+    expect(isAllowedDesktopAuthNavigation("https://accounts.google.com/o/oauth2/v2/auth")).toBe(true);
+    expect(isAllowedDesktopAuthNavigation("https://clerk.matrix-os.com/v1/oauth_callback")).toBe(true);
+    expect(isAllowedDesktopAuthNavigation("https://quick-fox-12.clerk.accounts.dev/v1/oauth_callback")).toBe(true);
+    expect(isAllowedDesktopAuthNavigation("http://localhost:3001/login")).toBe(true);
+
+    expect(isAllowedDesktopAuthNavigation("http://accounts.google.com/o/oauth2/v2/auth")).toBe(false);
+    expect(isAllowedDesktopAuthNavigation("https://accounts.google.evil.example/o/oauth2/v2/auth")).toBe(false);
+    expect(isAllowedDesktopAuthNavigation("https://evil.example.com/sign-in")).toBe(false);
   });
 
   it("opens external URLs only for safe web protocols", () => {
@@ -46,6 +60,16 @@ describe("desktop navigation policy", () => {
 
     expect(await handler({ url: "https://matrix-os.com/docs" })).toEqual({ action: "deny" });
     expect(openExternal).toHaveBeenCalledWith("https://matrix-os.com/docs");
+  });
+
+  it("routes desktop auth windows inside Electron instead of the system browser", async () => {
+    const openExternal = vi.fn(async () => {});
+    const openAuthUrl = vi.fn(async () => {});
+    const handler = createWindowOpenHandler({ openExternal, openAuthUrl });
+
+    expect(await handler({ url: "https://accounts.google.com/o/oauth2/v2/auth" })).toEqual({ action: "deny" });
+    expect(openAuthUrl).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("reports whether desktop IPC external opens were allowed and completed", async () => {
