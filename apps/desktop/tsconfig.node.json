@@ -4,6 +4,7 @@
     "composite": false,
     "declaration": false,
     "declarationMap": false,
+    "lib": ["ES2024", "DOM"],
     "noEmit": true,
     "outDir": "out",
     "rootDir": "../..",
@@ -12,7 +13,9 @@
   "include": [
     "electron.vite.config.ts",
     "src/main/**/*.ts",
+    "src/preload/**/*.d.ts",
     "src/preload/**/*.ts",
+    "src/renderer/**/*.ts",
     "../../packages/gateway/src/desktop/capabilities.ts"
   ]
 }
