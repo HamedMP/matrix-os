@@ -115,6 +115,15 @@ export { createSymphonyRunner, SymphonyConfigSchema, SymphonyConfigUpdateSchema,
 export type { SymphonyConfig, SymphonyConfigUpdate, SymphonyStatus, SymphonyStartResult } from "./symphony-runner.js";
 export { createSymphonyRoutes } from "./symphony-routes.js";
 export * from "./symphony/index.js";
+export {
+  createFileHermesCredentialStore,
+  createHermesEventHub,
+  createHermesRoutes,
+  createLocalHermesBridge,
+  InMemoryHermesRepository,
+  KyselyHermesRepository,
+} from "./hermes/index.js";
+export type { HermesBridge, HermesCredentialStore, HermesEventHub, HermesRepository } from "./hermes/index.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";

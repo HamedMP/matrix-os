@@ -35,6 +35,7 @@ import { createLinearSource } from "./symphony/linear-source.js";
 import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
 import { KyselySymphonyRepository } from "./symphony/repository.js";
 import { createSymphonyStatusHub } from "./symphony/status-hub.js";
+import { createFileHermesCredentialStore, createHermesEventHub, createHermesRoutes, createLocalHermesBridge, KyselyHermesRepository, type HermesEventHub } from "./hermes/index.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -443,6 +444,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
+  let hermesEventHub: HermesEventHub | null = null;
 
   if (databaseUrl) {
     try {
@@ -2434,6 +2436,24 @@ export async function createGateway(config: GatewayConfig) {
     unavailable.all("*", (c) => c.json({ error: { code: "symphony_unavailable", message: "Symphony is unavailable" } }, 503));
     app.route("/api/symphony", unavailable);
   }
+  if (kyselyInstance) {
+    const hermesRepository = new KyselyHermesRepository(kyselyInstance as Kysely<any>);
+    await hermesRepository.bootstrap();
+    const hermesCredentialStore = createFileHermesCredentialStore({ homePath });
+    hermesEventHub = createHermesEventHub();
+    const hermesBridge = createLocalHermesBridge({ homePath });
+    app.route("/api/hermes", createHermesRoutes({
+      repository: hermesRepository,
+      credentialStore: hermesCredentialStore,
+      bridge: hermesBridge,
+      eventHub: hermesEventHub,
+    }));
+  } else {
+    console.warn("[hermes] Hermes Manager requires owner Postgres; routes are disabled");
+    const unavailable = new Hono();
+    unavailable.all("*", (c) => c.json({ error: { code: "hermes_unavailable", message: "Hermes is unavailable" } }, 503));
+    app.route("/api/hermes", unavailable);
+  }
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
@@ -3830,6 +3850,7 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
+      await hermesEventHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
       await matrixSymphonyOrchestrator?.shutdown();
