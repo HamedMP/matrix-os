@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-const execFileMock = vi.fn();
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+}));
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
@@ -144,9 +146,10 @@ describe("pollForToken", () => {
 
     const tokenStorePath = "/tmp/test-auth-3.json";
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
+    const assertion = expect(promise).rejects.toThrow(/expired/i);
 
     await vi.advanceTimersByTimeAsync(5_000);
-    await expect(promise).rejects.toThrow(/expired/i);
+    await assertion;
   });
 
   it("throws when the polling deadline elapses", async () => {
@@ -159,9 +162,10 @@ describe("pollForToken", () => {
 
     const tokenStorePath = "/tmp/test-auth-4.json";
     const promise = pollForToken(config, "device-1", 5, 10, tokenStorePath);
+    const assertion = expect(promise).rejects.toThrow(/timed out/i);
 
     await vi.advanceTimersByTimeAsync(15_000);
-    await expect(promise).rejects.toThrow(/timed out/i);
+    await assertion;
   });
 
   it("persists the returned token to the configured path", async () => {
@@ -201,10 +205,11 @@ describe("pollForToken", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = pollForToken(config, "device-1", 5, 60, "/tmp/test-auth-5.json");
+    const assertion = expect(promise).rejects.toThrow("Token polling failed with status 500");
 
     await vi.advanceTimersByTimeAsync(5_000);
-    await expect(promise).rejects.toThrow("Token polling failed with status 500");
-    await expect(promise).rejects.not.toThrow(/stack trace/i);
+    await assertion;
+    await expect(promise.catch((err: unknown) => String(err))).resolves.not.toMatch(/stack trace/i);
   });
 
   it("rejects malformed auth payloads before writing them to disk", async () => {
@@ -222,8 +227,9 @@ describe("pollForToken", () => {
 
     const tokenStorePath = "/tmp/test-auth-invalid.json";
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
+    const assertion = expect(promise).rejects.toThrow();
 
     await vi.advanceTimersByTimeAsync(5_000);
-    await expect(promise).rejects.toThrow();
+    await assertion;
   });
 });

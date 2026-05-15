@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { HookInput, HookOutput } from "./hooks.js";
 
 export const PROTECTED_FILE_PATTERNS: RegExp[] = [
@@ -16,8 +17,10 @@ export const PROTECTED_FILE_PATTERNS: RegExp[] = [
 ];
 
 export function createProtectedFilesHook(
-  _homePath: string,
+  homePath: string,
 ): (input: HookInput) => Promise<HookOutput> {
+  const resolvedHomePath = resolve(homePath);
+
   return async (input: HookInput): Promise<HookOutput> => {
     if (input.tool_name !== "Write" && input.tool_name !== "Edit") {
       return {};
@@ -29,8 +32,18 @@ export function createProtectedFilesHook(
       return {};
     }
 
+    const resolvedFilePath = resolve(filePath);
+    const relativeToHome = relative(resolvedHomePath, resolvedFilePath);
+    const isInsideHome =
+      relativeToHome === "" ||
+      (!relativeToHome.startsWith("..") && !isAbsolute(relativeToHome));
+
+    const pathForProtection = isInsideHome
+      ? relativeToHome.replaceAll("\\", "/")
+      : filePath.replaceAll("\\", "/");
+
     for (const pattern of PROTECTED_FILE_PATTERNS) {
-      if (pattern.test(filePath)) {
+      if (pattern.test(pathForProtection)) {
         return {
           hookSpecificOutput: { permissionDecision: "deny" },
           systemMessage: `Blocked write to protected file: ${filePath}. This file is protected from modification by the evolver.`,
