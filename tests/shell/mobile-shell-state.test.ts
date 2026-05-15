@@ -51,7 +51,7 @@ describe("browser mobile shell state", () => {
   it("uses the canonical app slug validator", () => {
     expect(parseBrowserMobileShellState({
       mode: "app",
-      lastActiveAppSlug: "my_app",
+      lastActiveAppSlug: "my.app",
       updatedAt: "2026-05-12T00:01:00.000Z",
     })).toMatchObject({
       mode: "app",
