@@ -54,6 +54,7 @@ describe("Messages automation UI", () => {
 
     expect(await screen.findByRole("heading", { name: "Automations" })).toBeTruthy();
     expect(screen.getByText("Deadlines")).toBeTruthy();
+    expect((screen.getByLabelText("Trigger") as HTMLInputElement).maxLength).toBe(160);
 
     fireEvent.change(screen.getByLabelText("Trigger"), { target: { value: "follow up" } });
     fireEvent.click(screen.getByRole("button", { name: "Add automation" }));
@@ -61,6 +62,7 @@ describe("Messages automation UI", () => {
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith("/api/messages/automation/rules", expect.objectContaining({
         method: "POST",
+        signal: expect.any(AbortSignal),
         body: JSON.stringify({
           name: "Follow ups",
           scope: "all_permitted",
@@ -69,5 +71,30 @@ describe("Messages automation UI", () => {
         }),
       }));
     });
+  });
+
+  it("logs automation creation failures before entering error state", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/messages/networks") return jsonResponse({ networks: [] });
+      if (path === "/api/messages/accounts") return jsonResponse({ accounts: [] });
+      if (path === "/api/messages/conversations") return jsonResponse({ items: [] });
+      if (path === "/api/messages/drafts") return jsonResponse({ drafts: [] });
+      if (path === "/api/messages/automation/rules" && init?.method !== "POST") return jsonResponse({ rules: [] });
+      if (path === "/api/messages/automation/rules" && init?.method === "POST") return jsonResponse({ error: { code: "bad_request" } }, 400);
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Automations" });
+
+    fireEvent.change(screen.getByLabelText("Trigger"), { target: { value: "follow up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add automation" }));
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith("[messages] create automation failed", expect.any(Error));
+    });
+    errorSpy.mockRestore();
   });
 });

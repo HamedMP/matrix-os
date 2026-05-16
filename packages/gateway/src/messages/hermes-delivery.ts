@@ -17,7 +17,7 @@ export class HermesDeliveryRegistry {
   register(abortTokenId: string, nowMs = Date.now()): AbortSignal {
     this.sweep(nowMs);
     if (this.entries.size >= this.maxEntries) {
-      const oldest = [...this.entries.values()].sort((a, b) => a.lastTouched - b.lastTouched)[0];
+      const oldest = this.entries.values().next().value;
       if (oldest) this.entries.delete(oldest.abortTokenId);
     }
     const controller = new AbortController();

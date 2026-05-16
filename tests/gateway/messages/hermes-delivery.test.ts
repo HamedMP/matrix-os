@@ -4,6 +4,7 @@ import {
   createHermesCapabilityToken,
   verifyHermesCapabilityToken,
 } from "../../../packages/gateway/src/messages/hermes-capability.js";
+import { HermesDeliveryRegistry } from "../../../packages/gateway/src/messages/hermes-delivery.js";
 
 describe("Hermes capability tokens", () => {
   it("scopes tokens to owner, room, action, and a 60-second maximum TTL", () => {
@@ -62,9 +63,27 @@ describe("Hermes capability tokens", () => {
       nowMs: 10_000,
     })).toBeNull();
   });
+
   it("normalizes token comparisons before timing-safe equality", () => {
     expect(constantTimeEqual("short", "much-longer")).toBe(false);
     expect(constantTimeEqual("same", "same")).toBe(true);
   });
+});
 
+describe("HermesDeliveryRegistry", () => {
+  it("evicts the oldest inserted entry when capacity is reached", () => {
+    const registry = new HermesDeliveryRegistry(2, 60_000);
+
+    const first = registry.register("abort_1", 1);
+    const second = registry.register("abort_2", 2);
+    const third = registry.register("abort_3", 3);
+
+    expect(registry.size()).toBe(2);
+    expect(registry.abort("abort_1")).toBe(false);
+    expect(first.aborted).toBe(false);
+    expect(registry.abort("abort_2")).toBe(true);
+    expect(second.aborted).toBe(true);
+    expect(registry.abort("abort_3")).toBe(true);
+    expect(third.aborted).toBe(true);
+  });
 });

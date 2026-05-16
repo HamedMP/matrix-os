@@ -21,6 +21,27 @@ describe("messaging disconnect routes", () => {
     expect(disconnectAccount).toHaveBeenCalledWith({ ownerId, accountId, retention: "keep_history" });
   });
 
+  it("accepts bodyless DELETE requests even when content-type is present", async () => {
+    const disconnectAccount = vi.fn().mockResolvedValue({
+      id: accountId,
+      ownerId,
+      networkSlug: "whatsapp",
+      status: "disconnected",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const repository = createRepositoryMock({ disconnectAccount });
+    const app = createMessagingTestApp(repository);
+
+    const res = await app.request(`/api/messages/accounts/${accountId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(disconnectAccount).toHaveBeenCalledWith({ ownerId, accountId, retention: "keep_history" });
+  });
+
   it("passes explicit delete-local-mapping retention", async () => {
     const disconnectAccount = vi.fn().mockResolvedValue({
       id: accountId,

@@ -13,8 +13,8 @@ export interface AutomationActionRunnerDeps {
   createDraft: (input: { ownerId: string; roomId: string; ruleId: string; body: string }) => Promise<string>;
 }
 
-export function renderAutomationTemplate(template: string, body: string): string {
-  return template.replaceAll("{body}", body).slice(0, 160);
+export function renderAutomationTemplate(template: string, body: string, maxLength: number): string {
+  return template.replaceAll("{body}", body).slice(0, maxLength);
 }
 
 export function createAutomationActionRunner(deps: AutomationActionRunnerDeps) {
@@ -22,7 +22,7 @@ export function createAutomationActionRunner(deps: AutomationActionRunnerDeps) {
     if (input.action.type === "create_task") {
       const taskId = await deps.createTask({
         ownerId: input.ownerId,
-        title: renderAutomationTemplate(input.action.titleTemplate, input.body),
+        title: renderAutomationTemplate(input.action.titleTemplate, input.body, 160),
       });
       return { ok: true, taskId };
     }
@@ -30,7 +30,7 @@ export function createAutomationActionRunner(deps: AutomationActionRunnerDeps) {
       ownerId: input.ownerId,
       roomId: input.roomId,
       ruleId: input.ruleId,
-      body: renderAutomationTemplate(input.action.bodyTemplate, input.body),
+      body: renderAutomationTemplate(input.action.bodyTemplate, input.body, 1_000),
     });
     return { ok: true, draftReplyId };
   };

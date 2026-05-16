@@ -164,6 +164,65 @@ describe("appservice event ingestion", () => {
     }));
   });
 
+  it("isolates automation action failures from appservice ingestion acknowledgements", async () => {
+    const roomId = "!room:matrixos.local";
+    const ingestBridgeEvent = vi.fn().mockResolvedValue({ accepted: true, effect: "automation_queued" });
+    const getPermission = vi.fn().mockResolvedValue({
+      ownerId,
+      roomId,
+      readEnabled: false,
+      replyEnabled: false,
+      automationEnabled: true,
+      mentionOnly: false,
+      revision: 3,
+      createdAt: "2026-05-13T00:00:00.000Z",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    });
+    const listAutomationRules = vi.fn().mockResolvedValue({
+      items: [{
+        id: "auto_0123456789abcdef0123456789abcdef",
+        ownerId,
+        name: "Deadlines",
+        scope: "room",
+        roomId,
+        trigger: { type: "text_contains", value: "deadline" },
+        action: { type: "draft_reply", bodyTemplate: "I saw: {body}" },
+        status: "enabled",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      }],
+      nextCursor: undefined,
+    });
+    const createReply = vi.fn().mockRejectedValue(new Error("draft store unavailable"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const repository = createRepositoryMock({ ingestBridgeEvent, getPermission, listAutomationRules, createReply });
+    const app = createMessagingTestApp(repository, null);
+
+    const res = await app.request("/api/messages/appservice/whatsapp/events", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Matrix-OS-Appservice-Token": "test-appservice-token",
+      },
+      body: JSON.stringify({
+        events: [{
+          eventId: "$event-auto-fail:matrixos.local",
+          roomId,
+          accountId: "acct_0123456789abcdef0123456789abcdef",
+          type: "message",
+          sender: { displayName: "Ada" },
+          content: { kind: "text", body: "deadline tomorrow" },
+          occurredAt: "2026-05-13T00:00:00.000Z",
+        }],
+      }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 1, ignored: 0 });
+    expect(errorSpy).toHaveBeenCalledWith("[messages/routes] automation evaluation failed", expect.any(String));
+    errorSpy.mockRestore();
+  });
+
   it("rejects appservice events without the trusted token", async () => {
     const ingestBridgeEvent = vi.fn();
     const repository = createRepositoryMock({ ingestBridgeEvent });

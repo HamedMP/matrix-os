@@ -67,8 +67,10 @@ const networkTone: Record<NetworkSlug, string> = {
 };
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const signal = init?.signal ?? AbortSignal.timeout(10_000);
   const res = await fetch(path, {
     ...init,
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
@@ -106,7 +108,8 @@ export default function App() {
       setDrafts(draftsResult.drafts);
       setAutomationRules(automationResult.rules);
       setStatus("ready");
-    } catch {
+    } catch (err) {
+      console.error("[messages] refresh failed", err);
       setStatus("error");
     }
   }
@@ -137,7 +140,8 @@ export default function App() {
       });
       setSetupSession(session);
       await refresh();
-    } catch {
+    } catch (err) {
+      console.error("[messages] start setup failed", err);
       setStatus("error");
     } finally {
       setBusyNetwork(null);
@@ -159,7 +163,8 @@ export default function App() {
         }),
       });
       await refresh();
-    } catch {
+    } catch (err) {
+      console.error("[messages] update permission failed", err);
       setStatus("error");
     }
   }
@@ -179,7 +184,8 @@ export default function App() {
       });
       setAutomationTrigger("");
       await refresh();
-    } catch {
+    } catch (err) {
+      console.error("[messages] create automation failed", err);
       setStatus("error");
     }
   }
@@ -343,6 +349,7 @@ export default function App() {
               value={automationTrigger}
               onChange={(event) => setAutomationTrigger(event.currentTarget.value)}
               placeholder="deadline"
+              maxLength={160}
             />
           </label>
           <button className="primary-button" type="button" onClick={() => void createAutomation()}>

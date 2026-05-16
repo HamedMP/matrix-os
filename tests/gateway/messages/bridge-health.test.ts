@@ -21,6 +21,22 @@ describe("messaging bridge health service", () => {
     });
   });
 
+  it("does not report ok when all network accounts are still mid-setup", async () => {
+    const repository = createRepositoryMock({
+      listAccounts: vi.fn().mockResolvedValue([
+        { id: accountId, ownerId, networkSlug: "whatsapp", status: "connecting", createdAt: now, updatedAt: now },
+      ]),
+    });
+    const service = createMessagingBridgeHealthService(repository);
+
+    await expect(service.getHealth({ ownerId })).resolves.toMatchObject({
+      networks: [
+        { network: "telegram", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
+        { network: "whatsapp", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
+      ],
+    });
+  });
+
   it("rejects recovery actions that are not wired to an executor", async () => {
     const repository = createRepositoryMock({
       getAccount: vi.fn().mockResolvedValue({

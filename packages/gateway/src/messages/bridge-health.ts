@@ -37,7 +37,11 @@ export function createMessagingBridgeHealthService(repository: MessagingReposito
         const accountsNeedingRelink = networkAccounts.filter((account) => account.status === "error" || account.status === "disconnected").length;
         return {
           network,
-          status: networkAccounts.length === 0 ? "unknown" : accountsNeedingRelink > 0 ? "degraded" : "ok",
+          status: networkAccounts.length === 0
+            ? "unknown"
+            : accountsNeedingRelink > 0
+              ? "degraded"
+              : accountsHealthy === 0 ? "unknown" : "ok",
           accountsHealthy,
           accountsNeedingRelink,
         };
