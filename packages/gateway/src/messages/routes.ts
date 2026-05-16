@@ -67,7 +67,7 @@ async function optionalJsonBody(c: Context): Promise<unknown> {
     return await c.req.json();
   } catch (err: unknown) {
     if (err instanceof SyntaxError) return undefined;
-    if (err instanceof Error && err.name === "TypeError") return undefined;
+    if (err instanceof TypeError) return undefined;
     throw err;
   }
 }

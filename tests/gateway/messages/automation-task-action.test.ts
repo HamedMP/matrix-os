@@ -50,7 +50,7 @@ describe("automation task action", () => {
     const createTask = vi.fn().mockResolvedValue("task_1");
     const createDraft = vi.fn().mockResolvedValue("reply_1");
     const runner = createAutomationActionRunner({ createTask, createDraft });
-    const longBody = "x".repeat(900);
+    const longBody = "x".repeat(1_200);
 
     await runner({
       ownerId: "user_a",
@@ -68,6 +68,6 @@ describe("automation task action", () => {
     });
 
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ title: "x".repeat(160) }));
-    expect(createDraft).toHaveBeenCalledWith(expect.objectContaining({ body: longBody }));
+    expect(createDraft).toHaveBeenCalledWith(expect.objectContaining({ body: "x".repeat(1_000) }));
   });
 });

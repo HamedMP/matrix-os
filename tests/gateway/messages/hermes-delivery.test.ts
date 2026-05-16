@@ -86,4 +86,22 @@ describe("HermesDeliveryRegistry", () => {
     expect(registry.abort("abort_3")).toBe(true);
     expect(third.aborted).toBe(true);
   });
+
+  it("treats duplicate registration as the newest entry for capacity eviction", () => {
+    const registry = new HermesDeliveryRegistry(2, 60_000);
+
+    const originalFirst = registry.register("abort_1", 1);
+    const second = registry.register("abort_2", 2);
+    const refreshedFirst = registry.register("abort_1", 3);
+    const third = registry.register("abort_3", 4);
+
+    expect(registry.size()).toBe(2);
+    expect(registry.abort("abort_2")).toBe(false);
+    expect(second.aborted).toBe(false);
+    expect(registry.abort("abort_1")).toBe(true);
+    expect(originalFirst.aborted).toBe(false);
+    expect(refreshedFirst.aborted).toBe(true);
+    expect(registry.abort("abort_3")).toBe(true);
+    expect(third.aborted).toBe(true);
+  });
 });

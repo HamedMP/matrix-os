@@ -3,7 +3,7 @@ import { MESSAGING_HERMES_DELIVERY_REGISTRY_CAP, MESSAGING_REVOCATION_ABORT_DEAD
 export interface HermesAbortEntry {
   abortTokenId: string;
   controller: AbortController;
-  lastTouched: number;
+  registeredAt: number;
 }
 
 export class HermesDeliveryRegistry {
@@ -16,12 +16,13 @@ export class HermesDeliveryRegistry {
 
   register(abortTokenId: string, nowMs = Date.now()): AbortSignal {
     this.sweep(nowMs);
+    this.entries.delete(abortTokenId);
     if (this.entries.size >= this.maxEntries) {
       const oldest = this.entries.values().next().value;
       if (oldest) this.entries.delete(oldest.abortTokenId);
     }
     const controller = new AbortController();
-    this.entries.set(abortTokenId, { abortTokenId, controller, lastTouched: nowMs });
+    this.entries.set(abortTokenId, { abortTokenId, controller, registeredAt: nowMs });
     return controller.signal;
   }
 
@@ -35,7 +36,7 @@ export class HermesDeliveryRegistry {
 
   sweep(nowMs = Date.now()): void {
     for (const [id, entry] of this.entries) {
-      if (nowMs - entry.lastTouched > this.ttlMs) {
+      if (nowMs - entry.registeredAt > this.ttlMs) {
         this.entries.delete(id);
       }
     }
