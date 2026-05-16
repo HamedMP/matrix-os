@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import {
   MessagingKyselyRepository,
   type MessagingBridgeAccountProvider,
+  type MessagingDatabase,
 } from "../../../packages/gateway/src/messages/repository.js";
 
 const ownerId = "user_a";
@@ -53,6 +55,7 @@ describe("MessagingKyselyRepository", () => {
       ownerId,
       networkSlug: "whatsapp",
       setupId: setup.id,
+      signal: expect.any(AbortSignal),
     });
 
     const account = await repository.completeSetupSession({
@@ -93,6 +96,88 @@ describe("MessagingKyselyRepository", () => {
     expect(second.id).toBe(first.id);
     expect(second.displayName).toBe("Updated");
     await expect(repository.listAccounts({ ownerId })).resolves.toHaveLength(1);
+  });
+
+  it("uses a NULL-safe owner/network singleton for WhatsApp completions without external account ids", async () => {
+    const firstSetup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
+    const first = await repository.completeSetupSession({
+      ownerId,
+      setupId: firstSetup.id,
+      displayName: "WhatsApp Device",
+    });
+
+    const secondSetup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
+    const second = await repository.completeSetupSession({
+      ownerId,
+      setupId: secondSetup.id,
+      displayName: "Renamed WhatsApp Device",
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.displayName).toBe("Renamed WhatsApp Device");
+    await expect(repository.listAccounts({ ownerId })).resolves.toHaveLength(1);
+  });
+
+  it("deduplicates legacy NULL external account rows before creating the singleton index", async () => {
+    const legacyPglite = await KyselyPGlite.create();
+    const legacyKysely = new Kysely<MessagingDatabase>({ dialect: legacyPglite.dialect });
+    try {
+      await sql`
+        CREATE TABLE messaging_accounts (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          network_slug TEXT NOT NULL CHECK (network_slug IN ('telegram', 'whatsapp')),
+          external_account_id TEXT,
+          display_name TEXT,
+          status TEXT NOT NULL CHECK (status IN ('setup_required', 'connecting', 'connected', 'disconnected', 'error')),
+          status_reason TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `.execute(legacyKysely);
+      await legacyKysely
+        .insertInto("messaging_accounts")
+        .values([
+          {
+            id: "acct_legacy_old",
+            owner_id: ownerId,
+            network_slug: "whatsapp",
+            external_account_id: null,
+            display_name: "Old WhatsApp Device",
+            status: "connected",
+            status_reason: null,
+            created_at: "2026-05-13T00:00:00.000Z",
+            updated_at: "2026-05-13T00:00:00.000Z",
+          },
+          {
+            id: "acct_legacy_new",
+            owner_id: ownerId,
+            network_slug: "whatsapp",
+            external_account_id: null,
+            display_name: "Current WhatsApp Device",
+            status: "connected",
+            status_reason: null,
+            created_at: "2026-05-14T00:00:00.000Z",
+            updated_at: "2026-05-14T00:00:00.000Z",
+          },
+        ])
+        .execute();
+
+      const legacyRepository = new MessagingKyselyRepository(legacyKysely);
+      await legacyRepository.bootstrap();
+
+      await expect(legacyKysely
+        .selectFrom("messaging_accounts")
+        .select(["id", "display_name"])
+        .where("owner_id", "=", ownerId)
+        .where("network_slug", "=", "whatsapp")
+        .where("external_account_id", "is", null)
+        .execute()).resolves.toEqual([
+        { id: "acct_legacy_new", display_name: "Current WhatsApp Device" },
+      ]);
+    } finally {
+      await legacyKysely.destroy();
+    }
   });
 
   it("upserts conversations and bridge-local mappings by canonical external thread", async () => {
@@ -176,6 +261,7 @@ describe("MessagingKyselyRepository", () => {
       ownerId,
       networkSlug: "whatsapp",
       accountId: account.id,
+      signal: expect.any(AbortSignal),
     });
     await expect(repository.getMappingByExternalThread({
       ownerId,
@@ -183,6 +269,31 @@ describe("MessagingKyselyRepository", () => {
       accountId: account.id,
       externalThreadId: "wa_thread_1",
     })).resolves.toBeNull();
+  });
+
+  it("does not call bridge disconnect again for already disconnected accounts", async () => {
+    const setup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
+    const account = await repository.completeSetupSession({
+      ownerId,
+      setupId: setup.id,
+      externalAccountId: "wa_retry_disconnect",
+      displayName: "Personal WhatsApp",
+    });
+
+    await repository.disconnectAccount({ ownerId, accountId: account.id, retention: "keep_history" });
+    vi.mocked(whatsappProvider.disconnect).mockRejectedValueOnce(new Error("should not be called"));
+
+    await expect(repository.disconnectAccount({
+      ownerId,
+      accountId: account.id,
+      retention: "keep_history",
+    })).resolves.toMatchObject({ id: account.id, status: "disconnected" });
+    expect(whatsappProvider.disconnect).toHaveBeenCalledTimes(1);
+    await expect(repository.getAccount({ ownerId }, account.id)).resolves.toMatchObject({
+      id: account.id,
+      status: "disconnected",
+      statusReason: undefined,
+    });
   });
 
   it("rejects repeat completion of the same setup session", async () => {

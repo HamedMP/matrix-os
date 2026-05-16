@@ -45,4 +45,29 @@ describe("automation task action", () => {
     });
     expect(createTask).not.toHaveBeenCalled();
   });
+
+  it("uses action-specific template caps for task titles and draft bodies", async () => {
+    const createTask = vi.fn().mockResolvedValue("task_1");
+    const createDraft = vi.fn().mockResolvedValue("reply_1");
+    const runner = createAutomationActionRunner({ createTask, createDraft });
+    const longBody = "x".repeat(1_200);
+
+    await runner({
+      ownerId: "user_a",
+      ruleId: "auto_0123456789abcdef0123456789abcdef",
+      roomId: "!room:matrixos.local",
+      body: longBody,
+      action: { type: "create_task", titleTemplate: "{body}" },
+    });
+    await runner({
+      ownerId: "user_a",
+      ruleId: "auto_0123456789abcdef0123456789abcdef",
+      roomId: "!room:matrixos.local",
+      body: longBody,
+      action: { type: "draft_reply", bodyTemplate: "{body}" },
+    });
+
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ title: "x".repeat(160) }));
+    expect(createDraft).toHaveBeenCalledWith(expect.objectContaining({ body: "x".repeat(1_000) }));
+  });
 });

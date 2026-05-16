@@ -27,22 +27,53 @@ if [ -z "$BACKUP_DIR" ] || [ ! -d "$BACKUP_DIR" ]; then
   exit 2
 fi
 
+restart_services() {
+  if [ "${SERVICES_STOPPED:-0}" = "1" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl start $MESSAGING_SERVICES
+  fi
+}
+
+restore_tree() {
+  name="$1"
+  archive="$BACKUP_DIR/$name.tar.gz"
+  if [ ! -f "$archive" ]; then
+    return 0
+  fi
+
+  tmp="$ROOT/.restore-$name-$$"
+  old="$ROOT/.old-$name-$$"
+  rm -rf "$tmp" "$old"
+  mkdir -p "$tmp"
+  tar -C "$tmp" -xzf "$archive"
+  if [ ! -d "$tmp/$name" ]; then
+    echo "backup archive $archive does not contain $name/" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  if [ -d "$ROOT/$name" ]; then
+    mv "$ROOT/$name" "$old"
+  fi
+  mv "$tmp/$name" "$ROOT/$name"
+  rm -rf "$old" "$tmp"
+}
+
+SERVICES_STOPPED=0
 if command -v systemctl >/dev/null 2>&1; then
   systemctl stop $MESSAGING_SERVICES 2>/dev/null || true
+  SERVICES_STOPPED=1
+  trap restart_services EXIT INT TERM
 fi
 
 mkdir -p "$ROOT"
 for name in synapse mautrix-telegram mautrix-whatsapp; do
-  if [ -f "$BACKUP_DIR/$name.tar.gz" ]; then
-    tar -C "$ROOT" -xzf "$BACKUP_DIR/$name.tar.gz"
-  fi
+  restore_tree "$name"
 done
 
 restore_matrix_os_database() {
   url="$1"
   file="$BACKUP_DIR/matrix-os-messaging.sql"
   if [ -n "$url" ] && [ -f "$file" ]; then
-    psql --set ON_ERROR_STOP=1 "$url" <<'SQL'
+    psql --set ON_ERROR_STOP=1 --single-transaction "$url" -c '
 TRUNCATE TABLE
   messaging_accounts,
   messaging_setup_sessions,
@@ -55,8 +86,7 @@ TRUNCATE TABLE
   messaging_hermes_work_items,
   messaging_automation_rules
 RESTART IDENTITY CASCADE;
-SQL
-    psql --set ON_ERROR_STOP=1 "$url" < "$file"
+' -f "$file"
   fi
 }
 
@@ -65,7 +95,7 @@ restore_database() {
   url="$2"
   file="$BACKUP_DIR/$label.sql"
   if [ -n "$url" ] && [ -f "$file" ]; then
-    psql --set ON_ERROR_STOP=1 "$url" < "$file"
+    psql --set ON_ERROR_STOP=1 --single-transaction "$url" < "$file"
   fi
 }
 
@@ -77,7 +107,8 @@ if command -v psql >/dev/null 2>&1; then
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl start $MESSAGING_SERVICES
+  restart_services
+  trap - EXIT INT TERM
 fi
 
 now="$(date +%s)"

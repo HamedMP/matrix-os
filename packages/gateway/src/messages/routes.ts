@@ -62,6 +62,16 @@ function automationDraftClientTxnId(eventId: string, ruleId: string): string {
   return `auto_${createHash("sha256").update(`${eventId}:${ruleId}`).digest("hex")}`;
 }
 
+async function optionalJsonBody(c: Context): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) return undefined;
+    if (err instanceof TypeError) return undefined;
+    throw err;
+  }
+}
+
 function handleMessagingRouteError(c: Context, err: unknown) {
   const mapped = mapMessagingError(err);
   if (mapped.log) {
@@ -132,8 +142,8 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
     try {
       const ownerId = getOwnerIdOrThrow(deps, c);
       const accountId = MessagingAccountIdSchema.parse(c.req.param("accountId"));
-      const hasBody = c.req.header("content-length") !== "0" && Boolean(c.req.header("content-type"));
-      const parsed = hasBody ? DisconnectAccountRequestSchema.parse(await c.req.json()) : DisconnectAccountRequestSchema.parse(undefined);
+      const body = await optionalJsonBody(c);
+      const parsed = DisconnectAccountRequestSchema.parse(body);
       return c.json(await deps.repository.disconnectAccount({ ownerId, accountId, ...parsed }));
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
@@ -247,12 +257,16 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
               return reply.id;
             },
           });
-          await evaluateAutomationRules({
-            event: { ownerId, roomId: event.roomId, body: event.content.body },
-            permission,
-            rules: rules.items,
-            runAction,
-          });
+          try {
+            await evaluateAutomationRules({
+              event: { ownerId, roomId: event.roomId, body: event.content.body },
+              permission,
+              rules: rules.items,
+              runAction,
+            });
+          } catch (err: unknown) {
+            console.error("[messages/routes] automation evaluation failed", redactMessagingErrorDetail(err));
+          }
         }
       }
       return c.json({ accepted, ignored }, 202);

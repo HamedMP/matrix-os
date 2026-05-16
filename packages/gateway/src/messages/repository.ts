@@ -202,8 +202,8 @@ export interface BridgeAccountSetupState {
 }
 
 export interface MessagingBridgeAccountProvider {
-  beginSetup(input: { ownerId: string; networkSlug: MessagingNetworkSlug; setupId: string }): Promise<BridgeAccountSetupState>;
-  disconnect(input: { ownerId: string; networkSlug: MessagingNetworkSlug; accountId: string }): Promise<void>;
+  beginSetup(input: { ownerId: string; networkSlug: MessagingNetworkSlug; setupId: string; signal?: AbortSignal }): Promise<BridgeAccountSetupState>;
+  disconnect(input: { ownerId: string; networkSlug: MessagingNetworkSlug; accountId: string; signal?: AbortSignal }): Promise<void>;
 }
 
 export interface MessagingAccountsTable {
@@ -537,8 +537,29 @@ export class MessagingKyselyRepository implements MessagingRepository {
       )
     `.execute(this.kysely);
     await sql`
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY owner_id, network_slug
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+          ) AS row_number
+        FROM messaging_accounts
+        WHERE external_account_id IS NULL
+      )
+      DELETE FROM messaging_accounts
+      USING ranked
+      WHERE messaging_accounts.id = ranked.id
+        AND ranked.row_number > 1
+    `.execute(this.kysely);
+    await sql`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_messaging_accounts_external
       ON messaging_accounts(owner_id, network_slug, external_account_id)
+    `.execute(this.kysely);
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_messaging_accounts_external_null
+      ON messaging_accounts(owner_id, network_slug)
+      WHERE external_account_id IS NULL
     `.execute(this.kysely);
     await sql`CREATE INDEX IF NOT EXISTS idx_messaging_accounts_owner ON messaging_accounts(owner_id, updated_at DESC)`.execute(this.kysely);
 
@@ -727,6 +748,71 @@ export class MessagingKyselyRepository implements MessagingRepository {
     return row ? toAccount(row) : null;
   }
 
+  private async upsertConnectedAccountForSetup(
+    trx: Transaction<MessagingDatabase>,
+    input: {
+      ownerId: string;
+      networkSlug: MessagingNetworkSlug;
+      externalAccountId?: string;
+      displayName?: string;
+    },
+  ): Promise<Selectable<MessagingAccountsTable>> {
+    const now = new Date().toISOString();
+    if (!input.externalAccountId) {
+      const inserted = await trx
+        .insertInto("messaging_accounts")
+        .values({
+          id: prefixedId("acct"),
+          owner_id: input.ownerId,
+          network_slug: input.networkSlug,
+          external_account_id: null,
+          display_name: input.displayName ?? null,
+          status: "connected",
+          status_reason: null,
+        })
+        .onConflict((oc) => oc.doNothing())
+        .returningAll()
+        .executeTakeFirst();
+      if (inserted) return inserted;
+
+      return trx
+        .updateTable("messaging_accounts")
+        .set({
+          display_name: input.displayName ?? null,
+          status: "connected",
+          status_reason: null,
+          updated_at: now,
+        })
+        .where("owner_id", "=", input.ownerId)
+        .where("network_slug", "=", input.networkSlug)
+        .where("external_account_id", "is", null)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    }
+
+    return trx
+      .insertInto("messaging_accounts")
+      .values({
+        id: prefixedId("acct"),
+        owner_id: input.ownerId,
+        network_slug: input.networkSlug,
+        external_account_id: input.externalAccountId,
+        display_name: input.displayName ?? null,
+        status: "connected",
+        status_reason: null,
+      })
+      .onConflict((oc) => oc
+        .columns(["owner_id", "network_slug", "external_account_id"])
+        .doUpdateSet({
+          display_name: input.displayName ?? null,
+          status: "connected",
+          status_reason: null,
+          updated_at: now,
+        }))
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
   async createSetupSession(input: CreateSetupSessionInput): Promise<SetupSession> {
     const network = MESSAGING_NETWORKS.find((candidate) => candidate.slug === input.networkSlug && candidate.enabled);
     if (!network) throw new MessagingError("bad_request", "unsupported network", 400);
@@ -740,6 +826,7 @@ export class MessagingKyselyRepository implements MessagingRepository {
         ownerId: input.ownerId,
         networkSlug: input.networkSlug,
         setupId,
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err: unknown) {
       console.error("[messages/repository] Bridge setup failed", err instanceof Error ? err.name : typeof err);
@@ -785,28 +872,12 @@ export class MessagingKyselyRepository implements MessagingRepository {
         throw new MessagingError("expired", "setup expired", 410);
       }
 
-      const accountId = prefixedId("acct");
-      const accountRow = await trx
-        .insertInto("messaging_accounts")
-        .values({
-          id: accountId,
-          owner_id: input.ownerId,
-          network_slug: setup.network_slug,
-          external_account_id: input.externalAccountId ?? null,
-          display_name: input.displayName ?? null,
-          status: "connected",
-          status_reason: null,
-        })
-        .onConflict((oc) => oc
-          .columns(["owner_id", "network_slug", "external_account_id"])
-          .doUpdateSet({
-            display_name: input.displayName ?? null,
-            status: "connected",
-            status_reason: null,
-            updated_at: new Date().toISOString(),
-          }))
-        .returningAll()
-        .executeTakeFirstOrThrow();
+      const accountRow = await this.upsertConnectedAccountForSetup(trx, {
+        ownerId: input.ownerId,
+        networkSlug: setup.network_slug,
+        externalAccountId: input.externalAccountId,
+        displayName: input.displayName,
+      });
 
       const completedSetup = await trx
         .updateTable("messaging_setup_sessions")
@@ -844,12 +915,17 @@ export class MessagingKyselyRepository implements MessagingRepository {
         .executeTakeFirstOrThrow());
     });
 
+    if (account.status === "disconnected") {
+      return updated;
+    }
+
     const provider = getMessagingBridgeAccountProvider(this.providers, account.networkSlug);
     try {
       await provider.disconnect({
         ownerId: input.ownerId,
         networkSlug: account.networkSlug,
         accountId: input.accountId,
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err: unknown) {
       console.error("[messages/repository] Bridge disconnect failed", err instanceof Error ? err.name : typeof err);
@@ -1069,28 +1145,37 @@ export class MessagingKyselyRepository implements MessagingRepository {
   }
 
   async ingestBridgeEvent(input: IngestBridgeEventInput): Promise<IngestBridgeEventResult> {
-    const permission = await this.getPermission({ ownerId: input.ownerId }, input.roomId);
-    const canRead = Boolean(permission?.readEnabled) && (!permission?.mentionOnly || Boolean(input.content.mentionsOwner));
-    const effect: BridgeEventEffect = canRead
-      ? "sent_to_hermes"
-      : permission?.automationEnabled ? "automation_queued" : "stored_only";
-    const inserted = await this.kysely
-      .insertInto("messaging_event_cursors")
-      .values({
-        owner_id: input.ownerId,
-        network_slug: input.networkSlug,
-        room_id: input.roomId,
-        event_id: input.eventId,
-        external_event_id: input.externalEventId ?? null,
-        event_hash: null,
-        processed_at: input.occurredAt,
-        effect,
-      })
-      .onConflict((oc) => oc.columns(["owner_id", "network_slug", "event_id"]).doNothing())
-      .returningAll()
-      .executeTakeFirst();
-    if (!inserted) return { accepted: false, effect: "ignored" };
-    return { accepted: true, effect };
+    return this.kysely.transaction().execute(async (trx) => {
+      const permissionRow = await trx
+        .selectFrom("messaging_permissions")
+        .selectAll()
+        .where("owner_id", "=", input.ownerId)
+        .where("room_id", "=", input.roomId)
+        .forShare()
+        .executeTakeFirst();
+      const permission = permissionRow ? toPermission(permissionRow) : null;
+      const canRead = Boolean(permission?.readEnabled) && (!permission?.mentionOnly || Boolean(input.content.mentionsOwner));
+      const effect: BridgeEventEffect = canRead
+        ? "sent_to_hermes"
+        : permission?.automationEnabled ? "automation_queued" : "stored_only";
+      const inserted = await trx
+        .insertInto("messaging_event_cursors")
+        .values({
+          owner_id: input.ownerId,
+          network_slug: input.networkSlug,
+          room_id: input.roomId,
+          event_id: input.eventId,
+          external_event_id: input.externalEventId ?? null,
+          event_hash: null,
+          processed_at: input.occurredAt,
+          effect,
+        })
+        .onConflict((oc) => oc.columns(["owner_id", "network_slug", "event_id"]).doNothing())
+        .returningAll()
+        .executeTakeFirst();
+      if (!inserted) return { accepted: false, effect: "ignored" };
+      return { accepted: true, effect };
+    });
   }
 
   async createReply(input: CreateReplyInput): Promise<OutgoingReply> {
