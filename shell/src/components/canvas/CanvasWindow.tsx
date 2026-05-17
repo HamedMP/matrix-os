@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
+import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
@@ -56,6 +57,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const isFullscreen = fullscreenWindowId === win.id;
   const showTitles = useCanvasSettings((s) => s.showTitles);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const isMobile = useMobileViewport();
   const themeStyle = useThemeStyle();
   const isNeumorphic = themeStyle === "neumorphic";
 
@@ -478,11 +480,11 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const appContent = (
     <>
       {win.path.startsWith("__terminal__") ? (
-        <TerminalApp />
+        <TerminalApp mobile={isMobile} />
       ) : win.path === "__workspace__" ? (
         <WorkspaceApp />
       ) : win.path === "__file-browser__" ? (
-        <FileBrowser windowId={win.id} />
+        <FileBrowser windowId={win.id} mobile={isMobile} />
       ) : win.path === "__preview-window__" ? (
         <PreviewWindow />
       ) : win.path === "__chat__" ? (
@@ -497,6 +499,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
               onNewChat={chatState.newChat}
               onSwitchConversation={chatState.switchConversation}
               onSubmit={chatState.submitMessage}
+              mobile={isMobile}
             />
           )}
         </div>
@@ -510,7 +513,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
     <div
       ref={wrapperRef}
       className="absolute"
-      data-canvas-window={!isPreview || undefined}
+      data-canvas-window={!isPreview && !isFullscreen || undefined}
       style={wrapperStyle}
       onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
     >
