@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -19,6 +19,39 @@ export function loadIconStyle(homePath: string): string {
 export function buildIconPrompt(slug: string, style: string): string {
   const name = slug.replace(/-/g, " ").replace(/_/g, " ");
   return `App icon for '${name}': ${style}, no text, 1:1 square`;
+}
+
+export interface IconBatchResult {
+  generated: number;
+  failed: string[];
+}
+
+export async function generateIconBatch(
+  apiKey: string,
+  slugs: string[],
+  iconStyle: string,
+  iconsDir: string,
+  opts?: { skipExisting?: boolean },
+): Promise<IconBatchResult> {
+  const client = createImageClient(apiKey);
+  let generated = 0;
+  const failed: string[] = [];
+  for (const slug of slugs) {
+    if (opts?.skipExisting && existsSync(join(iconsDir, `${slug}.png`))) continue;
+    try {
+      await client.generateImage(buildIconPrompt(slug, iconStyle), {
+        aspectRatio: "1:1",
+        imageDir: iconsDir,
+        saveAs: `${slug}.png`,
+      });
+      generated++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[icons] Generation failed for "${slug}": ${msg}`);
+      failed.push(slug);
+    }
+  }
+  return { generated, failed };
 }
 
 export interface ImageResult {

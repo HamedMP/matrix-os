@@ -53,10 +53,11 @@ export function CanvasGroupRect({ group }: CanvasGroupProps) {
   const onDoubleClick = useCallback(() => {
     const memberWindows = windows.filter((w) => group.windowIds.includes(w.id));
     if (memberWindows.length === 0) return;
+    const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
       memberWindows.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-      window.innerWidth,
-      window.innerHeight,
+      cRect?.width ?? window.innerWidth,
+      cRect?.height ?? window.innerHeight,
     );
   }, [windows, group.windowIds, fitAll]);
 

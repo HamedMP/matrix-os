@@ -81,7 +81,7 @@
   "system/canvas.json": "d3fb42c13909ccd1d2604c89d42f940e6dca2384c5e3bca3394ecab979912260",
   "system/config.json": "ac6a21d32819ea663fca845359c3ae83a76c3d1cc0abc1a45785a46294d282bc",
   "system/cron.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
-  "system/desktop.json": "fa12a85c3911e3b7e19679784b1802167134adcf421e695ea0051ea62713ff8a",
+  "system/desktop.json": "1c9c1a55162983089ebe688f511da71d7f469d26d98432bce6fe02aa60a0ea64",
   "system/handle.json": "34578ed189ce259ffdabf35ca95622f3aa43e3adceef27604e9f2416dd691de0",
   "system/icons/calculator.svg": "706589394cae0cfa885722b1dc323f2f87fdf62671ae239e4f22c327267da173",
   "system/icons/calendar.svg": "f80255065c2847381acec861e8f370fe2bd2f15423485351b1cdc8ecda73f4b0",
@@ -109,6 +109,7 @@
   "system/theme.json": "447e28b84ffa67a618f4ccb7ce150f3f4b6d3d651e1be21aa8a7b64e81f0e47e",
   "system/user.md": "e6e32a770ba0c7f272d18d55df3e0748cfd70f518fd0056c71660bdc684a3dff",
   "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688",
-  "apps/_shared/default-apps.tsx": "effc9af71989d3020fb8e572c4b967cb7415d7efdb1bfbf6cbe811c258b2251d",
-  "apps/_shared/theme.css": "e3b223cf782fbb3e416e2875e1000686af9fc0d3c3a25173c162d029892228d7"
+  "apps/_shared/default-apps.tsx": "10f6a540ac219424769732b5952b586bcc0029674915eb22af7bb1b5cc9864d9",
+  "apps/_shared/theme.css": "382355577a00e4744b823fda818f1c4cdb40d782609eb90adc9950492bccaa5b"
 }
+

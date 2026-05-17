@@ -199,4 +199,73 @@ describe("Canvas Transform Store", () => {
       expect(useCanvasTransform.getState().isAnimating).toBe(true);
     });
   });
+
+  describe("container offset", () => {
+    function rect(left: number, top: number, width = 800, height = 600) {
+      return { left, top, width, height };
+    }
+
+    afterEach(() => {
+      useCanvasTransform.setState({ containerRect: null });
+    });
+
+    it("screenToCanvas subtracts container offset", () => {
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(250, 28) });
+      const pt = useCanvasTransform.getState().screenToCanvas(500, 300);
+      expect(pt.x).toBeCloseTo(250);
+      expect(pt.y).toBeCloseTo(272);
+    });
+
+    it("canvasToScreen adds container offset", () => {
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(250, 28) });
+      const pt = useCanvasTransform.getState().canvasToScreen(250, 272);
+      expect(pt.x).toBeCloseTo(500);
+      expect(pt.y).toBeCloseTo(300);
+    });
+
+    it("round-trip with container offset", () => {
+      useCanvasTransform.setState({ zoom: 1.5, panX: -200, panY: 100, containerRect: rect(250, 28) });
+      const { screenToCanvas, canvasToScreen } = useCanvasTransform.getState();
+      const canvas = screenToCanvas(600, 400);
+      const screen = canvasToScreen(canvas.x, canvas.y);
+      expect(screen.x).toBeCloseTo(600);
+      expect(screen.y).toBeCloseTo(400);
+    });
+
+    it("zoomAtPoint preserves focal point with container offset", () => {
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(250, 28) });
+      const canvasBefore = useCanvasTransform.getState().screenToCanvas(500, 300);
+
+      useCanvasTransform.getState().zoomAtPoint(2, 500, 300);
+      expect(useCanvasTransform.getState().zoom).toBe(2);
+
+      const screenAfter = useCanvasTransform.getState().canvasToScreen(canvasBefore.x, canvasBefore.y);
+      expect(screenAfter.x).toBeCloseTo(500);
+      expect(screenAfter.y).toBeCloseTo(300);
+    });
+
+    it("zoomAtPoint preserves focal point with offset and existing pan", () => {
+      useCanvasTransform.setState({ zoom: 1.5, panX: -200, panY: 100, containerRect: rect(100, 50) });
+      const canvasBefore = useCanvasTransform.getState().screenToCanvas(600, 400);
+
+      useCanvasTransform.getState().zoomAtPoint(2.5, 600, 400);
+
+      const screenAfter = useCanvasTransform.getState().canvasToScreen(canvasBefore.x, canvasBefore.y);
+      expect(screenAfter.x).toBeCloseTo(600);
+      expect(screenAfter.y).toBeCloseTo(400);
+    });
+
+    it("multiple zoom steps maintain focal point stability", () => {
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(200, 40) });
+      const canvasBefore = useCanvasTransform.getState().screenToCanvas(500, 300);
+
+      for (let z = 1.1; z <= 2.0; z += 0.1) {
+        useCanvasTransform.getState().zoomAtPoint(z, 500, 300);
+      }
+
+      const screenAfter = useCanvasTransform.getState().canvasToScreen(canvasBefore.x, canvasBefore.y);
+      expect(screenAfter.x).toBeCloseTo(500, 0);
+      expect(screenAfter.y).toBeCloseTo(300, 0);
+    });
+  });
 });

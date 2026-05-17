@@ -40,10 +40,11 @@ export function CanvasRenderer() {
         wm.moveWindow(wins[i].id, x, y);
       }
       const arranged = useWindowManager.getState().windows;
+      const cRect = useCanvasTransform.getState().containerRect;
       fitAll(
         arranged.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-        window.innerWidth,
-        window.innerHeight,
+        cRect?.width ?? window.innerWidth,
+        cRect?.height ?? window.innerHeight,
       );
     },
     [fitAll],
@@ -81,10 +82,11 @@ export function CanvasRenderer() {
 
   const handleFitAll = useCallback(() => {
     const wins = useWindowManager.getState().windows.filter((w) => !w.minimized);
+    const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
       wins.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-      window.innerWidth,
-      window.innerHeight,
+      cRect?.width ?? window.innerWidth,
+      cRect?.height ?? window.innerHeight,
     );
   }, [fitAll]);
 

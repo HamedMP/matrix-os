@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
 import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "lucide-react";
+import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -23,9 +23,7 @@ interface AppTileProps {
 
 export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
-  const [imgError, setImgError] = useState(false);
-  useEffect(() => setImgError(false), [iconUrl]);
-  const showImage = iconUrl && !imgError;
+  const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
   const tile = (
     <button
@@ -43,7 +41,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           }`}
         >
           {showImage ? (
-            <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgError(true)} />
+            <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
           ) : (
             initial
           )}
