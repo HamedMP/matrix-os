@@ -12,6 +12,8 @@ home/apps/whiteboard/public/excalidraw-assets/
 *.log
 *.tmp
 *.swp
+__pycache__/
+*.py[cod]
 .vscode/
 .idea/
 
@@ -45,6 +47,9 @@ shell/e2e/test-results/
 shell/e2e/playwright-report/
 shell/test-results/
 shell/playwright-report/
+
+# Desktop generated output
+apps/desktop/out/
 
 # Next.js generated types
 www/next-env.d.ts
