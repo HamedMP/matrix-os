@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -213,9 +214,7 @@ function DockIcon({
   canQuit?: boolean;
 }) {
   const initial = name.charAt(0).toUpperCase();
-  const [imgError, setImgError] = useState(false);
-  useEffect(() => setImgError(false), [iconUrl]);
-  const showImage = iconUrl && !imgError;
+  const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
   const btn = (
     <button
@@ -224,7 +223,7 @@ function DockIcon({
       style={{ width: iconSize, height: iconSize }}
     >
       {showImage ? (
-        <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgError(true)} />
+        <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
       ) : (
         <span className="text-sm font-semibold text-foreground">
           {initial}
@@ -1868,41 +1867,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           buttons. Lives outside both dock-orientation branches so it
           isn't unmounted when the viewport flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
-
-      {fullscreenWindowId && desktopMode === "canvas" && (() => {
-        const fsWin = windows.find((w) => w.id === fullscreenWindowId);
-        if (!fsWin) return null;
-        return (
-          <div className="fixed inset-0 z-[100] bg-background overflow-hidden">
-            {fsWin.path.startsWith("__terminal__") ? (
-              <TerminalApp />
-            ) : fsWin.path === "__workspace__" ? (
-              <WorkspaceApp />
-            ) : fsWin.path === "__file-browser__" ? (
-              <FileBrowser windowId={fsWin.id} />
-            ) : fsWin.path === "__preview-window__" ? (
-              <PreviewWindow />
-            ) : fsWin.path === "__chat__" ? (
-              <div className="h-full overflow-hidden">
-                {chat && (
-                  <ChatApp
-                    messages={chat.messages}
-                    sessionId={chat.sessionId}
-                    busy={chat.busy}
-                    connected={chat.connected}
-                    conversations={chat.conversations}
-                    onNewChat={chat.newChat}
-                    onSwitchConversation={chat.switchConversation}
-                    onSubmit={chat.submitMessage}
-                  />
-                )}
-              </div>
-            ) : (
-              <AppViewer path={fsWin.path} onOpenApp={openWindow} />
-            )}
-          </div>
-        );
-      })()}
 
       {fullscreenWindowId && (
         <FullscreenExitPill onExit={wmExitFullscreen} />

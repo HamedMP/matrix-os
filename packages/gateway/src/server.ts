@@ -56,6 +56,7 @@ import {
   createImageClient,
   loadIconStyle,
   buildIconPrompt,
+  generateIconBatch,
   createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
@@ -3207,40 +3208,18 @@ export async function createGateway(config: GatewayConfig) {
 
     const apps = await listApps(homePath);
     const appSlugs = new Set(apps.map((a) => a.slug).filter(Boolean));
-    const pngFiles = readdirSync(iconsDir)
+    const slugs = readdirSync(iconsDir)
       .filter((f: string) => f.endsWith(".png"))
-      .filter((f: string) => appSlugs.has(f.replace(/\.png$/, "")));
-
-    const iconStyle = loadIconStyle(homePath);
-    const total = pngFiles.length;
+      .map((f: string) => f.replace(/\.png$/, ""))
+      .filter((s: string) => appSlugs.has(s));
 
     iconRegenerationInProgress = true;
-    const regeneration = (async () => {
-      const client = createImageClient(geminiKey);
-      let regenerated = 0;
-      const failed: string[] = [];
-      for (const file of pngFiles) {
-        const slug = file.replace(/\.png$/, "");
-        try {
-          await client.generateImage(buildIconPrompt(slug, iconStyle), {
-            aspectRatio: "1:1",
-            imageDir: iconsDir,
-            saveAs: `${slug}.png`,
-          });
-          regenerated++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          console.error(`Icon regeneration failed for "${slug}":`, msg);
-          failed.push(slug);
-        }
-      }
-      console.log(`[icons] Regeneration complete: ${regenerated}/${total} succeeded, ${failed.length} failed`);
-    })();
-    regeneration.catch((err) => console.error("[icons] Regeneration error:", err)).finally(() => {
-      iconRegenerationInProgress = false;
-    });
+    generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
+      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
+      .catch((err) => console.error("[icons] Regeneration error:", err))
+      .finally(() => { iconRegenerationInProgress = false; });
 
-    return c.json({ accepted: true, total }, 202);
+    return c.json({ accepted: true, total: slugs.length }, 202);
   });
 
   app.get("/api/cron", (c) => {
