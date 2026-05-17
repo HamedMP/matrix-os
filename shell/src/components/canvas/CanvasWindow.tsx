@@ -117,9 +117,12 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
       parent = parent.parentElement;
     }
 
+    // Fall back to the transform div's parent if no overflow:hidden ancestor
+    // was found (e.g. if clipping uses clip-path instead of overflow).
+    const offsetEl = canvasContainer ?? el.parentElement?.parentElement ?? el.parentElement;
     const measure = () => {
-      if (canvasContainer) {
-        const r = canvasContainer.getBoundingClientRect();
+      if (offsetEl) {
+        const r = offsetEl.getBoundingClientRect();
         setContainerOffset({ x: r.left, y: r.top });
       }
     };
