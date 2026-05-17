@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasSettings } from "@/stores/canvas-settings";
@@ -41,6 +41,8 @@ interface CanvasWindowProps {
 export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
+  const panX = useCanvasTransform((s) => s.panX);
+  const panY = useCanvasTransform((s) => s.panY);
   const fitAll = useCanvasTransform((s) => s.fitAll);
   const closeWindow = useWindowManager((s) => s.closeWindow);
   const minimizeWindow = useWindowManager((s) => s.minimizeWindow);
@@ -53,6 +55,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const isFocused = focusedWindowId === win.id;
   const isFullscreen = fullscreenWindowId === win.id;
   const showTitles = useCanvasSettings((s) => s.showTitles);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const themeStyle = useThemeStyle();
   const isNeumorphic = themeStyle === "neumorphic";
 
@@ -86,6 +89,45 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   useEffect(() => {
     if (isCanvasScrolling || !isFocused) setContentFocused(false);
   }, [isCanvasScrolling, isFocused]);
+
+  const [containerOffset, setContainerOffset] = useState({ x: 0, y: 0 });
+
+  useLayoutEffect(() => {
+    if (!isFullscreen) return;
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const saved: { el: HTMLElement; overflow: string; zIndex: string }[] = [];
+    let canvasContainer: HTMLElement | null = null;
+    let parent = el.parentElement;
+    while (parent && parent !== document.body) {
+      const cs = getComputedStyle(parent);
+      saved.push({ el: parent, overflow: parent.style.overflow, zIndex: parent.style.zIndex });
+      if (cs.overflow === "hidden") {
+        parent.style.overflow = "visible";
+        if (!canvasContainer) canvasContainer = parent;
+      }
+      if (cs.position !== "static") parent.style.zIndex = "100";
+      parent = parent.parentElement;
+    }
+
+    const measure = () => {
+      if (canvasContainer) {
+        const r = canvasContainer.getBoundingClientRect();
+        setContainerOffset({ x: r.left, y: r.top });
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+
+    return () => {
+      window.removeEventListener("resize", measure);
+      for (const s of saved) {
+        s.el.style.overflow = s.overflow;
+        s.el.style.zIndex = s.zIndex;
+      }
+    };
+  }, [isFullscreen]);
 
   const dragRef = useRef<{
     startX: number;
@@ -396,112 +438,127 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
     </div>
   );
 
-  // Zoomed-out preview: icon card with title bar above
-  if (!isInteractive) {
-    return (
-      <div
-        className="absolute"
-        style={{
-          left: win.x,
-          top: win.y,
-          zIndex: win.zIndex,
-          pointerEvents: "auto",
-          display: hidden ? "none" : undefined,
-        }}
-      >
-        {titleBar}
-        <div
-          className={`rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
-            isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
-          }`}
-          style={{ width: win.width, height: win.height }}
-        >
-          {iconUrl ? (
-            <img src={iconUrl} alt={win.title} className="size-16 object-contain opacity-50" draggable={false} />
-          ) : (
-            <span className="text-3xl font-semibold text-muted-foreground/20">
-              {win.title.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const isPreview = !isInteractive && !isFullscreen;
 
-  // Zoomed-in interactive: title bar above, content below
-  return (
-    <div
-      className="absolute"
-      data-canvas-window
-      style={{
+  const contLeft = containerOffset.x;
+  const contTop = containerOffset.y;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 0;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 0;
+
+  const wrapperStyle: React.CSSProperties = isFullscreen
+    ? {
+        left: -contLeft / zoom - panX,
+        top: -contTop / zoom - panY,
+        zIndex: 9999,
+        transform: `scale(${1 / zoom})`,
+        transformOrigin: "0 0",
+      }
+    : {
         left: win.x,
         top: win.y,
         zIndex: win.zIndex,
+        pointerEvents: isPreview ? "auto" : undefined,
         display: hidden ? "none" : undefined,
-      }}
-      onMouseDown={() => focusWindow(win.id)}
+      };
+
+  const contentStyle: React.CSSProperties = isFullscreen
+    ? { width: vw, height: vh }
+    : { width: win.width, height: win.height };
+
+  const appContent = (
+    <>
+      {win.path.startsWith("__terminal__") ? (
+        <TerminalApp />
+      ) : win.path === "__workspace__" ? (
+        <WorkspaceApp />
+      ) : win.path === "__file-browser__" ? (
+        <FileBrowser windowId={win.id} />
+      ) : win.path === "__preview-window__" ? (
+        <PreviewWindow />
+      ) : win.path === "__chat__" ? (
+        <div className="h-full overflow-hidden">
+          {chatState && (
+            <ChatApp
+              messages={chatState.messages}
+              sessionId={chatState.sessionId}
+              busy={chatState.busy}
+              connected={chatState.connected}
+              conversations={chatState.conversations}
+              onNewChat={chatState.newChat}
+              onSwitchConversation={chatState.switchConversation}
+              onSubmit={chatState.submitMessage}
+            />
+          )}
+        </div>
+      ) : (
+        <AppViewer path={win.path} />
+      )}
+    </>
+  );
+
+  return (
+    <div
+      ref={wrapperRef}
+      className="absolute"
+      data-canvas-window={!isPreview || undefined}
+      style={wrapperStyle}
+      onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
     >
-      {titleBar}
+      {!isFullscreen && titleBar}
       <div
-        className={`rounded-lg bg-card overflow-hidden transition-shadow duration-150 ${
-          isFocused ? "shadow-xl ring-1 ring-primary/30" : "shadow-md"
-        }`}
-        style={{ width: win.width, height: win.height }}
+        className={isFullscreen
+          ? "bg-background overflow-hidden"
+          : isPreview
+            ? `rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
+                isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
+              }`
+            : `rounded-lg bg-card overflow-hidden transition-shadow duration-150 ${
+                isFocused ? "shadow-xl ring-1 ring-primary/30" : "shadow-md"
+              }`
+        }
+        style={contentStyle}
       >
-        {win.path.startsWith("__terminal__") ? (
-          <TerminalApp />
-        ) : win.path === "__workspace__" ? (
-          <WorkspaceApp />
-        ) : win.path === "__file-browser__" ? (
-          <FileBrowser windowId={win.id} />
-        ) : win.path === "__preview-window__" ? (
-          <PreviewWindow />
-        ) : win.path === "__chat__" ? (
-          <div className="h-full overflow-hidden">
-            {chatState && (
-              <ChatApp
-                messages={chatState.messages}
-                sessionId={chatState.sessionId}
-                busy={chatState.busy}
-                connected={chatState.connected}
-                conversations={chatState.conversations}
-                onNewChat={chatState.newChat}
-                onSwitchConversation={chatState.switchConversation}
-                onSubmit={chatState.submitMessage}
+        {isPreview ? (
+          <>
+            {iconUrl ? (
+              <img src={iconUrl} alt={win.title} className="size-16 object-contain opacity-50" draggable={false} />
+            ) : (
+              <span className="text-3xl font-semibold text-muted-foreground/20">
+                {win.title.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            {appContent}
+            {!isFullscreen && interacting && <div className="absolute inset-0 z-10" />}
+            {!isFullscreen && !contentFocused && !interacting && (
+              <div
+                className="absolute inset-0 z-10"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  setContentFocused(true);
+                  focusWindow(win.id);
+                }}
               />
             )}
-          </div>
-        ) : (
-          <AppViewer path={win.path} />
-        )}
-        {interacting && <div className="absolute inset-0 z-10" />}
-        {/* Click-to-interact overlay: captures wheel events so the canvas can
-            pan/zoom when this window isn't focused. Click focuses the window
-            and removes the overlay so the app content becomes interactive. */}
-        {!contentFocused && !interacting && (
-          <div
-            className="absolute inset-0 z-10"
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              setContentFocused(true);
-              focusWindow(win.id);
-            }}
-          />
+          </>
         )}
       </div>
-      {/* Resize handle */}
-      <div
-        className="absolute bottom-0 right-0 size-3 cursor-se-resize touch-none z-20"
-        onPointerDown={onResizeStart}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeEnd}
-        onPointerCancel={onResizeEnd}
-      >
-        <svg viewBox="0 0 12 12" className="size-3 text-muted-foreground/30">
-          <path d="M11 1v10H1" fill="none" stroke="currentColor" strokeWidth="1" />
-          <path d="M11 5v6H5" fill="none" stroke="currentColor" strokeWidth="1" />
-        </svg>
-      </div>
+      {!isFullscreen && !isPreview && (
+        <div
+          className="absolute bottom-0 right-0 size-3 cursor-se-resize touch-none z-20"
+          onPointerDown={onResizeStart}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeEnd}
+          onPointerCancel={onResizeEnd}
+        >
+          <svg viewBox="0 0 12 12" className="size-3 text-muted-foreground/30">
+            <path d="M11 1v10H1" fill="none" stroke="currentColor" strokeWidth="1" />
+            <path d="M11 5v6H5" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
