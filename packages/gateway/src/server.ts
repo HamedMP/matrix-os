@@ -73,6 +73,8 @@ import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
   checkForSystemUpdate,
+  listSystemReleases,
+  parseInternalUpgradeTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
   writeInternalUpgradeTrigger,
@@ -143,6 +145,8 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { MessagingKyselyRepository } from "./messages/repository.js";
+import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
@@ -390,6 +394,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
     try {
@@ -403,6 +408,8 @@ export async function createGateway(config: GatewayConfig) {
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
+      messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
+      await messagingRepository.bootstrap();
       canvasSubscriptionHub = new CanvasSubscriptionHub({
         authorize: async (subscriber) => {
           const record = await canvasRepository?.get(
@@ -498,6 +505,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasRepository = null;
       canvasService = null;
       canvasSubscriptionHub = null;
+      messagingRepository = null;
     }
   }
 
@@ -3195,21 +3203,22 @@ export async function createGateway(config: GatewayConfig) {
     if (iconRegenerationInProgress) {
       return c.json({ error: "Regeneration already in progress" }, 409);
     }
+    iconRegenerationInProgress = true;
 
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [], generated: false });
     }
 
     const iconsDir = join(homePath, "system/icons");
     if (!existsSync(iconsDir)) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [] });
     }
 
     const apps = await listApps(homePath);
     const slugs = apps.map((a) => a.slug).filter(Boolean);
-
-    iconRegenerationInProgress = true;
     generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
       .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
       .catch((err) => console.error("[icons] Regeneration error:", err))
@@ -3321,6 +3330,20 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
+  app.get("/api/system/releases", async (c) => {
+    const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    const result = await listSystemReleases({
+      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
+      channel,
+    });
+    return c.json(result);
+  });
+
   app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
     const token = process.env.MATRIX_SYSTEM_BACKUP_TOKEN;
     if (!token) {
@@ -3414,6 +3437,19 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
+
+  if (messagingRepository) {
+    app.route("/api/messages", createMessagingRoutes({
+      repository: messagingRepository,
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      appserviceToken: process.env.MATRIX_MESSAGING_APPSERVICE_TOKEN,
+      appserviceOwnerId: process.env.MATRIX_MESSAGING_APPSERVICE_OWNER_ID ?? process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
+      hermesCapabilitySecret: process.env.MATRIX_MESSAGING_HERMES_CAPABILITY_SECRET,
+    }));
+  } else {
+    app.all("/api/messages/*", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
+    app.all("/api/messages", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
+  }
 
   if (canvasService) {
     // Global authMiddleware is mounted before route registration; routes still resolve user IDs defensively.
