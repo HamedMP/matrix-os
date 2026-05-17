@@ -1869,41 +1869,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           isn't unmounted when the viewport flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
 
-      {fullscreenWindowId && desktopMode === "canvas" && (() => {
-        const fsWin = windows.find((w) => w.id === fullscreenWindowId);
-        if (!fsWin) return null;
-        return (
-          <div className="fixed inset-0 z-[100] bg-background overflow-hidden">
-            {fsWin.path.startsWith("__terminal__") ? (
-              <TerminalApp />
-            ) : fsWin.path === "__workspace__" ? (
-              <WorkspaceApp />
-            ) : fsWin.path === "__file-browser__" ? (
-              <FileBrowser windowId={fsWin.id} />
-            ) : fsWin.path === "__preview-window__" ? (
-              <PreviewWindow />
-            ) : fsWin.path === "__chat__" ? (
-              <div className="h-full overflow-hidden">
-                {chat && (
-                  <ChatApp
-                    messages={chat.messages}
-                    sessionId={chat.sessionId}
-                    busy={chat.busy}
-                    connected={chat.connected}
-                    conversations={chat.conversations}
-                    onNewChat={chat.newChat}
-                    onSwitchConversation={chat.switchConversation}
-                    onSubmit={chat.submitMessage}
-                  />
-                )}
-              </div>
-            ) : (
-              <AppViewer path={fsWin.path} onOpenApp={openWindow} />
-            )}
-          </div>
-        );
-      })()}
-
       {fullscreenWindowId && (
         <FullscreenExitPill onExit={wmExitFullscreen} />
       )}
