@@ -3218,12 +3218,12 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     const apps = await listApps(homePath);
-    const slugs = apps.map((a) => a.slug).filter(Boolean);
+    const slugs: string[] = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
+
     generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
       .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
       .catch((err) => console.error("[icons] Regeneration error:", err))
       .finally(() => { iconRegenerationInProgress = false; });
-
     return c.json({ accepted: true, total: slugs.length }, 202);
   });
 
