@@ -48,6 +48,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const closeWindow = useWindowManager((s) => s.closeWindow);
   const minimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const focusWindow = useWindowManager((s) => s.focusWindow);
+  const openWindow = useWindowManager((s) => s.openWindow);
   const moveWindow = useWindowManager((s) => s.moveWindow);
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
@@ -497,7 +498,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
           )}
         </div>
       ) : (
-        <AppViewer path={win.path} />
+        <AppViewer path={win.path} onOpenApp={(name, path) => openWindow(name, path, 0)} />
       )}
     </>
   );
