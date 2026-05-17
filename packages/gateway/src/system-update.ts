@@ -22,6 +22,7 @@ export interface HostBundleRelease {
   size?: number;
   bundleSha256?: string;
   installedAt?: string;
+  createdAt?: string;
   severity?: UpdateSeverity;
   changelog?: string;
   updateType?: UpdateType;
@@ -49,6 +50,13 @@ export interface SystemUpdateCheck {
   latest: HostBundleRelease | null;
   updateAvailable: boolean;
   checkedAt: string;
+  error?: string;
+}
+
+export interface SystemReleaseList {
+  channel: UpdateChannel;
+  releases: HostBundleRelease[];
+  generatedAt: string;
   error?: string;
 }
 
@@ -249,11 +257,68 @@ export async function checkForSystemUpdate(options: {
   }
 }
 
-export async function startSystemUpdate(options: {
+export async function listSystemReleases(options: {
+  platformUrl?: string;
   channel: UpdateChannel;
+  fetchImpl?: typeof fetch;
+  now?: Date;
+}): Promise<SystemReleaseList> {
+  const generatedAt = (options.now ?? new Date()).toISOString();
+  if (!options.platformUrl) {
+    return {
+      channel: options.channel,
+      releases: [],
+      generatedAt,
+      error: "Release list not configured",
+    };
+  }
+
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const url = new URL("/system-bundles/releases", options.platformUrl);
+  url.searchParams.set("channel", options.channel);
+  try {
+    const res = await fetchImpl(url.toString(), {
+      signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      throw new Error(`release list unavailable: ${res.status}`);
+    }
+    const data = await res.json() as { releases?: unknown; generatedAt?: unknown };
+    const releases = Array.isArray(data.releases)
+      ? data.releases.filter((release): release is HostBundleRelease => (
+          release !== null &&
+          typeof release === "object" &&
+          typeof (release as { version?: unknown }).version === "string"
+        ))
+      : [];
+    return {
+      channel: options.channel,
+      releases,
+      generatedAt: typeof data.generatedAt === "string" ? data.generatedAt : generatedAt,
+    };
+  } catch (err: unknown) {
+    console.warn(
+      "[system-update] Failed to list host bundle releases:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return {
+      channel: options.channel,
+      releases: [],
+      generatedAt,
+      error: "Release list unavailable",
+    };
+  }
+}
+
+export async function startSystemUpdate(options: {
+  channel?: UpdateChannel;
+  target?: InternalUpgradeTarget;
   updateCommand?: string;
   spawnImpl?: typeof spawn;
 }): Promise<{ ok: true; status: "started" } | { ok: false; status: "not_configured" }> {
+  const target = options.target ?? (options.channel ? { type: "channel" as const, value: options.channel } : null);
+  if (!target) return { ok: false, status: "not_configured" };
+
   const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
   try {
     await access(updateCommand, constants.X_OK);
@@ -268,7 +333,7 @@ export async function startSystemUpdate(options: {
   }
 
   const spawnImpl = options.spawnImpl ?? spawn;
-  const child = spawnImpl("sudo", ["-n", updateCommand, options.channel], {
+  const child = spawnImpl("sudo", ["-n", updateCommand, target.value], {
     detached: true,
     stdio: "ignore",
     env: process.env,

@@ -10,22 +10,23 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ece5f0"
+      "backgroundColor": "#FAFAF9"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.matrixos.mobile",
       "infoPlist": {
-        "NSCameraUsageDescription": "Scan QR codes to connect to your Matrix OS gateway",
+        "NSCameraUsageDescription": "Scan Matrix OS codes",
         "NSMicrophoneUsageDescription": "Voice input for chat messages",
         "NSFaceIDUsageDescription": "Biometric authentication to secure your Matrix OS data",
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "PX4JL74Y2K"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ece5f0"
+        "backgroundColor": "#FAFAF9"
       },
       "package": "com.matrixos.mobile",
       "permissions": [
@@ -57,7 +58,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#c2703a"
+          "color": "#8CC7BE"
         }
       ],
       "expo-web-browser"

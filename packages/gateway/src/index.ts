@@ -95,9 +95,26 @@ export { createCanvasRoutes } from "./canvas/routes.js";
 export type { CanvasRouteDeps, CanvasRouteService } from "./canvas/routes.js";
 export { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 export type { CanvasSubscriber, CanvasSubscriptionHubOptions } from "./canvas/subscriptions.js";
+export { createMessagingRoutes } from "./messages/routes.js";
+export { MessagingError, mapMessagingError } from "./messages/errors.js";
+export { MessagingKyselyRepository } from "./messages/repository.js";
+export { createPermissionRegistry } from "./messages/permission-registry.js";
+export { createHermesCapabilityToken, verifyHermesCapabilityToken } from "./messages/hermes-capability.js";
+export { HermesDeliveryRegistry } from "./messages/hermes-delivery.js";
+export { evaluateAutomationRules } from "./messages/automation-evaluator.js";
+export { createAutomationActionRunner } from "./messages/automation-actions.js";
+export { createMessagingBridgeHealthService } from "./messages/bridge-health.js";
+export type { MessagingBridgeHealthService, MessagingHealthSummary } from "./messages/bridge-health.js";
+export type {
+  MessagingRepository,
+  MessagingOwnerScope,
+  MessagingListResult,
+  MessagingBridgeAccountProvider,
+} from "./messages/repository.js";
 export { createSymphonyRunner, SymphonyConfigSchema, SymphonyConfigUpdateSchema, SymphonyTrackerConfigSchema, SymphonyTrackerConfigUpdateSchema } from "./symphony-runner.js";
 export type { SymphonyConfig, SymphonyConfigUpdate, SymphonyStatus, SymphonyStartResult } from "./symphony-runner.js";
 export { createSymphonyRoutes } from "./symphony-routes.js";
+export * from "./symphony/index.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";

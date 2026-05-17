@@ -117,6 +117,19 @@ function getPaneSessionId(node: PaneNode, paneId: string): string | null {
   return getPaneSessionId(node.children[0], paneId) ?? getPaneSessionId(node.children[1], paneId);
 }
 
+function getPaneCwd(node: PaneNode, paneId: string): string | null {
+  if (node.type === "pane") {
+    return node.id === paneId ? node.cwd : null;
+  }
+  return getPaneCwd(node.children[0], paneId) ?? getPaneCwd(node.children[1], paneId);
+}
+
+function formatCwd(value: string): string {
+  if (value === DEFAULT_CWD) return "~/projects";
+  if (value.startsWith(DEFAULT_CWD + "/")) return `~/${value}`;
+  return value;
+}
+
 function getSessionIds(node: PaneNode): string[] {
   if (node.type === "pane") {
     return node.sessionId ? [node.sessionId] : [];
@@ -140,9 +153,10 @@ const countPanes = countPanesFromStore;
 interface TerminalAppProps {
   initialCommand?: string;
   initialSessionId?: string;
+  mobile?: boolean;
 }
 
-export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialSessionId, mobile = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const isLightTheme = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
@@ -158,7 +172,7 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
@@ -169,6 +183,7 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
   activeTabIdRef.current = activeTabId;
   const themeIdRef = useRef(themeId);
   themeIdRef.current = themeId;
+  const initialMobileRef = useRef(mobile);
   const sidebarOpenRef = useRef(sidebarOpen);
   sidebarOpenRef.current = sidebarOpen;
   const pendingPaneSessionsRef = useRef<Map<string, string>>(new Map());
@@ -208,6 +223,10 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
         method: "DELETE",
         keepalive: true,
         signal: AbortSignal.timeout(5_000),
+      }).then((res) => {
+        if (!res.ok && res.status !== 404) {
+          console.warn(`Failed to destroy terminal session "${sessionId}" on explicit close: ${res.status}`);
+        }
       }).catch((err: unknown) => {
         console.warn(
           `Failed to destroy terminal session "${sessionId}" on explicit close:`,
@@ -310,7 +329,7 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
             const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
             setTabs(data.tabs);
             setActiveTabId(nextActiveTabId);
-            setSidebarOpen(data.sidebarOpen ?? true);
+            setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
             setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
             setInitialized(true);
             return;
@@ -526,7 +545,7 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
 
   // Construct store-compatible interface for child components
   const storeApi = {
-    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId,
+    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile,
     addTab, addSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
@@ -542,11 +561,11 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
       <TerminalAppContext.Provider value={storeApi}>
         <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} isLightTheme={isLightTheme} />
         <div className="flex flex-1 min-h-0">
-          <LocalTerminalSidebar />
+          {!mobile && <LocalTerminalSidebar />}
           {activeTab ? (
             <div
               className="flex-1 min-w-0 min-h-0 flex"
-              style={{ padding: "8px 10px 8px 12px", background: terminalBackground }}
+              style={{ padding: mobile ? "6px" : "8px 10px 8px 12px", background: terminalBackground }}
             >
               <PaneGrid
                 paneTree={activeTab.paneTree}
@@ -588,6 +607,7 @@ interface TerminalAppContextType {
   sidebarOpen: boolean;
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
+  mobile: boolean;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
   closeTab: (tabId: string) => void;
@@ -760,6 +780,11 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
   const dragIndexRef = useRef<number | null>(null);
 
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
+  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
+  const activePaneId = activeTab ? ctx.focusedPaneId ?? getFirstPaneId(activeTab.paneTree) : null;
+  const activeCwd = activeTab && activePaneId
+    ? getPaneCwd(activeTab.paneTree, activePaneId) ?? defaultCwd
+    : defaultCwd;
 
   return (
     <div
@@ -767,7 +792,7 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
       style={{
         background: "var(--card)",
         borderColor: "var(--border)",
-        height: 40,
+        height: ctx.mobile ? 50 : 40,
         padding: "4px 6px",
         gap: 4,
       }}
@@ -784,9 +809,9 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
                 color: active ? "var(--foreground)" : "var(--muted-foreground)",
                 border: `1px solid ${active ? "var(--border)" : "transparent"}`,
                 borderRadius: 6,
-                padding: "0 10px",
+                padding: ctx.mobile ? "0 8px" : "0 10px",
                 fontSize: 12,
-                height: 30,
+                height: ctx.mobile ? 34 : 30,
                 fontWeight: active ? 500 : 400,
               }}
               draggable
@@ -804,7 +829,25 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
                   opacity: active ? 1 : 0.5,
                 }}
               />
-              <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
+              <span
+                className={ctx.mobile ? "flex min-w-0 flex-col leading-tight" : undefined}
+                style={{ maxWidth: ctx.mobile ? 132 : 160, overflow: "hidden" }}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
+                {ctx.mobile && active && (
+                  <span
+                    style={{
+                      color: "var(--muted-foreground)",
+                      fontSize: 10,
+                      fontWeight: 400,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {formatCwd(activeCwd)}
+                  </span>
+                )}
+              </span>
               <button
                 className="cursor-pointer flex items-center justify-center transition-colors"
                 onClick={(e) => { e.stopPropagation(); ctx.closeTab(tab.id); }}
@@ -831,41 +874,52 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
         })}
       </div>
       <div className="flex items-center shrink-0" style={{ gap: 4, paddingLeft: 8, borderLeft: "1px solid var(--border)" }}>
-        <ToolbarBtn
-          onClick={() => ctx.addTab(getCwd(), "Claude Code", true)}
-          title="Launch Claude Code (Ctrl+Shift+C)"
-          variant="success"
-        >
-          Claude
-        </ToolbarBtn>
-        <ToolbarBtn
-          onClick={() => ctx.addTab(getCwd(), "Zellij", false, zellijLaunchCommand(themeId, isLightTheme))}
-          title="Launch Zellij (Ctrl+Shift+Z)"
-          variant="primary"
-        >
-          Zellij
-        </ToolbarBtn>
-        <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
-        <ToolbarBtn
-          onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
-          title="Split horizontally (Ctrl+Shift+D)"
-        >
-          <IconSplitH />
-        </ToolbarBtn>
-        <ToolbarBtn
-          onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
-          title="Split vertically (Ctrl+Shift+E)"
-        >
-          <IconSplitV />
-        </ToolbarBtn>
-        <ToolbarBtn
-          onClick={() => ctx.addTab(getCwd())}
-          title="New tab (Ctrl+Shift+T)"
-        >
-          <IconPlus />
-        </ToolbarBtn>
-        <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
-        <ThemePickerButton />
+        {ctx.mobile ? (
+          <ToolbarBtn
+            onClick={() => ctx.addTab(getCwd())}
+            title="New tab (Ctrl+Shift+T)"
+          >
+            <IconPlus />
+          </ToolbarBtn>
+        ) : (
+          <>
+            <ToolbarBtn
+              onClick={() => ctx.addTab(getCwd(), "Claude Code", true)}
+              title="Launch Claude Code (Ctrl+Shift+C)"
+              variant="success"
+            >
+              Claude
+            </ToolbarBtn>
+            <ToolbarBtn
+              onClick={() => ctx.addTab(getCwd(), "Zellij", false, zellijLaunchCommand(themeId, isLightTheme))}
+              title="Launch Zellij (Ctrl+Shift+Z)"
+              variant="primary"
+            >
+              Zellij
+            </ToolbarBtn>
+            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
+            <ToolbarBtn
+              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
+              title="Split horizontally (Ctrl+Shift+D)"
+            >
+              <IconSplitH />
+            </ToolbarBtn>
+            <ToolbarBtn
+              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
+              title="Split vertically (Ctrl+Shift+E)"
+            >
+              <IconSplitV />
+            </ToolbarBtn>
+            <ToolbarBtn
+              onClick={() => ctx.addTab(getCwd())}
+              title="New tab (Ctrl+Shift+T)"
+            >
+              <IconPlus />
+            </ToolbarBtn>
+            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
+            <ThemePickerButton />
+          </>
+        )}
       </div>
     </div>
   );

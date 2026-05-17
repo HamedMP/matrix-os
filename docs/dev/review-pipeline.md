@@ -68,6 +68,11 @@ Suggested split boundaries for Matrix OS:
 - **shell** frontend changes (one PR)
 - **docs + deploy** configuration (one PR)
 
+For features that need multiple dependent PRs, use Graphite stacked PRs instead
+of one oversized branch. See `docs/dev/stacked-prs.md` for the command flow.
+Each stack layer still follows the same size limits, gates, PR title rules, and
+backend Invariants requirement.
+
 ## PR Body: Mandatory Invariants Section
 
 Every PR touching backend code must include an invariants section:

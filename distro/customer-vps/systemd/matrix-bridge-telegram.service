@@ -1,0 +1,22 @@
+[Unit]
+Description=Matrix OS Telegram bridge
+After=network-online.target matrix-homeserver.service
+Wants=network-online.target matrix-homeserver.service
+ConditionPathExists=/opt/matrix/messaging/bin/mautrix-telegram
+
+[Service]
+Type=simple
+User=matrix
+Group=matrix
+Environment=MATRIX_MESSAGING_ROOT=/var/lib/matrix-messaging
+EnvironmentFile=-/etc/matrix/messaging.env
+WorkingDirectory=/opt/matrix/messaging
+StateDirectory=matrix-messaging
+ExecStart=/opt/matrix/messaging/bin/mautrix-telegram -c ${MATRIX_MESSAGING_ROOT}/mautrix-telegram/config.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

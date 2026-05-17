@@ -40,7 +40,7 @@ describe("agent-launcher", () => {
     expect(JSON.stringify(result)).not.toContain("sk-secret");
   });
 
-  it("constructs argv arrays for supported agents without shell interpolation", () => {
+  it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
       cwd: "/home/matrixos/home/projects/repo/worktrees/wt_123",
@@ -51,6 +51,10 @@ describe("agent-launcher", () => {
     expect(launch).toEqual({
       command: "codex",
       args: [
+        "exec",
+        "--skip-git-repo-check",
+        "--ask-for-approval",
+        "never",
         "--sandbox",
         "workspace-write",
         "--writable-root",
@@ -63,7 +67,7 @@ describe("agent-launcher", () => {
     });
   });
 
-  it("inserts end-of-options before prompt to prevent flag injection", () => {
+  it("inserts end-of-options before prompt for interactive agents to prevent flag injection", () => {
     const agents = ["claude", "codex", "opencode", "pi"] as const;
     for (const agent of agents) {
       const launch = buildAgentLaunch({
@@ -72,6 +76,20 @@ describe("agent-launcher", () => {
         prompt: "--dangerously-bypass-sandbox",
         sandbox: agent === "codex" ? { enabled: true, writableRoots: ["/tmp/sandbox"] } : undefined,
       });
+      if (agent === "codex") {
+        expect(launch.args).toEqual([
+          "exec",
+          "--skip-git-repo-check",
+          "--ask-for-approval",
+          "never",
+          "--sandbox",
+          "workspace-write",
+          "--writable-root",
+          "/tmp/sandbox",
+          "--",
+          "--dangerously-bypass-sandbox",
+        ]);
+      }
       const dashDashIndex = launch.args.indexOf("--");
       const promptIndex = launch.args.indexOf("--dangerously-bypass-sandbox");
       expect(dashDashIndex).toBeGreaterThanOrEqual(0);
@@ -94,18 +112,21 @@ describe("agent-launcher", () => {
     expect(launchEmpty.args).not.toContain("--");
   });
 
-  it("places end-of-options after sandbox flags for codex", () => {
+  it("places Codex exec controls before sandbox flags and the prompt last", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "--help",
       sandbox: { enabled: true, writableRoots: ["/tmp/sandbox"] },
     });
-    const dashDashIndex = launch.args.indexOf("--");
+    expect(launch.args.slice(0, 4)).toEqual(["exec", "--skip-git-repo-check", "--ask-for-approval", "never"]);
     const sandboxIndex = launch.args.indexOf("--sandbox");
     const writableRootIndex = launch.args.indexOf("--writable-root");
-    expect(sandboxIndex).toBeLessThan(dashDashIndex);
-    expect(writableRootIndex).toBeLessThan(dashDashIndex);
+    const dashDashIndex = launch.args.indexOf("--");
+    expect(sandboxIndex).toBeGreaterThan(3);
+    expect(writableRootIndex).toBeGreaterThan(sandboxIndex);
+    expect(dashDashIndex).toBeGreaterThan(writableRootIndex);
+    expect(launch.args.at(-1)).toBe("--help");
   });
 
   it("requires Codex sandbox metadata unless explicitly overridden", () => {
@@ -120,7 +141,7 @@ describe("agent-launcher", () => {
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
-    }).args).toEqual(["--dangerously-bypass-sandbox", "--", "work"]);
+    }).args).toEqual(["exec", "--skip-git-repo-check", "--ask-for-approval", "never", "--dangerously-bypass-sandbox", "--", "work"]);
   });
 
   it("validates supported agent IDs", () => {

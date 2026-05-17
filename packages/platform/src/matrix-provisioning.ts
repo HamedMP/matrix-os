@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { PlatformDB } from './db.js';
 
 const MATRIX_FETCH_TIMEOUT_MS = 10_000;
+export const MATRIX_MESSAGING_HOMESERVER = 'synapse';
+export const MATRIX_MESSAGING_SPLIT_HOMESERVER_REQUIRED = false;
 
 export interface MatrixUserRecord {
   handle: string;

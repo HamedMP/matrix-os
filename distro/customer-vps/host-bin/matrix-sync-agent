@@ -205,6 +205,20 @@ apply_update() {
     log "Updated bin scripts"
   fi
 
+  if [ -d "$extract_dir/systemd" ]; then
+    sudo install -d -o root -g root -m 0755 /etc/systemd/system
+    sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
+    sudo systemctl daemon-reload
+    log "Installed systemd units"
+    if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
+      sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
+      sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
+      log "Messaging services enabled"
+    else
+      log "Messaging runtimes missing; units installed but not enabled"
+    fi
+  fi
+
   # Start services and health-check
   log "Starting services..."
   sudo systemctl start matrix-gateway matrix-shell

@@ -290,6 +290,7 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
     sections.push("No knowledge files yet.");
   }
 
+  // Design System (always injected — apps must follow the Matrix OS brand)
   sections.push(`\n## Design System (ALWAYS apply when building apps)\n
 Palette: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (accent CTA — one per view), Deep #32352E (text). Sand shades: #F7F1E7, #F3EAE0, #D6AB8B.
 Background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%) — NEVER flat colors.

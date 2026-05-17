@@ -3,6 +3,7 @@ import { createApp } from '../../packages/platform/src/main.js';
 import type { CustomerVpsObjectStore } from '../../packages/platform/src/customer-vps-r2.js';
 import {
   getHostBundleRelease,
+  listHostBundleReleases,
   promoteHostBundleChannel,
   type PlatformDB,
   upsertHostBundleRelease,
@@ -154,6 +155,7 @@ describe('platform host bundle route', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
     await expect(res.json()).resolves.toMatchObject({
       version: 'v2026.05.12-1',
+      channel: 'stable',
       gitCommit: 'c1598218',
       sha256: 'a'.repeat(64),
       url: 'https://r2.example/signed-host-bundle',
@@ -163,6 +165,52 @@ describe('platform host bundle route', () => {
       'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
       3600,
     );
+  });
+
+  it('serializes the requested channel for promoted channel aliases', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-7',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-7',
+      buildTime: '2026-05-12T04:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-7/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-7/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'e'.repeat(64),
+      size: 7890,
+      channel: 'canary',
+    });
+    await promoteHostBundleChannel(db, 'stable', 'v2026.05.12-7');
+    const getPresignedGetUrl = vi.fn().mockResolvedValue('https://r2.example/promoted-host-bundle');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const channelManifestRes = await app.request('/system-bundles/channels/stable.json');
+    expect(channelManifestRes.status).toBe(200);
+    await expect(channelManifestRes.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-7',
+      channel: 'stable',
+    });
+
+    const aliasReleaseRes = await app.request('/system-bundles/stable/release.json');
+    expect(aliasReleaseRes.status).toBe(200);
+    await expect(aliasReleaseRes.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-7',
+      channel: 'stable',
+    });
+
+    const immutableReleaseRes = await app.request('/system-bundles/releases/v2026.05.12-7.json');
+    expect(immutableReleaseRes.status).toBe(200);
+    await expect(immutableReleaseRes.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-7',
+      channel: 'canary',
+    });
   });
 
   it('resolves channel aliases to DB releases for cloud-init bundle downloads', async () => {
@@ -244,6 +292,7 @@ describe('platform host bundle route', () => {
     await expect(res.json()).resolves.toMatchObject({
       release: {
         version: 'v2026.05.12-2',
+        channel: 'canary',
         gitCommit: 'c15982181234567890',
       },
       channel: {
@@ -257,10 +306,89 @@ describe('platform host bundle route', () => {
       releases: [
         {
           version: 'v2026.05.12-2',
+          channel: 'canary',
           bundleKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz',
         },
       ],
     });
+
+    const channelReleasesRes = await app.request('/system-bundles/releases?channel=canary');
+    await expect(channelReleasesRes.json()).resolves.toMatchObject({
+      releases: [{ version: 'v2026.05.12-2', channel: 'canary' }],
+    });
+
+    const stableReleasesRes = await app.request('/system-bundles/releases?channel=stable');
+    await expect(stableReleasesRes.json()).resolves.toMatchObject({ releases: [] });
+
+    const emptyChannelRes = await app.request('/system-bundles/releases?channel=');
+    expect(emptyChannelRes.status).toBe(400);
+
+    const promoteRes = await app.request('/system-bundles/channels/stable', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ version: 'v2026.05.12-2' }),
+    });
+    expect(promoteRes.status).toBe(200);
+
+    const promotedStableRes = await app.request('/system-bundles/releases?channel=stable');
+    await expect(promotedStableRes.json()).resolves.toMatchObject({
+      releases: [{ version: 'v2026.05.12-2', channel: 'canary' }],
+    });
+
+    const canaryAfterPromotionRes = await app.request('/system-bundles/releases?channel=canary');
+    await expect(canaryAfterPromotionRes.json()).resolves.toMatchObject({
+      releases: [{ version: 'v2026.05.12-2', channel: 'canary' }],
+    });
+
+    const reRegisterRes = await app.request('/system-bundles/releases', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        version: 'v2026.05.12-2',
+        gitCommit: 'c15982181234567890',
+        gitRef: 'refs/tags/v2026.05.12-2',
+        buildTime: '2026-05-12T01:00:00.000Z',
+        bundleKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz',
+        checksumKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz.sha256',
+        sha256: 'b'.repeat(64),
+        size: 5678,
+        channel: 'stable',
+      }),
+    });
+    expect(reRegisterRes.status).toBe(200);
+
+    const canaryAfterReRegisterRes = await app.request('/system-bundles/releases?channel=canary');
+    await expect(canaryAfterReRegisterRes.json()).resolves.toMatchObject({
+      releases: [{ version: 'v2026.05.12-2', channel: 'canary' }],
+    });
+  });
+
+  it('only adds release channel history when channel promotion succeeds', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-6',
+      gitCommit: 'c15982181234567890',
+      gitRef: 'refs/tags/v2026.05.12-6',
+      buildTime: '2026-05-12T03:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-6/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-6/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'd'.repeat(64),
+      size: 4321,
+      channel: 'dev',
+    });
+
+    await expect(listHostBundleReleases(db, 10, 'dev')).resolves.toEqual([]);
+
+    await promoteHostBundleChannel(db, 'dev', 'v2026.05.12-6');
+
+    await expect(listHostBundleReleases(db, 10, 'dev')).resolves.toMatchObject([
+      { version: 'v2026.05.12-6', channel: 'dev' },
+    ]);
   });
 
   it('rejects release re-registration when immutable artifact fields differ', async () => {

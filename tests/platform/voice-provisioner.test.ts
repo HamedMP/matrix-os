@@ -59,7 +59,7 @@ describe("platform/voice-provisioner", () => {
       const [, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
       const body = options.body as URLSearchParams;
       expect(body.get("VoiceUrl")).toBe(
-        "https://alice.matrix-os.com/voice/webhook/twilio",
+        "https://app.matrix-os.com/voice/webhook/twilio?handle=alice",
       );
     });
 

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,49 +8,74 @@ import {
   Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useOAuth, useAuth } from "@clerk/clerk-expo";
+import { makeRedirectUri } from "expo-auth-session";
+import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Ionicons } from "@expo/vector-icons";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Image } from "expo-image";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 WebBrowser.maybeCompleteAuthSession();
 
+const clerkOAuthRedirectUrl =
+  process.env.EXPO_PUBLIC_CLERK_OAUTH_REDIRECT_URL ??
+  makeRedirectUri({ scheme: "matrixos", path: "sso-callback" });
+
 export default function SignInScreen() {
   const router = useRouter();
   const { isSignedIn } = useAuth();
-  const { startOAuthFlow } = useOAuth({ strategy: "oauth_google" });
+  const { startSSOFlow } = useSSO();
 
   const [loading, setLoading] = useState(false);
+  const redirectedRef = useRef(false);
 
-  if (isSignedIn) {
-    router.replace("/(tabs)/chat");
-    return null;
-  }
+  useEffect(() => {
+    if (isSignedIn && !redirectedRef.current) {
+      redirectedRef.current = true;
+      router.replace("/(tabs)/apps" as any);
+    }
+  }, [isSignedIn, router]);
 
   const handleGoogleSignIn = useCallback(async () => {
     setLoading(true);
     try {
-      const { createdSessionId, setActive } = await startOAuthFlow();
+      const { createdSessionId, setActive } = await startSSOFlow({
+        strategy: "oauth_google",
+        redirectUrl: clerkOAuthRedirectUrl,
+      });
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
-        router.replace("/(tabs)/chat");
+        redirectedRef.current = true;
+        router.replace("/(tabs)/apps" as any);
       }
-    } catch (err: any) {
-      const msg = err?.errors?.[0]?.longMessage || err?.message || "Sign in failed";
-      Alert.alert("Error", msg);
+    } catch (err: unknown) {
+      console.warn("[mobile] Google sign-in failed:", err);
+      Alert.alert("Sign in failed", "Check the mobile OAuth redirect URL and try again.");
     } finally {
       setLoading(false);
     }
-  }, [startOAuthFlow, router]);
+  }, [startSSOFlow, router]);
+
+  if (isSignedIn) {
+    return null;
+  }
 
   return (
-    <SafeAreaView style={styles.container} edges={["bottom"]}>
+    <View style={styles.container}>
       <View style={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>Welcome to Matrix OS</Text>
+          <View style={styles.logoContainer}>
+            <Image
+              source={require("../assets/icon.png")}
+              style={styles.logo}
+              contentFit="contain"
+              accessibilityLabel="Matrix OS"
+            />
+          </View>
+          <Text style={styles.wordmark}>MATRIX OS</Text>
+          <Text style={styles.title}>Enter your AI operating system</Text>
           <Text style={styles.subtitle}>
-            Sign in to access your AI operating system
+            Sign in to sync your shell, apps, channels, and agent state.
           </Text>
         </View>
 
@@ -76,7 +101,7 @@ export default function SignInScreen() {
           By continuing, you agree to our Terms of Service and Privacy Policy
         </Text>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -94,11 +119,34 @@ const styles = StyleSheet.create({
     marginBottom: 40,
     alignItems: "center",
   },
+  logoContainer: {
+    width: 104,
+    height: 104,
+    borderRadius: 28,
+    borderCurve: "continuous" as const,
+    backgroundColor: colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    boxShadow: "0 12px 28px rgba(50, 61, 46, 0.10)",
+    marginBottom: spacing.lg,
+  },
+  logo: {
+    width: 76,
+    height: 76,
+  },
+  wordmark: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 12,
+    color: colors.light.forest,
+    letterSpacing: 2.4,
+    marginBottom: spacing.lg,
+  },
   title: {
     fontFamily: fonts.sansBold,
-    fontSize: 28,
+    fontSize: 30,
     color: colors.light.foreground,
-    letterSpacing: -0.5,
     marginBottom: 8,
     textAlign: "center",
   },

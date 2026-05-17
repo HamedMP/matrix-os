@@ -16,16 +16,27 @@ import {
   JetBrainsMono_700Bold,
 } from "@expo-google-fonts/jetbrains-mono";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { ClerkProvider } from "@clerk/clerk-expo";
+import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
-import { getActiveGateway, type GatewayConnection } from "@/lib/storage";
+import { HOSTED_GATEWAY, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { colors, fonts } from "@/lib/theme";
 
-import "../global.css";
+let nativeSplashRegistered = false;
+const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
+  .then(() => {
+    nativeSplashRegistered = true;
+    return true;
+  })
+  .catch((err: unknown) => {
+    console.warn("[mobile] Native splash screen was not registered:", err);
+    return false;
+  });
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
+const clerkPublishableKey =
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 const tokenCache = {
   async getToken(key: string) {
@@ -70,44 +81,13 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
   });
 
-  const [client, setClient] = useState<GatewayClient | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
-  const [gateway, setGatewayState] = useState<GatewayConnection | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [ready, setReady] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  const incrementUnread = useCallback(() => {
-    setUnreadCount((c) => c + 1);
-  }, []);
-
-  const clearUnread = useCallback(() => {
-    setUnreadCount(0);
-  }, []);
-
-  const setGateway = useCallback((gw: GatewayConnection) => {
-    client?.disconnect();
-    const newClient = new GatewayClient(gw.url, gw.token);
-    newClient.onStateChange(setConnectionState);
-    newClient.connect();
-    setClient(newClient);
-    setGatewayState(gw);
-  }, [client]);
 
   useEffect(() => {
     async function init() {
       const authed = await authenticateBiometric();
       setAuthenticated(authed);
-
-      const savedGateway = await getActiveGateway();
-      if (savedGateway) {
-        const gw = new GatewayClient(savedGateway.url, savedGateway.token);
-        gw.onStateChange(setConnectionState);
-        gw.connect();
-        setClient(gw);
-        setGatewayState(savedGateway);
-      }
-
       setReady(true);
     }
 
@@ -115,9 +95,18 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (fontsLoaded && ready) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
+    if (!fontsLoaded || !ready) return;
+
+    let cancelled = false;
+    nativeSplashRegistration.then((registered) => {
+      if (cancelled || (!registered && !nativeSplashRegistered)) return;
+      void SplashScreen.hideAsync().catch((err: unknown) => {
+        console.warn("[mobile] Native splash screen could not be hidden:", err);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fontsLoaded, ready]);
 
   if (!fontsLoaded || !ready) {
@@ -139,42 +128,170 @@ export default function RootLayout() {
     );
   }
 
+  if (!clerkPublishableKey) {
+    return <MissingClerkConfigScreen />;
+  }
+
   return (
-    <ClerkProvider tokenCache={tokenCache}>
-      <GestureHandlerRootView style={styles.flex}>
-        <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }}>
-          <Stack
-            screenOptions={{
-              headerStyle: { backgroundColor: colors.light.background },
-              headerTintColor: colors.light.foreground,
-              headerTitleStyle: { fontFamily: fonts.sansSemiBold },
-              contentStyle: { backgroundColor: colors.light.background },
-            }}
-          >
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="connect"
-              options={{
-                title: "Self-hosted Gateway",
-                presentation: "modal",
-                headerStyle: { backgroundColor: colors.light.background },
-              }}
-            />
-            <Stack.Screen
-              name="sign-in"
-              options={{
-                title: "Sign In",
-                presentation: "modal",
-                headerStyle: { backgroundColor: colors.light.background },
-              }}
-            />
-          </Stack>
-          <NotificationRouter />
-          <StatusBar style="dark" />
-        </GatewayContext.Provider>
-      </GestureHandlerRootView>
+    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+      <GatewayShell />
     </ClerkProvider>
+  );
+}
+
+function MissingClerkConfigScreen() {
+  return (
+    <View style={styles.loadingContainer}>
+      <Text style={styles.loadingTitle}>Matrix OS</Text>
+      <Text style={styles.configTitle}>Missing mobile auth config</Text>
+      <Text style={styles.configBody}>
+        Set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY before starting Expo.
+      </Text>
+    </View>
+  );
+}
+
+function GatewayShell() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const [client, setClient] = useState<GatewayClient | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
+  const [gateway, setGatewayState] = useState<GatewayConnection | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const getTokenRef = useRef(getToken);
+  const connectionKeyRef = useRef<string | null>(null);
+  const clientRef = useRef<GatewayClient | null>(null);
+
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
+
+  const incrementUnread = useCallback(() => {
+    setUnreadCount((c) => c + 1);
+  }, []);
+
+  const clearUnread = useCallback(() => {
+    setUnreadCount(0);
+  }, []);
+
+  const setGateway = useCallback((gw: GatewayConnection) => {
+    clientRef.current?.disconnect();
+    const newClient = new GatewayClient(gw.url, gw.token);
+    newClient.onStateChange(setConnectionState);
+    newClient.connect();
+    clientRef.current = newClient;
+    setClient(newClient);
+    setGatewayState(gw);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    let cancelled = false;
+
+    async function connectHostedGateway() {
+      if (!isSignedIn) {
+        if (connectionKeyRef.current === null) return;
+        connectionKeyRef.current = null;
+        clientRef.current?.disconnect();
+        clientRef.current = null;
+        setClient(null);
+        setGatewayState(null);
+        setConnectionState("disconnected");
+        return;
+      }
+
+      const token = await getTokenRef.current();
+      if (cancelled) return;
+      if (!token) {
+        connectionKeyRef.current = null;
+        clientRef.current?.disconnect();
+        clientRef.current = null;
+        setClient(null);
+        setGatewayState(null);
+        setConnectionState("disconnected");
+        console.warn("[mobile] Clerk is signed in but no session token was available for Matrix OS");
+        return;
+      }
+
+      const hostedGateway: GatewayConnection = {
+        ...HOSTED_GATEWAY,
+        token,
+      };
+      const nextKey = `${hostedGateway.url}:${hostedGateway.token ?? ""}`;
+      if (connectionKeyRef.current === nextKey) return;
+      connectionKeyRef.current = nextKey;
+
+      clientRef.current?.disconnect();
+      const nextClient = new GatewayClient(hostedGateway.url, () => getTokenRef.current());
+      clientRef.current = nextClient;
+      setClient(nextClient);
+      setGatewayState(hostedGateway);
+      setConnectionState("connecting");
+
+      nextClient.onStateChange(setConnectionState);
+      const wsToken = await nextClient.getWsToken();
+      if (cancelled || clientRef.current !== nextClient) return;
+      if (!wsToken) {
+        console.warn("[mobile] ws-token unavailable, connecting without upgrade token");
+        nextClient.connect();
+        return;
+      }
+      nextClient.setWebSocketToken(wsToken);
+      nextClient.connect();
+    }
+
+    connectHostedGateway();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    return () => {
+      clientRef.current?.disconnect();
+      clientRef.current = null;
+    };
+  }, []);
+
+  return (
+    <GestureHandlerRootView style={styles.flex}>
+      <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }}>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: colors.light.background },
+            headerTintColor: colors.light.foreground,
+            headerTitleStyle: { fontFamily: fonts.sansSemiBold },
+            contentStyle: { backgroundColor: colors.light.background },
+          }}
+        >
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="apps" options={{ headerShown: false }} />
+          <Stack.Screen name="terminal" options={{ headerShown: false }} />
+          <Stack.Screen name="runtime" options={{ headerShown: false }} />
+          <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="connect"
+            options={{
+              title: "Gateway",
+              presentation: "modal",
+              headerStyle: { backgroundColor: colors.light.background },
+            }}
+          />
+          <Stack.Screen
+            name="sign-in"
+            options={{
+              title: "Sign In",
+              presentation: "modal",
+              headerStyle: { backgroundColor: colors.light.background },
+            }}
+          />
+        </Stack>
+        <NotificationRouter />
+        <StatusBar style="dark" />
+      </GatewayContext.Provider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -217,5 +334,19 @@ const styles = StyleSheet.create({
   },
   loadingSpinner: {
     marginTop: 24,
+  },
+  configTitle: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 16,
+    color: colors.light.foreground,
+    marginTop: 16,
+  },
+  configBody: {
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+    marginTop: 8,
+    maxWidth: 300,
+    textAlign: "center",
   },
 });

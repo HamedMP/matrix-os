@@ -61,7 +61,7 @@ graph TD
 `packages/platform/` owns shared platform concerns:
 
 - Clerk/session auth for `app.matrix-os.com` and `code.matrix-os.com`.
-- `{handle}.matrix-os.com` routing.
+- Session-based routing from the signed-in Clerk user to that user's active customer VPS.
 - `user_machines` registry for customer VPSes.
 - Hetzner provisioning, registration, deletion, and recovery flows.
 - Host-bundle serving through `/system-bundles/*`.
@@ -174,13 +174,6 @@ The gateway creates schema-per-app Postgres tables and exposes scoped CRUD throu
 4. Platform finds the user's `running` `user_machines` row.
 5. Platform proxies to `https://<customer-vps-ip>:443`.
 6. Customer nginx routes shell/gateway/code requests to local services.
-
-### Handle Domain
-
-1. Browser requests `https://alice.matrix-os.com`.
-2. Platform resolves `alice` to a customer VPS.
-3. Platform proxies to that VPS.
-4. The customer gateway/shell serves the user workspace.
 
 ### App Data
 

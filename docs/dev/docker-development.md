@@ -163,7 +163,7 @@ All env vars are loaded from `.env.docker` (via `env_file` in compose). The comp
 | `MATRIX_AUTH_TOKEN` | No | - | Legacy bearer token for service-to-service auth. Coexists with `PLATFORM_JWT_SECRET`. |
 | `PLATFORM_JWT_SECRET` | No | - | HS256 secret used to verify sync JWTs issued by the platform. Set the **same value** on the platform service so issued tokens validate. Min 32 chars. Dev only. |
 | `PLATFORM_JWT_PUBLIC_KEY` | No | - | RS256 public key (PEM) for verifying platform-issued sync JWTs in production. Takes precedence over `PLATFORM_JWT_SECRET` when set. |
-| `GATEWAY_URL_TEMPLATE` | No | `https://{handle}.matrix-os.com` | Platform-only. Template for the gateway URL embedded in issued sync JWTs and returned by `/api/me`. Use `http://localhost:4000` for single-tenant dev or `http://matrixos-{handle}:4000` for in-cluster Docker routing. |
+| `GATEWAY_URL_TEMPLATE` | No | `https://app.matrix-os.com` | Platform-only. Template for the gateway URL embedded in issued sync JWTs and returned by `/api/me`. Use `http://localhost:4000` for single-tenant dev or `http://matrixos-{handle}:4000` for in-cluster Docker routing. |
 | `PLATFORM_PUBLIC_URL` | No | `http://localhost:9000` | Platform-only. Base URL the CLI's browser should hit for `/auth/device?user_code=...`. |
 
 **Pointing at Cloudflare R2 instead of MinIO**: set `S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com` (or `R2_ACCOUNT_ID=<id>`), unset `S3_PUBLIC_ENDPOINT`, and set real credentials. R2 is virtual-host style, so `S3_FORCE_PATH_STYLE=false`.

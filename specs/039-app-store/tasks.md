@@ -10,7 +10,7 @@
 - **US68**: "I can publish my app to the store by saying 'publish my app'"
 - **US69**: "I can browse and install apps from a store inside my OS"
 - **US70**: "Anyone can try my app via a public link without signing up"
-- **US71**: "My handle gives me a personal website at handle.matrix-os.com"
+- **US71**: "My Matrix profile is available from managed Matrix social/profile surfaces"
 - **US72**: "I can fork any public app and modify it"
 - **US73**: "I can see which apps are popular, new, and well-rated"
 
@@ -156,8 +156,8 @@
 ## Phase E: Personal Websites (T1490-T1494)
 
 ### T1490 [US71] Subdomain routing
-- [ ] Wildcard DNS: `*.matrix-os.com` -> platform service
-- [ ] Platform routes `{handle}.matrix-os.com` to user's container
+- [ ] Managed routing: `app.matrix-os.com` -> platform service
+- [ ] Platform routes the signed-in user to their active runtime
 - [ ] Not logged in: serve `~/apps/profile/index.html` (public profile)
 - [ ] Logged in as owner: serve full Matrix OS shell
 - [ ] Logged in as other user: serve public profile

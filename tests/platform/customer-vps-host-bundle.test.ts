@@ -18,7 +18,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
-    expect(script).toContain('bin app runtime release.json');
+    expect(script).toContain('bin app runtime systemd release.json');
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
@@ -32,6 +32,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
     expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
+    expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
+    expect(script).toContain('matrix-messaging-health');
+    expect(script).toContain('bin app runtime systemd release.json');
   });
 
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {
@@ -98,9 +101,19 @@ describe('customer VPS host bundle', () => {
     expect(updater).toContain('/opt/matrix/app/.update-version');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
-    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*');
+    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|<version>]');
+    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|v<version>|main-<build>]');
+  });
+
+  it('sync agent installs bundled messaging systemd units during updates', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
+    expect(syncAgent).toContain('sudo systemctl daemon-reload');
+    expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
   });
 
   it('sync agent replaces the app tree with root permissions', () => {

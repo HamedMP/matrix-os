@@ -28,7 +28,7 @@ they go. Keep it concise — status per group, files touched, open questions.
 - [x] Review agents run per group (Review A+D: SHIP; Review B: SHIP; Review C: FIX; silent-failure-hunter: FIX)
 - [x] Fix wave landed (gateway `247d066`, client `e45cf5b`/`01148e1`/`06927c3`, platform `1894145`)
 - [~] PR 30 review remediation in progress — tracker: `specs/066-file-sync/pr-review.md` (trusted platform-proxy refactor now removes tenant-visible R2 credentials, `PLATFORM_DATABASE_URL`, and container JWT-signing-secret needs; latest blocker/worth-fixing wave aligns sync identity on `MATRIX_USER_ID`, hardens home-mirror local push semantics, makes share accept/revoke transactional, and fixes watcher async-error handling; latest runtime/integrity wave fixes the daemon `stat()` regression, validates WS payloads, caps client state, verifies pull hashes, adds temp-file crash cleanup, and hardens platform/orchestrator auth+transaction paths; latest data-plane wave fixes PUT presign size plumbing, valid sync peer subscribe frames, atomic verified client downloads, clean JWT-expiry exits, device-page CSP, and batched startup manifest writes; host suites now cover gateway auth-jwt, platform sync-jwt, presign, r2-client, app-db, home-mirror, sync-client oauth/config/ipc/ws/runtime guards, routes, user-id wiring, platform-r2-client, and the latest blocker/runtime/data-plane regression waves `319/319`, while Docker verifies platform device-flow + device-routes + proxy-routing + home-mirror-env + orchestrator + internal-sync-routes + middleware short-circuit `178/178`)
-- [x] Legacy `{handle}.matrix-os.com` middleware retired in `1894145` (voice-tunnel still uses per-handle subdomain via Cloudflare tunnel ingress — not via the retired platform middleware, so safe)
+- [x] Legacy `{handle}.matrix-os.com` middleware retired in `1894145`; voice webhooks now use `https://app.matrix-os.com/voice/webhook/twilio?handle={handle}` and platform forwards by handle.
 - [x] Integration verification (local): 451/451 platform+gateway-sync+auth-jwt, 149/149 sync-client (2 pre-existing oauth.test.ts unhandled-rejection warnings unrelated to PR 1)
 - [ ] Smoke tests per deployment-plan.md § "Smoke tests" executed against prod (requires VPS deploy)
 - [ ] Ready to merge — pending user approval + VPS smoke tests
@@ -328,10 +328,9 @@ and landed as a single conventional commit.
   branch (main.ts:805-855) + the redundant in-middleware device-flow
   short-circuit that went with it. `gatewayUrlForHandle` still returns
   `https://app.matrix-os.com` for every handle (contract unchanged).
-  Remaining consumers of `{handle}.matrix-os.com` in the codebase
-  (`voice-provisioner.ts`, `voice/tunnel/cloudflare.ts`) serve Twilio
-  webhooks via a Cloudflare tunnel pointing directly at the user
-  container — they never went through this platform middleware, so
+  Voice provisioning and tunnel helpers now use `app.matrix-os.com`;
+  Twilio webhook routing goes through the platform app-domain proxy
+  with a `handle` query parameter, so
   retiring it is safe. Flagged to lead.
   Tests: 262/262 platform (was 251 pre-wave; +11).
 - [x] Group C hardening — fix-client — committed. Commits:

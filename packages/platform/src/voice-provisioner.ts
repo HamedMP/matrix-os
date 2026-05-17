@@ -1,6 +1,7 @@
 export interface VoiceProvisionerConfig {
   accountSid: string;
   authToken: string;
+  publicBaseUrl?: string;
 }
 
 export interface ProvisionResult {
@@ -11,10 +12,18 @@ export interface ProvisionResult {
 export class VoiceProvisioner {
   private accountSid: string;
   private authToken: string;
+  private publicBaseUrl: string;
 
   constructor(config: VoiceProvisionerConfig) {
     this.accountSid = config.accountSid;
     this.authToken = config.authToken;
+    this.publicBaseUrl = config.publicBaseUrl ?? "https://app.matrix-os.com";
+  }
+
+  private buildWebhookUrl(handle: string): string {
+    const url = new URL("/voice/webhook/twilio", this.publicBaseUrl);
+    url.searchParams.set("handle", handle);
+    return url.toString();
   }
 
   async provisionNumber(handle: string): Promise<ProvisionResult | null> {
@@ -23,7 +32,7 @@ export class VoiceProvisioner {
     }
 
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/IncomingPhoneNumbers.json`;
-    const webhookUrl = `https://${handle}.matrix-os.com/voice/webhook/twilio`;
+    const webhookUrl = this.buildWebhookUrl(handle);
 
     const body = new URLSearchParams({
       VoiceUrl: webhookUrl,

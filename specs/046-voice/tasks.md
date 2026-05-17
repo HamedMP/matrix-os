@@ -422,7 +422,7 @@ Implementation:
   - On user provisioning: call Twilio API to allocate phone number from pool
   - `POST https://api.twilio.com/2010-04-01/Accounts/{sid}/IncomingPhoneNumbers.json`
   - Store number + SID in platform DB (new column on users table)
-  - Configure webhook URL: `https://{handle}.matrix-os.com/voice/webhook/twilio`
+  - Configure webhook URL: `https://app.matrix-os.com/voice/webhook/twilio?handle={handle}`
   - On user deletion: release phone number back to pool
   - Graceful: if Twilio provisioning fails, user still created (voice disabled)
 

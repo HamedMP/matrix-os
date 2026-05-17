@@ -3,6 +3,8 @@ import * as SecureStore from "expo-secure-store";
 const GATEWAYS_KEY = "matrix_os_gateways";
 const ACTIVE_GATEWAY_KEY = "matrix_os_active_gateway";
 const SETTINGS_KEY = "matrix_os_settings";
+export const HOSTED_GATEWAY_URL = "https://app.matrix-os.com";
+export const HOSTED_GATEWAY_ID = "matrix-os-hosted";
 
 export interface GatewayConnection {
   id: string;
@@ -22,6 +24,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   biometricEnabled: false,
   theme: "system",
   notificationsEnabled: true,
+};
+
+export const HOSTED_GATEWAY: GatewayConnection = {
+  id: HOSTED_GATEWAY_ID,
+  url: HOSTED_GATEWAY_URL,
+  name: "Matrix OS Cloud",
+  addedAt: 0,
 };
 
 export async function getGateways(): Promise<GatewayConnection[]> {
@@ -59,11 +68,11 @@ export async function setActiveGatewayId(id: string): Promise<void> {
   await SecureStore.setItemAsync(ACTIVE_GATEWAY_KEY, id);
 }
 
-export async function getActiveGateway(): Promise<GatewayConnection | null> {
+export async function getActiveGateway(): Promise<GatewayConnection> {
   const id = await getActiveGatewayId();
-  if (!id) return null;
+  if (!id) return HOSTED_GATEWAY;
   const gateways = await getGateways();
-  return gateways.find((g) => g.id === id) ?? null;
+  return gateways.find((g) => g.id === id) ?? HOSTED_GATEWAY;
 }
 
 export async function getSettings(): Promise<AppSettings> {

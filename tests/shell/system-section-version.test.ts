@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareHostBundleReleaseVersions,
   isNewer,
   normalizeMatrixReleaseTag,
+  releaseActionLabel,
   resolveSystemUpdateState,
   severityBadgeStyle,
 } from "../../shell/src/components/settings/sections/system-update-state.js";
@@ -20,6 +22,43 @@ describe("SystemSection version helpers", () => {
     expect(isNewer("0.2.4", "0.2.3")).toBe(true);
     expect(isNewer("0.2.4", "0.2.4")).toBe(false);
     expect(isNewer("0.2.3", "0.2.4")).toBe(false);
+  });
+
+  it("compares host bundle releases for downgrade actions", () => {
+    expect(compareHostBundleReleaseVersions("v2026.05.14-2", "v2026.05.14-1")).toBe(1);
+    expect(compareHostBundleReleaseVersions("v2026.05.13-1", "v2026.05.14-1")).toBe(-1);
+    expect(compareHostBundleReleaseVersions("v2026.05.14-1", "v2026.05.14-1")).toBe(0);
+    expect(compareHostBundleReleaseVersions(
+      "main-abc1234-20260514121530",
+      "main-abc1234-20260514111530",
+    )).toBe(1);
+    expect(compareHostBundleReleaseVersions(
+      "main-abc1234-20260513121530",
+      "main-abc1234-20260514111530",
+    )).toBe(-1);
+    expect(compareHostBundleReleaseVersions(
+      "main-abc1234-20260514121530",
+      "v2026.05.14-1",
+    )).toBe(1);
+    expect(compareHostBundleReleaseVersions(
+      "v2026.05.14-1",
+      "main-abc1234-20260514121530",
+    )).toBe(-1);
+  });
+
+  it("labels explicit release installs as upgrade or downgrade", () => {
+    expect(releaseActionLabel({
+      candidateVersion: "v2026.05.14-2",
+      currentVersion: "v2026.05.14-1",
+    })).toBe("Upgrade");
+    expect(releaseActionLabel({
+      candidateVersion: "v2026.05.13-1",
+      currentVersion: "v2026.05.14-1",
+    })).toBe("Downgrade");
+    expect(releaseActionLabel({
+      candidateVersion: "v2026.05.14-1",
+      currentVersion: "v2026.05.14-1",
+    })).toBe("Installed");
   });
 
   it("uses VPS host-bundle update metadata before GitHub release tags", () => {

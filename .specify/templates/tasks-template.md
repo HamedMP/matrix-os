@@ -11,6 +11,8 @@ description: "Task list template for feature implementation"
 **Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
+For Matrix OS repositories, multi-phase features should also include a Graphite
+stack plan so each phase or user story can become a small stacked PR.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -169,6 +171,20 @@ Examples of foundational tasks (adjust based on your project):
   - User stories can then proceed in parallel (if staffed)
   - Or sequentially in priority order (P1 → P2 → P3)
 - **Polish (Final Phase)**: Depends on all desired user stories being complete
+
+### Graphite Stack Plan
+
+For multi-phase Matrix OS features, publish phases as Graphite stacked PRs
+instead of one oversized PR. Suggested stack:
+
+- **Stack 1**: Setup, spec/docs, spike gates, and shared scaffolding.
+- **Stack 2**: Foundational infrastructure that blocks user stories.
+- **Stack 3+**: One PR per user story phase where possible.
+- **Final Stack**: Operations, docs, polish, and validation notes.
+
+Each stack layer must remain independently reviewable, respect the PR size
+limits in `docs/dev/review-pipeline.md`, and follow `docs/dev/stacked-prs.md`.
+Do not flatten stack layers unless explicitly requested.
 
 ### User Story Dependencies
 

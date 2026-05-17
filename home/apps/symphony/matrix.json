@@ -1,6 +1,6 @@
 {
   "name": "Symphony",
-  "description": "Linear-driven Codex orchestration for Matrix OS repositories",
+  "description": "Matrix-native Linear ticket orchestration with Codex agents and managed worktrees",
   "category": "developer",
   "icon": "code",
   "author": "system",
@@ -17,9 +17,13 @@
   },
   "integrations": {
     "required": [
-      "linear",
-      "github"
+      "linear"
     ]
   },
+  "permissions": [
+    "matrix.projects",
+    "matrix.worktrees",
+    "matrix.agents"
+  ],
   "listingTrust": "first_party"
 }

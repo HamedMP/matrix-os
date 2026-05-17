@@ -272,9 +272,11 @@ function isObjectNotFoundError(err: unknown): boolean {
 function hostBundleReleaseResponse(
   release: HostBundleReleaseRecord,
   url?: string,
+  channel?: string,
 ): Record<string, unknown> {
   return {
     version: release.version,
+    channel: channel ?? release.channel,
     gitCommit: release.gitCommit,
     gitRef: release.gitRef,
     buildTime: release.buildTime,
@@ -1047,9 +1049,16 @@ export function createApp(deps: {
   }
 
   app.get('/system-bundles/releases', async (c) => {
+    const channel = c.req.query('channel');
+    if (channel !== undefined && !HOST_BUNDLE_CHANNEL_PATTERN.test(channel)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
     try {
-      const releases = await listHostBundleReleases(db, 100);
-      return c.json({ releases: releases.map((release) => hostBundleReleaseResponse(release)) });
+      const releases = await listHostBundleReleases(db, 100, channel);
+      return c.json({
+        generatedAt: new Date().toISOString(),
+        releases: releases.map((release) => hostBundleReleaseResponse(release)),
+      });
     } catch (err: unknown) {
       logPlatformRouteError('/system-bundles/releases', err);
       return c.json({ error: 'Host bundle unavailable' }, 502);
@@ -1175,7 +1184,7 @@ export function createApp(deps: {
           return c.json({ error: 'Not found' }, 404);
         }
         const url = await getSignedBundleUrl(release);
-        return c.json(hostBundleReleaseResponse(release, url), 200, {
+        return c.json(hostBundleReleaseResponse(release, url, channel), 200, {
           'cache-control': 'private, max-age=30',
         });
       } catch (err: unknown) {
@@ -1236,7 +1245,7 @@ export function createApp(deps: {
     if (file.endsWith('.json')) {
       try {
         const url = await getSignedBundleUrl(release);
-        return c.json(hostBundleReleaseResponse(release, url), 200, {
+        return c.json(hostBundleReleaseResponse(release, url, isChannelAlias ? imageVersion : undefined), 200, {
           'cache-control': 'private, max-age=30',
         });
       } catch (err: unknown) {
@@ -1293,7 +1302,7 @@ export function createApp(deps: {
         return c.json({ error: 'Not found' }, 404);
       }
       const url = await getSignedBundleUrl(release);
-      return c.json(hostBundleReleaseResponse(release, url), 200, {
+      return c.json(hostBundleReleaseResponse(release, url, channel), 200, {
         'cache-control': 'private, max-age=30',
       });
     } catch (err: unknown) {
@@ -1355,6 +1364,59 @@ export function createApp(deps: {
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
     if (isAppDomain && isPublicIntegrationPath) {
       return next();
+    }
+    if (isAppDomain && reqPath === '/voice/webhook/twilio') {
+      const webhookUrl = new URL(c.req.url);
+      const handle = webhookUrl.searchParams.get('handle') ?? '';
+      if (!HANDLE_PATTERN.test(handle)) {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+
+      const runningMachine = await getRunningUserMachineByHandle(db, handle);
+      if (!runningMachine) {
+        return c.json({ error: 'VPS unavailable' }, 404);
+      }
+
+      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) {
+          headers.set(key, value);
+        }
+      }
+      headers.set('host', 'app.matrix-os.com');
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
+      headers.set('connection', 'close');
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(handle, platformSecret)}`);
+      }
+
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: sanitizeProxyResponseHeaders(upstream.headers),
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain voice webhook proxy', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
     }
 
     const authHeader = c.req.header('authorization');

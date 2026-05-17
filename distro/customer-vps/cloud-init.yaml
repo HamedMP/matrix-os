@@ -18,6 +18,7 @@ write_files:
     permissions: "0644"
     content: |
       export PATH="/opt/matrix/runtime/node/bin:$PATH"
+      test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
   - path: /opt/matrix/postgres-compose.yml
     owner: root:root
     permissions: "0644"
@@ -137,6 +138,28 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-sync-agent
       Restart=on-failure
       RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-linux-tools.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Install Matrix OS optional Linux developer tools
+      After=network-online.target
+      Wants=network-online.target
+      ConditionPathExists=/opt/matrix/bin/matrix-install-linux-tools
+
+      [Service]
+      Type=oneshot
+      User=matrix
+      Group=matrix
+      Environment=HOME=/home/matrix
+      ExecStart=/opt/matrix/bin/matrix-install-linux-tools
+      Restart=on-failure
+      RestartSec=10m
+      TimeoutStartSec=1800
 
       [Install]
       WantedBy=multi-user.target
@@ -642,13 +665,14 @@ runcmd:
       apt_get_update
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
 
     install -d -o root -g matrix -m 0770 /opt/matrix
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
+    install -d -o matrix -g matrix -m 0755 /opt/matrix/messaging /opt/matrix/messaging/bin
     install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config
     install -d -o matrix -g matrix -m 0755 /home/matrix/.config/systemd /home/matrix/home/.config/systemd/user
     install -d -o root -g root -m 0750 /etc/sudoers.d
@@ -671,11 +695,15 @@ runcmd:
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    if [ -d /opt/matrix/systemd ]; then
+      install -d -o root -g root -m 0755 /etc/systemd/system
+      install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/
+    fi
     if [ -f /opt/matrix/release.json ]; then
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes
+    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes /opt/matrix/bin/matrix-install-linux-tools /opt/matrix/bin/matrix-messaging-health /opt/matrix/bin/matrix-messaging-backup /opt/matrix/bin/matrix-messaging-restore
     for cli in node npm npx claude codex opencode pi code-server uv uvx; do
       if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then
         ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"
@@ -710,7 +738,14 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer nginx
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-linux-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service
+    systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2
+    if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
+      systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
+      systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || echo "matrix-host: optional messaging services will retry via systemd" >&2
+    else
+      echo "matrix-host: messaging runtimes not installed; units installed but not enabled" >&2
+    fi
     systemctl restart nginx
     systemctl start matrix-db-backup.timer

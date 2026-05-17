@@ -10,7 +10,7 @@ Vercel (www/)
   |-- Clerk auth + Inngest provisioning
   |
 Cloudflare Edge
-  |-- app.matrix-os.com / code.matrix-os.com / *.matrix-os.com
+  |-- app.matrix-os.com / code.matrix-os.com
   |
   +-- Cloudflare Tunnel (outbound only from platform VPS)
       |-- api.matrix-os.com -> localhost:9000 (platform API)
@@ -139,15 +139,15 @@ Legacy `/containers/*` routes remain for local development and old fallback path
 5. When customer VPS provisioning is enabled, platform delegates to POST /vps/provision
 6. Platform inserts a user_machines row, renders cloud-init, and asks Hetzner to create the server
 7. The customer VPS downloads the host bundle, starts local Postgres and Matrix services, then calls POST /vps/register
-8. Platform marks the machine running; app.matrix-os.com, code.matrix-os.com, and {handle}.matrix-os.com route to it
+8. Platform marks the machine running; app.matrix-os.com and code.matrix-os.com route the signed-in user to it
 ```
 
 ### Request Routing
 
 ```
-1. Browser: https://app.matrix-os.com or https://alice.matrix-os.com
+1. Browser: https://app.matrix-os.com
 2. Cloudflare: resolve DNS -> tunnel to platform
-3. Platform verifies Clerk/session identity or handle route
+3. Platform verifies Clerk/session identity
 4. Platform looks up a running user_machines row
 5. Platform proxies over HTTPS to https://<customer-vps-ip>:443
 6. Customer nginx routes to matrix-shell, matrix-gateway, or matrix-code on localhost

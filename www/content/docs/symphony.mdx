@@ -1,0 +1,51 @@
+---
+title: Symphony
+description: Run assigned Linear tickets with Matrix-owned coding agents and worktrees.
+---
+
+# Symphony
+
+Symphony turns selected Linear tickets into Matrix-owned coding-agent runs. You
+choose which team, labels, states, and assignees Symphony can react to. Matrix
+creates the worktree, starts the agent session, and shows the status in one
+dashboard.
+
+## Set Up Linear
+
+Open Symphony from Matrix and use **Setup**.
+
+Add a Linear API secret server-side, then choose:
+
+- Matrix project
+- Linear team
+- Required labels
+- Active and terminal states
+- Optional assignee IDs
+- Agent and concurrency
+
+The browser only sees whether a credential exists. It never receives your
+Linear token.
+
+## Run Tickets
+
+After setup, Symphony previews eligible tickets. Press **Start** to let Symphony
+poll Linear and claim work.
+
+For every eligible ticket, Symphony creates or reuses one Matrix worktree,
+acquires the worktree lease, starts one agent session, and records the run in
+the dashboard. Duplicate active claims for the same ticket are rejected.
+
+## Operate Runs
+
+The dashboard groups work by Queue, Running, Needs Attention, and Done/Handoff.
+Each run shows the ticket, agent, worktree, session, latest event, and actions to
+stop, retry, open the Matrix workspace, or open the Linear ticket.
+
+If Linear, workflow loading, worktree creation, or agent startup fails, Symphony
+shows a generic attention state while detailed errors stay in server logs.
+
+## Workflow Policy
+
+Repository instructions stay in `WORKFLOW.md` inside the selected Matrix
+project. Matrix stores runtime rules and credentials separately so teams can
+version coding policy without putting secrets in the repo.

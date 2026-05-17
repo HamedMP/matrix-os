@@ -56,9 +56,14 @@ function MenuBarClock() {
 }
 
 function MenuBarUser() {
+  const [mounted, setMounted] = useState(false);
   const { isLoaded, isSignedIn } = useAuth();
 
-  if (!isLoaded || !isSignedIn) {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted || !isLoaded || !isSignedIn) {
     return (
       <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
         <UserIcon className="size-[14px] text-foreground/70" />
@@ -209,7 +214,12 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
       if (sel?.toString()) await navigator.clipboard.writeText(sel.toString());
     }},
     { label: "Paste", shortcut: "⌘V", action: async () => {
-      try { const text = await navigator.clipboard.readText(); document.execCommand("insertText", false, text); } catch { /* denied */ }
+      try {
+        const text = await navigator.clipboard.readText();
+        document.execCommand("insertText", false, text);
+      } catch (err: unknown) {
+        console.warn("[menu] Clipboard paste was denied or unavailable:", err);
+      }
     }},
     { separator: true },
     { label: "Select All", shortcut: "⌘A", action: () => document.execCommand("selectAll") },

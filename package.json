@@ -56,6 +56,13 @@
       "allowedVersions": {
         "kysely-codegen>kysely": "^0.28.0"
       }
+    },
+    "packageExtensions": {
+      "node-pty@*": {
+        "dependencies": {
+          "node-gyp": "12.3.0"
+        }
+      }
     }
   },
   "devDependencies": {
@@ -68,6 +75,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.45.1",
+    "lucide-react": "^0.563.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "tsx": "^4.21.0",

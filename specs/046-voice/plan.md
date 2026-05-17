@@ -211,7 +211,7 @@ Platform injects `TWILIO_*`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY` into user ga
 
 ### D3: Webhook URL configuration
 
-Platform configures Twilio webhook URL to `https://{handle}.matrix-os.com/voice/webhook/twilio` using existing Cloudflare Tunnel subdomain.
+Platform configures Twilio webhook URL to `https://app.matrix-os.com/voice/webhook/twilio?handle={handle}`. The app-domain platform proxy resolves the handle to the running customer VPS and forwards the webhook without requiring a browser session.
 
 ### D4: Tunnel provider interface
 

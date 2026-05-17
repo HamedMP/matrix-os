@@ -115,7 +115,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!gateway && !isSignedIn) {
-      router.replace("/connect");
+      router.replace("/sign-in");
     }
   }, [gateway, isSignedIn, router]);
 
@@ -341,9 +341,9 @@ export default function ChatScreen() {
             <Text style={styles.emptySubtitle}>
               {isConnected
                 ? "Send a message to start a conversation"
-                : gateway
-                  ? "Connecting to gateway..."
-                  : "No gateway connected"}
+                  : gateway
+                    ? "Connecting to Matrix OS..."
+                    : "Sign in to connect"}
             </Text>
             {isConnected && (
               <View style={styles.suggestionsContainer}>

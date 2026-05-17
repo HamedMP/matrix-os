@@ -10,7 +10,6 @@ import {
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { useGateway } from "../_layout";
 import { ChannelBadge } from "@/components/ChannelBadge";
 import {
@@ -72,7 +71,6 @@ function SettingsRow({
 }
 
 export default function SettingsScreen() {
-  const router = useRouter();
   const { client, connectionState, gateway } = useGateway();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [channels, setChannels] = useState<Record<string, { status: string }>>({});
@@ -99,7 +97,7 @@ export default function SettingsScreen() {
   }, []);
 
   const fetchRemote = useCallback(async () => {
-    if (!client || connectionState !== "connected") return;
+    if (!client) return;
     try {
       const [chStatus, sysInfo, profile] = await Promise.all([
         client.getChannelStatus(),
@@ -112,7 +110,7 @@ export default function SettingsScreen() {
     } catch {
       // silently handle
     }
-  }, [client, connectionState]);
+  }, [client]);
 
   useEffect(() => {
     fetchRemote();
@@ -148,17 +146,8 @@ export default function SettingsScreen() {
         <SettingsRow
           label={gateway?.name ?? "Not connected"}
           icon="server-outline"
-          value={connectionState === "connected" ? "Connected" : connectionState}
+          value={connectionState === "connected" ? "app.matrix-os.com" : connectionState}
         />
-        <Pressable
-          onPress={() => router.push("/connect")}
-          style={({ pressed }) => [
-            styles.actionButton,
-            pressed && styles.rowPressed,
-          ]}
-        >
-          <Text style={styles.actionButtonText}>Manage Gateways</Text>
-        </Pressable>
       </SettingsSection>
 
       <SettingsSection title="Agent">
