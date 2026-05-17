@@ -22,6 +22,13 @@ interface WindowRect {
 /** Maximum pan distance from origin in canvas units. Prevents getting lost. */
 const PAN_LIMIT = 8000;
 
+interface ContainerRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 interface CanvasTransformState {
   zoom: number;
   panX: number;
@@ -29,7 +36,7 @@ interface CanvasTransformState {
   isAnimating: boolean;
   /** True while the user is actively scrolling/wheeling the canvas. */
   isScrolling: boolean;
-  containerEl: HTMLElement | null;
+  containerRect: ContainerRect | null;
 }
 
 interface CanvasTransformActions {
@@ -41,7 +48,7 @@ interface CanvasTransformActions {
   setPan: (x: number, y: number) => void;
   panBy: (dx: number, dy: number) => void;
   setIsScrolling: (v: boolean) => void;
-  setContainerEl: (el: HTMLElement | null) => void;
+  setContainerRect: (rect: ContainerRect | null) => void;
   screenToCanvas: (sx: number, sy: number) => { x: number; y: number };
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
@@ -56,7 +63,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     panY: 0,
     isAnimating: false,
     isScrolling: false,
-    containerEl: null,
+    containerRect: null,
 
     setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
@@ -68,7 +75,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     zoomAtPoint: (newZoom, cx, cy) => {
       const clamped = clampZoom(newZoom);
-      const rect = get().containerEl?.getBoundingClientRect();
+      const rect = get().containerRect;
       const lx = cx - (rect?.left ?? 0);
       const ly = cy - (rect?.top ?? 0);
       set((s) => ({
@@ -87,13 +94,12 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     setIsScrolling: (v) => { if (get().isScrolling !== v) set({ isScrolling: v }); },
 
-    setContainerEl: (el) => set({ containerEl: el }),
+    setContainerRect: (rect) => set({ containerRect: rect }),
 
     screenToCanvas: (sx, sy) => {
-      const { zoom, panX, panY, containerEl } = get();
-      const rect = containerEl?.getBoundingClientRect();
-      const lx = sx - (rect?.left ?? 0);
-      const ly = sy - (rect?.top ?? 0);
+      const { zoom, panX, panY, containerRect } = get();
+      const lx = sx - (containerRect?.left ?? 0);
+      const ly = sy - (containerRect?.top ?? 0);
       return {
         x: lx / zoom - panX,
         y: ly / zoom - panY,
@@ -101,11 +107,10 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     },
 
     canvasToScreen: (cx, cy) => {
-      const { zoom, panX, panY, containerEl } = get();
-      const rect = containerEl?.getBoundingClientRect();
+      const { zoom, panX, panY, containerRect } = get();
       return {
-        x: (cx + panX) * zoom + (rect?.left ?? 0),
-        y: (cy + panY) * zoom + (rect?.top ?? 0),
+        x: (cx + panX) * zoom + (containerRect?.left ?? 0),
+        y: (cy + panY) * zoom + (containerRect?.top ?? 0),
       };
     },
 

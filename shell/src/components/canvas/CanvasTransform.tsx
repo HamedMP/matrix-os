@@ -27,7 +27,7 @@ export function CanvasTransform({
   const panBy = useCanvasTransform((s) => s.panBy);
   const navMode = useCanvasSettings((s) => s.navMode);
 
-  const setContainerEl = useCanvasTransform((s) => s.setContainerEl);
+  const setContainerRect = useCanvasTransform((s) => s.setContainerRect);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const zoomOverlayRef = useRef<HTMLDivElement>(null);
@@ -39,9 +39,22 @@ export function CanvasTransform({
   const [grabCursor, setGrabCursor] = useState(false);
 
   useEffect(() => {
-    setContainerEl(containerRef.current);
-    return () => setContainerEl(null);
-  }, [setContainerEl]);
+    const el = containerRef.current;
+    if (!el) return;
+    const sync = () => {
+      const r = el.getBoundingClientRect();
+      setContainerRect({ left: r.left, top: r.top, width: r.width, height: r.height });
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    window.addEventListener("scroll", sync, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("scroll", sync, true);
+      setContainerRect(null);
+    };
+  }, [setContainerRect]);
 
   const isCanvasSurfaceEvent = useCallback((target: EventTarget | null) => {
     if (

@@ -705,7 +705,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       requestAnimationFrame(() => {
         const win = useWindowManager.getState().windows.find((w) => w.path === actualPath);
         if (win) {
-          const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+          const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
             win,
             cRect?.width ?? window.innerWidth,
@@ -721,7 +721,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     requestAnimationFrame(() => {
       const win = useWindowManager.getState().getWindow(winId);
       if (!win || win.minimized) return;
-      const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+      const cRect = useCanvasTransform.getState().containerRect;
       useCanvasTransform.getState().focusOnWindow(
         win,
         cRect?.width ?? window.innerWidth,

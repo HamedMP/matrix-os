@@ -75,16 +75,15 @@ export function CanvasMinimap() {
     ctx.roundRect(0, 0, LG_W, LG_H, 8);
     ctx.fill();
 
-    const { zoom, panX, panY, screenToCanvas, containerEl } = useCanvasTransform.getState();
+    const { zoom, panX, panY, screenToCanvas, containerRect } = useCanvasTransform.getState();
     const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
     const groups = useCanvasGroups.getState().groups;
 
     // Viewport rect in canvas coords — use container bounds, not window bounds
-    const cRect = containerEl?.getBoundingClientRect();
-    const cLeft = cRect?.left ?? 0;
-    const cTop = cRect?.top ?? 0;
-    const cRight = cLeft + (cRect?.width ?? window.innerWidth);
-    const cBottom = cTop + (cRect?.height ?? window.innerHeight);
+    const cLeft = containerRect?.left ?? 0;
+    const cTop = containerRect?.top ?? 0;
+    const cRight = cLeft + (containerRect?.width ?? window.innerWidth);
+    const cBottom = cTop + (containerRect?.height ?? window.innerHeight);
     const topLeft = screenToCanvas(cLeft, cTop);
     const bottomRight = screenToCanvas(cRight, cBottom);
     const viewportRect = {
@@ -160,13 +159,12 @@ export function CanvasMinimap() {
       const mx = clientX - rect.left;
       const my = clientY - rect.top;
 
-      const { zoom, screenToCanvas, containerEl } = useCanvasTransform.getState();
+      const { zoom, screenToCanvas, containerRect } = useCanvasTransform.getState();
       const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
-      const cRect = containerEl?.getBoundingClientRect();
-      const cLeft = cRect?.left ?? 0;
-      const cTop = cRect?.top ?? 0;
-      const cW = cRect?.width ?? window.innerWidth;
-      const cH = cRect?.height ?? window.innerHeight;
+      const cLeft = containerRect?.left ?? 0;
+      const cTop = containerRect?.top ?? 0;
+      const cW = containerRect?.width ?? window.innerWidth;
+      const cH = containerRect?.height ?? window.innerHeight;
       const topLeft = screenToCanvas(cLeft, cTop);
       const bottomRight = screenToCanvas(cLeft + cW, cTop + cH);
       const viewportRect = {

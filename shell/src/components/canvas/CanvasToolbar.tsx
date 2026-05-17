@@ -46,7 +46,7 @@ export function autoArrangeWindows() {
   }
 
   const arranged = useWindowManager.getState().windows.filter((w) => !w.minimized);
-  const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+  const cRect = useCanvasTransform.getState().containerRect;
   useCanvasTransform.getState().fitAll(
     arranged.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
     cRect?.width ?? window.innerWidth,
@@ -70,7 +70,7 @@ export function CanvasToolbar() {
 
   const onFitAll = useCallback(() => {
     const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
-    const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+    const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
       windows.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
       cRect?.width ?? window.innerWidth,
@@ -82,7 +82,7 @@ export function CanvasToolbar() {
   const screenToCanvas = useCanvasTransform((s) => s.screenToCanvas);
 
   const onAddLabel = useCallback(() => {
-    const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+    const cRect = useCanvasTransform.getState().containerRect;
     const cx = (cRect?.left ?? 0) + (cRect?.width ?? window.innerWidth) / 2;
     const cy = (cRect?.top ?? 0) + (cRect?.height ?? window.innerHeight) / 2;
     const center = screenToCanvas(cx, cy);

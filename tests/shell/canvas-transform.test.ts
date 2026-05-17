@@ -201,32 +201,30 @@ describe("Canvas Transform Store", () => {
   });
 
   describe("container offset", () => {
-    function mockContainer(left: number, top: number, width = 800, height = 600) {
-      return {
-        getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON() {} }),
-      } as HTMLElement;
+    function rect(left: number, top: number, width = 800, height = 600) {
+      return { left, top, width, height };
     }
 
     afterEach(() => {
-      useCanvasTransform.setState({ containerEl: null });
+      useCanvasTransform.setState({ containerRect: null });
     });
 
     it("screenToCanvas subtracts container offset", () => {
-      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerEl: mockContainer(250, 28) });
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(250, 28) });
       const pt = useCanvasTransform.getState().screenToCanvas(500, 300);
       expect(pt.x).toBeCloseTo(250);
       expect(pt.y).toBeCloseTo(272);
     });
 
     it("canvasToScreen adds container offset", () => {
-      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerEl: mockContainer(250, 28) });
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(250, 28) });
       const pt = useCanvasTransform.getState().canvasToScreen(250, 272);
       expect(pt.x).toBeCloseTo(500);
       expect(pt.y).toBeCloseTo(300);
     });
 
     it("round-trip with container offset", () => {
-      useCanvasTransform.setState({ zoom: 1.5, panX: -200, panY: 100, containerEl: mockContainer(250, 28) });
+      useCanvasTransform.setState({ zoom: 1.5, panX: -200, panY: 100, containerRect: rect(250, 28) });
       const { screenToCanvas, canvasToScreen } = useCanvasTransform.getState();
       const canvas = screenToCanvas(600, 400);
       const screen = canvasToScreen(canvas.x, canvas.y);
@@ -235,7 +233,7 @@ describe("Canvas Transform Store", () => {
     });
 
     it("zoomAtPoint preserves focal point with container offset", () => {
-      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerEl: mockContainer(250, 28) });
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(250, 28) });
       const canvasBefore = useCanvasTransform.getState().screenToCanvas(500, 300);
 
       useCanvasTransform.getState().zoomAtPoint(2, 500, 300);
@@ -247,7 +245,7 @@ describe("Canvas Transform Store", () => {
     });
 
     it("zoomAtPoint preserves focal point with offset and existing pan", () => {
-      useCanvasTransform.setState({ zoom: 1.5, panX: -200, panY: 100, containerEl: mockContainer(100, 50) });
+      useCanvasTransform.setState({ zoom: 1.5, panX: -200, panY: 100, containerRect: rect(100, 50) });
       const canvasBefore = useCanvasTransform.getState().screenToCanvas(600, 400);
 
       useCanvasTransform.getState().zoomAtPoint(2.5, 600, 400);
@@ -258,7 +256,7 @@ describe("Canvas Transform Store", () => {
     });
 
     it("multiple zoom steps maintain focal point stability", () => {
-      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerEl: mockContainer(200, 40) });
+      useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, containerRect: rect(200, 40) });
       const canvasBefore = useCanvasTransform.getState().screenToCanvas(500, 300);
 
       for (let z = 1.1; z <= 2.0; z += 0.1) {

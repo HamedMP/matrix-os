@@ -40,7 +40,7 @@ export function CanvasRenderer() {
         wm.moveWindow(wins[i].id, x, y);
       }
       const arranged = useWindowManager.getState().windows;
-      const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+      const cRect = useCanvasTransform.getState().containerRect;
       fitAll(
         arranged.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
         cRect?.width ?? window.innerWidth,
@@ -82,7 +82,7 @@ export function CanvasRenderer() {
 
   const handleFitAll = useCallback(() => {
     const wins = useWindowManager.getState().windows.filter((w) => !w.minimized);
-    const cRect = useCanvasTransform.getState().containerEl?.getBoundingClientRect();
+    const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
       wins.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
       cRect?.width ?? window.innerWidth,
