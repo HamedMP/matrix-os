@@ -62,7 +62,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   clock: {
     title: "Clock",
     subtitle: "World clock, timer, and focus-friendly timekeeping.",
-    accent: "#434E3F",
+    accent: "#3A7D44",
     metrics: [
       { label: "Local", value: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
       { label: "Focus", value: "25:00" },
@@ -116,7 +116,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   snake: {
     title: "Snake",
     subtitle: "Arrow-key arcade with a compact board.",
-    accent: "#434E3F",
+    accent: "#3A7D44",
     metrics: [
       { label: "Length", value: "18" },
       { label: "Speed", value: "7" },
@@ -143,7 +143,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   tetris: {
     title: "Tetris",
     subtitle: "Clean stack, visible queue, no visual noise.",
-    accent: "#434E3F",
+    accent: "#D06F25",
     metrics: [
       { label: "Lines", value: "42" },
       { label: "Level", value: "6" },
@@ -161,7 +161,7 @@ const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; 
   weather: {
     title: "Weather",
     subtitle: "Current conditions and a readable daily forecast.",
-    accent: "#434E3F",
+    accent: "#3A7D44",
     metrics: [
       { label: "Now", value: "72°F" },
       { label: "Wind", value: "8 mph" },
@@ -279,7 +279,7 @@ function ExpensesApp() {
         <div className="bar-stack">
           <span style={{ width: "48%", background: "#434E3F" }} />
           <span style={{ width: "28%", background: "#D06F25" }} />
-          <span style={{ width: "18%", background: "#D6AB8B" }} />
+          <span style={{ width: "18%", background: "#3A7D44" }} />
         </div>
         <p>Most spend is concentrated in tools and workspace operations.</p>
       </section>

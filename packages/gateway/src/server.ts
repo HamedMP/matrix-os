@@ -2301,6 +2301,7 @@ export async function createGateway(config: GatewayConfig) {
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
   const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
+  let iconRegenerationInProgress = false;
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -3190,6 +3191,10 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
+    if (iconRegenerationInProgress) {
+      return c.json({ error: "Regeneration already in progress" }, 409);
+    }
+
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
       return c.json({ regenerated: 0, failed: [], generated: false });
@@ -3209,7 +3214,7 @@ export async function createGateway(config: GatewayConfig) {
     const iconStyle = loadIconStyle(homePath);
     const total = pngFiles.length;
 
-    // Return 202 immediately, regenerate in background
+    iconRegenerationInProgress = true;
     const regeneration = (async () => {
       const client = createImageClient(geminiKey);
       let regenerated = 0;
@@ -3231,7 +3236,9 @@ export async function createGateway(config: GatewayConfig) {
       }
       console.log(`[icons] Regeneration complete: ${regenerated}/${total} succeeded, ${failed.length} failed`);
     })();
-    regeneration.catch((err) => console.error("[icons] Regeneration error:", err));
+    regeneration.catch((err) => console.error("[icons] Regeneration error:", err)).finally(() => {
+      iconRegenerationInProgress = false;
+    });
 
     return c.json({ accepted: true, total }, 202);
   });

@@ -234,12 +234,24 @@ button:hover {
   box-shadow: 0 4px 12px rgba(50, 53, 46, 0.1);
 }
 
-input, textarea, select {
+input, select {
   background: var(--card);
   color: var(--fg);
   border: 1.5px solid var(--border);
   padding: 12px 20px;
   border-radius: 50px;
+  font-family: 'Inter', system-ui, sans-serif;
+  width: 100%;
+  outline: none;
+  transition: all 0.2s;
+}
+
+textarea {
+  background: var(--card);
+  color: var(--fg);
+  border: 1.5px solid var(--border);
+  padding: 12px 20px;
+  border-radius: var(--radius);
   font-family: 'Inter', system-ui, sans-serif;
   width: 100%;
   outline: none;
