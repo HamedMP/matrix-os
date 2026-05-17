@@ -65,6 +65,7 @@ import {
   createImageClient,
   loadIconStyle,
   buildIconPrompt,
+  generateIconBatch,
   createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
@@ -2376,6 +2377,7 @@ export async function createGateway(config: GatewayConfig) {
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
   const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
+  let iconRegenerationInProgress = false;
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -3282,50 +3284,32 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
+    if (iconRegenerationInProgress) {
+      return c.json({ error: "Regeneration already in progress" }, 409);
+    }
+    iconRegenerationInProgress = true;
+
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [], generated: false });
     }
 
     const iconsDir = join(homePath, "system/icons");
     if (!existsSync(iconsDir)) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [] });
     }
 
     const apps = await listApps(homePath);
-    const appSlugs = new Set(apps.map((a) => a.slug).filter(Boolean));
-    const pngFiles = readdirSync(iconsDir)
-      .filter((f: string) => f.endsWith(".png"))
-      .filter((f: string) => appSlugs.has(f.replace(/\.png$/, "")));
+    const slugs: string[] = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
 
-    const iconStyle = loadIconStyle(homePath);
-    const total = pngFiles.length;
+    generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
+      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
+      .catch((err) => console.error("[icons] Regeneration error:", err))
+      .finally(() => { iconRegenerationInProgress = false; });
 
-    // Return 202 immediately, regenerate in background
-    const regeneration = (async () => {
-      const client = createImageClient(geminiKey);
-      let regenerated = 0;
-      const failed: string[] = [];
-      for (const file of pngFiles) {
-        const slug = file.replace(/\.png$/, "");
-        try {
-          await client.generateImage(buildIconPrompt(slug, iconStyle), {
-            aspectRatio: "1:1",
-            imageDir: iconsDir,
-            saveAs: `${slug}.png`,
-          });
-          regenerated++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          console.error(`Icon regeneration failed for "${slug}":`, msg);
-          failed.push(slug);
-        }
-      }
-      console.log(`[icons] Regeneration complete: ${regenerated}/${total} succeeded, ${failed.length} failed`);
-    })();
-    regeneration.catch((err) => console.error("[icons] Regeneration error:", err));
-
-    return c.json({ accepted: true, total }, 202);
+    return c.json({ accepted: true, total: slugs.length }, 202);
   });
 
   app.get("/api/cron", (c) => {
