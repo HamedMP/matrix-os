@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFileSymphonyCredentialStore } from "../../packages/gateway/src/symphony/credential-store.js";
+import {
+  createCompositeSymphonyCredentialStore,
+  createFileSymphonyCredentialStore,
+  encodeLinearIntegrationCredential,
+} from "../../packages/gateway/src/symphony/credential-store.js";
 
 describe("Symphony credential store", () => {
   let homePath: string;
@@ -41,5 +45,26 @@ describe("Symphony credential store", () => {
 
     await expect(store.hasLinearCredential("user_123")).resolves.toBe(false);
     await expect(store.readLinearCredential("user_123")).resolves.toBeNull();
+  });
+
+  it("falls back to an opaque Linear integration reference when no API key is stored", async () => {
+    const primary = createFileSymphonyCredentialStore({ homePath });
+    const hasLinearIntegration = vi.fn(async (ownerId: string) => ownerId === "user_123");
+    const store = createCompositeSymphonyCredentialStore({ primary, hasLinearIntegration });
+
+    await expect(store.hasLinearCredential("user_123")).resolves.toBe(true);
+    await expect(store.readLinearCredential("user_123")).resolves.toBe(encodeLinearIntegrationCredential("user_123"));
+    expect(hasLinearIntegration).toHaveBeenCalledWith("user_123");
+  });
+
+  it("prefers a stored Linear API key over the integration fallback", async () => {
+    const primary = createFileSymphonyCredentialStore({ homePath });
+    await primary.writeLinearCredential("user_123", "lin_api_secret");
+    const store = createCompositeSymphonyCredentialStore({
+      primary,
+      hasLinearIntegration: vi.fn(async () => true),
+    });
+
+    await expect(store.readLinearCredential("user_123")).resolves.toBe("lin_api_secret");
   });
 });

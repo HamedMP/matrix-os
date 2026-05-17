@@ -38,11 +38,50 @@ function branchFor(ticket: TrackedTicket): string {
   return ticket.branchName?.trim() || `symphony/${ticket.identifier.toLowerCase().replace(/[^a-z0-9._/-]+/g, "-")}`;
 }
 
+function normalizeState(state: string): string {
+  return state.trim().toLowerCase();
+}
+
+function includesAllRequiredLabels(ticket: TrackedTicket, requiredLabels: string[]): boolean {
+  const actual = new Set(ticket.labels.map((label) => label.toLowerCase()));
+  return requiredLabels.every((label) => actual.has(label.toLowerCase()));
+}
+
+function todoBlockedByNonTerminal(ticket: TrackedTicket, terminalStates: string[]): boolean {
+  if (normalizeState(ticket.stateName) !== "todo") return false;
+  const terminal = new Set(terminalStates.map(normalizeState));
+  return (ticket.blockedBy ?? []).some((blocker) => {
+    if (!blocker.stateName) return true;
+    return !terminal.has(normalizeState(blocker.stateName));
+  });
+}
+
 function shouldDispatch(ticket: TrackedTicket, rule: TicketSourceRule): boolean {
-  if (!rule.activeStates.map((state) => state.toLowerCase()).includes(ticket.stateName.toLowerCase())) return false;
-  if (rule.terminalStates.map((state) => state.toLowerCase()).includes(ticket.stateName.toLowerCase())) return false;
+  if (!rule.activeStates.map(normalizeState).includes(normalizeState(ticket.stateName))) return false;
+  if (rule.terminalStates.map(normalizeState).includes(normalizeState(ticket.stateName))) return false;
+  if (!includesAllRequiredLabels(ticket, rule.requiredLabels)) return false;
   if (rule.assigneeIds.length > 0 && (!ticket.assigneeId || !rule.assigneeIds.includes(ticket.assigneeId))) return false;
+  if (todoBlockedByNonTerminal(ticket, rule.terminalStates)) return false;
   return true;
+}
+
+function priorityRank(priority: number | null | undefined): number {
+  return typeof priority === "number" && Number.isInteger(priority) && priority >= 1 && priority <= 4 ? priority : 5;
+}
+
+function createdAtSortKey(ticket: TrackedTicket): number {
+  if (!ticket.createdAt) return Number.MAX_SAFE_INTEGER;
+  const value = Date.parse(ticket.createdAt);
+  return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
+}
+
+function sortTicketsForDispatch(tickets: TrackedTicket[]): TrackedTicket[] {
+  return [...tickets].sort((a, b) =>
+    priorityRank(a.priority) - priorityRank(b.priority) ||
+    createdAtSortKey(a) - createdAtSortKey(b) ||
+    a.identifier.localeCompare(b.identifier) ||
+    a.externalId.localeCompare(b.externalId)
+  );
 }
 
 function isRetryBackoffActive(run: SymphonyRun, nowMs = Date.now()): boolean {
@@ -304,7 +343,7 @@ export function createMatrixSymphonyOrchestrator(options: {
       options.repository.listRuns(ownerId, { status: "blocked", limit: 100 }),
     ]);
     const blockedLiveRuns = blockedRuns.filter((run) => Boolean(run.sessionId));
-    const eligibleTickets = preview.tickets.filter((ticket) => shouldDispatch(ticket, rule));
+    const eligibleTickets = sortTicketsForDispatch(preview.tickets.filter((ticket) => shouldDispatch(ticket, rule)));
     const eligibleClaimKeys = new Set(eligibleTickets.map((ticket) => claimKey(ticket)));
     if (!preview.truncated) await reconcileIneligibleRunningRuns(ownerId, installation, activeRuns, eligibleClaimKeys);
     const countedRunning = preview.truncated
@@ -312,9 +351,8 @@ export function createMatrixSymphonyOrchestrator(options: {
       : activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
     const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - countedRunning - blockedLiveRuns.length);
     let dispatched = 0;
-    for (const ticket of preview.tickets) {
+    for (const ticket of eligibleTickets) {
       if (dispatched >= capacity) break;
-      if (!shouldDispatch(ticket, rule)) continue;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
       if (existing && isRetryBackoffActive(existing)) continue;
       if (existing && existing.status !== "queued" && existing.status !== "retrying") continue;
@@ -473,7 +511,12 @@ export function createMatrixSymphonyOrchestrator(options: {
       const ownerIds = await options.repository.listEnabledOwnerIds();
       for (const ownerId of ownerIds) {
         const snapshot = await options.repository.getSnapshot(ownerId);
-        if (snapshot.installation?.enabled) ensurePolling(ownerId, snapshot.installation.pollIntervalMs);
+        if (snapshot.installation?.enabled) {
+          ensurePolling(ownerId, snapshot.installation.pollIntervalMs);
+          void poll(ownerId).catch((err: unknown) => {
+            console.warn("[symphony] Initial poll after resume failed:", err instanceof Error ? err.message : String(err));
+          });
+        }
       }
       return ownerIds;
     },

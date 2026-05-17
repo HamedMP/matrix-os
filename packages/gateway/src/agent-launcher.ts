@@ -79,15 +79,19 @@ function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {
   }
   if (!sandbox.enabled) {
     if (sandbox.adminOverride === true) {
-      return ["--dangerously-bypass-sandbox"];
+      return ["--dangerously-bypass-approvals-and-sandbox"];
     }
     throw new Error("Codex sandbox preflight is required");
   }
   const args = ["--sandbox", "workspace-write"];
   for (const root of sandbox.writableRoots ?? []) {
-    args.push("--writable-root", root);
+    args.push("--add-dir", root);
   }
   return args;
+}
+
+function authStatusArgs(agent: SupportedAgent): string[] {
+  return agent === "codex" ? ["login", "status"] : ["auth", "status"];
 }
 
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
@@ -100,10 +104,10 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
       return {
         command,
         args: [
-          "exec",
-          "--skip-git-repo-check",
           "--ask-for-approval",
           "never",
+          "exec",
+          "--skip-git-repo-check",
           ...codexSandboxArgs(input.sandbox),
           ...promptArgs(input.prompt),
         ],
@@ -152,7 +156,7 @@ export function createAgentLauncher(options: {
         }
 
         try {
-          await runCommand(config.command, ["auth", "status"], {
+          await runCommand(config.command, authStatusArgs(id), {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
           });

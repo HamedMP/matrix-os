@@ -30,7 +30,8 @@ import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
-import { createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
+import { createCompositeSymphonyCredentialStore, createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
+import { createIntegrationAwareLinearGraphql, hasConnectedLinearIntegration } from "./symphony/linear-integration.js";
 import { createLinearSource } from "./symphony/linear-source.js";
 import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
 import { KyselySymphonyRepository } from "./symphony/repository.js";
@@ -2390,8 +2391,16 @@ export async function createGateway(config: GatewayConfig) {
   if (kyselyInstance) {
     const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
     await repository.bootstrap();
-    const credentialStore = createFileSymphonyCredentialStore({ homePath });
-    const linearSource = createLinearSource();
+    const fileCredentialStore = createFileSymphonyCredentialStore({ homePath });
+    const credentialStore = platformDb && pipedreamClient
+      ? createCompositeSymphonyCredentialStore({
+        primary: fileCredentialStore,
+        hasLinearIntegration: (ownerId) => hasConnectedLinearIntegration(platformDb!, ownerId),
+      })
+      : fileCredentialStore;
+    const linearSource = platformDb && pipedreamClient
+      ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
+      : createLinearSource();
     const projectManager = createProjectManager({ homePath });
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath });

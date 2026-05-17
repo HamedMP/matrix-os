@@ -11,11 +11,24 @@ export interface SymphonyCredentialStore {
 }
 
 const OWNER_ID_RE = /^[A-Za-z0-9_-]{1,256}$/;
+const LINEAR_INTEGRATION_CREDENTIAL_PREFIX = "matrixos:integration:linear:";
 
 function assertOwnerId(ownerId: string): void {
   if (!OWNER_ID_RE.test(ownerId)) {
     throw new Error("Invalid owner identifier");
   }
+}
+
+export function encodeLinearIntegrationCredential(ownerId: string): string {
+  assertOwnerId(ownerId);
+  return `${LINEAR_INTEGRATION_CREDENTIAL_PREFIX}${ownerId}`;
+}
+
+export function parseLinearIntegrationCredential(credential: string): string | null {
+  if (!credential.startsWith(LINEAR_INTEGRATION_CREDENTIAL_PREFIX)) return null;
+  const ownerId = credential.slice(LINEAR_INTEGRATION_CREDENTIAL_PREFIX.length);
+  assertOwnerId(ownerId);
+  return ownerId;
 }
 
 function credentialPath(homePath: string, ownerId: string): string {
@@ -75,6 +88,34 @@ export function createFileSymphonyCredentialStore(options: { homePath: string })
 
     async deleteLinearCredential(ownerId: string): Promise<void> {
       await rm(credentialPath(homePath, ownerId), { force: true });
+    },
+  };
+}
+
+export function createCompositeSymphonyCredentialStore(options: {
+  primary: SymphonyCredentialStore;
+  hasLinearIntegration: (ownerId: string) => Promise<boolean>;
+}): SymphonyCredentialStore {
+  const { primary, hasLinearIntegration } = options;
+
+  return {
+    async hasLinearCredential(ownerId: string): Promise<boolean> {
+      if (await primary.hasLinearCredential(ownerId)) return true;
+      return hasLinearIntegration(ownerId);
+    },
+
+    async readLinearCredential(ownerId: string): Promise<string | null> {
+      const apiKey = await primary.readLinearCredential(ownerId);
+      if (apiKey) return apiKey;
+      return await hasLinearIntegration(ownerId) ? encodeLinearIntegrationCredential(ownerId) : null;
+    },
+
+    writeLinearCredential(ownerId: string, secret: string): Promise<void> {
+      return primary.writeLinearCredential(ownerId, secret);
+    },
+
+    deleteLinearCredential(ownerId: string): Promise<void> {
+      return primary.deleteLinearCredential(ownerId);
     },
   };
 }
