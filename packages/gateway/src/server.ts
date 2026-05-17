@@ -3207,11 +3207,7 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     const apps = await listApps(homePath);
-    const appSlugs = new Set(apps.map((a) => a.slug).filter(Boolean));
-    const slugs = readdirSync(iconsDir)
-      .filter((f: string) => f.endsWith(".png"))
-      .map((f: string) => f.replace(/\.png$/, ""))
-      .filter((s: string) => appSlugs.has(s));
+    const slugs = apps.map((a) => a.slug).filter(Boolean);
 
     iconRegenerationInProgress = true;
     generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
