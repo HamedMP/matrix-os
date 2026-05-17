@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
@@ -31,6 +31,19 @@ function createIconApp(homePath: string) {
       return c.json({ error: "Invalid slug" }, 400);
     }
 
+    const iconsDir = join(homePath, "system/icons");
+    const iconPath = join(iconsDir, `${slug}.png`);
+    if (existsSync(iconPath)) {
+      const stat = statSync(iconPath);
+      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+      return c.json({
+        iconUrl: `/files/system/icons/${slug}.png`,
+        etag,
+        generated: false,
+        alreadyExists: true,
+      });
+    }
+
     let body: { style?: string } = {};
     try { body = await c.req.json(); } catch { /* no body is fine */ }
 
@@ -48,7 +61,6 @@ function createIconApp(homePath: string) {
     const client = createImageClient("test-key");
     const name = slug.replace(/-/g, " ").replace(/_/g, " ");
     const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
-    const iconsDir = join(homePath, "system/icons");
     const result = await client.generateImage(prompt, {
       aspectRatio: "1:1",
       imageDir: iconsDir,
@@ -140,5 +152,40 @@ describe("POST /api/apps/:slug/icon", () => {
     const body = await res.json() as { prompt: string };
     expect(body.prompt).toContain("watercolor painting soft edges");
     expect(body.prompt).not.toContain("pixel art");
+  });
+
+  it("returns existing icon without regenerating when icon already exists", async () => {
+    const res1 = await app.request("/api/apps/calculator/icon", {
+      method: "POST",
+    });
+    expect(res1.status).toBe(200);
+    const body1 = await res1.json() as { iconUrl: string; cost: number };
+    expect(body1.iconUrl).toBe("/files/system/icons/calculator.png");
+    expect(typeof body1.cost).toBe("number");
+
+    const res2 = await app.request("/api/apps/calculator/icon", {
+      method: "POST",
+    });
+    expect(res2.status).toBe(200);
+    const body2 = await res2.json() as { iconUrl: string; alreadyExists: boolean; cost?: number };
+    expect(body2.iconUrl).toBe("/files/system/icons/calculator.png");
+    expect(body2.alreadyExists).toBe(true);
+    expect(body2.cost).toBeUndefined();
+  });
+
+  it("generates different icons independently then locks both", async () => {
+    await app.request("/api/apps/notes/icon", { method: "POST" });
+    await app.request("/api/apps/timer/icon", { method: "POST" });
+
+    expect(existsSync(join(homePath, "system/icons/notes.png"))).toBe(true);
+    expect(existsSync(join(homePath, "system/icons/timer.png"))).toBe(true);
+
+    const res1 = await app.request("/api/apps/notes/icon", { method: "POST" });
+    const body1 = await res1.json() as { alreadyExists: boolean };
+    expect(body1.alreadyExists).toBe(true);
+
+    const res2 = await app.request("/api/apps/timer/icon", { method: "POST" });
+    const body2 = await res2.json() as { alreadyExists: boolean };
+    expect(body2.alreadyExists).toBe(true);
   });
 });

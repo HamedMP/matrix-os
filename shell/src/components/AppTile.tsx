@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "lucide-react";
+import { PinIcon, PencilIcon, EyeOffIcon } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -16,12 +16,11 @@ interface AppTileProps {
   pinned?: boolean;
   onTogglePin?: () => void;
   iconUrl?: string;
-  onRegenerateIcon?: () => void;
   onRename?: (newName: string) => void;
   onRemoveFromCanvas?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRename, onRemoveFromCanvas }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const [imgError, setImgError] = useState(false);
   useEffect(() => setImgError(false), [iconUrl]);
@@ -75,7 +74,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
     </button>
   );
 
-  const hasContextMenu = onTogglePin || onRegenerateIcon || onRename || onRemoveFromCanvas;
+  const hasContextMenu = onTogglePin || onRename || onRemoveFromCanvas;
   if (!hasContextMenu) return tile;
 
   return (
@@ -90,13 +89,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
             {pinned ? "Unpin from Dock" : "Pin to Dock"}
           </ContextMenuItem>
         )}
-        {onRegenerateIcon && (
-          <ContextMenuItem onSelect={onRegenerateIcon}>
-            <RefreshCwIcon className="size-3.5 mr-2" />
-            Regenerate Icon
-          </ContextMenuItem>
-        )}
-        {(onRename || onRemoveFromCanvas) && (onTogglePin || onRegenerateIcon) && (
+        {(onRename || onRemoveFromCanvas) && onTogglePin && (
           <ContextMenuSeparator />
         )}
         {onRename && (

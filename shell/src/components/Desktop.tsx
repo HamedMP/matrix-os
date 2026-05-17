@@ -40,7 +40,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, ExternalLinkIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, ExternalLinkIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -207,7 +207,6 @@ function DockIcon({
   tooltipSide = "right",
   iconUrl,
   onUnpin,
-  onRegenerateIcon,
   onRename,
   onQuit,
   canQuit,
@@ -219,7 +218,6 @@ function DockIcon({
   tooltipSide?: "left" | "right" | "top" | "bottom";
   iconUrl?: string;
   onUnpin?: () => void;
-  onRegenerateIcon?: () => void;
   onRename?: (newName: string) => void;
   onQuit?: () => void;
   canQuit?: boolean;
@@ -248,7 +246,7 @@ function DockIcon({
     </button>
   );
 
-  const hasContextMenu = onUnpin || onRegenerateIcon || onRename || onQuit;
+  const hasContextMenu = onUnpin || onRename || onQuit;
   if (!hasContextMenu) {
     return (
       <Tooltip>
@@ -275,13 +273,7 @@ function DockIcon({
             Unpin from Dock
           </ContextMenuItem>
         )}
-        {onRegenerateIcon && (
-          <ContextMenuItem onSelect={onRegenerateIcon}>
-            <RefreshCwIcon className="size-3.5 mr-2" />
-            Regenerate Icon
-          </ContextMenuItem>
-        )}
-        {onRename && (onUnpin || onRegenerateIcon) && (
+        {onRename && onUnpin && (
           <ContextMenuSeparator />
         )}
         {onRename && (
@@ -299,7 +291,7 @@ function DockIcon({
         )}
         {onQuit && (
           <>
-            {(onUnpin || onRegenerateIcon || onRename) && <ContextMenuSeparator />}
+            {(onUnpin || onRename) && <ContextMenuSeparator />}
             <ContextMenuItem
               disabled={!canQuit}
               onSelect={() => {
@@ -592,7 +584,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const generatingRef = useRef(new Set<string>());
   const checkedRef = useRef(new Set<string>());
 
-  const regenerateIcon = useCallback((slug: string) => {
+  const generateIconIfMissing = useCallback((slug: string) => {
+    if (generatingRef.current.has(slug)) return;
     generatingRef.current.add(slug);
     fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
       method: "POST",
@@ -601,8 +594,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       .then((r) => {
         if (!r.ok) {
           r.json()
-            .then((d: { error?: string }) => console.warn(`Icon regen failed for "${slug}":`, d.error))
-            .catch((err) => console.warn(`[desktop] Failed to parse icon regeneration error for "${slug}":`, err));
+            .then((d: { error?: string }) => console.warn(`Icon generation failed for "${slug}":`, d.error))
+            .catch((err) => console.warn(`[desktop] Failed to parse icon generation error for "${slug}":`, err));
           return;
         }
         return r.json().then((data: { iconUrl: string; etag?: string }) => {
@@ -615,7 +608,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           );
         });
       })
-      .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
+      .catch((err) => console.warn(`Icon generation request failed for "${slug}":`, err))
       .finally(() => generatingRef.current.delete(slug));
   }, [wmSetApps]);
 
@@ -642,7 +635,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         }
       } else {
         if (iconPath.endsWith(".png")) {
-          regenerateIcon(slug);
+          generateIconIfMissing(slug);
         } else {
           wmSetApps((prev) =>
             prev.map((a) =>
@@ -654,7 +647,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         }
       }
     }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
-  }, [wmSetApps, regenerateIcon]);
+  }, [wmSetApps, generateIconIfMissing]);
 
   const renameAppOnServer = useCallback((slug: string, newName: string) => {
     fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
@@ -1559,7 +1552,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                         tooltipSide={tooltipSide}
                         iconUrl={app.iconUrl}
                         onUnpin={pinnedSet.has(app.path) ? () => togglePin(app.path) : undefined}
-                        onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
                         onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
                         onQuit={() => removeFromCanvas(app.path)}
                         canQuit={hasAny}
@@ -1831,7 +1823,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             onClose={() => setTaskBoardOpen(false)}
             pinnedApps={pinnedApps}
             onTogglePin={togglePin}
-            onRegenerateIcon={regenerateIcon}
             onRenameApp={renameAppOnServer}
             onRemoveFromCanvas={removeFromCanvas}
           />

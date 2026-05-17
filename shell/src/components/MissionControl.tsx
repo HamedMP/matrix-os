@@ -27,7 +27,6 @@ interface MissionControlProps {
   onClose: () => void;
   pinnedApps: string[];
   onTogglePin: (path: string) => void;
-  onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
   onRemoveFromCanvas?: (path: string) => void;
 }
@@ -40,7 +39,6 @@ export function MissionControl({
   onClose,
   pinnedApps,
   onTogglePin,
-  onRegenerateIcon,
   onRenameApp,
   onRemoveFromCanvas,
 }: MissionControlProps) {
@@ -139,7 +137,6 @@ export function MissionControl({
           onOpenApp={onOpenApp}
           onClose={onClose}
           onTogglePin={onTogglePin}
-          onRegenerateIcon={onRegenerateIcon}
           onRenameApp={onRenameApp}
           onRemoveFromCanvas={onRemoveFromCanvas}
           visible={visible}
@@ -164,7 +161,6 @@ function LauncherGrid({
   onOpenApp,
   onClose,
   onTogglePin,
-  onRegenerateIcon,
   onRenameApp,
   onRemoveFromCanvas,
   visible,
@@ -176,7 +172,6 @@ function LauncherGrid({
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
   onTogglePin: (path: string) => void;
-  onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
   onRemoveFromCanvas?: (path: string) => void;
   visible: boolean;
@@ -226,7 +221,6 @@ function LauncherGrid({
           pinned={pinnedApps.includes(app.path)}
           onTogglePin={() => onTogglePin(app.path)}
           iconUrl={app.iconUrl}
-          onRegenerateIcon={() => onRegenerateIcon(slug)}
           onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
           onRemoveFromCanvas={onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
         />

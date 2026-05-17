@@ -3238,6 +3238,21 @@ export async function createGateway(config: GatewayConfig) {
         shipped: true,
       });
     }
+
+    const iconsDir = join(homePath, "system/icons");
+    const iconPath = join(iconsDir, `${slug}.png`);
+    if (existsSync(iconPath)) {
+      const stat = statSync(iconPath);
+      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+      c.header("ETag", etag);
+      return c.json({
+        iconUrl: `/files/system/icons/${slug}.png`,
+        etag,
+        generated: false,
+        alreadyExists: true,
+      });
+    }
+
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
       return c.json({
@@ -3259,13 +3274,11 @@ export async function createGateway(config: GatewayConfig) {
       const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
       const prompt = buildIconPrompt(slug, iconStyle);
-      const iconsDir = join(homePath, "system/icons");
       const result = await client.generateImage(prompt, {
         aspectRatio: "1:1",
         imageDir: iconsDir,
         saveAs: `${slug}.png`,
       });
-      const iconPath = join(iconsDir, `${slug}.png`);
       const stat = statSync(iconPath);
       const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
       c.header("ETag", etag);
@@ -3281,51 +3294,43 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
+  app.post("/api/icons/generate-missing", appIconBodyLimit, async (c) => {
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
-      return c.json({ regenerated: 0, failed: [], generated: false });
+      return c.json({ generated: 0, failed: [] });
     }
 
     const iconsDir = join(homePath, "system/icons");
-    if (!existsSync(iconsDir)) {
-      return c.json({ regenerated: 0, failed: [] });
+    const apps = await listApps(homePath);
+    const slugs = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
+    const missing = slugs.filter((s) => !existsSync(join(iconsDir, `${s}.png`)));
+
+    if (missing.length === 0) {
+      return c.json({ generated: 0, total: slugs.length, missing: 0 });
     }
 
-    const apps = await listApps(homePath);
-    const appSlugs = new Set(apps.map((a) => a.slug).filter(Boolean));
-    const pngFiles = readdirSync(iconsDir)
-      .filter((f: string) => f.endsWith(".png"))
-      .filter((f: string) => appSlugs.has(f.replace(/\.png$/, "")));
-
     const iconStyle = loadIconStyle(homePath);
-    const total = pngFiles.length;
-
-    // Return 202 immediately, regenerate in background
-    const regeneration = (async () => {
-      const client = createImageClient(geminiKey);
-      let regenerated = 0;
+    const client = createImageClient(geminiKey);
+    (async () => {
+      let generated = 0;
       const failed: string[] = [];
-      for (const file of pngFiles) {
-        const slug = file.replace(/\.png$/, "");
+      for (const slug of missing) {
         try {
           await client.generateImage(buildIconPrompt(slug, iconStyle), {
             aspectRatio: "1:1",
             imageDir: iconsDir,
             saveAs: `${slug}.png`,
           });
-          regenerated++;
+          generated++;
         } catch (err) {
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          console.error(`Icon regeneration failed for "${slug}":`, msg);
+          console.error(`[icons] Generate-missing failed for "${slug}":`, err instanceof Error ? err.message : String(err));
           failed.push(slug);
         }
       }
-      console.log(`[icons] Regeneration complete: ${regenerated}/${total} succeeded, ${failed.length} failed`);
-    })();
-    regeneration.catch((err) => console.error("[icons] Regeneration error:", err));
+      console.log(`[icons] Generated missing: ${generated}/${missing.length} succeeded, ${failed.length} failed`);
+    })().catch((err) => console.error("[icons] Generate-missing error:", err));
 
-    return c.json({ accepted: true, total }, 202);
+    return c.json({ accepted: true, total: slugs.length, missing: missing.length }, 202);
   });
 
   app.get("/api/cron", (c) => {
