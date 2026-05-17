@@ -24,8 +24,17 @@ import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createProjectManager } from "./project-manager.js";
 import { createSymphonyRoutes } from "./symphony-routes.js";
 import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
+import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
+import { createWorktreeManager } from "./worktree-manager.js";
+import { createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
+import { createLinearSource } from "./symphony/linear-source.js";
+import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
+import { KyselySymphonyRepository } from "./symphony/repository.js";
+import { createSymphonyStatusHub } from "./symphony/status-hub.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -2320,14 +2329,55 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
-  app.route("/api/symphony", createSymphonyRoutes({
-    homePath,
-    runner: symphonyRunner,
-    onConfigChange: (nextConfig) => allowedOriginController.updateSymphonyPort(
-      nextConfig.port,
-      nextConfig.runningPort ? [nextConfig.runningPort] : [],
-    ),
-  }));
+  let matrixSymphonyOrchestrator: ReturnType<typeof createMatrixSymphonyOrchestrator> | null = null;
+  let matrixSymphonyStatusHub: ReturnType<typeof createSymphonyStatusHub> | null = null;
+  if (kyselyInstance) {
+    const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
+    await repository.bootstrap();
+    const credentialStore = createFileSymphonyCredentialStore({ homePath });
+    const linearSource = createLinearSource();
+    const projectManager = createProjectManager({ homePath });
+    const worktreeManager = createWorktreeManager({ homePath });
+    const agentLauncher = createAgentLauncher({ cwd: homePath });
+    const agentSessionManager = createAgentSessionManager({
+      homePath,
+      worktreeManager,
+      agentLauncher,
+      zellijRuntime: workspaceZellijRuntime,
+    });
+    matrixSymphonyStatusHub = createSymphonyStatusHub();
+    matrixSymphonyOrchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore,
+      linearSource,
+      worktreeManager,
+      agentSessionManager,
+      statusHub: matrixSymphonyStatusHub,
+    });
+    await matrixSymphonyOrchestrator.resumeEnabledInstallations();
+    app.route("/api/symphony", createSymphonyRoutes({
+      repository,
+      credentialStore,
+      linearSource,
+      orchestrator: matrixSymphonyOrchestrator,
+      statusHub: matrixSymphonyStatusHub,
+      listMatrixProjects: async () => {
+        const result = await projectManager.listManagedProjects();
+        return result.projects.map((project) => ({
+          slug: project.slug,
+          name: project.name,
+          repositoryUrl: project.github?.htmlUrl ?? project.remote,
+          updatedAt: project.updatedAt,
+        }));
+      },
+    }));
+  } else {
+    console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");
+    const unavailable = new Hono();
+    unavailable.all("*", (c) => c.json({ error: { code: "symphony_unavailable", message: "Symphony is unavailable" } }, 503));
+    app.route("/api/symphony", unavailable);
+  }
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
