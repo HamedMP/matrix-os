@@ -704,10 +704,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       requestAnimationFrame(() => {
         const win = useWindowManager.getState().windows.find((w) => w.path === actualPath);
         if (win) {
+          const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
             win,
-            window.innerWidth,
-            window.innerHeight,
+            cRect?.width ?? window.innerWidth,
+            cRect?.height ?? window.innerHeight,
           );
         }
       });
@@ -719,10 +720,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     requestAnimationFrame(() => {
       const win = useWindowManager.getState().getWindow(winId);
       if (!win || win.minimized) return;
+      const cRect = useCanvasTransform.getState().containerRect;
       useCanvasTransform.getState().focusOnWindow(
         win,
-        window.innerWidth,
-        window.innerHeight,
+        cRect?.width ?? window.innerWidth,
+        cRect?.height ?? window.innerHeight,
       );
     });
   }, []);

@@ -62,10 +62,11 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const isNeumorphic = themeStyle === "neumorphic";
 
   const fitWindow = useCallback(() => {
+    const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
       [{ x: win.x, y: win.y, width: win.width, height: win.height }],
-      window.innerWidth,
-      window.innerHeight,
+      cRect?.width ?? window.innerWidth,
+      cRect?.height ?? window.innerHeight,
     );
   }, [fitAll, win.x, win.y, win.width, win.height]);
 
