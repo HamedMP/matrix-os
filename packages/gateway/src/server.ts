@@ -197,6 +197,46 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
   console.info("[terminal-debug][gateway]", event, details);
 }
 
+export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
+
+export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
+
+export function registerTerminalSessionRoutes(
+  app: Hono,
+  options: { homePath: string; sessionRegistry: TerminalSessionRouteRegistry },
+): void {
+  const { homePath, sessionRegistry } = options;
+  const terminalSessionDeleteBodyLimit = bodyLimit({
+    maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  });
+
+  app.get("/api/terminal/sessions", (c) => {
+    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
+      const displayCwd = relative(homePath, session.cwd) || "~";
+      return {
+        sessionId: session.sessionId,
+        cwd: displayCwd,
+        state: session.state,
+        exitCode: session.exitCode,
+        createdAt: session.createdAt,
+        lastAttachedAt: session.lastAttachedAt,
+        attachedClients: session.attachedClients,
+      };
+    });
+    return c.json(publicSessions);
+  });
+
+  app.delete("/api/terminal/sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
+    const id = c.req.param("id");
+    logTerminalDebug("rest-destroy-request", { sessionId: id });
+    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
+    const session = sessionRegistry.getSession(id);
+    if (!session) return c.json({ ok: true }, 200);
+    sessionRegistry.destroy(id);
+    return c.json({ ok: true });
+  });
+}
+
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 
@@ -2498,31 +2538,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.get("/api/terminal/sessions", (c) => {
-    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
-      const displayCwd = relative(homePath, session.cwd) || "~";
-      return {
-        sessionId: session.sessionId,
-        cwd: displayCwd,
-        state: session.state,
-        exitCode: session.exitCode,
-        createdAt: session.createdAt,
-        lastAttachedAt: session.lastAttachedAt,
-        attachedClients: session.attachedClients,
-      };
-    });
-    return c.json(publicSessions);
-  });
-
-  app.delete("/api/terminal/sessions/:id", (c) => {
-    const id = c.req.param("id");
-    logTerminalDebug("rest-destroy-request", { sessionId: id });
-    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
-    const session = sessionRegistry.getSession(id);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-    sessionRegistry.destroy(id);
-    return c.json({ ok: true });
-  });
+  registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
     const body = await c.req.json<{
