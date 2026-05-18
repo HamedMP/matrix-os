@@ -3,6 +3,39 @@
 How to verify the file sync feature works end-to-end -- from raw HTTP probes
 to running the macOS menu bar app.
 
+## Local Smoke Scripts
+
+Use the checked-in smoke scripts before manual local testing or release
+verification. They reuse the focused unit and integration tests instead of
+duplicating assertions.
+
+```bash
+# Sync only: CLI profile/auth, gateway sync contracts, and two-peer sync.
+flox activate -- bun run test:sync
+
+# SSH only: CLI SSH resolution, platform resolve route, VPS setup, and key sync.
+flox activate -- bun run test:ssh
+
+# Convenience pre-push gate for both feature areas.
+flox activate -- bun run test:sync-ssh
+```
+
+Fast and extended modes:
+
+```bash
+scripts/test-sync-local.sh --fast
+scripts/test-sync-local.sh --docker
+scripts/test-sync-local.sh --full
+
+scripts/test-ssh-local.sh --fast
+scripts/test-ssh-local.sh --full
+```
+
+`--docker` expects the local Docker gateway on `localhost:4000` and does a
+read-only sync API reachability check. Start it separately with `bun run docker`
+when you need that layer. `--full` adds the slower repository checks for the
+selected feature area.
+
 ## What's Running
 
 `bun run docker` brings up the full sync stack:
@@ -245,6 +278,113 @@ node --import tsx bin/matrixos.ts sync resume
 
 The daemon uses `~/.matrixos/config.json` for its config and
 `~/.matrixos/daemon.sock` for IPC. Logs land in `~/.matrixos/logs/sync.log`.
+
+## Manual Local Sync Acceptance
+
+Run this after `bun run test:sync` passes when validating real daemon behavior.
+Use an isolated `HOME` so local testing does not touch your real Matrix profile
+or install a persistent service.
+
+Terminal 1:
+
+```bash
+export MATRIX_TEST_HOME="$(mktemp -d)"
+export HOME="$MATRIX_TEST_HOME"
+
+node packages/sync-client/bin/matrix.mjs login --dev
+mkdir -p "$HOME/matrixos-sync-test"
+pnpm --filter @finnaai/matrix exec tsx src/daemon/index.ts
+```
+
+Terminal 2, with the same `MATRIX_TEST_HOME` value:
+
+```bash
+export HOME="$MATRIX_TEST_HOME"
+node packages/sync-client/bin/matrix.mjs sync status
+```
+
+Acceptance scenarios:
+
+- Local create uploads and appears in the local gateway manifest/storage.
+- Remote change downloads locally.
+- Remote delete removes the local file only when there is no local edit.
+- Local edit plus remote update creates a conflict copy and preserves local
+  content.
+- `matrix sync pause` stops uploads.
+- `matrix sync resume` resumes uploads.
+- Restarting the daemon performs the initial pull correctly.
+- `matrix sync status` shows profile, manifest version, tracked files, and
+  conflicts.
+
+## SSH Local Acceptance
+
+Run this after `bun run test:ssh` passes when validating a real VPS. Local tests
+prove the CLI, platform route, cloud-init, host-bundle packaging, and authorized
+keys projection, but they cannot prove public networking or the user's live SSH
+key without a real VPS.
+
+Prerequisites:
+
+- Active CLI profile is logged in.
+- The profile's platform API can resolve a running VPS with `publicIPv4`.
+- The user's public key has been added with `matrix keys add`.
+- The VPS has deployed the host bundle that includes direct SSH/Zellij support.
+
+Commands:
+
+```bash
+matrix whoami
+matrix keys add ~/.ssh/id_ed25519.pub
+matrix ssh
+matrix ssh --raw
+```
+
+Acceptance scenarios:
+
+- `matrix ssh` resolves the active profile's VPS and connects as `matrix`.
+- The default command attaches or creates the `matrix-main` Zellij session.
+- tmux is used only as fallback when Zellij is unavailable.
+- `matrix ssh --raw` skips the remote Zellij/tmux command and opens plain SSH.
+- Missing auth, missing VPS, stopped VPS, and missing public IP return clear,
+  safe errors.
+- `matrix shell` subcommands remain separate Zellij session-management commands.
+
+## Production Rollout Verification
+
+Production customer runtime is VPS-native. Do not use Docker image rebuilds or
+Docker Compose as the customer deployment path.
+
+Before rollout:
+
+```bash
+flox activate -- bun run test:sync-ssh
+bun run test -- --maxWorkers=1
+```
+
+Rollout:
+
+- Push the branch and wait for CI.
+- Build and publish the host bundle through the existing release workflow.
+- Deploy to a test VPS with the platform deploy route or selected release
+  channel.
+
+Verify on the VPS:
+
+```bash
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
+systemctl status matrix-gateway.service matrix-shell.service matrix-sync-agent.service ssh
+command -v zellij
+ls -l /home/matrix/.ssh/authorized_keys
+```
+
+Verify from a real CLI profile:
+
+- `matrix keys add` updates the VPS authorized keys projection.
+- `matrix ssh` lands in `matrix-main`.
+- `matrix ssh --raw` opens plain SSH.
+- Sync create, download, delete, conflict preservation, pause/resume, and daemon
+  restart behavior still pass against the deployed VPS.
 
 ## Two-Peer Test (Same Machine)
 
