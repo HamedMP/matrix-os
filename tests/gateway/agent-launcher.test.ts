@@ -14,7 +14,7 @@ describe("agent-launcher", () => {
       if (args[0] === "--version" && command === "opencode") {
         throw new Error("ENOENT: opencode missing from /usr/bin");
       }
-      if (args[0] === "auth" && command === "codex") {
+      if (args[0] === "login" && args[1] === "status" && command === "codex") {
         throw new Error("not logged in: token sk-secret");
       }
       return { stdout: "ok\n", stderr: "" };
@@ -51,13 +51,13 @@ describe("agent-launcher", () => {
     expect(launch).toEqual({
       command: "codex",
       args: [
-        "exec",
-        "--skip-git-repo-check",
         "--ask-for-approval",
         "never",
+        "exec",
+        "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
-        "--writable-root",
+        "--add-dir",
         "/tmp/matrixos-codex",
         "--",
         "fix tests; rm -rf /",
@@ -78,13 +78,13 @@ describe("agent-launcher", () => {
       });
       if (agent === "codex") {
         expect(launch.args).toEqual([
-          "exec",
-          "--skip-git-repo-check",
           "--ask-for-approval",
           "never",
+          "exec",
+          "--skip-git-repo-check",
           "--sandbox",
           "workspace-write",
-          "--writable-root",
+          "--add-dir",
           "/tmp/sandbox",
           "--",
           "--dangerously-bypass-sandbox",
@@ -119,9 +119,9 @@ describe("agent-launcher", () => {
       prompt: "--help",
       sandbox: { enabled: true, writableRoots: ["/tmp/sandbox"] },
     });
-    expect(launch.args.slice(0, 4)).toEqual(["exec", "--skip-git-repo-check", "--ask-for-approval", "never"]);
+    expect(launch.args.slice(0, 4)).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check"]);
     const sandboxIndex = launch.args.indexOf("--sandbox");
-    const writableRootIndex = launch.args.indexOf("--writable-root");
+    const writableRootIndex = launch.args.indexOf("--add-dir");
     const dashDashIndex = launch.args.indexOf("--");
     expect(sandboxIndex).toBeGreaterThan(3);
     expect(writableRootIndex).toBeGreaterThan(sandboxIndex);
@@ -141,7 +141,7 @@ describe("agent-launcher", () => {
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
-    }).args).toEqual(["exec", "--skip-git-repo-check", "--ask-for-approval", "never", "--dangerously-bypass-sandbox", "--", "work"]);
+    }).args).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "--", "work"]);
   });
 
   it("validates supported agent IDs", () => {

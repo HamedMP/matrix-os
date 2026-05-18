@@ -27,12 +27,19 @@ interface LinearIssueNode {
   description?: string | null;
   url?: string;
   priority?: number | null;
+  createdAt?: string;
   updatedAt?: string;
   branchName?: string | null;
   assignee?: { id?: string; name?: string; displayName?: string } | null;
   state?: { id?: string; name?: string; type?: string } | null;
   team?: { id?: string; key?: string; name?: string } | null;
   labels?: { nodes?: Array<{ id?: string; name?: string }> } | null;
+  inverseRelations?: {
+    nodes?: Array<{
+      type?: string;
+      issue?: { id?: string | null; identifier?: string | null; state?: { name?: string | null } | null } | null;
+    }>;
+  } | null;
   project?: { id?: string; name?: string; slugId?: string } | null;
 }
 
@@ -67,6 +74,37 @@ interface LinearSetupPayload {
     };
   };
   errors?: unknown[];
+}
+
+export interface LinearGraphqlRequest {
+  credential: string;
+  query: string;
+  variables?: Record<string, unknown>;
+  endpoint: string;
+  fetch: FetchLike;
+  timeoutMs: number;
+}
+
+export type LinearGraphqlTransport = (request: LinearGraphqlRequest) => Promise<unknown>;
+
+export async function defaultLinearGraphqlTransport(request: LinearGraphqlRequest): Promise<unknown> {
+  const response = await request.fetch(request.endpoint, {
+    method: "POST",
+    headers: {
+      "Authorization": request.credential,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: request.query,
+      ...(request.variables ? { variables: request.variables } : {}),
+    }),
+    signal: AbortSignal.timeout(request.timeoutMs),
+  });
+  if (!response.ok) {
+    console.warn("[symphony] Linear GraphQL request failed with status", response.status);
+    throw new Error("linear_graphql_failed");
+  }
+  return response.json();
 }
 
 function normalizeSetupOptions(payloads: LinearSetupPayload[]): LinearSetupOptions {
@@ -116,6 +154,7 @@ function normalizeIssue(node: LinearIssueNode): TrackedTicket | null {
     externalId: node.id,
     identifier: node.identifier,
     title: node.title,
+    description: node.description ?? null,
     url: node.url,
     teamId: node.team?.id,
     teamKey: node.team?.key,
@@ -126,10 +165,23 @@ function normalizeIssue(node: LinearIssueNode): TrackedTicket | null {
     assigneeId: node.assignee?.id,
     assigneeName: node.assignee?.displayName ?? node.assignee?.name,
     labels: sanitizeLabels(node.labels?.nodes?.map((label) => label.name ?? "") ?? []).map((label) => label.toLowerCase()),
+    blockedBy: extractBlockers(node),
     priority: node.priority,
     branchName: node.branchName ?? null,
+    createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };
+}
+
+function extractBlockers(node: LinearIssueNode): TrackedTicket["blockedBy"] {
+  return (node.inverseRelations?.nodes ?? []).flatMap((relation) => {
+    if (relation.type?.trim().toLowerCase() !== "blocks" || !relation.issue) return [];
+    return [{
+      id: relation.issue.id ?? null,
+      identifier: relation.issue.identifier ?? null,
+      stateName: relation.issue.state?.name ?? null,
+    }];
+  });
 }
 
 function includesAllLabels(ticket: TrackedTicket, requiredLabels: string[]): boolean {
@@ -137,7 +189,7 @@ function includesAllLabels(ticket: TrackedTicket, requiredLabels: string[]): boo
   return requiredLabels.every((label) => actual.has(label.toLowerCase()));
 }
 
-function buildIssuesQuery(input: { projectId?: string; state?: string; labelName?: string; assigneeId?: string }) {
+function buildIssuesQuery(input: { projectId?: string; state?: string; assigneeId?: string }) {
   const variableDefs = ["$first: Int!", "$after: String", "$teamId: ID!"];
   const filters = ["team: { id: { eq: $teamId } }"];
   if (input.projectId) {
@@ -147,10 +199,6 @@ function buildIssuesQuery(input: { projectId?: string; state?: string; labelName
   if (input.state) {
     variableDefs.push("$state: String!");
     filters.push("state: { name: { eq: $state } }");
-  }
-  if (input.labelName) {
-    variableDefs.push("$labelName: String!");
-    filters.push("labels: { name: { eq: $labelName } }");
   }
   if (input.assigneeId) {
     variableDefs.push("$assigneeId: ID!");
@@ -169,11 +217,17 @@ function buildIssuesQuery(input: { projectId?: string; state?: string; labelName
         }
       ) {
         nodes {
-          id identifier title description url priority updatedAt branchName
+          id identifier title description url priority createdAt updatedAt branchName
           assignee { id name displayName }
           state { id name type color }
           team { id key name }
           labels { nodes { id name } }
+          inverseRelations(first: 50) {
+            nodes {
+              type
+              issue { id identifier state { name } }
+            }
+          }
           project { id name slugId }
         }
         pageInfo { hasNextPage endCursor }
@@ -215,10 +269,12 @@ const SETUP_OPTIONS_QUERY = `
 export function createLinearSource(options: {
   endpoint?: string;
   fetch?: FetchLike;
+  graphql?: LinearGraphqlTransport;
   timeoutMs?: number;
 } = {}): LinearSource {
   const endpoint = options.endpoint ?? "https://api.linear.app/graphql";
   const fetchImpl = options.fetch ?? fetch;
+  const graphql = options.graphql ?? defaultLinearGraphqlTransport;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const scanOffsets = new Map<string, number>();
 
@@ -226,7 +282,6 @@ export function createLinearSource(options: {
     return JSON.stringify({
       teamId: rule.teamId,
       projectId: rule.projectId ?? null,
-      label: rule.requiredLabels[0] ?? null,
       states,
       assigneeIds,
     });
@@ -258,31 +313,22 @@ export function createLinearSource(options: {
           throw new Error("linear_setup_failed");
         }
 
-        const response = await fetchImpl(endpoint, {
-          method: "POST",
-          headers: {
-            "Authorization": credential,
-            "Content-Type": "application/json",
+        const payload = await graphql({
+          credential,
+          query: SETUP_OPTIONS_QUERY,
+          variables: {
+            first: LINEAR_SETUP_PAGE_SIZE,
+            teamsAfter,
+            projectsAfter,
+            usersAfter,
+            includeTeams,
+            includeProjects,
+            includeUsers,
           },
-          body: JSON.stringify({
-            query: SETUP_OPTIONS_QUERY,
-            variables: {
-              first: LINEAR_SETUP_PAGE_SIZE,
-              teamsAfter,
-              projectsAfter,
-              usersAfter,
-              includeTeams,
-              includeProjects,
-              includeUsers,
-            },
-          }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (!response.ok) {
-          console.warn("[symphony] Linear setup discovery failed with status", response.status);
-          throw new Error("linear_setup_failed");
-        }
-        const payload = await response.json() as LinearSetupPayload;
+          endpoint,
+          fetch: fetchImpl,
+          timeoutMs,
+        }) as LinearSetupPayload;
         if (payload.errors) {
           console.warn("[symphony] Linear setup discovery returned GraphQL errors");
           throw new Error("linear_setup_failed");
@@ -309,7 +355,6 @@ export function createLinearSource(options: {
     async previewTickets(rule: TicketSourceRule, credential: string, input: { limit?: number; state?: string } = {}) {
       const limit = Math.min(input.limit ?? 25, MAX_PREVIEW_TICKETS);
       const states = input.state ? [input.state] : rule.activeStates;
-      const labelForServer = rule.requiredLabels[0];
       const assigneeIds = rule.assigneeIds.length > 0 ? rule.assigneeIds : [undefined];
       const activeStateNames = new Set(states.map((state) => state.toLowerCase()));
       const combinations = states.flatMap((state) => assigneeIds.map((assigneeId) => ({ state, assigneeId })));
@@ -329,36 +374,25 @@ export function createLinearSource(options: {
         }
         const item = queue.shift()!;
         requests += 1;
-        const response = await fetchImpl(endpoint, {
-          method: "POST",
-          headers: {
-            "Authorization": credential,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: buildIssuesQuery({
-              projectId: rule.projectId,
-              state: item.state,
-              labelName: labelForServer,
-              assigneeId: item.assigneeId,
-            }),
-            variables: {
-              first: Math.min(MAX_PREVIEW_TICKETS, 100),
-              after: item.after,
-              teamId: rule.teamId,
-              ...(rule.projectId ? { projectId: rule.projectId } : {}),
-              ...(item.state ? { state: item.state } : {}),
-              ...(labelForServer ? { labelName: labelForServer } : {}),
-              ...(item.assigneeId ? { assigneeId: item.assigneeId } : {}),
-            },
+        const payload = await graphql({
+          credential,
+          query: buildIssuesQuery({
+            projectId: rule.projectId,
+            state: item.state,
+            assigneeId: item.assigneeId,
           }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (!response.ok) {
-          console.warn("[symphony] Linear preview failed with status", response.status);
-          throw new Error("linear_preview_failed");
-        }
-        const payload = await response.json() as LinearIssuesPayload;
+          variables: {
+            first: Math.min(MAX_PREVIEW_TICKETS, 100),
+            after: item.after,
+            teamId: rule.teamId,
+            ...(rule.projectId ? { projectId: rule.projectId } : {}),
+            ...(item.state ? { state: item.state } : {}),
+            ...(item.assigneeId ? { assigneeId: item.assigneeId } : {}),
+          },
+          endpoint,
+          fetch: fetchImpl,
+          timeoutMs,
+        }) as LinearIssuesPayload;
         if (payload.errors) {
           console.warn("[symphony] Linear preview returned GraphQL errors");
           throw new Error("linear_preview_failed");

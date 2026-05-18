@@ -44,7 +44,7 @@ export const SymphonyRuleInputSchema = z.object({
   projectId: LinearId.optional(),
   projectSlug: z.string().trim().min(1).max(128).optional(),
   requiredLabels: z.array(LabelOrState).max(20).default([]),
-  activeStates: z.array(LabelOrState).min(1).max(20).default(["Todo", "In Progress"]),
+  activeStates: z.array(LabelOrState).min(1).max(20).default(["Todo", "In Progress", "Merging", "Rework"]),
   terminalStates: z.array(LabelOrState).min(1).max(20).default(["Done", "Canceled", "Cancelled", "Duplicate"]),
   assigneeIds: z.array(LinearId).max(50).default([]),
 }).strict();
@@ -136,6 +136,7 @@ export interface TrackedTicket {
   externalId: string;
   identifier: string;
   title: string;
+  description?: string | null;
   url?: string;
   teamId?: string;
   teamKey?: string;
@@ -146,8 +147,10 @@ export interface TrackedTicket {
   assigneeId?: string;
   assigneeName?: string;
   labels: string[];
+  blockedBy?: Array<{ id?: string | null; identifier?: string | null; stateName?: string | null }>;
   priority?: number | null;
   branchName?: string | null;
+  createdAt?: string;
   updatedAt?: string;
 }
 

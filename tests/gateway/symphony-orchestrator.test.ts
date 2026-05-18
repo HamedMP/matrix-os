@@ -244,6 +244,71 @@ describe("Matrix Symphony orchestrator", () => {
     expect(agentSessionManager.startSession).toHaveBeenCalledTimes(1);
   });
 
+  it("uses Elixir-style priority ordering before dispatching eligible labeled tickets", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    const worktreeManager = {
+      createWorktree: vi.fn(async (input: { branch: string }) => ({
+        ok: true as const,
+        status: 201 as const,
+        worktree: { id: `wt_${input.branch.split("/").pop()}`, path: "/repo/wt", projectSlug: "matrix-os" },
+      })),
+    };
+    const agentSessionManager = {
+      startSession: vi.fn(async () => ({ ok: true as const, status: 201 as const, session: { id: "sess_priority", runtime: { status: "running" } } })),
+      killSession: vi.fn(),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [
+            { externalId: "issue_low", identifier: "MAT-20", title: "Low", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"], priority: 4, createdAt: "2026-05-13T00:01:00.000Z" },
+            { externalId: "issue_high", identifier: "MAT-10", title: "High", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"], priority: 1, createdAt: "2026-05-13T00:02:00.000Z" },
+          ],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager,
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(worktreeManager.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ branch: "symphony/mat-10" }));
+  });
+
+  it("does not dispatch Todo tickets blocked by non-terminal dependencies", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    const worktreeManager = { createWorktree: vi.fn() };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{
+            externalId: "issue_blocked",
+            identifier: "MAT-30",
+            title: "Blocked",
+            stateName: "Todo",
+            assigneeId: "assignee_1",
+            labels: ["symphony"],
+            blockedBy: [{ id: "issue_dependency", identifier: "MAT-29", stateName: "In Progress" }],
+          }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager: { startSession: vi.fn(), killSession: vi.fn() },
+    });
+
+    await expect(orchestrator.poll("user_123")).resolves.toMatchObject({ dispatched: 0, skipped: 1 });
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+  });
+
   it("serializes concurrent polls for the same owner", async () => {
     const repository = memoryRepo(structuredClone(baseSnapshot));
     const linearSource = {
@@ -665,9 +730,11 @@ describe("Matrix Symphony orchestrator", () => {
       });
 
       await expect(orchestrator.resumeEnabledInstallations()).resolves.toEqual(["user_123"]);
+      await Promise.resolve();
+      expect(linearSource.previewTickets).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1_000);
 
-      expect(linearSource.previewTickets).toHaveBeenCalledTimes(1);
+      expect(linearSource.previewTickets).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

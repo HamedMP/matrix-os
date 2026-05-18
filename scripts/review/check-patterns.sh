@@ -158,7 +158,7 @@ if [[ -n "$MATCHES" ]]; then
     fi
     window_end=$((line_no + 12))
     call_window=$(sed -n "${line_no},${window_end}p" "$file" 2>/dev/null || true)
-    if ! echo "$call_window" | grep -Eq 'signal\s*:'; then
+    if ! echo "$call_window" | grep -Eq 'signal[[:space:]]*:'; then
       MISSING_SIGNAL+="$line"$'\n'
     fi
   done <<< "$MATCHES"
