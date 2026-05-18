@@ -5,7 +5,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { spawn } from "node:child_process";
-import { resolveTarget, spawnSsh } from "../../src/cli/commands/ssh.js";
+import { remoteAttachCommand, resolveTarget, spawnSsh } from "../../src/cli/commands/ssh.js";
 
 describe("resolveTarget", () => {
   afterEach(() => {
@@ -13,26 +13,46 @@ describe("resolveTarget", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns the default SSH target when no handle is provided", async () => {
+  it("resolves the authenticated user's VPS target when no handle is provided", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        host: "203.0.113.10",
+        port: 22,
+        user: "matrix",
+        sessionName: "matrix-main",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
     await expect(
       resolveTarget({
-        gatewayUrl: "https://matrix-os.com",
+        platformUrl: "https://app.matrix-os.com",
         token: "token",
       }),
     ).resolves.toEqual({
-      host: "ssh.matrix-os.com",
-      port: 2222,
-      user: "matrixos",
+      host: "203.0.113.10",
+      port: 22,
+      user: "matrix",
+      sessionName: "matrix-main",
     });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/ssh/resolve",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer token" },
+      }),
+    );
   });
 
   it("validates and returns the API-provided SSH target", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        host: "ssh.matrix-os.com",
-        port: 2222,
-        user: "matrixos",
+        host: "203.0.113.10",
+        port: 22,
+        user: "matrix",
+        sessionName: "matrix-main",
       }),
     });
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
@@ -41,17 +61,18 @@ describe("resolveTarget", () => {
     await expect(
       resolveTarget({
         handle: "@alice",
-        gatewayUrl: "https://gateway.matrix-os.com",
+        platformUrl: "https://app.matrix-os.com",
         token: "token",
       }),
     ).resolves.toEqual({
-      host: "ssh.matrix-os.com",
-      port: 2222,
-      user: "matrixos",
+      host: "203.0.113.10",
+      port: 22,
+      user: "matrix",
+      sessionName: "matrix-main",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://gateway.matrix-os.com/api/ssh/resolve?handle=alice",
+      "https://app.matrix-os.com/api/ssh/resolve?handle=alice",
       expect.objectContaining({
         headers: { Authorization: "Bearer token" },
       }),
@@ -75,23 +96,53 @@ describe("resolveTarget", () => {
     await expect(
       resolveTarget({
         handle: "@alice",
-        gatewayUrl: "https://gateway.matrix-os.com",
+        platformUrl: "https://app.matrix-os.com",
         token: "token",
       }),
     ).rejects.toThrow("Platform returned an invalid SSH target");
   });
 
-  it("uses interactive host key checking for spawned SSH sessions", () => {
+  it("uses interactive host key checking and attaches the Matrix session for spawned SSH sessions", () => {
     spawnSsh({
-      host: "ssh.matrix-os.com",
-      port: 2222,
-      user: "matrixos",
+      host: "203.0.113.10",
+      port: 22,
+      user: "matrix",
+      sessionName: "matrix-main",
     });
 
     expect(spawn).toHaveBeenCalledWith(
       "ssh",
-      expect.arrayContaining(["-o", "StrictHostKeyChecking=ask"]),
+      expect.arrayContaining([
+        "-p",
+        "22",
+        "-o",
+        "StrictHostKeyChecking=ask",
+        "-t",
+        "matrix@203.0.113.10",
+        expect.stringContaining("zellij attach matrix-main"),
+      ]),
       expect.objectContaining({ stdio: "inherit" }),
     );
+  });
+
+  it("opens a raw SSH login without a remote attach command", () => {
+    spawnSsh({
+      host: "203.0.113.10",
+      port: 22,
+      user: "matrix",
+      sessionName: "matrix-main",
+    }, { raw: true });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "ssh",
+      ["-p", "22", "-o", "StrictHostKeyChecking=ask", "matrix@203.0.113.10"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+  });
+
+  it("falls back from zellij to tmux and then to a login shell", () => {
+    expect(remoteAttachCommand("matrix-main")).toContain("zellij attach matrix-main");
+    expect(remoteAttachCommand("matrix-main")).toContain("tmux attach -t matrix-main");
+    expect(remoteAttachCommand("matrix-main")).toContain('exec "${SHELL:-/bin/bash}" -l');
   });
 });

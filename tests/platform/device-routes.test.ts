@@ -8,7 +8,7 @@ import {
 import { createOrchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
-import { verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
+import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -587,6 +587,117 @@ describe("device routes", () => {
 
       expect(res.status).toBe(429);
       await expect(res.json()).resolves.toEqual({ error: "too_many_requests" });
+    });
+  });
+
+  describe("GET /api/ssh/resolve", () => {
+    async function syncToken(input: { clerkUserId: string; handle: string }): Promise<string> {
+      const issued = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: input.clerkUserId,
+        handle: input.handle,
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+      return issued.token;
+    }
+
+    it("returns the authenticated user's running VPS SSH target", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_alice",
+        clerkUserId: "user_alice",
+        handle: "alice",
+        status: "running",
+        publicIPv4: "203.0.113.10",
+        provisionedAt: new Date().toISOString(),
+      });
+      const token = await syncToken({ clerkUserId: "user_alice", handle: "alice" });
+
+      const res = await app.request("/api/ssh/resolve", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        host: "203.0.113.10",
+        port: 22,
+        user: "matrix",
+        sessionName: "matrix-main",
+      });
+    });
+
+    it("allows an explicit self handle", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_alice",
+        clerkUserId: "user_alice",
+        handle: "alice",
+        status: "running",
+        publicIPv4: "203.0.113.10",
+        provisionedAt: new Date().toISOString(),
+      });
+      const token = await syncToken({ clerkUserId: "user_alice", handle: "alice" });
+
+      const res = await app.request("/api/ssh/resolve?handle=@alice", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("returns 403 for another user's handle", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_alice",
+        clerkUserId: "user_alice",
+        handle: "alice",
+        status: "running",
+        publicIPv4: "203.0.113.10",
+        provisionedAt: new Date().toISOString(),
+      });
+      const token = await syncToken({ clerkUserId: "user_alice", handle: "alice" });
+
+      const res = await app.request("/api/ssh/resolve?handle=bob", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+    });
+
+    it("returns 401 without a valid sync JWT", async () => {
+      const res = await app.request("/api/ssh/resolve", {
+        headers: { authorization: "Bearer invalid" },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it("returns a safe not-ready error when no running VPS exists", async () => {
+      const token = await syncToken({ clerkUserId: "user_alice", handle: "alice" });
+
+      const res = await app.request("/api/ssh/resolve", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(404);
+      await expect(res.json()).resolves.toEqual({ error: "vps_not_ready" });
+    });
+
+    it("returns a safe conflict when the running VPS has no public IPv4", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_alice",
+        clerkUserId: "user_alice",
+        handle: "alice",
+        status: "running",
+        publicIPv4: null,
+        provisionedAt: new Date().toISOString(),
+      });
+      const token = await syncToken({ clerkUserId: "user_alice", handle: "alice" });
+
+      const res = await app.request("/api/ssh/resolve", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toEqual({ error: "vps_missing_public_ip" });
     });
   });
 });

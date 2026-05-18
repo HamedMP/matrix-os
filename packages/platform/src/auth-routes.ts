@@ -18,6 +18,7 @@ import {
   getActiveUserMachineByHandle,
   getContainer,
   getContainerByClerkId,
+  getRunningUserMachineByClerkId,
 } from './db.js';
 import type { ClerkAuth } from './clerk-auth.js';
 
@@ -25,6 +26,8 @@ const DEVICE_BODY_LIMIT = 4096;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 100;
 const RATE_LIMIT_MAX_KEYS = 10_000;
+const SSH_SESSION_NAME = 'matrix-main';
+const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export interface AuthRoutesConfig {
   db: PlatformDB;
@@ -114,6 +117,11 @@ function isSyncJwtConfigError(err: unknown): boolean {
     err.message === 'verifySyncJwt requires either secret or publicKey' ||
     err.message.includes('PLATFORM_JWT_SECRET must be at least 32 characters')
   );
+}
+
+function normalizeHandle(raw: string): string | null {
+  const normalized = raw.trim().replace(/^@/, '').toLowerCase();
+  return HANDLE_PATTERN.test(normalized) ? normalized : null;
 }
 
 function approvalPage(
@@ -444,6 +452,58 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       userId: claims.sub,
       handle,
       gatewayUrl: config.gatewayUrlForHandle(handle),
+    });
+  });
+
+  // GET /api/ssh/resolve -- authed via sync JWT. Resolves the caller's own VPS SSH target.
+  app.get('/api/ssh/resolve', async (c) => {
+    if (!rateLimit.check(clientIp(c))) {
+      return c.json({ error: 'too_many_requests' }, 429);
+    }
+    const auth = c.req.header('authorization');
+    if (!auth?.startsWith('Bearer ')) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    let claims: SyncJwtClaims;
+    try {
+      claims = await verifySyncJwt(auth.slice(7), { secret: config.jwtSecret });
+    } catch (err: unknown) {
+      if (isSyncJwtConfigError(err)) {
+        throw err;
+      }
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    const claimsHandle = normalizeHandle(claims.handle);
+    if (!claims.sub || !claimsHandle) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    const requestedHandle = c.req.query('handle');
+    if (requestedHandle !== undefined) {
+      const normalizedRequestedHandle = normalizeHandle(requestedHandle);
+      if (!normalizedRequestedHandle) {
+        return c.json({ error: 'invalid_handle' }, 400);
+      }
+      if (normalizedRequestedHandle !== claimsHandle) {
+        return c.json({ error: 'forbidden' }, 403);
+      }
+    }
+
+    const machine = await getRunningUserMachineByClerkId(config.db, claims.sub);
+    if (!machine || machine.handle !== claimsHandle) {
+      return c.json({ error: 'vps_not_ready' }, 404);
+    }
+    if (!machine.publicIPv4) {
+      return c.json({ error: 'vps_missing_public_ip' }, 409);
+    }
+
+    return c.json({
+      host: machine.publicIPv4,
+      port: 22,
+      user: 'matrix',
+      sessionName: SSH_SESSION_NAME,
     });
   });
 

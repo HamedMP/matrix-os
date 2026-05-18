@@ -136,12 +136,17 @@ matrix sync ~/work-projects --folder projects
 
 ## SSH
 
-`matrix ssh` connects to your instance via the bastion at `ssh.matrix-os.com:2222` and auto-attaches a tmux session.
+`matrix ssh` connects directly to your customer VPS as the `matrix` user and auto-attaches the default zellij session, `matrix-main`. If zellij is unavailable, it falls back to tmux with the same session name.
 
 ```bash
 matrix ssh                  # your own instance
-matrix ssh @hamed           # someone else (requires their permission)
+matrix ssh @hamed           # your own handle; shared-handle SSH is not enabled yet
+matrix ssh --raw            # plain SSH login shell, no session auto-attach
 ```
+
+<Callout type="info">
+  SSH currently resolves your active profile's own VPS. The old bastion path is deferred until a production bastion exists.
+</Callout>
 
 Add a public key for SSH access:
 
