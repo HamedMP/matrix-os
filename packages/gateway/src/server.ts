@@ -145,7 +145,7 @@ import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { sanitizePeerId } from "./sync/peer-id.js";
-import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
+import { ensureSyncUser, migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
@@ -601,6 +601,16 @@ export async function createGateway(config: GatewayConfig) {
       }
 
       await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
+      const configuredSyncUserId =
+        process.env.MATRIX_USER_ID ??
+        process.env.MATRIX_HANDLE ??
+        (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : undefined);
+      if (configuredSyncUserId) {
+        await ensureSyncUser(kyselyInstance as Kysely<SyncDatabase>, {
+          id: configuredSyncUserId,
+          handle: process.env.MATRIX_HANDLE ?? configuredSyncUserId,
+        });
+      }
 
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       syncPeerRegistry = createPeerRegistry();

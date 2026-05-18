@@ -69,3 +69,18 @@ export async function migrateSyncTables(db: Kysely<SyncDatabase>): Promise<void>
   await sql`CREATE INDEX IF NOT EXISTS idx_sync_shares_grantee ON sync_shares(grantee_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_sync_shares_owner ON sync_shares(owner_id)`.execute(db);
 }
+
+export async function ensureSyncUser(
+  db: Kysely<SyncDatabase>,
+  input: { id: string; handle: string },
+): Promise<void> {
+  await db
+    .insertInto("users")
+    .values({ id: input.id, handle: input.handle })
+    .onConflict((oc) =>
+      oc.column("id").doUpdateSet({
+        handle: input.handle,
+      }),
+    )
+    .execute();
+}
