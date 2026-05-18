@@ -12,6 +12,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
+    expect(script).toContain('matrix-sync-authorized-keys');
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');

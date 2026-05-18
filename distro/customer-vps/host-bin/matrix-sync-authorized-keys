@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+src="${MATRIX_HOME:-/home/matrix/home}/system/authorized_keys"
+ssh_dir="/home/matrix/.ssh"
+dest="$ssh_dir/authorized_keys"
+
+if [ -L "$ssh_dir" ]; then
+  rm -f "$ssh_dir"
+fi
+install -d -o matrix -g matrix -m 0700 "$ssh_dir"
+
+if [ ! -e "$src" ]; then
+  if [ -L "$dest" ]; then
+    rm -f "$dest"
+  elif [ -f "$dest" ]; then
+    install -o matrix -g matrix -m 0600 /dev/null "$dest"
+  fi
+  exit 0
+fi
+
+python3 - "$src" "$dest" <<'PY'
+import os
+import stat
+import sys
+
+src, dest = sys.argv[1], sys.argv[2]
+ssh_dir = os.path.dirname(dest)
+tmp = os.path.join(ssh_dir, f".authorized_keys.{os.getpid()}.tmp")
+
+try:
+    src_fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW)
+except OSError as exc:
+    raise SystemExit(f"refusing authorized_keys source: {exc}") from exc
+
+try:
+    src_stat = os.fstat(src_fd)
+    if not stat.S_ISREG(src_stat.st_mode):
+        raise SystemExit("refusing authorized_keys source: not a regular file")
+    if src_stat.st_size > 1024 * 1024:
+        raise SystemExit("refusing authorized_keys source: file too large")
+    data = os.read(src_fd, src_stat.st_size)
+finally:
+    os.close(src_fd)
+
+try:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    tmp_fd = os.open(tmp, flags, 0o600)
+    try:
+        os.write(tmp_fd, data)
+        os.fsync(tmp_fd)
+    finally:
+        os.close(tmp_fd)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, dest)
+finally:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+PY
+
+chown matrix:matrix "$dest"
+chmod 0600 "$dest"

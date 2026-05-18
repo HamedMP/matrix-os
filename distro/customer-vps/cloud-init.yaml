@@ -141,6 +141,38 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-authorized-keys.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Project Matrix OS authorized_keys into SSH home
+      After=matrix-restore.service
+      Requires=matrix-restore.service
+      ConditionPathExists=/opt/matrix/bin/matrix-sync-authorized-keys
+
+      [Service]
+      Type=oneshot
+      User=root
+      Group=root
+      EnvironmentFile=/opt/matrix/env/host.env
+      ExecStart=/opt/matrix/bin/matrix-sync-authorized-keys
+  - path: /etc/systemd/system/matrix-authorized-keys.path
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Watch Matrix OS authorized_keys source
+      After=matrix-restore.service
+      Requires=matrix-restore.service
+
+      [Path]
+      PathExists=/home/matrix/home/system/authorized_keys
+      PathChanged=/home/matrix/home/system/authorized_keys
+      Unit=matrix-authorized-keys.service
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /etc/systemd/system/matrix-linux-tools.service
     owner: root:root
     permissions: "0644"
@@ -665,7 +697,7 @@ runcmd:
       apt_get_update
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git openssh-server postgresql-client procps nginx openssl sudo unzip
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
@@ -674,6 +706,7 @@ runcmd:
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
     install -d -o matrix -g matrix -m 0755 /opt/matrix/messaging /opt/matrix/messaging/bin
     install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config
+    install -d -o matrix -g matrix -m 0700 /home/matrix/.ssh
     install -d -o matrix -g matrix -m 0755 /home/matrix/.config/systemd /home/matrix/home/.config/systemd/user
     install -d -o root -g root -m 0750 /etc/sudoers.d
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
@@ -703,7 +736,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes /opt/matrix/bin/matrix-install-linux-tools /opt/matrix/bin/matrix-messaging-health /opt/matrix/bin/matrix-messaging-backup /opt/matrix/bin/matrix-messaging-restore
+    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes /opt/matrix/bin/matrix-install-linux-tools /opt/matrix/bin/matrix-messaging-health /opt/matrix/bin/matrix-messaging-backup /opt/matrix/bin/matrix-messaging-restore /opt/matrix/bin/matrix-sync-authorized-keys
     for cli in node npm npx claude codex opencode pi code-server uv uvx; do
       if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then
         ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"
@@ -713,6 +746,12 @@ runcmd:
       ln -sf /opt/matrix/bin/zellij /usr/local/bin/zellij
     fi
     /opt/matrix/bin/matrix-install-hermes
+    sed -i \
+      -e 's/^#\?PermitRootLogin .*/PermitRootLogin no/' \
+      -e 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' \
+      -e 's/^#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' \
+      /etc/ssh/sshd_config
+    /opt/matrix/bin/matrix-sync-authorized-keys
     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
     chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
     chmod 0640 /opt/matrix/tls/key.pem
@@ -738,8 +777,8 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-linux-tools.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-authorized-keys.path matrix-linux-tools.service matrix-db-backup.timer ssh nginx
+    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-authorized-keys.service matrix-authorized-keys.path ssh
     systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service

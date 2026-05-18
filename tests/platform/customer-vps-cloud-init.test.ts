@@ -110,7 +110,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-authorized-keys.path matrix-linux-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
@@ -182,7 +182,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git openssh-server postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
@@ -204,7 +204,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
     expect(cloudInit).toContain('sudo');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git openssh-server postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
@@ -321,11 +321,11 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('permissions: "0750"');
-    expect(cloudInit).toContain('docker.io file git postgresql-client procps nginx openssl sudo unzip');
+    expect(cloudInit).toContain('docker.io file git openssh-server postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-authorized-keys.path matrix-linux-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {
@@ -340,5 +340,23 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(matrixctl).toContain('export AWS_ACCESS_KEY_ID=');
     expect(matrixctl).toContain('rm -f "${tmp:-}"');
     expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+  });
+
+  it('configures direct SSH for the matrix user without password or root login', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const keySync = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-authorized-keys'), 'utf8');
+
+    expect(cloudInit).toContain('openssh-server');
+    expect(cloudInit).toContain('PermitRootLogin no');
+    expect(cloudInit).toContain('PasswordAuthentication no');
+    expect(cloudInit).toContain('PubkeyAuthentication yes');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/.ssh');
+    expect(cloudInit).toContain('matrix-authorized-keys.service');
+    expect(cloudInit).toContain('PathChanged=/home/matrix/home/system/authorized_keys');
+    expect(cloudInit).toContain('systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-authorized-keys.service matrix-authorized-keys.path ssh');
+    expect(keySync).toContain('os.O_NOFOLLOW');
+    expect(keySync).toContain('os.replace(tmp, dest)');
+    expect(keySync).toContain('chmod 0600 "$dest"');
   });
 });
