@@ -159,4 +159,37 @@ describe("profile CLI command", () => {
 
     await expect(readFile(join(configDir, "config.json"), "utf-8")).resolves.toContain("gateway.example");
   });
+
+  it("profile ls does not migrate the daemon config into cloud profile storage", async () => {
+    const home = process.env.HOME!;
+    const configDir = join(home, ".matrixos");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "profiles.json"),
+      JSON.stringify({
+        active: "local",
+        profiles: {
+          local: {
+            platformUrl: "http://localhost:9000",
+            gatewayUrl: "http://localhost:4010",
+          },
+        },
+      }),
+    );
+    await writeFile(
+      join(configDir, "config.json"),
+      JSON.stringify({
+        profile: "local",
+        gatewayUrl: "http://localhost:4010",
+        syncPath: join(home, "matrixos"),
+        peerId: "peer-test",
+      }),
+    );
+    const logs = captureLogs();
+
+    await profileCommand.subCommands!.ls.run!({ args: { json: true } } as never);
+
+    expect(JSON.parse(logs[0]).data.active).toBe("local");
+    await expect(readFile(join(configDir, "config.json"), "utf-8")).resolves.toContain("peer-test");
+  });
 });

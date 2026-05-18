@@ -1,6 +1,6 @@
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
@@ -408,6 +408,7 @@ export function recordSyncConflict(
 }
 
 export async function startDaemon(): Promise<void> {
+  await mkdir(join(configDir, "logs"), { recursive: true, mode: 0o700 });
   const logger = pino({
     transport: {
       target: "pino/file",
