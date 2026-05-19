@@ -85,7 +85,7 @@ export default function LandingPage() {
           transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.6s ease;
         }
         .screenshot-wrapper:hover {
-          transform: translateY(-8px) scale(1.005);
+          transform: translateY(calc(var(--ss-y, 0px) - 8px)) scale(1.005);
           box-shadow: 0 60px 120px -20px rgba(50,53,46,0.3), 0 40px 80px -30px rgba(50,53,46,0.35), 0 0 0 1px rgba(50,53,46,0.08);
         }
 
