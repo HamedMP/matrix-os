@@ -8,7 +8,8 @@ export function isPublicShellPath(pathname: string): boolean {
     pathname.startsWith("/sign-in/") ||
     pathname === "/sign-up" ||
     pathname.startsWith("/sign-up/") ||
-    pathname === "/landing"
+    pathname === "/landing" ||
+    pathname.startsWith("/landing/")
   );
 }
 
