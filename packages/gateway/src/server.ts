@@ -2387,7 +2387,7 @@ export async function createGateway(config: GatewayConfig) {
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
     const worktreeManager = createWorktreeManager({ homePath });
-    const agentLauncher = createAgentLauncher({ cwd: homePath });
+    const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const agentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager,
@@ -2402,6 +2402,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       worktreeManager,
       agentSessionManager,
+      agentStatusProvider: agentLauncher,
       statusHub: matrixSymphonyStatusHub,
     });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();
