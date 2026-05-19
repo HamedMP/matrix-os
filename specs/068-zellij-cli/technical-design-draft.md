@@ -5,11 +5,10 @@
 Today the Matrix OS CLI surface is fragmented:
 
 - A **dev CLI** at `bin/matrixos.{mjs,ts}` registered via the root `package.json`'s `bin` exposes `start / send / status / doctor` and has its own help text. It is meant for in-repo testing.
-- A **published CLI** at `packages/sync-client/` (npm `@finnaai/matrix`, also `matrix` / `matrixos` / `mos`) exposes `login / logout / sync / peers / keys / ssh` via citty.
+- A **published CLI** at `packages/sync-client/` (npm `@finnaai/matrix`, also `matrix` / `matrixos` / `mos`) exposes `login / logout / sync / peers / shell / profile / status / doctor / instance` via citty.
 - The web shell (`shell/src/components/terminal/TerminalApp.tsx`) drives **gateway PTY sessions** as one-off tabs, with an opt-in "Launch Zellij" button per tab.
-- `matrix ssh` attaches a `tmux` session called `main` on the SSH bastion (`packages/sync-client/src/cli/commands/ssh.ts:67`).
 
-This means three different "session" models (gateway PTY, in-tab zellij, bastion tmux) and two different CLIs.
+This means two different "session" models (gateway PTY and in-tab zellij) and two different CLIs.
 
 This spec replaces all of that with **one CLI**, **zellij-native sessions everywhere a user-facing terminal lives**, and a **stable contract for the upcoming VSCode extension**. Local development and the published cloud experience use the same binary against different profiles.
 
@@ -37,7 +36,7 @@ This spec replaces all of that with **one CLI**, **zellij-native sessions everyw
 ### Non-Goals
 
 - Web shell rewrite to use zellij sessions directly. Phase 4; out of scope for this spec.
-- Replacing `matrix ssh`'s tmux attach with zellij. The bastion is a different surface; tracked separately.
+- Reintroducing an SSH-backed terminal path. `matrix shell` is the canonical CLI terminal surface.
 - Headless `zellij` plugin/RPC integration. v1 shells out to the `zellij` binary and parses text output.
 - New web/marketing site copy for the CLI launch.
 
@@ -225,11 +224,7 @@ matrix
 |     +-- ls [<remote>]                       NEW -- browse remote tree
 |     `-- push|pull <local> <remote>          NEW -- one-shot transfer
 |
-+-- ssh [<handle>]                            (current; tmux attach kept for bastion)
 +-- peers
-+-- keys
-|     +-- add <pubkey-path>
-|     +-- ls                                  NEW
 |     `-- rm <key-id>                         NEW
 |
 +-- instance                                  NEW -- your container ops
