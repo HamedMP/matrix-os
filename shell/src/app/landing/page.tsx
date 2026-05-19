@@ -1,20 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
   BrainCircuitIcon,
   GlobeIcon,
-  PaletteIcon,
   ShieldCheckIcon,
-  MessageSquareIcon,
-  LayoutGridIcon,
-  SmartphoneIcon,
-  MonitorIcon,
-  LaptopIcon,
-  TabletIcon,
-  TvIcon,
 } from "lucide-react";
 
 const c = {
@@ -22,10 +14,7 @@ const c = {
   deep: "#32352E",
   cream: "#E0E1CA",
   ember: "#D06F25",
-  bg: "#FAFAF5",
-  sandLight: "#F7F1E7",
-  sandMid: "#F3EAE0",
-  muted: "#F0EDE4",
+  pageBg: "#E2E2CF",
   border: "#D6D3C8",
   mutedFg: "#5C5A4F",
   subtle: "#7A7768",
@@ -49,73 +38,42 @@ function Logo({ className = "", style = {} }: { className?: string; style?: Reac
   );
 }
 
-function useReveal() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { el.classList.add("revealed"); obs.unobserve(el); } },
-      { threshold: 0.15, rootMargin: "0px 0px -80px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-  return ref;
-}
-
-function RevealLine({ children, delay = 0, className = "" }: { children: React.ReactNode; delay?: number; className?: string }) {
-  const ref = useReveal();
-  return (<div ref={ref} className={`line-mask ${className}`}><div className="line-inner" style={{ transitionDelay: `${delay}ms` }}>{children}</div></div>);
-}
-
-function FadeIn({ children, delay = 0, className = "" }: { children: React.ReactNode; delay?: number; className?: string }) {
-  const ref = useReveal();
-  return (<div ref={ref} className={`fade-mask ${className}`} style={{ transitionDelay: `${delay}ms` }}>{children}</div>);
-}
-
-function BlurIn({ children, delay = 0, className = "" }: { children: React.ReactNode; delay?: number; className?: string }) {
-  const ref = useReveal();
-  return (<div ref={ref} className={`blur-mask ${className}`} style={{ transitionDelay: `${delay}ms` }}>{children}</div>);
-}
-
 export default function LandingPage() {
   const [scrollY, setScrollY] = useState(0);
+  const rafRef = useRef(0);
+
+  const onScroll = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => setScrollY(window.scrollY));
+  }, []);
+
   useEffect(() => {
     document.body.style.overflow = "auto";
     document.body.style.height = "auto";
-    const onScroll = () => setScrollY(window.scrollY);
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => { document.body.style.overflow = ""; document.body.style.height = ""; window.removeEventListener("scroll", onScroll); };
-  }, []);
+    return () => {
+      document.body.style.overflow = "";
+      document.body.style.height = "";
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [onScroll]);
 
-
-  const heroOpacity = Math.max(0, 1 - scrollY / 700);
-  const heroScale = 1 + scrollY * 0.0003;
   const screenshotY = Math.max(0, 60 - scrollY * 0.04);
   const screenshotScale = Math.min(1, 0.92 + scrollY * 0.00008);
 
   return (
-    <div style={{ backgroundColor: "#E2E2CF", color: c.deep, fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", position: "relative" }}>
-      {/* Grain overlay */}
+    <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", position: "relative" }}>
       <svg style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 50, opacity: 0.12 }}>
         <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
         <rect width="100%" height="100%" filter="url(#grain)" />
       </svg>
       <style>{`
-
-        .blur-mask { opacity: 0; filter: blur(10px); transform: translateY(1rem); transition: opacity 1s cubic-bezier(0.16, 1, 0.3, 1), filter 1s cubic-bezier(0.16, 1, 0.3, 1), transform 1s cubic-bezier(0.16, 1, 0.3, 1); }
-        .blur-mask.revealed { opacity: 1; filter: blur(0); transform: translateY(0); }
-
         .nav-link { position: relative; }
         .nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 1px; background: currentColor; transform: scaleX(0); transform-origin: right; transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
         .nav-link:hover::after { transform: scaleX(1); transform-origin: left; }
 
-        @keyframes hero-gradient-shift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-        @keyframes logo-float { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(3deg) scale(1.02); } }
-
         html { scroll-behavior: smooth; }
-        .split-heading { letter-spacing: -0.03em; }
 
         .screenshot-wrapper {
           border-radius: 16px;
@@ -149,7 +107,6 @@ export default function LandingPage() {
         }
       `}</style>
 
-      {/* Floating Nav Island */}
       <div className="nav-island">
         <div className="nav-island-inner">
           <Link href="/landing" className="flex items-center gap-[0.3em] shrink-0" style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>
@@ -162,406 +119,268 @@ export default function LandingPage() {
             <a href="#preview" className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>preview</a>
           </nav>
           <Link href="/sign-up" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
-            style={{ backgroundColor: c.forest, color: "#E2E2CF" }}>
+            style={{ backgroundColor: c.forest, color: c.pageBg }}>
             get started
           </Link>
         </div>
       </div>
 
-      {/* Hero — full viewport */}
-      <section className="relative h-screen overflow-hidden" style={{ backgroundColor: "#E2E2CF" }}>
+      <section className="relative h-screen overflow-hidden" style={{ backgroundColor: c.pageBg }}>
         <div className="relative h-full mx-auto max-w-[1200px] px-8 flex items-center">
-          {/* Left text */}
           <div className="relative z-10 max-w-md">
-            <h1 className="text-[clamp(2.5rem,5vw,3.5rem)] leading-[1.1] mb-6"
-              style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", color: c.forest }}>
+            <h1 className="text-[clamp(2.5rem,5vw,3.5rem)] leading-[1.1] mb-6" style={{ color: c.forest }}>
               Your computer, in the cloud.
             </h1>
             <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
               A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready — your apps, your files, your way.
             </p>
             <Link href="/sign-up" className="inline-block rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-              style={{ backgroundColor: c.forest, color: "#E2E2CF" }}>
+              style={{ backgroundColor: c.forest, color: c.pageBg }}>
               Get Started
             </Link>
           </div>
-
-          {/* Right video */}
           <div className="absolute right-0 top-0 h-full flex items-center justify-end pointer-events-none" style={{ width: "55%" }}>
-            <video
-              autoPlay
-              loop
-              muted
-              playsInline
-              src="/hero-loop.mp4"
-              className="max-w-none"
-              style={{ height: "60%", width: "auto" }}
-            />
+            <video autoPlay loop muted playsInline src="/hero-loop.mp4" className="max-w-none" style={{ height: "60%", width: "auto" }} />
           </div>
         </div>
       </section>
 
-      {/* App Screenshot */}
-      <section id="preview" className="relative py-24 md:py-36 overflow-hidden" style={{ backgroundColor: "#E2E2CF" }}>
+      <section id="preview" className="relative py-24 md:py-36 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
-          
-            <div
-              className="screenshot-wrapper"
-              style={{
-                transform: `translateY(${screenshotY}px) scale(${screenshotScale})`,
-              }}
-            >
-              <Image
-                src="/app-screenshot.jpg"
-                alt="Matrix OS Desktop"
-                width={1920}
-                height={1080}
-                className="w-full h-auto"
-                priority
-              />
-            </div>
-          
-          
-            <div className="mt-10 max-w-2xl mx-auto text-center">
-              <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
-              <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-                Your Matrix instance isn&apos;t just a dashboard — it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
-              </p>
-            </div>
-          
+          <div className="screenshot-wrapper" style={{ transform: `translateY(${screenshotY}px) scale(${screenshotScale})` }}>
+            <Image src="/app-screenshot.jpg" alt="Matrix OS Desktop" width={1920} height={1080} className="w-full h-auto" priority />
+          </div>
+          <div className="mt-10 max-w-2xl mx-auto text-center">
+            <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
+            <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+              Your Matrix instance isn&apos;t just a dashboard — it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
+            </p>
+          </div>
         </div>
       </section>
 
-      {/* About */}
-      <section id="about" className="py-32 md:py-44" style={{ backgroundColor: "#E2E2CF" }}>
+      <section id="about" className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
           <div className="grid md:grid-cols-[1fr_1.2fr] gap-16 md:gap-24">
             <div>
-              
-                <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>About</p>
-              
-              
-                <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2]"
-                  style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", color: c.forest }}>
-                  Your computer, in the cloud.
-                </h2>
-              
+              <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>About</p>
+              <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2]" style={{ color: c.forest }}>
+                Your computer, in the cloud.
+              </h2>
             </div>
             <div className="flex flex-col gap-6 md:pt-10">
-              
-                <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-                  Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop — your apps, your files, your settings — ready to go. No installs, no setup, nothing to maintain.
-                </p>
-              
-              
-                <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-                  Just tell it what you need. An AI assistant builds your apps, organizes your workspace, and keeps everything running. It works on any device, from anywhere, and picks up right where you left off.
-                </p>
-              
+              <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+                Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop — your apps, your files, your settings — ready to go. No installs, no setup, nothing to maintain.
+              </p>
+              <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+                Just tell it what you need. An AI assistant builds your apps, organizes your workspace, and keeps everything running. It works on any device, from anywhere, and picks up right where you left off.
+              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Divider */}
       <div className="mx-auto max-w-[1100px] px-8">
         <div style={{ height: 1, backgroundColor: c.border }} />
       </div>
 
-      {/* Features — Connected System */}
-      <section id="features" className="relative py-32 md:py-44 overflow-hidden" style={{ backgroundColor: "#E2E2CF" }}>
+      <section id="features" className="relative py-32 md:py-44 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
         <style>{`
-          @keyframes net-flow {
-            0% { stroke-dashoffset: 24; }
-            100% { stroke-dashoffset: 0; }
-          }
-          @keyframes center-pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.04); }
-          }
-          @keyframes center-ring {
-            0% { r: 44; opacity: 0.3; }
-            100% { r: 80; opacity: 0; }
-          }
-          @keyframes glow-breathe {
-            0%, 100% { opacity: 0.2; }
-            50% { opacity: 0.45; }
-          }
-          @keyframes device-online {
-            0%, 15% { opacity: 1; }
-            20%, 100% { opacity: 0.3; }
-          }
-          @keyframes device-online-long {
-            0%, 60% { opacity: 1; }
-            65%, 100% { opacity: 0.3; }
-          }
-          @keyframes line-active {
-            0%, 15% { stroke-opacity: 0.3; }
-            20%, 100% { stroke-opacity: 0.06; }
-          }
-          @keyframes line-active-long {
-            0%, 60% { stroke-opacity: 0.3; }
-            65%, 100% { stroke-opacity: 0.06; }
-          }
-          .net-line-flow {
-            stroke-dasharray: 6 6;
-            animation: net-flow 1.8s linear infinite;
-          }
-          .center-hub {
-            animation: center-pulse 5s ease-in-out infinite;
-            transform-origin: 200px 200px;
-          }
-          .center-ring-ping {
-            animation: center-ring 3s ease-out infinite;
-          }
-          .net-glow {
-            animation: glow-breathe 5s ease-in-out infinite;
-          }
-          .device-blink {
-            animation: device-online 8s ease-in-out infinite;
-          }
-          .device-steady {
-            animation: device-online-long 10s ease-in-out infinite;
-          }
-          .line-blink {
-            animation: line-active 8s ease-in-out infinite;
-          }
-          .line-steady {
-            animation: line-active-long 10s ease-in-out infinite;
-          }
-          .feature-pill {
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-          }
-          .feature-pill:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-          }
+          @keyframes net-flow { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
+          @keyframes center-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+          @keyframes center-ring { 0% { r: 44; opacity: 0.3; } 100% { r: 80; opacity: 0; } }
+          @keyframes glow-breathe { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.45; } }
+          @keyframes device-online { 0%, 15% { opacity: 1; } 20%, 100% { opacity: 0.3; } }
+          @keyframes device-online-long { 0%, 60% { opacity: 1; } 65%, 100% { opacity: 0.3; } }
+          @keyframes line-active { 0%, 15% { stroke-opacity: 0.3; } 20%, 100% { stroke-opacity: 0.06; } }
+          @keyframes line-active-long { 0%, 60% { stroke-opacity: 0.3; } 65%, 100% { stroke-opacity: 0.06; } }
+          .net-line-flow { stroke-dasharray: 6 6; animation: net-flow 1.8s linear infinite; }
+          .center-hub { animation: center-pulse 5s ease-in-out infinite; transform-origin: 200px 200px; }
+          .center-ring-ping { animation: center-ring 3s ease-out infinite; }
+          .net-glow { animation: glow-breathe 5s ease-in-out infinite; }
+          .device-blink { animation: device-online 8s ease-in-out infinite; }
+          .device-steady { animation: device-online-long 10s ease-in-out infinite; }
+          .line-blink { animation: line-active 8s ease-in-out infinite; }
+          .line-steady { animation: line-active-long 10s ease-in-out infinite; }
+          .feature-pill { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+          .feature-pill:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
         `}</style>
 
         <div className="mx-auto max-w-[1200px] px-8">
           <div className="grid md:grid-cols-2 gap-12 md:gap-20 items-center mb-20 md:mb-32">
-            {/* Left: text */}
             <div>
-              
-                <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>The platform</p>
-              
-              
-                <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-8"
-                  style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", color: c.forest }}>
-                  Built around you.
-                </h2>
-              
-              
-                <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
-                  Your Matrix instance runs 24/7 in the cloud — always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
-                </p>
-              
-              
-                <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
-                  Devices come and go. Your instance never stops. Close your laptop and pick up on your phone — everything is exactly where you left it. No syncing, no waiting, no setup.
-                </p>
-              
+              <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>The platform</p>
+              <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-8" style={{ color: c.forest }}>
+                Built around you.
+              </h2>
+              <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
+                Your Matrix instance runs 24/7 in the cloud — always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
+              </p>
+              <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
+                Devices come and go. Your instance never stops. Close your laptop and pick up on your phone — everything is exactly where you left it. No syncing, no waiting, no setup.
+              </p>
             </div>
 
-            {/* Right: network visualization */}
-            
-              <div className="relative" style={{ aspectRatio: "1 / 1", maxWidth: 520, margin: "0 auto" }}>
-                <svg viewBox="0 0 400 400" className="w-full h-full" style={{ overflow: "visible" }}>
-                  <defs>
-                    <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor={c.ember} stopOpacity="0.25" />
-                      <stop offset="70%" stopColor={c.ember} stopOpacity="0.05" />
-                      <stop offset="100%" stopColor={c.ember} stopOpacity="0" />
-                    </radialGradient>
-                  </defs>
+            <div className="relative" style={{ aspectRatio: "1 / 1", maxWidth: 520, margin: "0 auto" }}>
+              <svg viewBox="0 0 400 400" className="w-full h-full" style={{ overflow: "visible" }}>
+                <defs>
+                  <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stopColor={c.ember} stopOpacity="0.25" />
+                    <stop offset="70%" stopColor={c.ember} stopOpacity="0.05" />
+                    <stop offset="100%" stopColor={c.ember} stopOpacity="0" />
+                  </radialGradient>
+                </defs>
 
-                  {/* Ambient center glow */}
-                  <circle cx="200" cy="200" r="110" fill="url(#center-glow)" className="net-glow" />
+                <circle cx="200" cy="200" r="110" fill="url(#center-glow)" className="net-glow" />
 
-                  {/* Expanding ring — "always broadcasting" */}
-                  <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.8" className="center-ring-ping" />
-                  <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.5" className="center-ring-ping" style={{ animationDelay: "1s" }} />
-                  <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.3" className="center-ring-ping" style={{ animationDelay: "2s" }} />
+                <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.8" className="center-ring-ping" />
+                <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.5" className="center-ring-ping" style={{ animationDelay: "1s" }} />
+                <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.3" className="center-ring-ping" style={{ animationDelay: "2s" }} />
 
-                  {/* Connection lines — from center to each device */}
-                  {[
-                    { x: 200, y: 52, anim: "line-blink", delay: "0s" },
-                    { x: 338, y: 115, anim: "line-steady", delay: "1s" },
-                    { x: 340, y: 280, anim: "line-blink", delay: "3s" },
-                    { x: 200, y: 348, anim: "line-steady", delay: "0.5s" },
-                    { x: 60, y: 280, anim: "line-blink", delay: "5s" },
-                    { x: 62, y: 115, anim: "line-steady", delay: "2s" },
-                  ].map((node, i) => (
-                    <line key={`line-${i}`} x1="200" y1="200" x2={node.x} y2={node.y}
-                      stroke="rgba(67,78,63,0.25)" strokeWidth="1.5"
-                      className={`net-line-flow ${node.anim}`}
-                      style={{ animationDelay: `${node.delay}, ${node.delay}` }} />
-                  ))}
+                {[
+                  { x: 200, y: 52, anim: "line-blink", delay: "0s" },
+                  { x: 338, y: 115, anim: "line-steady", delay: "1s" },
+                  { x: 340, y: 280, anim: "line-blink", delay: "3s" },
+                  { x: 200, y: 348, anim: "line-steady", delay: "0.5s" },
+                  { x: 60, y: 280, anim: "line-blink", delay: "5s" },
+                  { x: 62, y: 115, anim: "line-steady", delay: "2s" },
+                ].map((node, i) => (
+                  <line key={`line-${i}`} x1="200" y1="200" x2={node.x} y2={node.y}
+                    stroke="rgba(67,78,63,0.25)" strokeWidth="1.5"
+                    className={`net-line-flow ${node.anim}`}
+                    style={{ animationDelay: `${node.delay}, ${node.delay}` }} />
+                ))}
 
-                  {/* Center hub — Matrix Instance (always on) */}
-                  <g className="center-hub">
-                    <circle cx="200" cy="200" r="44" fill="rgba(208,111,37,0.12)" stroke={c.ember} strokeWidth="1.5" />
-                    <circle cx="200" cy="200" r="28" fill={c.ember} opacity="0.85" />
+                <g className="center-hub">
+                  <circle cx="200" cy="200" r="44" fill="rgba(208,111,37,0.12)" stroke={c.ember} strokeWidth="1.5" />
+                  <circle cx="200" cy="200" r="28" fill={c.ember} opacity="0.85" />
+                </g>
+
+                {[
+                  { x: 200, y: 52, anim: "device-blink", delay: "0s", label: "Mobile", icon: "smartphone" as const },
+                  { x: 338, y: 115, anim: "device-steady", delay: "1s", label: "Laptop", icon: "laptop" as const },
+                  { x: 340, y: 280, anim: "device-blink", delay: "3s", label: "Tablet", icon: "tablet" as const },
+                  { x: 200, y: 348, anim: "device-steady", delay: "0.5s", label: "Computer", icon: "monitor" as const },
+                  { x: 60, y: 280, anim: "device-blink", delay: "5s", label: "Friend's PC", icon: "laptop" as const },
+                  { x: 62, y: 115, anim: "device-steady", delay: "2s", label: "Browser", icon: "globe" as const },
+                ].map((node, i) => (
+                  <g key={`device-${i}`} className={node.anim} style={{ animationDelay: node.delay }}>
+                    <circle cx={node.x} cy={node.y} r="28" fill="rgba(67,78,63,0.06)" stroke="rgba(67,78,63,0.2)" strokeWidth="1" />
+                    {node.icon === "smartphone" && (
+                      <rect x={node.x - 5} y={node.y - 8} width="10" height="16" rx="2" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                    )}
+                    {node.icon === "laptop" && (<>
+                      <rect x={node.x - 9} y={node.y - 6} width="18" height="12" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                      <line x1={node.x - 11} y1={node.y + 7} x2={node.x + 11} y2={node.y + 7} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                    </>)}
+                    {node.icon === "tablet" && (
+                      <rect x={node.x - 7} y={node.y - 9} width="14" height="18" rx="2" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                    )}
+                    {node.icon === "monitor" && (<>
+                      <rect x={node.x - 10} y={node.y - 8} width="20" height="14" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                      <line x1={node.x} y1={node.y + 6} x2={node.x} y2={node.y + 9} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                      <line x1={node.x - 5} y1={node.y + 9} x2={node.x + 5} y2={node.y + 9} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+                    </>)}
+                    {node.icon === "globe" && (
+                      <g opacity="0.7">
+                        <circle cx={node.x} cy={node.y} r="8" fill="none" stroke={c.forest} strokeWidth="1.2" />
+                        <ellipse cx={node.x} cy={node.y} rx="4" ry="8" fill="none" stroke={c.forest} strokeWidth="0.8" />
+                        <line x1={node.x - 8} y1={node.y} x2={node.x + 8} y2={node.y} stroke={c.forest} strokeWidth="0.8" />
+                      </g>
+                    )}
+                    <text x={node.x} y={node.y + 38} textAnchor="middle" dominantBaseline="central"
+                      fill="rgba(67,78,63,0.7)" fontSize="7" letterSpacing="0.1em"
+                      fontFamily="var(--font-inter), Inter, sans-serif">
+                      {node.label.toUpperCase()}
+                    </text>
                   </g>
+                ))}
 
-                  {/* Device nodes with icons inside */}
-                  {[
-                    { x: 200, y: 52, anim: "device-blink", delay: "0s", label: "Mobile", icon: "smartphone" },
-                    { x: 338, y: 115, anim: "device-steady", delay: "1s", label: "Laptop", icon: "laptop" },
-                    { x: 340, y: 280, anim: "device-blink", delay: "3s", label: "Tablet", icon: "tablet" },
-                    { x: 200, y: 348, anim: "device-steady", delay: "0.5s", label: "Computer", icon: "monitor" },
-                    { x: 60, y: 280, anim: "device-blink", delay: "5s", label: "Friend's PC", icon: "tv" },
-                    { x: 62, y: 115, anim: "device-steady", delay: "2s", label: "Browser", icon: "globe" },
-                  ].map((node, i) => (
-                    <g key={`device-${i}`} className={node.anim} style={{ animationDelay: node.delay }}>
-                      <circle cx={node.x} cy={node.y} r="28" fill="rgba(67,78,63,0.06)" stroke="rgba(67,78,63,0.2)" strokeWidth="1" />
-                      {/* Icon placeholder — rendered as simple SVG shapes */}
-                      {node.icon === "smartphone" && (
-                        <rect x={node.x - 5} y={node.y - 8} width="10" height="16" rx="2" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                      )}
-                      {node.icon === "laptop" && (<>
-                        <rect x={node.x - 9} y={node.y - 6} width="18" height="12" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                        <line x1={node.x - 11} y1={node.y + 7} x2={node.x + 11} y2={node.y + 7} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                      </>)}
-                      {node.icon === "tablet" && (
-                        <rect x={node.x - 7} y={node.y - 9} width="14" height="18" rx="2" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                      )}
-                      {node.icon === "monitor" && (<>
-                        <rect x={node.x - 10} y={node.y - 8} width="20" height="14" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                        <line x1={node.x} y1={node.y + 6} x2={node.x} y2={node.y + 9} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                        <line x1={node.x - 5} y1={node.y + 9} x2={node.x + 5} y2={node.y + 9} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                      </>)}
-                      {node.icon === "tv" && (<>
-                        <rect x={node.x - 10} y={node.y - 7} width="20" height="14" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-                      </>)}
-                      {node.icon === "globe" && (
-                        <g opacity="0.7">
-                          <circle cx={node.x} cy={node.y} r="8" fill="none" stroke={c.forest} strokeWidth="1.2" />
-                          <ellipse cx={node.x} cy={node.y} rx="4" ry="8" fill="none" stroke={c.forest} strokeWidth="0.8" />
-                          <line x1={node.x - 8} y1={node.y} x2={node.x + 8} y2={node.y} stroke={c.forest} strokeWidth="0.8" />
-                        </g>
-                      )}
-                      {/* Label below the circle */}
-                      <text x={node.x} y={node.y + 38} textAnchor="middle" dominantBaseline="central"
-                        fill="rgba(67,78,63,0.7)" fontSize="7" letterSpacing="0.1em"
-                        fontFamily="var(--font-inter), Inter, sans-serif">
-                        {node.label.toUpperCase()}
-                      </text>
-                    </g>
-                  ))}
-
-                  {/* Center label */}
-                  <text x="200" y="196" textAnchor="middle" dominantBaseline="central"
-                    fill="#FAFAF5" fontSize="7" fontWeight="600" letterSpacing="0.12em"
-                    fontFamily="var(--font-display), Instrument Serif, Georgia, serif">
-                    MATRIX
-                  </text>
-                  <text x="200" y="208" textAnchor="middle" dominantBaseline="central"
-                    fill="rgba(250,250,245,0.7)" fontSize="5.5" letterSpacing="0.15em"
-                    fontFamily="var(--font-inter), Inter, sans-serif">
-                    24/7
-                  </text>
-                </svg>
-              </div>
-            
+                <text x="200" y="196" textAnchor="middle" dominantBaseline="central"
+                  fill="#FAFAF5" fontSize="7" fontWeight="600" letterSpacing="0.12em"
+                  fontFamily="var(--font-orbitron), Orbitron, sans-serif">
+                  MATRIX
+                </text>
+                <text x="200" y="208" textAnchor="middle" dominantBaseline="central"
+                  fill="rgba(250,250,245,0.7)" fontSize="5.5" letterSpacing="0.15em"
+                  fontFamily="var(--font-inter), Inter, sans-serif">
+                  24/7
+                </text>
+              </svg>
+            </div>
           </div>
 
-          {/* Capability pills */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[
               { Icon: BrainCircuitIcon, title: "Always running", desc: "Your instance never sleeps. Apps, data, and AI — running 24/7 whether you're connected or not." },
               { Icon: ShieldCheckIcon, title: "Private by design", desc: "Your own database, files, and runtime. Fully isolated. Nobody else can see in." },
               { Icon: GlobeIcon, title: "Any screen, anywhere", desc: "Phone, laptop, friend's computer — open a browser and you're home." },
-            ].map((item, i) => (
-              
-                <div className="feature-pill rounded-[16px] p-6 h-full"
-                  style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
-                  <item.Icon className="size-5 mb-4" style={{ color: c.ember }} />
-                  <h3 className="text-[14px] font-semibold mb-2" style={{ color: c.forest }}>{item.title}</h3>
-                  <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
-                </div>
-              
+            ].map((item) => (
+              <div key={item.title} className="feature-pill rounded-[16px] p-6 h-full"
+                style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
+                <item.Icon className="size-5 mb-4" style={{ color: c.ember }} />
+                <h3 className="text-[14px] font-semibold mb-2" style={{ color: c.forest }}>{item.title}</h3>
+                <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* How It Works */}
-      <section className="py-32 md:py-44" style={{ backgroundColor: "#E2E2CF" }}>
+      <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
-          
-            <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
-          
-          
-            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] mb-16 md:mb-24"
-              style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", color: c.forest }}>
-              Up and running in seconds.
-            </h2>
-          
+          <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
+          <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] mb-16 md:mb-24" style={{ color: c.forest }}>
+            Up and running in seconds.
+          </h2>
 
           <div className="grid md:grid-cols-3 gap-12 md:gap-16">
             {[
               { step: "01", title: "Create an account", desc: "Sign up in seconds. No credit card, no setup wizard, no downloads." },
               { step: "02", title: "Get your Matrix instance", desc: "Your personal cloud computer spins up instantly — a full desktop with apps, files, and AI built in." },
               { step: "03", title: "Bring your own agent", desc: "Connect your preferred AI — Claude, GPT, Hermes, or any model you trust. Your instance, your agent, your rules." },
-            ].map((item, i) => (
-              
-                <div>
-                  <span className="block text-[clamp(2.5rem,5vw,4rem)] font-bold leading-none mb-5"
-                    style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", color: c.border }}>
-                    {item.step}
-                  </span>
-                  <h3 className="text-[16px] font-semibold mb-3" style={{ color: c.forest }}>{item.title}</h3>
-                  <p className="text-[14px] leading-[1.8]" style={{ color: c.mutedFg }}>{item.desc}</p>
-                </div>
-              
+            ].map((item) => (
+              <div key={item.step}>
+                <span className="block text-[clamp(2.5rem,5vw,4rem)] font-bold leading-none mb-5" style={{ color: c.border }}>
+                  {item.step}
+                </span>
+                <h3 className="text-[16px] font-semibold mb-3" style={{ color: c.forest }}>{item.title}</h3>
+                <p className="text-[14px] leading-[1.8]" style={{ color: c.mutedFg }}>{item.desc}</p>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="py-32 md:py-44" style={{ backgroundColor: "#E2E2CF" }}>
+      <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8 text-center">
-          
-            <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6"
-              style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", color: c.forest }}>
-              Ready to begin?
-            </h2>
-          
-          
-            <p className="text-[15px] mb-10 max-w-md mx-auto" style={{ color: c.mutedFg }}>
-              Your personal cloud computer is waiting. Set up takes less than a minute.
-            </p>
-          
-          
-            <Link href="/sign-up" className="inline-block rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-              style={{ backgroundColor: c.forest, color: "#E2E2CF" }}>
-              Get Started Free
-            </Link>
-          
+          <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6" style={{ color: c.forest }}>
+            Ready to begin?
+          </h2>
+          <p className="text-[15px] mb-10 max-w-md mx-auto" style={{ color: c.mutedFg }}>
+            Your personal cloud computer is waiting. Set up takes less than a minute.
+          </p>
+          <Link href="/sign-up" className="inline-block rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+            style={{ backgroundColor: c.forest, color: c.pageBg }}>
+            Get Started Free
+          </Link>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="py-16" style={{ backgroundColor: "#E2E2CF" }}>
+      <footer className="py-16" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
-          
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
-              <div className="flex items-center gap-3">
-                <Logo className="h-5 w-auto" style={{ color: c.subtle }} />
-                <span className="text-[11px] font-semibold tracking-[0.25em] uppercase"
-                  style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>Matrix OS</span>
-              </div>
-              <div className="flex items-center gap-8">
-                <a href="#about" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>About</a>
-                <a href="#features" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>Features</a>
-                <Link href="/sign-in" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>Sign In</Link>
-              </div>
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+            <div className="flex items-center gap-3">
+              <Logo className="h-5 w-auto" style={{ color: c.subtle }} />
+              <span className="text-[11px] font-semibold tracking-[0.25em] uppercase"
+                style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>Matrix OS</span>
             </div>
-          
+            <div className="flex items-center gap-8">
+              <a href="#about" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>About</a>
+              <a href="#features" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>Features</a>
+              <Link href="/sign-in" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>Sign In</Link>
+            </div>
+          </div>
         </div>
       </footer>
     </div>
