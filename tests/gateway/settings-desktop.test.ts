@@ -210,6 +210,22 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(data.wallpapers).toHaveLength(2);
       expect(data.wallpapers.toSorted()).toEqual(["forest.jpg", "ocean.png"]);
     });
+
+    it("excludes placeholder and non-image files from the wallpaper list", async () => {
+      const wpDir = join(homePath, "system/wallpapers");
+      mkdirSync(wpDir, { recursive: true });
+      mkdirSync(join(wpDir, "nested"), { recursive: true });
+      writeFileSync(join(wpDir, ".gitkeep"), "");
+      writeFileSync(join(wpDir, ".DS_Store"), "");
+      writeFileSync(join(wpDir, "notes.txt"), "not a wallpaper");
+      writeFileSync(join(wpDir, "forest.jpg"), "fake-image-data");
+      writeFileSync(join(wpDir, "orbit.WEBP"), "fake-image-data");
+
+      const res = await app.request("/api/settings/wallpapers");
+      expect(res.status).toBe(200);
+      const data = await res.json() as { wallpapers: string[] };
+      expect(data.wallpapers.toSorted()).toEqual(["forest.jpg", "orbit.WEBP"]);
+    });
   });
 
   // --- POST /api/settings/wallpaper ---
@@ -250,6 +266,20 @@ describe("Settings: desktop + theme + wallpapers", () => {
         body: JSON.stringify({ name: "test file!@#.png", data: imageData }),
       });
       expect(res.status).toBe(400);
+    });
+
+    it("rejects unsupported wallpaper file extensions", async () => {
+      const imageData = Buffer.from("fake-bitmap-data").toString("base64");
+      const res = await app.request("/api/settings/wallpaper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "legacy.bmp", data: imageData }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Unsupported wallpaper file type",
+      });
     });
   });
 

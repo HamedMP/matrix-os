@@ -9,7 +9,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, relative, join } from "node:path";
+import { dirname, extname, relative, join } from "node:path";
 import { loadSkills } from "@matrix-os/kernel";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
@@ -24,6 +24,15 @@ const DESKTOP_DEFAULTS = {
 
 const THEME_DEFAULTS = {};
 const SETTINGS_BODY_LIMIT = 256 * 1024;
+const WALLPAPER_FILE_EXTENSIONS = new Set([
+  ".avif",
+  ".gif",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".svg",
+  ".webp",
+]);
 const CHANNEL_IDS = new Set<ChannelId>([
   "telegram",
   "whatsapp",
@@ -35,6 +44,20 @@ const CHANNEL_IDS = new Set<ChannelId>([
 
 function isValidFilename(name: string): boolean {
   return /^[a-zA-Z0-9_.-]+$/.test(name) && !name.includes("..");
+}
+
+function hasSupportedWallpaperExtension(name: string): boolean {
+  return (
+    !name.startsWith(".") &&
+    WALLPAPER_FILE_EXTENSIONS.has(extname(name).toLowerCase())
+  );
+}
+
+function isVisibleWallpaperFile(entry: { name: string; isFile(): boolean }): boolean {
+  return (
+    entry.isFile() &&
+    hasSupportedWallpaperExtension(entry.name)
+  );
 }
 
 function isValidChannelId(channelId: string): channelId is ChannelId {
@@ -209,8 +232,12 @@ export function createSettingsRoutes(opts: {
 
   app.get("/wallpapers", async (c) => {
     if (!(await fileExists(wallpapersDir))) return c.json({ wallpapers: [] });
-    const files = await readdir(wallpapersDir);
-    return c.json({ wallpapers: files });
+    const files = await readdir(wallpapersDir, { withFileTypes: true });
+    const wallpapers = files
+      .filter(isVisibleWallpaperFile)
+      .map((file) => file.name)
+      .sort((a, b) => a.localeCompare(b));
+    return c.json({ wallpapers });
   });
 
   app.post("/wallpaper", bodyLimit({ maxSize: 10 * 1024 * 1024 }), async (c) => {
@@ -229,6 +256,9 @@ export function createSettingsRoutes(opts: {
     if (!isValidFilename(body.name)) {
       return c.json({ error: "Invalid filename" }, 400);
     }
+    if (!hasSupportedWallpaperExtension(body.name)) {
+      return c.json({ error: "Unsupported wallpaper file type" }, 400);
+    }
     await mkdir(wallpapersDir, { recursive: true });
     const filePath = join(wallpapersDir, body.name);
     // Strip data URL prefix (e.g. "data:image/png;base64,") if present
@@ -237,7 +267,7 @@ export function createSettingsRoutes(opts: {
     return c.json({ ok: true });
   });
 
-  app.delete("/wallpaper/:name", async (c) => {
+  app.delete("/wallpaper/:name", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     const name = c.req.param("name");
     if (!isValidFilename(name)) {
       return c.json({ error: "Invalid filename" }, 400);
