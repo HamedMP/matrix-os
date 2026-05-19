@@ -70,6 +70,31 @@ describe("CanvasTransform app focus interactions", () => {
     expect(useCanvasTransform.getState().panY).toBe(0);
   });
 
+  it("does not treat built-in app window content as canvas background for grab panning", () => {
+    useCanvasSettings.setState({ navMode: "grab", showTitles: true });
+    const clearFocus = vi.fn();
+    const { getByText } = render(
+      <CanvasTransform panEnabled onBackgroundPointerDown={clearFocus}>
+        <div data-canvas-window>
+          <button type="button">Terminal sidebar item</button>
+        </div>
+      </CanvasTransform>,
+    );
+    const button = getByText("Terminal sidebar item");
+    const event = new PointerEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      pointerId: 1,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+
+    button.dispatchEvent(event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(clearFocus).not.toHaveBeenCalled();
+  });
+
   it("ignores iframe-forwarded zoom while app focus owns input", () => {
     render(
       <CanvasTransform panEnabled={false}>

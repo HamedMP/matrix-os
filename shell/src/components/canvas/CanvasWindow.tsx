@@ -478,8 +478,9 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         {/* Click-to-interact overlay: captures wheel events so the canvas can
             pan/zoom when this window isn't focused. Click focuses the window
             and removes the overlay so the app content becomes interactive. */}
-        {!contentFocused && !interacting && (
+        {isIframeWindow && !contentFocused && !interacting && (
           <div
+            data-canvas-interaction-overlay
             className="absolute inset-0 z-10"
             onPointerDown={(e) => {
               e.stopPropagation();
