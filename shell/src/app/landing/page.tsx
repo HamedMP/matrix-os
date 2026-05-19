@@ -48,12 +48,14 @@ export default function LandingPage() {
   }, []);
 
   useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    const prevHeight = document.body.style.height;
     document.body.style.overflow = "auto";
     document.body.style.height = "auto";
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
-      document.body.style.overflow = "";
-      document.body.style.height = "";
+      document.body.style.overflow = prevOverflow;
+      document.body.style.height = prevHeight;
       window.removeEventListener("scroll", onScroll);
       cancelAnimationFrame(rafRef.current);
     };
@@ -78,6 +80,7 @@ export default function LandingPage() {
         .screenshot-wrapper {
           border-radius: 16px;
           overflow: hidden;
+          transform: translateY(var(--ss-y, 0px)) scale(var(--ss-s, 1));
           box-shadow: 0 50px 100px -20px rgba(50,53,46,0.25), 0 30px 60px -30px rgba(50,53,46,0.3), 0 0 0 1px rgba(50,53,46,0.05);
           transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.6s ease;
         }
@@ -140,14 +143,14 @@ export default function LandingPage() {
             </Link>
           </div>
           <div className="absolute right-0 top-0 h-full flex items-center justify-end pointer-events-none" style={{ width: "55%" }}>
-            <video autoPlay loop muted playsInline src="/hero-loop.mp4" className="max-w-none" style={{ height: "60%", width: "auto" }} />
+            <video autoPlay loop muted playsInline src="/hero-loop.mp4" poster="/app-screenshot.jpg" className="max-w-none" style={{ height: "60%", width: "auto" }} />
           </div>
         </div>
       </section>
 
       <section id="preview" className="relative py-24 md:py-36 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
-          <div className="screenshot-wrapper" style={{ transform: `translateY(${screenshotY}px) scale(${screenshotScale})` }}>
+          <div className="screenshot-wrapper" style={{ "--ss-y": `${screenshotY}px`, "--ss-s": screenshotScale } as React.CSSProperties}>
             <Image src="/app-screenshot.jpg" alt="Matrix OS Desktop" width={1920} height={1080} className="w-full h-auto" priority />
           </div>
           <div className="mt-10 max-w-2xl mx-auto text-center">
