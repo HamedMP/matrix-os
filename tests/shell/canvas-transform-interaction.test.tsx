@@ -77,6 +77,26 @@ describe("CanvasTransform app focus interactions", () => {
     expect(useCanvasTransform.getState().panY).toBe(0);
   });
 
+  it("pans wheel input from the iframe interaction shield", () => {
+    const { container } = render(
+      <CanvasTransform panEnabled>
+        <div data-canvas-interaction-overlay />
+      </CanvasTransform>,
+    );
+    const shield = container.querySelector("[data-canvas-interaction-overlay]")!;
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 80,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+
+    shield.dispatchEvent(event);
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(useCanvasTransform.getState().panY).toBe(-80);
+  });
+
   it("does not treat built-in app window content as canvas background for grab panning", () => {
     useCanvasSettings.setState({ navMode: "grab", showTitles: true });
     const clearFocus = vi.fn();

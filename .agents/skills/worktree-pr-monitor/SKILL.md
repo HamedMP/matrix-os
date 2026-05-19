@@ -5,17 +5,25 @@ description: Create or continue an isolated Matrix OS worktree PR, validate it, 
 
 # Worktree PR Monitor
 
-Use this skill for Codex-driven publish loops that must keep `/home/deploy/matrix-os`
-on `main` while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
+Use this skill only when the requester explicitly asks for the manual git
+worktree -> PR -> monitor workflow. It keeps `/home/deploy/matrix-os` on `main`
+while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
+
+Do not use this skill for Swarm or multi-agent runs. The repo-level Swarm ban on
+`isolation: "worktree"` still applies; this workflow is a user-requested manual
+git worktree flow for isolated PR publication.
 
 ## Preconditions
 
 - `gh` is installed and authenticated.
 - The current repository is `HamedMP/matrix-os`.
-- The requester wants a PR, not only a local patch.
+- The requester wants a PR in a worktree, not only a local patch.
+- The requester explicitly asked for a worktree or invoked this workflow.
 
 ## Rules
 
+- If the requester did not explicitly ask for a worktree, follow the current
+  branch workflow instead.
 - Keep `/home/deploy/matrix-os` on `main`.
 - Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
