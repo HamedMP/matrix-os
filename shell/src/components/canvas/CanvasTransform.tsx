@@ -62,7 +62,6 @@ export function CanvasTransform({
       target === zoomOverlayRef.current ||
       target === transformRef.current
     ) return true;
-    if (target instanceof HTMLElement && target.closest("[data-canvas-window]") && !target.closest("iframe")) return true;
     return false;
   }, []);
 

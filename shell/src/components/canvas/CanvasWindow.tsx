@@ -549,8 +549,9 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
           <>
             {appContent}
             {!isFullscreen && interacting && <div className="absolute inset-0 z-10" />}
-            {!isFullscreen && !contentFocused && !interacting && (
+            {!isFullscreen && isIframeWindow && !contentFocused && !interacting && (
               <div
+                data-canvas-interaction-overlay
                 className="absolute inset-0 z-10"
                 onPointerDown={(e) => {
                   e.stopPropagation();
