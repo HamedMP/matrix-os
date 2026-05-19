@@ -142,7 +142,7 @@ export default function LandingPage() {
             </a>
           </div>
           <div className="absolute right-0 top-0 h-full flex items-center justify-end pointer-events-none" style={{ width: "55%" }}>
-            <video autoPlay loop muted playsInline src="/hero-loop.mp4" poster="/images/app-screenshot.jpg" className="max-w-none" style={{ height: "60%", width: "auto" }} />
+            <video autoPlay loop muted playsInline src="/hero-loop.mp4" className="max-w-none" style={{ height: "60%", width: "auto" }} />
           </div>
         </div>
       </section>
