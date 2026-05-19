@@ -12,6 +12,46 @@ Matrix OS production releases are VPS-native host bundles. R2 stores immutable t
 - Host-bundle updates must never overwrite owner data. Do not delete or replace `/home/matrix/home`, `/opt/matrix/env`, or the local Postgres data directory during deploys or rollbacks.
 - `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` and CI/release paths use `pnpm install --frozen-lockfile`; do not bypass either during releases.
 
+## Release Targets And Approvals
+
+| Target | Scope | Approval | Notes |
+| --- | --- | --- | --- |
+| Personal dev VPS hot reload | One engineer's dev machine | Owning engineer | Pull the branch and run the dev-VPS HMR flow. This is not a customer release. |
+| Personal customer-like VPS | One engineer's Matrix VPS | Owning engineer | Install a published `dev` channel or exact version with `matrix-update`. |
+| `dev` channel | Internal dogfood users | PR merged, CI green, automated review clean | `main` publishes to `dev`; deploy selected VPSes deliberately. |
+| `canary` / `beta` | Early users or opt-in cohort | Release owner or engineering lead | Promote only after dev channel smoke is healthy. |
+| `stable` | Broad production users | Explicit release owner approval after canary/beta health | Record version, changelog, rollback target, and sampled VPS verification. |
+| Security hotfix | Affected users or full fleet | Release owner approval; security severity may auto-deploy | Keep the rollback version visible and verify affected paths immediately. |
+
+Publishing a bundle and deploying it are separate actions. A successful merge to
+`main` publishes a `dev` release; it does not automatically mean every customer
+VPS should update unless the workflow or operator explicitly triggers fan-out.
+
+## Release To Your Own VPS
+
+Use this when you want to experience a published host bundle exactly as a
+customer VPS would.
+
+```bash
+matrix-update dev
+matrix-update v2026.05.12-43
+
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
+systemctl is-active matrix-gateway matrix-shell matrix-code matrix-sync-agent
+curl -fsS http://127.0.0.1:4000/health
+```
+
+If the update is bad:
+
+```bash
+matrix-update rollback
+matrix-update v<known-good-version>
+```
+
+For active development on a dev VPS, use `docs/dev/dev-vps.md` instead of
+building a host bundle for every edit.
+
 ## Version Scheme
 
 ```
@@ -88,6 +128,21 @@ Release metadata also records:
    ```
 
    Also check browser behavior against `https://app.matrix-os.com` and confirm the shell shows the expected Host Bundle and Git Commit.
+
+   Fleet-level monitoring:
+
+   - Grafana: VPS Fleet Overview dashboard.
+   - Prometheus: `matrix_vps_info` for version/status labels and
+     `matrix_vps_healthy` for health.
+   - Platform API: `GET /vps/:machineId/status` for a sampled machine.
+   - Customer VPS: `systemctl is-active matrix-gateway matrix-shell
+     matrix-code matrix-sync-agent`, `curl -fsS http://127.0.0.1:4000/health`,
+     and `/opt/matrix/release.json`.
+
+   Legacy container dashboards (`platform_containers_total`,
+   `platform_container_cpu_percent`, `platform_container_memory_bytes`) are for
+   old shared-container paths and local Docker development. They are not the
+   source of truth for production customer VPS runtime health.
 
 5. Tag a release:
 

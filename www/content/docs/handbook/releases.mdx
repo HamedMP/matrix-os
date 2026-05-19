@@ -1,0 +1,68 @@
+---
+title: Releases
+description: Host bundles, approvals, channel rollout, monitoring, and rollback.
+---
+
+# Releases
+
+Production Matrix OS is VPS-native. Customer-facing runtime changes ship as host
+bundles, not Docker image rebuilds.
+
+## Release Targets
+
+| Target | Scope | Approval | Ships by |
+| --- | --- | --- | --- |
+| Personal dev VPS hot reload | One engineer | Owning engineer | Pull branch and run dev VPS HMR. |
+| Personal customer-like VPS | One engineer's Matrix VPS | Owning engineer | `matrix-update dev` or exact version. |
+| `dev` channel | Internal dogfood | Merged PR, green CI, clean automated review | Host bundle from `main`, selected fan-out. |
+| `canary` / `beta` | Early users | Release owner | Promote tested version and deploy selected users. |
+| `stable` | Broad production | Explicit release owner approval | Promote version and deploy by channel. |
+| Security hotfix | Affected users or fleet | Release owner | Build, publish, deploy, verify, document rollback. |
+
+## Release Flow
+
+1. Merge reviewed PR/stack to `main`.
+2. GitHub Actions builds the host bundle.
+3. The bundle is uploaded to R2.
+4. Platform Postgres records release metadata and channel pointer.
+5. Operator deploys selected VPSes or fleet:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST https://app.matrix-os.com/vps/deploy \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"channel":"dev"}'
+```
+
+## Verify
+
+On a sampled customer VPS:
+
+```bash
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
+systemctl is-active matrix-gateway matrix-shell matrix-code matrix-sync-agent
+curl -fsS http://127.0.0.1:4000/health
+```
+
+Fleet health:
+
+- Grafana VPS Fleet Overview.
+- `matrix_vps_info`.
+- `matrix_vps_healthy`.
+- Platform `/vps/:machineId/status`.
+
+Legacy container dashboards are not proof of production customer VPS health.
+
+## Rollback
+
+```bash
+matrix-update rollback
+matrix-update stable
+matrix-update v<known-good-version>
+```
+
+Never overwrite `/home/matrix/home`, `/opt/matrix/env`, or local Postgres data.
+Host-bundle updates may replace `/opt/matrix/app` only.
+

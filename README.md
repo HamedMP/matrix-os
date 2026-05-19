@@ -195,15 +195,77 @@ distro/              # Docker, cloudflared, systemd deployment configs
 
 ---
 
+## For Engineers
+
+Start with the [Matrix Engineering Practices](docs/dev/engineering-practices.md)
+guide. It explains how Matrix engineers and coding agents choose work, use Spec
+Kit for large features, split phases into Graphite stacked PRs, preview UI
+changes on dev VPSes, run Symphony against Linear tickets, and close automated
+review loops before merge.
+
+High-level rules:
+
+- Use Spec Kit before large, cross-package, security-sensitive, persistence, or
+  VPS/release work.
+- Use Graphite stacked PRs for each reviewable phase of a spec.
+- Use Conventional Commit PR titles and commits.
+- Run `bun run typecheck`, `bun run check:patterns:diff`,
+  `bun run check:patterns`, `bun run test`, and `bun run test:e2e` before deep
+  review.
+- Fix automated review comments until Greptile reports 5/5 or every remaining
+  finding is explicitly deferred with a follow-up.
+- Preview shell/default-app/runtime changes on a Matrix dev VPS when local
+  source mode cannot show what customer VPS users will actually experience.
+- Ship customer-facing runtime changes through the VPS host-bundle release
+  workflow. Use `matrix-update` for your own VPS, platform `/vps/deploy` for
+  selected users or fleet rollout, and Grafana VPS Fleet Overview for release
+  health.
+
+Supporting docs:
+
+- [Developer Onboarding](docs/dev/onboarding.md)
+- [Review Pipeline](docs/dev/review-pipeline.md)
+- [Stacked PR Workflow](docs/dev/stacked-prs.md)
+- [Dev VPS](docs/dev/dev-vps.md)
+- [Matrix Symphony](docs/dev/symphony.md)
+- [Release Process](docs/dev/releases.md)
+- [User Operations](docs/dev/user-operations.md) -- Clerk waitlist, Inngest provisioning, PostHog, email plan
+- [VPS Deployment](docs/dev/vps-deployment.md)
+
+---
+
 ## Getting Started
 
-### Prerequisites
+### Primary: Cloud Dev VPS
+
+Matrix is developed from Matrix. The default development flow is a personal
+Matrix dev VPS with shell, code-server, Zellij, agent CLIs, hot reload, and
+authenticated previews.
+
+High-level setup:
+
+```bash
+git clone https://github.com/hamedmp/matrix-os.git
+cd matrix-os
+pnpm install
+docker compose -f docker-compose.dev-vps.yml up -d --build
+```
+
+See [Developer Onboarding](docs/dev/onboarding.md) and
+[Dev VPS](docs/dev/dev-vps.md) for the full cloud workflow.
+
+### Local / Special Cases
+
+Use local development for fast tests, mobile/desktop/native tooling, hardware
+access, offline work, Docker internals, or other local-only infrastructure.
+
+Prerequisites:
 
 - Node.js 24+
 - pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
 - `ANTHROPIC_API_KEY` environment variable
 
-### Install
+Install:
 
 ```bash
 pnpm install
@@ -218,7 +280,7 @@ bun run test:integration  # Integration tests (needs API key, uses haiku)
 bun run test:coverage     # Coverage report
 ```
 
-### Start Development
+Start local development:
 
 ```bash
 # All at once (gateway + shell):
@@ -229,7 +291,7 @@ bun run dev:gateway   # Gateway on http://localhost:4000
 bun run dev:shell     # Shell on http://localhost:3000
 ```
 
-### Docker Development (Primary)
+### Local Docker Development
 
 Requires [OrbStack](https://orbstack.dev) on macOS.
 
@@ -276,7 +338,7 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 - **Phase 33**: Documentation site -- Fumadocs at matrix-os.com/docs
 - **Phase 34A**: Prometheus metrics -- gateway, platform, and proxy instrumentation
 - **Phase 35**: Canvas desktop -- infinite pan/zoom, app grouping, minimap
-- **Phase 44**: Docker-primary development -- non-root user, su-exec, identity from env
+- **Phase 44**: Docker-primary local development -- non-root user, su-exec, identity from env. Current preferred engineering workflow is cloud dev VPS first, with local Docker retained for special cases.
 - **Phase 46**: Voice system -- TTS (Edge/ElevenLabs/OpenAI), STT (Whisper), telephony (Twilio)
 - **Phase 48**: File browser -- Finder-class with column view, preview, trash, search
 - **Phase 49**: Platform integrations -- Pipedream Connect, OAuth, 2,400+ services, settings UI
@@ -296,12 +358,19 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 
 ## Principles
 
-1. **Everything Is a File** -- apps, profiles, config, AI personality -- all files. Sync = git. Share = send a file. Backup = copy a folder.
-2. **Agent Is the Kernel** -- Claude Agent SDK V1 `query()` with `resume`. The AI has full system access. It writes software, manages files, communicates with other AIs.
-3. **Headless Core, Multi-Shell** -- the core is a gateway + kernel. Web shell, mobile app, Telegram bot, voice interface -- all shells.
-4. **Self-Healing and Self-Expanding** -- the OS fixes itself and grows new capabilities on demand.
-5. **Simplicity Over Sophistication** -- the simplest implementation that works.
-6. **TDD** -- tests first, 3,032 passing, targeting 99-100% coverage.
+1. **Data Belongs to Its Owner** -- files hold identity, config, and exportable
+   state; owner-controlled Postgres holds app, workspace, social, and user data.
+2. **AI Is the Kernel** -- Claude Agent SDK V1 `query()` with `resume` is the
+   current kernel path, with model-agnostic routing over time.
+3. **Headless Core, Multi-Shell** -- gateway, kernel, database, and agents work
+   without a UI; Canvas, Desktop, mobile, CLI, and messaging channels are shells.
+4. **Self-Healing and Self-Expanding** -- Matrix detects failures, preserves
+   state, and can grow new skills, agents, and tools.
+5. **Quality Over Shortcuts** -- built-in apps are real Vite/React projects,
+   not throwaway HTML, and production user runtime is VPS-native.
+6. **Defense in Depth** -- auth, validation, resource limits, timeouts, and
+   generic client errors are part of the design, not follow-up work.
+7. **TDD** -- tests first, 3,032 passing, targeting 99-100% coverage.
 
 ---
 

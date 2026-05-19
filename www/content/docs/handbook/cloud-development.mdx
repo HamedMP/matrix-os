@@ -1,0 +1,72 @@
+---
+title: Cloud Development
+description: Matrix dev VPS setup, local fallback, previews, and environment rules.
+---
+
+# Cloud Development
+
+The default Matrix engineering environment is a personal Matrix dev VPS. Local
+development is useful, but it is not the center of the workflow.
+
+## Environments
+
+| Environment | Purpose | Rule |
+| --- | --- | --- |
+| Personal dev VPS | Daily Matrix development, hot reload, shell/gateway parity, coding agents, app previews | Default. |
+| Shared dev VPS | Team dogfood and reproductions needing shared routing/auth/operator setup | Use deliberately. |
+| Local source dev | Fast tests, mobile/desktop/native, hardware, offline, Docker internals | Secondary path. |
+| Production customer VPS | What users see | Observe only; fixes ship through releases. |
+
+## Dev VPS Setup
+
+In the dev VPS checkout:
+
+```bash
+git clone https://github.com/hamedmp/matrix-os.git
+cd matrix-os
+pnpm install
+docker compose -f docker-compose.dev-vps.yml up -d --build
+docker compose -f docker-compose.dev-vps.yml logs -f dev
+```
+
+Verify:
+
+```bash
+curl -fsS http://127.0.0.1:4000/health
+```
+
+Use authenticated Matrix routes for normal preview. For private raw ports:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 4000:127.0.0.1:4000 matrix@<dev-vps>
+```
+
+## Local Setup
+
+Use local setup when needed:
+
+```bash
+git clone https://github.com/hamedmp/matrix-os.git
+cd matrix-os
+pnpm install
+bun run dev
+```
+
+Flox is optional. Docker/OrbStack is optional for local infrastructure and
+Docker-specific debugging.
+
+## UI Preview Order
+
+1. Canvas mode.
+2. Desktop compatibility.
+3. Mobile shell if touched.
+4. Browser console/network for stale bundles, auth regressions, WebSocket
+   reconnect behavior, and accidental `/files/__...` requests.
+
+## Secret Rules
+
+- Platform-owned secrets stay on the platform/Vercel.
+- Do not copy Clerk, Pipedream, provider, billing, or email secrets into
+  customer VPS env files or agent configs.
+- Dev VPS secrets should be scoped to the engineer and ticket.
+

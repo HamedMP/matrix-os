@@ -1,0 +1,64 @@
+---
+title: Agent Teams
+description: How Matrix uses Symphony, Linear, Zellij, and coding agents.
+---
+
+# Agent Teams
+
+Matrix should let one engineer manage a team of coding agents safely. Symphony
+is the main operator surface for this.
+
+## Symphony Flow
+
+1. A Linear ticket is labeled and assigned to a Matrix project.
+2. Symphony previews eligible tickets.
+3. The operator starts Symphony or a selected run.
+4. Matrix creates or reuses a deterministic worktree.
+5. Matrix acquires the worktree lease.
+6. Matrix starts a Zellij-backed agent session.
+7. The agent works with ticket context, repo workflow context, and Matrix rules.
+8. Progress, retries, logs, and attention states are visible in Matrix.
+9. The PR review loop runs until CI and automated review converge.
+
+## Agent Context
+
+Agents should receive:
+
+- the Linear ticket;
+- `AGENTS.md`;
+- this handbook;
+- relevant `specs/**` documents;
+- project `WORKFLOW.md`;
+- stack layer and target branch;
+- focused tests and release target.
+
+If the ticket is underspecified and crosses packages or trust boundaries, the
+agent should ask for Spec Kit rather than start coding.
+
+## Session Runtime
+
+Zellij is the preferred durable runtime. Web terminal, CLI, TUI, code-server,
+and local terminal attach should point at the same underlying session whenever
+possible.
+
+The session owner is responsible for:
+
+- stopping or handing off stale sessions;
+- preserving worktree state;
+- avoiding two writers on one worktree;
+- committing progress at phase boundaries;
+- not leaking provider secrets into transcripts.
+
+## Review Agents
+
+Reviewer and implementer agents should operate as a loop:
+
+1. Reviewer produces structured findings.
+2. Implementer fixes them.
+3. Tests and pattern checks run again.
+4. Reviewer rechecks.
+5. The loop stops when findings converge, max rounds are reached, or a human
+   operator intervenes.
+
+Greptile or equivalent automated review remains part of the PR gate.
+

@@ -1,0 +1,117 @@
+---
+title: User Operations
+description: Waitlist, provisioning, Inngest, PostHog, support debugging, and email.
+---
+
+# User Operations
+
+User operations covers the path from waitlist to usable Matrix instance, then
+support and customer communications after that.
+
+## Signup And Provisioning
+
+Current flow:
+
+```text
+Clerk signup
+  -> Clerk user.created webhook
+  -> Inngest provision-matrix-os
+  -> platform /containers/provision
+  -> customer VPS provisioning when CUSTOMER_VPS_ENABLED=true
+```
+
+Important code:
+
+- `www/src/inngest/provision-user.ts`
+- `www/src/inngest/provision-status.ts`
+- `www/src/app/dashboard/actions.ts`
+- `packages/platform/src/main.ts`
+- `packages/platform/src/customer-vps-routes.ts`
+
+## Waitlist
+
+Use Clerk Waitlist mode for closed access. Operators approve users from the
+Clerk Dashboard after checking capacity, release health, and support load.
+
+Approval rules:
+
+- internal dogfood users can be approved by a founder/operator;
+- external users need release owner or engineering lead approval when capacity
+  or stability is uncertain;
+- do not approve broad access while stable fleet health is degraded;
+- do not manually create a VPS before a Clerk user exists unless this is an
+  explicit support recovery action.
+
+## Inngest
+
+Inngest is for durable website/control-plane workflows that need retries,
+`step.run(...)`, `step.sleep(...)`, and operator-visible run history.
+
+Use it for:
+
+- Clerk signup provisioning;
+- waitlist approval follow-up;
+- provisioning retry requests;
+- future transactional email sending;
+- future billing entitlement reconciliation.
+
+Do not use it for:
+
+- Symphony polling;
+- customer VPS systemd health;
+- gateway request handlers;
+- owner-local automations that need customer VPS files or local Postgres.
+
+Rules:
+
+- events need stable idempotency keys;
+- steps must be safe to retry;
+- external calls need `AbortSignal.timeout(...)`;
+- secrets stay in website/platform env;
+- PostHog gets start, delayed, failed, and completed events.
+
+## PostHog
+
+Use PostHog for product and provisioning insight; use Grafana for runtime
+health.
+
+Primary events:
+
+| Event | Meaning |
+| --- | --- |
+| `provision_requested` | User clicked dashboard provisioning. |
+| `provision_completed` | Dashboard server action succeeded. |
+| `provision_failed` | Dashboard server action failed. |
+| `inngest_provision_started` | Inngest started provisioning. |
+| `inngest_provision_completed` | Inngest verified usable instance. |
+| `inngest_provision_booting` | Customer VPS exists but is still booting/recovering. |
+| `inngest_provision_failed` | Inngest provisioning failed. |
+
+Search by Clerk user ID as `distinctId`, then compare event timestamps with
+Inngest runs, platform logs, and customer VPS health.
+
+## Debugging
+
+Start with Clerk ID and handle:
+
+1. Check Clerk user and waitlist status.
+2. Check PostHog provisioning events.
+3. Check Inngest `provision-matrix-os` run.
+4. Query platform `user_machines`.
+5. Check customer VPS systemd services and gateway `/health`.
+
+## Email
+
+Current state:
+
+- Clerk can send waitlist invite/access emails.
+- Matrix does not yet have a first-party outbound email provider abstraction.
+
+Planned provider:
+
+- Cloudflare Email Service for outbound transactional/product email.
+- Cloudflare Email Routing for inbound aliases such as `support@matrix-os.com`.
+
+Email sending must be platform-owned. Customer VPSes and agent sessions should
+not hold email provider tokens.
+

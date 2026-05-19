@@ -50,6 +50,24 @@ auth, generic client errors, and operator events.
    worktrees, acquires the worktree lease, starts an agent session, and records
    run state for restart recovery.
 
+## Engineering Workflow
+
+Use Symphony for Linear-ticket coding-agent work when the ticket has enough
+context for an agent to make progress safely. The agent context should include:
+
+- the Linear ticket and acceptance criteria;
+- `AGENTS.md`;
+- `docs/dev/engineering-practices.md`;
+- the relevant spec under `specs/`, or an explicit instruction to ask for Spec
+  Kit before coding;
+- the project `WORKFLOW.md`, which Symphony creates by default when missing;
+- the expected Graphite stack layer, if the ticket is part of a multi-phase
+  spec.
+
+Symphony agents should open small PRs with Conventional Commit titles, run the
+focused checks for touched files, and keep working review findings until
+Greptile reaches 5/5 or a human owner documents a deferral.
+
 ## Validation
 
 Focused checks:

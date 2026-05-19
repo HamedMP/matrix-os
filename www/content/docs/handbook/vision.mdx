@@ -1,0 +1,65 @@
+---
+title: Why Matrix Exists
+description: The Web 4 vision and the operating beliefs behind Matrix OS.
+---
+
+# Why Matrix Exists
+
+Matrix OS is Web 4: a unified AI operating system where the OS, messaging,
+social, apps, games, cloud coding, and AI identity live together.
+
+The bet is simple: software should appear when you need it, run in an owner-
+controlled workspace, and be operated by AI agents that understand your context.
+
+## Product Beliefs
+
+### AI is the kernel
+
+The AI is not a side panel. It is the process manager, dispatcher, builder,
+operator, and interface. Today that means Claude Agent SDK V1 `query()` with
+`resume`; over time it means model-agnostic routing.
+
+### Data belongs to its owner
+
+Identity, config, apps, skills, and exportable state should be inspectable.
+Durable app, social, workspace, and user data belongs in owner-controlled
+Postgres. The platform should route, authenticate, integrate, and recover; it
+should not become the owner of user work.
+
+### Headless core, many shells
+
+Canvas, Desktop, mobile, CLI, Telegram, WhatsApp, Discord, Slack, Matrix
+protocol, and future shells are renderers over the same core. If a feature only
+works in one shell, it is incomplete.
+
+### Cloud coding is a product, not an ops hack
+
+Developers should move from local-only coding to Matrix-managed cloud coding:
+projects, terminals, worktrees, previews, code-server, agents, review loops, and
+release operations in one workspace.
+
+## How We Decide What To Build
+
+We prioritize work that increases one of these:
+
+- the quality of the user-owned OS;
+- the usefulness of AI as the kernel;
+- the ability for humans to manage coding agents safely;
+- the reliability of customer VPS runtime;
+- the speed of shipping without hiding security or review debt;
+- the ability to onboard other teams into Matrix cloud coding.
+
+If a ticket is high-impact but underspecified, write a Spec Kit plan. If it is
+small and clear, ship it with tests.
+
+## Values
+
+| Value | What it means here |
+| --- | --- |
+| Ownership | The engineer or agent holding a ticket is expected to understand the user impact, not just edit files. |
+| Context beats control | We prefer making decisions easy through clear docs, specs, and observability over adding approval bottlenecks everywhere. |
+| Cloud first | Use Matrix dev VPSes as the normal engineering environment. Local remains a useful tool, not the center. |
+| Security is product quality | Auth, validation, timeouts, error policy, and resource limits are part of the work. |
+| Agents are teammates | Coding agents need the same context, workflows, and review standards as human engineers. |
+| Make it visible | Specs, PR stacks, release state, user support state, and fleet health should be easy to inspect. |
+
