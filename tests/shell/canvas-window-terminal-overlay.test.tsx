@@ -71,12 +71,12 @@ describe("CanvasWindow terminal interactivity", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
     expect(screen.getByRole("button", { name: "Terminal tab one" })).toBeTruthy();
-    expect(container.querySelector("[data-canvas-interaction-overlay], .absolute.inset-0.z-10")).toBeNull();
+    expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeNull();
   });
 
   it("keeps the click shield for iframe app windows", () => {
     const { container } = render(<CanvasWindow win={iframeWindow} />);
 
-    expect(container.querySelector("[data-canvas-interaction-overlay], .absolute.inset-0.z-10")).toBeTruthy();
+    expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
   });
 });
