@@ -6,8 +6,15 @@ import { CanvasTransform } from "../../shell/src/components/canvas/CanvasTransfo
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
 
+class ResizeObserverMock {
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
+
 describe("CanvasTransform app focus interactions", () => {
   beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useCanvasSettings.setState({ navMode: "scroll", showTitles: true });
   });

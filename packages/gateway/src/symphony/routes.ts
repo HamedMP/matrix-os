@@ -232,14 +232,15 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     const parsed = await parseJson(c, EmptyBodySchema);
     if (!parsed.ok) return parsed.response;
     await deps.credentialStore.deleteLinearCredential(principal.userId);
-    await deps.repository.setCredentialConfigured(principal.userId, false, principal.userId);
+    const credentialConfigured = await deps.credentialStore.hasLinearCredential(principal.userId);
+    await deps.repository.setCredentialConfigured(principal.userId, credentialConfigured, principal.userId);
     await publishSimpleOperatorEvent(deps, principal.userId, {
       installationId: snapshot.installation?.id ?? `sym_${principal.userId}`,
       type: "symphony.credential.deleted",
       message: "Linear credential removed",
       actorId: principal.userId,
     });
-    return c.json({ credentialConfigured: false });
+    return c.json({ credentialConfigured });
   }));
 
   app.get("/tickets/preview", (c) => withPrincipal(c, deps, async (principal) => {

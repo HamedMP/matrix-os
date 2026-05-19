@@ -110,7 +110,7 @@ const DEFAULT_FORM: FormState = {
   linearProjectSlug: "",
   linearSecret: "",
   requiredLabels: "symphony",
-  activeStates: "Todo, In Progress",
+  activeStates: "Todo, In Progress, Merging, Rework",
   terminalStates: "Done, Canceled, Cancelled, Duplicate",
   assigneeIds: [],
   maxConcurrentAgents: 3,
@@ -479,10 +479,10 @@ export default function App() {
         <aside className="rounded-md border bg-white p-4">
           <h2 className="text-base font-semibold">Setup</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {needsSetup ? "Connect Linear and choose which assigned tickets Symphony can claim." : "Linear and ticket rules are configured."}
+            {needsSetup ? "Connect Linear and choose which tickets Symphony can claim." : "Linear and ticket rules are configured."}
           </p>
           <div className="mt-4 space-y-2 text-sm">
-            <StatusLine label="Linear credential" value={status?.credentialConfigured ? "Configured" : "Missing"} />
+            <StatusLine label="Linear account" value={status?.credentialConfigured ? "Configured" : "Missing"} />
             <StatusLine label="Project" value={config?.installation?.projectSlug ?? "Not set"} />
             <StatusLine label="Team" value={config?.rule?.teamKey ?? "Not set"} />
             <StatusLine label="Assignees" value={config?.rule?.assigneeIds.length ? `${config.rule.assigneeIds.length} selected` : "Any matching assignee"} />

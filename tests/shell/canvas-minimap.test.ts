@@ -43,6 +43,31 @@ describe("Canvas Minimap", () => {
       expect(bottomRight.x).toBe(350);
       expect(bottomRight.y).toBe(250);
     });
+
+    it("subtracts container offset when containerRect is set", () => {
+      useCanvasTransform.setState({ containerRect: { left: 60, top: 28, width: 740, height: 572 } });
+      const { screenToCanvas } = useCanvasTransform.getState();
+      const topLeft = screenToCanvas(60, 28);
+      const bottomRight = screenToCanvas(800, 600);
+      expect(topLeft.x).toBe(0);
+      expect(topLeft.y).toBe(0);
+      expect(bottomRight.x).toBe(740);
+      expect(bottomRight.y).toBe(572);
+      useCanvasTransform.setState({ containerRect: null });
+    });
+
+    it("subtracts container offset when zoomed and panned", () => {
+      useCanvasTransform.setState({ containerRect: { left: 60, top: 28, width: 740, height: 572 } });
+      useCanvasTransform.getState().setTransform(2, 50, 50);
+      const { screenToCanvas } = useCanvasTransform.getState();
+      const topLeft = screenToCanvas(60, 28);
+      const bottomRight = screenToCanvas(800, 600);
+      expect(topLeft.x).toBe(-50);
+      expect(topLeft.y).toBe(-50);
+      expect(bottomRight.x).toBe(320);
+      expect(bottomRight.y).toBe(236);
+      useCanvasTransform.setState({ containerRect: null });
+    });
   });
 
   describe("bounds computation", () => {

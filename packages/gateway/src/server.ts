@@ -23,14 +23,15 @@ import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } f
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
-import { createProjectManager } from "./project-manager.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createProjectManager } from "./project-manager.js";
 import { createSymphonyRoutes } from "./symphony-routes.js";
 import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
-import { createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
+import { createCompositeSymphonyCredentialStore, createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
+import { createIntegrationAwareLinearGraphql, hasConnectedLinearIntegration } from "./symphony/linear-integration.js";
 import { createLinearSource } from "./symphony/linear-source.js";
 import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
 import { KyselySymphonyRepository } from "./symphony/repository.js";
@@ -65,6 +66,7 @@ import {
   createImageClient,
   loadIconStyle,
   buildIconPrompt,
+  generateIconBatch,
   createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
@@ -1316,18 +1318,6 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
-  // Platform normally owns /api/auth/ws-token before proxying to a customer
-  // VPS. Direct gateway/dev shells have no platform layer, so expose an empty
-  // no-store response in open mode and let WebSocket clients fall back to the
-  // unauthenticated local dev upgrade path.
-  app.get("/api/auth/ws-token", (c) => {
-    if (process.env.MATRIX_AUTH_TOKEN) {
-      return c.json({ error: "WebSocket auth unavailable" }, 503);
-    }
-    return c.json({ token: null, expiresAt: 0 }, 200, {
-      "Cache-Control": "no-store",
-    });
-  });
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -1543,16 +1533,10 @@ export async function createGateway(config: GatewayConfig) {
     const { token, expiresAt } = mobileSessionTokens.mint(slug, Date.now(), {
       routingKey: routingHandle && HANDLE_PATTERN.test(routingHandle) ? routingHandle : undefined,
     });
-    return new Response(JSON.stringify({
+    return c.json({
       token,
       expiresAt,
       launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
-    }), {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "application/json; charset=UTF-8",
-      },
     });
   });
 
@@ -2376,6 +2360,7 @@ export async function createGateway(config: GatewayConfig) {
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
   const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
+  let iconRegenerationInProgress = false;
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -2390,8 +2375,16 @@ export async function createGateway(config: GatewayConfig) {
   if (kyselyInstance) {
     const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
     await repository.bootstrap();
-    const credentialStore = createFileSymphonyCredentialStore({ homePath });
-    const linearSource = createLinearSource();
+    const fileCredentialStore = createFileSymphonyCredentialStore({ homePath });
+    const credentialStore = platformDb && pipedreamClient
+      ? createCompositeSymphonyCredentialStore({
+        primary: fileCredentialStore,
+        hasLinearIntegration: (ownerId) => hasConnectedLinearIntegration(platformDb!, ownerId),
+      })
+      : fileCredentialStore;
+    const linearSource = platformDb && pipedreamClient
+      ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
+      : createLinearSource();
     const projectManager = createProjectManager({ homePath });
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath });
@@ -3282,50 +3275,31 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
+    if (iconRegenerationInProgress) {
+      return c.json({ error: "Regeneration already in progress" }, 409);
+    }
+    iconRegenerationInProgress = true;
+
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [], generated: false });
     }
 
     const iconsDir = join(homePath, "system/icons");
     if (!existsSync(iconsDir)) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [] });
     }
 
     const apps = await listApps(homePath);
-    const appSlugs = new Set(apps.map((a) => a.slug).filter(Boolean));
-    const pngFiles = readdirSync(iconsDir)
-      .filter((f: string) => f.endsWith(".png"))
-      .filter((f: string) => appSlugs.has(f.replace(/\.png$/, "")));
+    const slugs: string[] = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
 
-    const iconStyle = loadIconStyle(homePath);
-    const total = pngFiles.length;
-
-    // Return 202 immediately, regenerate in background
-    const regeneration = (async () => {
-      const client = createImageClient(geminiKey);
-      let regenerated = 0;
-      const failed: string[] = [];
-      for (const file of pngFiles) {
-        const slug = file.replace(/\.png$/, "");
-        try {
-          await client.generateImage(buildIconPrompt(slug, iconStyle), {
-            aspectRatio: "1:1",
-            imageDir: iconsDir,
-            saveAs: `${slug}.png`,
-          });
-          regenerated++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          console.error(`Icon regeneration failed for "${slug}":`, msg);
-          failed.push(slug);
-        }
-      }
-      console.log(`[icons] Regeneration complete: ${regenerated}/${total} succeeded, ${failed.length} failed`);
-    })();
-    regeneration.catch((err) => console.error("[icons] Regeneration error:", err));
-
-    return c.json({ accepted: true, total }, 202);
+    generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
+      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
+      .catch((err) => console.error("[icons] Regeneration error:", err))
+      .finally(() => { iconRegenerationInProgress = false; });
+    return c.json({ accepted: true, total: slugs.length }, 202);
   });
 
   app.get("/api/cron", (c) => {
@@ -3467,40 +3441,30 @@ export async function createGateway(config: GatewayConfig) {
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
+    const requestedChannel =
+      body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
     const info = getSystemInfo(homePath);
-    const parsedTarget = parseInternalUpgradeTarget(body);
-    if (!parsedTarget.ok) return c.json({ error: parsedTarget.error }, 400);
-    const target = parsedTarget.target ?? (() => {
-      const channel = resolveSystemUpdateChannel(undefined, {
-        envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-        installedChannel: info.release?.channel,
-      });
-      return channel ? { type: "channel" as const, value: channel } : null;
-    })();
-    if (!target) return c.json({ error: "Invalid update channel" }, 400);
+    const channel = resolveSystemUpdateChannel(requestedChannel, {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
 
-    const result = await startSystemUpdate({ target });
+    const result = await startSystemUpdate({ channel });
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
     void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
       distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
       properties: {
-        targetType: target.type,
-        targetValue: target.value,
-        channel: target.type === "channel" ? target.value : undefined,
+        channel,
         handle: process.env.MATRIX_HANDLE,
       },
     }).catch((err: unknown) => {
       const kind = err instanceof Error ? err.name : typeof err;
       console.warn(`[posthog] Failed to queue system update event: ${kind}`);
     });
-    return c.json({
-      ok: true,
-      status: result.status,
-      target,
-      ...(target.type === "channel" ? { channel: target.value } : { version: target.value }),
-    }, 202);
+    return c.json({ ok: true, status: result.status, channel }, 202);
   }
 
   app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
@@ -3832,7 +3796,6 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
-      await matrixSymphonyOrchestrator?.shutdown();
       await symphonyRunner.stop();
       await sessionRegistry.shutdown();
       await watcher.close();

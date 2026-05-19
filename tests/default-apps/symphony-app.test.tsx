@@ -170,7 +170,7 @@ describe("Symphony app", () => {
     expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Needs Attention").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Done / Handoff").length).toBeGreaterThan(0);
-    expect(screen.getByText("Linear credential")).toBeTruthy();
+    expect(screen.getByText("Linear account")).toBeTruthy();
   });
 
   it("saves a server-side Linear secret and non-secret rule set", async () => {

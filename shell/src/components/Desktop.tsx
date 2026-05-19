@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
-import { useWindowManager, type AppWindow, type LayoutWindow } from "@/hooks/useWindowManager";
-import { useMobileViewport } from "@/hooks/useMobileViewport";
+import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
@@ -48,8 +48,6 @@ import { OnboardingScreen } from "./OnboardingScreen";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { MobileAppSurface } from "./mobile/MobileAppSurface";
-import { MobileLauncher } from "./mobile/MobileLauncher";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
@@ -58,20 +56,20 @@ import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { openAppInStandaloneTab } from "@/lib/open-app-tab";
 import {
-  loadBrowserMobileShellState,
-  saveBrowserMobileShellState,
-} from "@/stores/mobile-shell-store";
-import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
   normalizeBuiltInAppPath,
   normalizeBuiltInLayoutWindow,
 } from "@/lib/builtin-apps";
-import { canonicalAppLaunchPath, iconUrlForSlug } from "@/lib/app-launch";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+
+function iconUrlForSlug(slug: string | undefined): string | undefined {
+  if (!slug) return undefined;
+  return `/icons/${encodeURIComponent(slug)}.png`;
+}
 
 // Forgiving app-name lookup used by vocal mode's `open_app` tool and the
 // auto-open after a build finishes. Handles exact, substring, reverse
@@ -112,15 +110,6 @@ function findAppByName<T extends { name: string }>(apps: T[], query: string): T 
   }
 
   return null;
-}
-
-function mobileAppSlugFromPath(path: string): string {
-  return path
-    .replace(/^apps\//, "")
-    .replace(/^__/, "")
-    .replace(/__$/, "")
-    .replace(/\/index\.html$/, "")
-    .replace(/\.html$/, "");
 }
 
 interface ModuleRegistryEntry {
@@ -225,9 +214,7 @@ function DockIcon({
   canQuit?: boolean;
 }) {
   const initial = name.charAt(0).toUpperCase();
-  const [imgError, setImgError] = useState(false);
-  useEffect(() => setImgError(false), [iconUrl]);
-  const showImage = iconUrl && !imgError;
+  const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
   const btn = (
     <button
@@ -236,7 +223,7 @@ function DockIcon({
       style={{ width: iconSize, height: iconSize }}
     >
       {showImage ? (
-        <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgError(true)} />
+        <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
       ) : (
         <span className="text-sm font-semibold text-foreground">
           {initial}
@@ -540,16 +527,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const focusedWindow = windows
     .filter((w) => !w.minimized)
     .sort((a, b) => b.zIndex - a.zIndex)[0];
-  const isPhoneShell = useMobileViewport();
-  const [mobileMode, setMobileMode] = useState<"launcher" | "app" | "canvas">("launcher");
-  const [lastActiveMobileAppSlug, setLastActiveMobileAppSlug] = useState<string | null>(null);
-  const activeMobileWindow = focusedWindow;
-
-  useEffect(() => {
-    if (!isPhoneShell) return;
-    const saved = loadBrowserMobileShellState();
-    setLastActiveMobileAppSlug(saved.lastActiveAppSlug);
-  }, [isPhoneShell]);
 
   useEffect(() => {
     const timers = minimizeTimers.current;
@@ -622,8 +599,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const checkAndGenerateIcon = useCallback((slug: string) => {
     if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
     checkedRef.current.add(slug);
-    const iconPath = iconUrlForSlug(slug);
-    if (!iconPath) return;
+    const iconPath = `/icons/${slug}.png`;
     fetch(`${GATEWAY_URL}${iconPath}`, {
       method: "HEAD",
       signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
@@ -631,7 +607,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       if (res.ok) {
         const etag = res.headers.get("etag");
         if (etag) {
-          const versionedUrl = versionedIconUrl(iconPath, etag);
+          const versionedUrl = versionedIconUrl(`/icons/${slug}.png`, etag);
           wmSetApps((prev) =>
             prev.map((a) =>
               nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
@@ -641,17 +617,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           );
         }
       } else {
-        if (iconPath.endsWith(".png")) {
-          regenerateIcon(slug);
-        } else {
-          wmSetApps((prev) =>
-            prev.map((a) =>
-              nameToSlug(a.name) === slug && a.iconUrl
-                ? { ...a, iconUrl: undefined }
-                : a,
-            ),
-          );
-        }
+        regenerateIcon(slug);
       }
     }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
   }, [wmSetApps, regenerateIcon]);
@@ -685,7 +651,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                     ...a,
                     name: newName,
                     path: newPath,
-                    iconUrl: iconUrlForSlug(ns),
+                    iconUrl: `/icons/${ns}.png`,
                   };
                 }
                 return a;
@@ -717,20 +683,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const addApp = useCallback((name: string, path: string, iconSlug?: string) => {
     const iconUrl = iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
-      const existingPath = prev.find((a) => a.path === path);
-      if (existingPath) {
-        return prev.map((a) => (
-          a.path === path && (a.name !== name || a.iconUrl !== iconUrl)
-            ? { ...a, name, iconUrl }
-            : a
-        ));
-      }
-      if (iconSlug) {
-        const existingName = prev.find((a) => a.name === name);
-        if (existingName) {
-          return prev.map((a) => a.name === name ? { ...a, path, iconUrl } : a);
-        }
-      }
+      if (prev.find((a) => a.path === path)) return prev;
       return [...prev, { name, path, iconUrl }];
     });
     if (iconSlug) checkAndGenerateIcon(iconSlug);
@@ -751,10 +704,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       requestAnimationFrame(() => {
         const win = useWindowManager.getState().windows.find((w) => w.path === actualPath);
         if (win) {
+          const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
             win,
-            window.innerWidth,
-            window.innerHeight,
+            cRect?.width ?? window.innerWidth,
+            cRect?.height ?? window.innerHeight,
           );
         }
       });
@@ -766,10 +720,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     requestAnimationFrame(() => {
       const win = useWindowManager.getState().getWindow(winId);
       if (!win || win.minimized) return;
+      const cRect = useCanvasTransform.getState().containerRect;
       useCanvasTransform.getState().focusOnWindow(
         win,
-        window.innerWidth,
-        window.innerHeight,
+        cRect?.width ?? window.innerWidth,
+        cRect?.height ?? window.innerHeight,
       );
     });
   }, []);
@@ -803,93 +758,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     },
     [focusOrOpen],
   );
-
-  const openMobileWindow = useCallback((name: string, path: string) => {
-    const slug = mobileAppSlugFromPath(path);
-    openWindow(name, path);
-    setMobileMode("app");
-    setLastActiveMobileAppSlug(slug);
-    saveBrowserMobileShellState({
-      ...loadBrowserMobileShellState(),
-      mode: "app",
-      lastActiveAppSlug: slug,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [openWindow]);
-
-  const openMobileCanvas = useCallback(() => {
-    useDesktopMode.getState().setMode("canvas");
-    useCanvasTransform.getState().resetForMobileViewport();
-    setMobileMode("canvas");
-    saveBrowserMobileShellState({
-      ...loadBrowserMobileShellState(),
-      mode: "canvas",
-      canvasEnteredAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }, []);
-
-  useEffect(() => {
-    if (isPhoneShell || typeof window === "undefined") return;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const nextWidth = Math.round(Math.min(1040, Math.max(720, vw * 0.62)));
-    const nextHeight = Math.round(Math.min(820, Math.max(520, vh * 0.7)));
-    wmSetWindows((prev) => prev.map((win) => {
-      if (win.minimized || win.width >= 640) return win;
-      return {
-        ...win,
-        x: Math.max(80, Math.min(win.x, Math.max(80, vw - nextWidth - 80))),
-        y: Math.max(56, Math.min(win.y, Math.max(56, vh - nextHeight - 56))),
-        width: nextWidth,
-        height: nextHeight,
-      };
-    }));
-  }, [isPhoneShell, wmSetWindows]);
-
-  const returnMobileHome = useCallback(() => {
-    setMobileMode("launcher");
-    saveBrowserMobileShellState({
-      ...loadBrowserMobileShellState(),
-      mode: "launcher",
-      updatedAt: new Date().toISOString(),
-    });
-  }, []);
-
-  const renderWindowContent = useCallback((win: AppWindow) => {
-    if (win.path.startsWith("__terminal__")) {
-      return <TerminalApp mobile={isPhoneShell} />;
-    }
-    if (win.path === "__workspace__") {
-      return <WorkspaceApp />;
-    }
-    if (win.path === "__file-browser__") {
-      return <FileBrowser windowId={win.id} mobile={isPhoneShell} />;
-    }
-    if (win.path === "__preview-window__") {
-      return <PreviewWindow />;
-    }
-    if (win.path === "__chat__") {
-      return (
-        <div className="h-full overflow-hidden">
-          {chat && (
-            <ChatApp
-              messages={chat.messages}
-              sessionId={chat.sessionId}
-              busy={chat.busy}
-              connected={chat.connected}
-              conversations={chat.conversations}
-              onNewChat={chat.newChat}
-              onSwitchConversation={chat.switchConversation}
-              onSubmit={chat.submitMessage}
-              mobile={isPhoneShell}
-            />
-          )}
-        </div>
-      );
-    }
-    return <AppViewer path={win.path} onOpenApp={openMobileWindow} />;
-  }, [chat, isPhoneShell, openMobileWindow]);
 
   const loadModules = useCallback(async () => {
     try {
@@ -939,14 +807,15 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (appsRes?.ok) {
-        const appsList: { name: string; path: string; icon?: string; slug?: string; launchUrl?: string }[] = await appsRes.json();
+        const appsList: { name: string; path: string; icon?: string }[] = await appsRes.json();
         for (const app of appsList) {
-          const legacyPath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
-          const canonicalPath = normalizeBuiltInAppPath(canonicalAppLaunchPath(app) ?? legacyPath);
-          addApp(app.name, canonicalPath, app.icon);
+          // path from API is like "/files/apps/calculator/index.html"
+          // strip leading "/files/" to get relative path for AppViewer
+          const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
+          addApp(app.name, relativePath, app.icon);
 
-          const saved = layoutMap.get(canonicalPath) ?? layoutMap.get(legacyPath);
-          queueSavedLayout(saved && saved.path !== canonicalPath ? { ...saved, path: canonicalPath } : saved);
+          const saved = layoutMap.get(relativePath);
+          queueSavedLayout(saved);
           // Don't auto-open pre-installed apps - let users open from dock/store
         }
       }
@@ -1394,46 +1263,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
-  if (!showSetup && isPhoneShell && modeConfig.showWindows) {
-    const openWindowPaths = new Set(windows.filter((w) => !w.minimized).map((w) => w.path));
-    const showApp = mobileMode === "app" && activeMobileWindow;
-    const resumeApp = lastActiveMobileAppSlug
-      ? apps.find((app) => mobileAppSlugFromPath(app.path) === lastActiveMobileAppSlug) ?? null
-      : null;
-
-    return (
-      <TooltipProvider delayDuration={300}>
-        <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
-          {mobileMode === "canvas" ? (
-            <MobileAppSurface title="Canvas" onHome={returnMobileHome}>
-              <div className="relative h-full w-full overflow-hidden bg-background">
-                <div className="absolute left-3 right-3 top-3 z-20">
-                  <CanvasToolbar />
-                </div>
-                <CanvasRenderer />
-              </div>
-            </MobileAppSurface>
-          ) : showApp ? (
-            <MobileAppSurface title={activeMobileWindow.title} onHome={returnMobileHome}>
-              {renderWindowContent(activeMobileWindow)}
-            </MobileAppSurface>
-          ) : (
-            <MobileLauncher
-              apps={apps}
-              openWindowPaths={openWindowPaths}
-              onOpenApp={openMobileWindow}
-              resumeApp={resumeApp}
-              onResumeApp={openMobileWindow}
-              onOpenCanvas={openMobileCanvas}
-            />
-          )}
-        </div>
-        <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
-        <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
-      </TooltipProvider>
-    );
-  }
-
   return (
     <TooltipProvider delayDuration={300}>
       {!showSetup && (
@@ -1446,12 +1275,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       {showSetup && (
         <OnboardingScreen
           onComplete={() => {
-            setMobileMode("launcher");
-            saveBrowserMobileShellState({
-              ...loadBrowserMobileShellState(),
-              mode: "launcher",
-              updatedAt: new Date().toISOString(),
-            });
             // Whether the user finished onboarding or skipped it, land them
             // on the moraine-lake wallpaper. Best-effort persist to the
             // gateway; the local default already matches so the visual is
@@ -1979,11 +1802,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
-                    <TerminalApp mobile={isPhoneShell} />
+                    <TerminalApp />
                   ) : win.path === "__workspace__" ? (
                     <WorkspaceApp />
                   ) : win.path === "__file-browser__" ? (
-                    <FileBrowser windowId={win.id} mobile={isPhoneShell} />
+                    <FileBrowser windowId={win.id} />
                   ) : win.path === "__preview-window__" ? (
                     <PreviewWindow />
                   ) : win.path === "__chat__" ? (
@@ -1998,7 +1821,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                           onNewChat={chat.newChat}
                           onSwitchConversation={chat.switchConversation}
                           onSubmit={chat.submitMessage}
-                          mobile={isPhoneShell}
                         />
                       )}
                     </div>
@@ -2047,42 +1869,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           buttons. Lives outside both dock-orientation branches so it
           isn't unmounted when the viewport flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
-
-      {fullscreenWindowId && desktopMode === "canvas" && (() => {
-        const fsWin = windows.find((w) => w.id === fullscreenWindowId);
-        if (!fsWin) return null;
-        return (
-          <div className="fixed inset-0 z-[100] bg-background overflow-hidden">
-            {fsWin.path.startsWith("__terminal__") ? (
-              <TerminalApp mobile={isPhoneShell} />
-            ) : fsWin.path === "__workspace__" ? (
-              <WorkspaceApp />
-            ) : fsWin.path === "__file-browser__" ? (
-              <FileBrowser windowId={fsWin.id} mobile={isPhoneShell} />
-            ) : fsWin.path === "__preview-window__" ? (
-              <PreviewWindow />
-            ) : fsWin.path === "__chat__" ? (
-              <div className="h-full overflow-hidden">
-                {chat && (
-                  <ChatApp
-                    messages={chat.messages}
-                    sessionId={chat.sessionId}
-                    busy={chat.busy}
-                    connected={chat.connected}
-                    conversations={chat.conversations}
-                    onNewChat={chat.newChat}
-                    onSwitchConversation={chat.switchConversation}
-                    onSubmit={chat.submitMessage}
-                    mobile={isPhoneShell}
-                  />
-                )}
-              </div>
-            ) : (
-              <AppViewer path={fsWin.path} onOpenApp={openWindow} />
-            )}
-          </div>
-        );
-      })()}
 
       {fullscreenWindowId && (
         <FullscreenExitPill onExit={wmExitFullscreen} />
