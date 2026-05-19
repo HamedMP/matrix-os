@@ -1,7 +1,5 @@
-"use client";
-
-import { type CSSProperties, useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
+import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
 import {
   BrainCircuitIcon,
   GlobeIcon,
@@ -38,33 +36,9 @@ function Logo({ className = "", style = {} }: { className?: string; style?: Reac
 }
 
 export default function LandingPage() {
-  const [scrollY, setScrollY] = useState(0);
-  const rafRef = useRef(0);
-
-  const onScroll = useCallback(() => {
-    cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => setScrollY(window.scrollY));
-  }, []);
-
-  useEffect(() => {
-    const prevOverflow = document.body.style.overflow;
-    const prevHeight = document.body.style.height;
-    document.body.style.overflow = "auto";
-    document.body.style.height = "auto";
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      document.body.style.height = prevHeight;
-      window.removeEventListener("scroll", onScroll);
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [onScroll]);
-
-  const screenshotY = Math.max(0, 60 - scrollY * 0.04);
-  const screenshotScale = Math.min(1, 0.92 + scrollY * 0.00008);
-
   return (
     <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", position: "relative" }}>
+      <BodyOverflow />
       <svg style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 50, opacity: 0.12 }}>
         <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
         <rect width="100%" height="100%" filter="url(#grain)" />
@@ -149,9 +123,7 @@ export default function LandingPage() {
 
       <section id="preview" className="relative py-24 md:py-36 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
-          <div className="screenshot-wrapper" style={{ "--ss-y": `${screenshotY}px`, "--ss-s": screenshotScale } as CSSProperties}>
-            <Image src="/images/app-screenshot.jpg" alt="Matrix OS Desktop" width={1920} height={1080} className="w-full h-auto" priority />
-          </div>
+          <ScrollScreenshot />
           <div className="mt-10 max-w-2xl mx-auto text-center">
             <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
