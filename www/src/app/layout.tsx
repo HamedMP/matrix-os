@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Caveat, Cormorant_Garamond } from "next/font/google";
+import { Inter, JetBrains_Mono, Caveat, Cormorant_Garamond, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
@@ -24,6 +24,12 @@ const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
   weight: ["300", "400", "500", "600", "700"],
   style: ["normal", "italic"],
+});
+
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -69,7 +75,7 @@ export default function RootLayout({
           <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
           <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
         </head>
-        <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable}`}>
+        <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
           <Analytics />
         </body>
