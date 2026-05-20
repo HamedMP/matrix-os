@@ -25,7 +25,7 @@ export function ScrollScreenshot() {
 
   return (
     <div className="screenshot-wrapper" style={{ "--ss-y": `${screenshotY}px`, "--ss-s": screenshotScale } as CSSProperties}>
-      <Image src="/images/app-screenshot.jpg" alt="Matrix OS Desktop" width={1920} height={1080} className="w-full h-auto" priority />
+      <Image src="/images/app-screenshot.jpg" alt="Matrix OS Desktop" width={1920} height={1080} className="w-full h-auto" loading="lazy" />
     </div>
   );
 }

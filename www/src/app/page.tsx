@@ -1,10 +1,34 @@
 import Image from "next/image";
+import { SignedIn, SignedOut } from "@clerk/nextjs";
+import { ArrowRightIcon } from "lucide-react";
 import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
 import {
   BrainCircuitIcon,
   GlobeIcon,
   ShieldCheckIcon,
 } from "lucide-react";
+
+const faqItems = [
+  { q: "What happens to my data?", a: "Everything is a file on your system. Apps, data, settings, your AI's memory. Copy a folder to back up your entire OS. No vendor lock-in. No opaque databases." },
+  { q: "Do I need to code?", a: "No. You describe what you want in plain English. The AI writes the code, saves it as a file, and it appears on your desktop. You never touch a line of code unless you want to." },
+  { q: "What if something breaks?", a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost." },
+  { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source, MIT licensed, auditable by anyone." },
+  { q: "How is this different from ChatGPT?", a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep." },
+  { q: "What does it cost?", a: "Free to start. The platform is open source. You bring your own AI key, or use our hosted instances. No surprise bills, no credit-burning loops." },
+];
+
+const jsonLd = JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    { "@type": "Organization", name: "Matrix OS", url: "https://matrix-os.com", logo: "https://matrix-os.com/rabbit.svg",
+      sameAs: ["https://github.com/HamedMP/matrix-os", "https://x.com/joinmatrixos", "https://discord.gg/cSBBQWtPwV"] },
+    { "@type": "SoftwareApplication", name: "Matrix OS", url: "https://matrix-os.com", applicationCategory: "OperatingSystem",
+      operatingSystem: "Web, Docker", description: "An AI-native operating system that generates software from conversation.",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" } },
+    { "@type": "FAQPage", mainEntity: faqItems.map((item) => ({
+        "@type": "Question", name: item.q, acceptedAnswer: { "@type": "Answer", text: item.a } })) },
+  ],
+});
 
 const c = {
   forest: "#434E3F",
@@ -38,6 +62,7 @@ function Logo({ className = "", style = {} }: { className?: string; style?: Reac
 export default function LandingPage() {
   return (
     <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", position: "relative" }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
       <BodyOverflow />
       <svg style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 50, opacity: 0.12 }}>
         <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
@@ -94,10 +119,18 @@ export default function LandingPage() {
             <a href="#features" className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>features</a>
             <a href="#preview" className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>preview</a>
           </nav>
-          <a href="https://app.matrix-os.com" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
-            style={{ backgroundColor: c.forest, color: c.pageBg }}>
-            get started
-          </a>
+          <SignedOut>
+            <a href="https://app.matrix-os.com" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}>
+              get started
+            </a>
+          </SignedOut>
+          <SignedIn>
+            <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}>
+              open matrix os
+            </a>
+          </SignedIn>
         </div>
       </div>
 
@@ -110,10 +143,18 @@ export default function LandingPage() {
             <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
               A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready — your apps, your files, your way.
             </p>
-            <a href="https://app.matrix-os.com" className="inline-block rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-              style={{ backgroundColor: c.forest, color: c.pageBg }}>
-              Get Started
-            </a>
+            <SignedOut>
+              <a href="https://app.matrix-os.com" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+                style={{ backgroundColor: c.forest, color: c.pageBg }}>
+                Get Started <ArrowRightIcon className="size-3.5" />
+              </a>
+            </SignedOut>
+            <SignedIn>
+              <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+                style={{ backgroundColor: c.forest, color: c.pageBg }}>
+                Open Matrix OS <ArrowRightIcon className="size-3.5" />
+              </a>
+            </SignedIn>
           </div>
           <div className="absolute right-0 top-0 h-full flex items-center justify-end pointer-events-none" style={{ width: "55%" }}>
             <video autoPlay loop muted playsInline preload="auto" controls={false} src="/hero-loop.mp4" className="max-w-none" style={{ height: "60%", width: "auto" }} />
@@ -168,14 +209,14 @@ export default function LandingPage() {
           @keyframes device-online-long { 0%, 60% { opacity: 1; } 65%, 100% { opacity: 0.3; } }
           @keyframes line-active { 0%, 15% { stroke-opacity: 0.3; } 20%, 100% { stroke-opacity: 0.06; } }
           @keyframes line-active-long { 0%, 60% { stroke-opacity: 0.3; } 65%, 100% { stroke-opacity: 0.06; } }
-          .net-line-flow { stroke-dasharray: 6 6; animation: net-flow 1.8s linear infinite; }
+          .net-line-flow { stroke-dasharray: 6 6; }
           .center-hub { animation: center-pulse 5s ease-in-out infinite; transform-origin: 200px 200px; }
           .center-ring-ping { animation: center-ring 3s ease-out infinite; }
           .net-glow { animation: glow-breathe 5s ease-in-out infinite; }
           .device-blink { animation: device-online 8s ease-in-out infinite; }
           .device-steady { animation: device-online-long 10s ease-in-out infinite; }
-          .line-blink { animation: line-active 8s ease-in-out infinite; }
-          .line-steady { animation: line-active-long 10s ease-in-out infinite; }
+          .line-blink { animation: net-flow 1.8s linear infinite, line-active 8s ease-in-out infinite; }
+          .line-steady { animation: net-flow 1.8s linear infinite, line-active-long 10s ease-in-out infinite; }
           .feature-pill { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: transform 0.3s ease, box-shadow 0.3s ease; }
           .feature-pill:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
         `}</style>
@@ -334,10 +375,18 @@ export default function LandingPage() {
           <p className="text-[15px] mb-10 max-w-md mx-auto" style={{ color: c.mutedFg }}>
             Your personal cloud computer is waiting. Set up takes less than a minute.
           </p>
-          <a href="https://app.matrix-os.com" className="inline-block rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-            style={{ backgroundColor: c.forest, color: c.pageBg }}>
-            Get Started Free
-          </a>
+          <SignedOut>
+            <a href="https://app.matrix-os.com" className="inline-flex items-center gap-2 rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}>
+              Get Started Free <ArrowRightIcon className="size-4" />
+            </a>
+          </SignedOut>
+          <SignedIn>
+            <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}>
+              Go to Dashboard <ArrowRightIcon className="size-4" />
+            </a>
+          </SignedIn>
         </div>
       </section>
 
