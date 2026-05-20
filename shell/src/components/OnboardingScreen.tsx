@@ -6,7 +6,7 @@ import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
 import { MicPermissionDialog } from "./MicPermissionDialog";
-import { MicIcon, BookOpenIcon, ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon } from "lucide-react";
 
 const MANUAL_STEPS = [
   {
@@ -214,55 +214,31 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
           {/* Mode picker */}
           <div
-            className="flex gap-5 transition-all duration-700 ease-out"
+            className="flex items-center gap-3 transition-all duration-700 ease-out"
             style={{
               opacity: phase !== "idle" ? 0 : 1,
               transform: phase !== "idle" ? "translateY(8px)" : "translateY(0)",
               pointerEvents: phase !== "idle" ? "none" : "auto",
             }}
           >
-            {/* Voice mode */}
             <button
               onClick={handleVoiceMode}
               disabled={phase !== "idle"}
-              className="group relative flex flex-col items-center gap-4 px-10 py-8 rounded-2xl border border-border/50 bg-card/50 hover:bg-card hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+              className="text-sm font-light text-muted-foreground/70 hover:text-foreground transition-colors duration-300"
+              style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
             >
-              <div className="size-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors duration-300">
-                <MicIcon className="size-5 text-primary" />
-              </div>
-              <div className="flex flex-col items-center gap-1">
-                <span
-                  className="text-base font-light text-foreground"
-                  style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-                >
-                  Talk to Aoede
-                </span>
-                <span className="text-[11px] text-muted-foreground/70">
-                  Voice conversation
-                </span>
-              </div>
+              Interactive mode
             </button>
 
-            {/* Manual guided mode */}
+            <span className="text-muted-foreground/30 text-sm select-none">or</span>
+
             <button
               onClick={handleStartManual}
               disabled={phase !== "idle"}
-              className="group relative flex flex-col items-center gap-4 px-10 py-8 rounded-2xl border border-border/50 bg-card/50 hover:bg-card hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+              className="text-sm font-light text-muted-foreground/70 hover:text-foreground transition-colors duration-300"
+              style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
             >
-              <div className="size-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors duration-300">
-                <BookOpenIcon className="size-5 text-primary" />
-              </div>
-              <div className="flex flex-col items-center gap-1">
-                <span
-                  className="text-base font-light text-foreground"
-                  style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-                >
-                  Read &amp; explore
-                </span>
-                <span className="text-[11px] text-muted-foreground/70">
-                  Guided walkthrough
-                </span>
-              </div>
+              Manual mode
             </button>
           </div>
         </div>
