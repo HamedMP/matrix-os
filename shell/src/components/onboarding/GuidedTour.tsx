@@ -1,44 +1,87 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { ArrowRightIcon } from "lucide-react";
 
-export interface TourStep {
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: "1.5rem",
+        height: "1.5rem",
+        padding: "0 0.35rem",
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: "0.7rem",
+        fontWeight: 600,
+        color: "#32352E",
+        backgroundColor: "#F0ECE3",
+        border: "1px solid #D6D0C4",
+        borderBottom: "2px solid #C8C2B6",
+        borderRadius: "5px",
+        lineHeight: 1,
+      }}
+    >
+      {children}
+    </kbd>
+  );
+}
+
+interface TourStep {
   selector: string;
   title: string;
-  body: string;
+  body: ReactNode;
   position?: "top" | "bottom" | "left" | "right";
+  padding?: number;
 }
 
 const TOUR_STEPS: TourStep[] = [
   {
-    selector: "[data-menu-bar]",
-    title: "Menu Bar",
-    body: "Access app menus, search with the command palette, and see the time up here.",
-    position: "bottom",
-  },
-  {
     selector: "[data-dock]",
     title: "The Dock",
-    body: "Your apps live here. Pin favorites, launch new ones, and switch between open windows.",
+    body: "Your apps live here. Pin your favorites, launch new ones, and switch between open windows.",
     position: "right",
+    padding: 4,
+  },
+  {
+    selector: "[data-menu-bar]",
+    title: "Quick Search",
+    body: (
+      <>
+        Press <Kbd>⌘</Kbd> <Kbd>K</Kbd> anytime to open the command palette. Search apps, run actions, and navigate your workspace instantly.
+      </>
+    ),
+    position: "bottom",
   },
   {
     selector: '[data-testid="dock-chat"]',
     title: "Chat",
-    body: "Talk to your AI assistant anytime. Ask questions, get help, or just have a conversation.",
+    body: "Send a message to your AI assistant. It can help you build apps, manage files, and answer questions about your workspace.",
     position: "right",
   },
   {
-    selector: '[data-testid="dock-settings"]',
-    title: "Settings",
-    body: "Customize your workspace — themes, dock position, wallpaper, and more.",
+    selector: '[data-testid="dock-tasks"]',
+    title: "Launcher",
+    body: "Open the launcher to see all your apps at a glance. Pin favorites and launch anything with one click.",
     position: "right",
+  },
+  {
+    selector: "[data-menu-bar]",
+    title: "Canvas Navigation",
+    body: (
+      <>
+        Your workspace is an infinite canvas. Scroll to pan around, or hold <Kbd>⌘</Kbd> and scroll to zoom. Press <Kbd>⌘</Kbd> <Kbd>0</Kbd> to fit everything on screen.
+      </>
+    ),
+    position: "bottom",
+    padding: 0,
   },
   {
     selector: '[data-testid="dock-vocal"]',
     title: "Aoede",
-    body: "Your voice AI companion. Click to start a voice conversation anytime.",
+    body: "Your voice companion. Click to start a voice conversation — ask anything, hands-free.",
     position: "right",
   },
 ];
@@ -57,72 +100,93 @@ interface GuidedTourProps {
 export function GuidedTour({ onComplete }: GuidedTourProps) {
   const [step, setStep] = useState(0);
   const [rect, setRect] = useState<SpotlightRect | null>(null);
+  const [prevRect, setPrevRect] = useState<SpotlightRect | null>(null);
   const [visible, setVisible] = useState(false);
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const current = TOUR_STEPS[step];
 
   const measureTarget = useCallback(() => {
-    if (!current) return;
+    if (!current) return null;
     const el = document.querySelector(current.selector);
-    if (!el) return;
+    if (!el) return null;
     const r = el.getBoundingClientRect();
-    const pad = 8;
-    setRect({
+    const pad = current.padding ?? 8;
+    return {
       top: r.top - pad,
       left: r.left - pad,
       width: r.width + pad * 2,
       height: r.height + pad * 2,
-    });
+    };
   }, [current]);
 
-  // Measure on step change + window resize
+  // Initial mount
   useEffect(() => {
-    // Small delay to let the desktop render / settle
     const t = setTimeout(() => {
-      measureTarget();
+      const r = measureTarget();
+      if (r) setRect(r);
       setVisible(true);
-      setTimeout(() => setTooltipVisible(true), 400);
-    }, 300);
+      setTimeout(() => setTooltipVisible(true), 500);
+    }, 600);
 
-    const onResize = () => measureTarget();
-    window.addEventListener("resize", onResize);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("resize", onResize);
-    };
+    return () => clearTimeout(t);
+  }, []);
+
+  // Step changes (not initial)
+  useEffect(() => {
+    if (step === 0) return;
+
+    const r = measureTarget();
+    if (r) setRect(r);
+    const t = setTimeout(() => setTooltipVisible(true), 400);
+
+    return () => clearTimeout(t);
   }, [step, measureTarget]);
 
+  // Resize handler
+  useEffect(() => {
+    const onResize = () => {
+      const r = measureTarget();
+      if (r) setRect(r);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [measureTarget]);
+
   function goNext() {
+    if (transitioning) return;
+    setTransitioning(true);
     setTooltipVisible(false);
+
     setTimeout(() => {
       if (step < TOUR_STEPS.length - 1) {
+        setPrevRect(rect);
         setStep((s) => s + 1);
+        setTransitioning(false);
       } else {
         setVisible(false);
-        setTimeout(onComplete, 500);
+        setTimeout(onComplete, 600);
       }
-    }, 300);
+    }, 350);
   }
 
   function skip() {
     setTooltipVisible(false);
     setVisible(false);
-    setTimeout(onComplete, 500);
+    setTimeout(onComplete, 600);
   }
 
-  // Tooltip positioning relative to spotlight
   function getTooltipStyle(): React.CSSProperties {
     if (!rect) return { opacity: 0 };
     const pos = current?.position ?? "right";
     const base: React.CSSProperties = {
       position: "fixed",
       zIndex: 82,
-      maxWidth: "18rem",
-      transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+      maxWidth: "20rem",
+      transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
       opacity: tooltipVisible ? 1 : 0,
-      transform: tooltipVisible ? "translateY(0)" : "translateY(8px)",
     };
 
     switch (pos) {
@@ -133,7 +197,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
           left: rect.left + rect.width / 2,
           transform: tooltipVisible
             ? "translateX(-50%) translateY(0)"
-            : "translateX(-50%) translateY(8px)",
+            : "translateX(-50%) translateY(12px)",
         };
       case "top":
         return {
@@ -142,7 +206,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
           left: rect.left + rect.width / 2,
           transform: tooltipVisible
             ? "translateX(-50%) translateY(0)"
-            : "translateX(-50%) translateY(-8px)",
+            : "translateX(-50%) translateY(-12px)",
         };
       case "left":
         return {
@@ -151,7 +215,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
           right: window.innerWidth - rect.left + 16,
           transform: tooltipVisible
             ? "translateY(-50%) translateX(0)"
-            : "translateY(-50%) translateX(-8px)",
+            : "translateY(-50%) translateX(-12px)",
         };
       case "right":
       default:
@@ -161,7 +225,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
           left: rect.left + rect.width + 16,
           transform: tooltipVisible
             ? "translateY(-50%) translateX(0)"
-            : "translateY(-50%) translateX(8px)",
+            : "translateY(-50%) translateX(12px)",
         };
     }
   }
@@ -175,18 +239,18 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
         position: "fixed",
         inset: 0,
         zIndex: 80,
-        transition: "opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+        transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
         opacity: visible ? 1 : 0,
         pointerEvents: visible ? "auto" : "none",
       }}
     >
-      {/* Dark backdrop with spotlight cutout via clip-path */}
+      {/* Dark backdrop with spotlight cutout */}
       <div
         style={{
           position: "fixed",
           inset: 0,
           backgroundColor: "rgba(0, 0, 0, 0.55)",
-          transition: "clip-path 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+          transition: "clip-path 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
           clipPath: rect
             ? `polygon(
                 0% 0%, 0% 100%,
@@ -213,8 +277,8 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
             width: rect.width,
             height: rect.height,
             borderRadius: "12px",
-            boxShadow: "0 0 0 3px rgba(196,162,101,0.4), 0 0 30px rgba(196,162,101,0.15)",
-            transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+            boxShadow: "0 0 0 2px rgba(196,162,101,0.35), 0 0 24px rgba(196,162,101,0.12)",
+            transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
             pointerEvents: "none",
             zIndex: 82,
           }}
@@ -226,9 +290,9 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
         <div
           style={{
             backgroundColor: "#FFFDF6",
-            borderRadius: "12px",
+            borderRadius: "14px",
             padding: "1.25rem 1.5rem",
-            boxShadow: "0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.06)",
             border: "1px solid #E8E2D6",
           }}
         >
@@ -244,18 +308,18 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
           >
             {current.title}
           </h3>
-          <p
+          <div
             style={{
               fontFamily: "Arial, Helvetica, sans-serif",
               fontSize: "0.8rem",
               fontWeight: 400,
               color: "#7A7768",
-              lineHeight: 1.6,
-              marginBottom: "1rem",
+              lineHeight: 1.7,
+              marginBottom: "1.1rem",
             }}
           >
             {current.body}
-          </p>
+          </div>
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <button
@@ -264,7 +328,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                 fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "0.7rem",
                 color: "#7A7768",
-                opacity: 0.6,
+                opacity: 0.5,
                 background: "none",
                 border: "none",
                 cursor: "pointer",
@@ -272,7 +336,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                 transition: "opacity 0.2s",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.6"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
             >
               Skip tour
             </button>
@@ -290,7 +354,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                 backgroundColor: "#434E3F",
                 border: "none",
                 borderRadius: "8px",
-                padding: "0.45rem 0.9rem",
+                padding: "0.5rem 1rem",
                 cursor: "pointer",
                 transition: "all 0.2s",
               }}
@@ -302,24 +366,24 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
             </button>
           </div>
 
-          {/* Step counter */}
+          {/* Step dots */}
           <div
             style={{
               display: "flex",
               justifyContent: "center",
-              gap: "0.35rem",
-              marginTop: "0.75rem",
+              gap: "0.3rem",
+              marginTop: "0.85rem",
             }}
           >
             {TOUR_STEPS.map((_, i) => (
               <div
                 key={i}
                 style={{
-                  width: i === step ? "1rem" : "0.35rem",
-                  height: "0.35rem",
+                  width: i === step ? "1.1rem" : "0.3rem",
+                  height: "0.3rem",
                   borderRadius: "2px",
                   backgroundColor: i === step ? "#434E3F" : "#D6D0C4",
-                  transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
+                  transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
                 }}
               />
             ))}
