@@ -45,6 +45,7 @@ import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { OnboardingScreen } from "./OnboardingScreen";
+import { GuidedTour } from "./onboarding/GuidedTour";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
@@ -494,6 +495,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   // check resolves quickly and we drop into the normal desktop. If they
   // don't, they stay on the onboarding screen -- no transition needed.
   const [showSetup, setShowSetup] = useState(true);
+  const [showTour, setShowTour] = useState(false);
   const setupChecked = useRef(false);
 
   useEffect(() => {
@@ -1275,10 +1277,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       {showSetup && (
         <OnboardingScreen
           onComplete={() => {
-            // Whether the user finished onboarding or skipped it, land them
-            // on the moraine-lake wallpaper. Best-effort persist to the
-            // gateway; the local default already matches so the visual is
-            // correct even if the gateway is unreachable.
             saveDesktopConfig({
               background: { type: "wallpaper", name: "moraine-lake.jpg" },
               dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
@@ -1289,7 +1287,21 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             setShowSetup(false);
           }}
           onOpenTerminal={() => openWindow("Terminal", "__terminal__")}
+          onStartTour={() => {
+            saveDesktopConfig({
+              background: { type: "wallpaper", name: "moraine-lake.jpg" },
+              dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+              pinnedApps: [...DEFAULT_PINNED_APPS],
+            }).catch((err: unknown) => {
+              console.warn("[desktop] failed to persist onboarding completion desktop config:", err instanceof Error ? err.message : String(err));
+            });
+            setShowSetup(false);
+            setShowTour(true);
+          }}
         />
+      )}
+      {showTour && (
+        <GuidedTour onComplete={() => setShowTour(false)} />
       )}
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
         {/* Desktop dock -- hidden in ambient/conversational modes and during setup */}

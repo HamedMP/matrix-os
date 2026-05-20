@@ -28,20 +28,19 @@ type Phase = "idle" | "lifting" | "ascending" | "whiteout" | "dimming" | "black"
 interface OnboardingScreenProps {
   onComplete: () => void;
   onOpenTerminal: () => void;
+  onStartTour?: () => void;
 }
 
-export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
+export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const mic = useMicPermission();
   const [phase, setPhase] = useState<Phase>("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualStep, setManualStep] = useState(0);
-  const [stepVisible, setStepVisible] = useState(false);
   const [headingVisible, setHeadingVisible] = useState(false);
   const [bodyVisible, setBodyVisible] = useState(false);
   const [buttonVisible, setButtonVisible] = useState(false);
-  const [lineVisible, setLineVisible] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -78,24 +77,18 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   useEffect(() => {
     if (!manualMode || phase !== "revealing") return;
 
-    setStepVisible(false);
     setHeadingVisible(false);
     setBodyVisible(false);
     setButtonVisible(false);
-    setLineVisible(false);
 
-    const t0 = setTimeout(() => setLineVisible(true), 200);
-    const t1 = setTimeout(() => setStepVisible(true), 400);
-    const t2 = setTimeout(() => setHeadingVisible(true), 700);
-    const t3 = setTimeout(() => setBodyVisible(true), 2200);
-    const t4 = setTimeout(() => setButtonVisible(true), 3000);
+    const t0 = setTimeout(() => setHeadingVisible(true), 400);
+    const t1 = setTimeout(() => setBodyVisible(true), 1900);
+    const t2 = setTimeout(() => setButtonVisible(true), 2700);
 
     return () => {
       clearTimeout(t0);
       clearTimeout(t1);
       clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
     };
   }, [manualMode, phase, manualStep]);
 
@@ -152,12 +145,12 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     setButtonVisible(false);
     setTimeout(() => setBodyVisible(false), 80);
     setTimeout(() => setHeadingVisible(false), 160);
-    setTimeout(() => setLineVisible(false), 240);
-    setTimeout(() => setStepVisible(false), 320);
 
     setTimeout(() => {
       if (manualStep < MANUAL_STEPS.length - 1) {
         setManualStep((s) => s + 1);
+      } else if (onStartTour) {
+        onStartTour();
       } else {
         setManualMode(false);
         ob.start(false);
