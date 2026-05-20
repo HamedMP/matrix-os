@@ -21,13 +21,28 @@ const RECONNECT_MAX_MS = 30_000;
 const PING_INTERVAL_MS = 30_000;
 export const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 
-const SyncEventMessageSchema = z.discriminatedUnion("type", [
+const SyncChangeFileSchema = z.object({
+  path: z.string().min(1).max(1024),
+  hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  size: z.number().int().nonnegative(),
+  action: z.enum(["add", "create", "update", "delete"]),
+});
+
+const SyncEventMessageSchema = z.union([
+  z.object({
+    type: z.literal("sync:change"),
+    files: z.array(SyncChangeFileSchema).min(1).max(100),
+    peerId: z.string().min(1).max(128),
+    manifestVersion: z.number().int().nonnegative().optional(),
+  }),
   z.object({
     type: z.literal("sync:change"),
     path: z.string().min(1).max(1024),
     hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    size: z.number().int().nonnegative().optional(),
     peerId: z.string().min(1).max(128),
     action: z.enum(["create", "update", "delete"]),
+    manifestVersion: z.number().int().nonnegative().optional(),
   }),
   z.object({
     type: z.literal("sync:conflict"),
@@ -43,7 +58,21 @@ export function parseSyncEventMessage(payload: string): SyncEvent | null {
   if (!msg.type?.startsWith("sync:")) {
     return null;
   }
-  return SyncEventMessageSchema.parse(msg);
+  const parsed = SyncEventMessageSchema.parse(msg);
+  if (parsed.type === "sync:change" && "path" in parsed) {
+    return {
+      type: "sync:change",
+      peerId: parsed.peerId,
+      manifestVersion: parsed.manifestVersion,
+      files: [{
+        path: parsed.path,
+        hash: parsed.hash,
+        size: parsed.size ?? 0,
+        action: parsed.action,
+      }],
+    };
+  }
+  return parsed;
 }
 
 export function buildSyncSubscribeMessage(

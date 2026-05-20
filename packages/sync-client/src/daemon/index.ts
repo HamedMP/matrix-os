@@ -557,64 +557,76 @@ export async function startDaemon(): Promise<void> {
     peerId: config.peerId,
     onEvent: async (event) => enqueue(async () => {
       if (config.pauseSync) return;
+      if (event.type !== "sync:change") return;
 
-      // Only react to events for files inside our prefix. A daemon syncing
-      // `~/audit` (prefix "audit") ignores changes another peer made to
-      // `notes/foo.md`.
-      const localRel = "path" in event ? toLocal(event.path) : null;
-      if (!localRel) return;
+      for (const file of event.files) {
+        // Only react to events for files inside our prefix. A daemon syncing
+        // `~/audit` (prefix "audit") ignores changes another peer made to
+        // `notes/foo.md`.
+        const localRel = toLocal(file.path);
+        if (!localRel) continue;
 
-      if (event.type === "sync:change" && event.action !== "delete") {
-        try {
-          const urls = await requestPresignedUrls(gatewayClient, [
-            { path: event.path, action: "get" },
-          ]);
-          if (urls[0]) {
-            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-            await downloadFile(
-              urls[0].url,
-              localPath,
-              event.hash,
-            );
-            const downloadedStat = await stat(localPath);
-            syncState.files[event.path] = {
-              hash: event.hash,
-              mtime: downloadedStat.mtimeMs,
-              size: downloadedStat.size,
-              lastSyncedHash: event.hash,
-            };
-            capSyncStateFiles(syncState);
-            await saveSyncState(stateFile, syncState);
-          }
-        } catch (err) {
-          if (exitOnAuthFailure(err, logger)) return;
-          logger.error({ err, path: event.path }, "Download failed");
-        }
-      } else if (
-        event.type === "sync:change" &&
-        event.action === "delete"
-      ) {
-        try {
-          const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-          const { unlink: unlinkFile } = await import("node:fs/promises");
+        if (file.action !== "delete") {
           try {
-            await unlinkFile(localPath);
-          } catch (err: unknown) {
-            if (
-              !(err instanceof Error) ||
-              !("code" in err) ||
-              (err as NodeJS.ErrnoException).code !== "ENOENT"
-            ) {
-              throw err;
+            const urls = await requestPresignedUrls(gatewayClient, [
+              { path: file.path, action: "get" },
+            ]);
+            if (urls[0]) {
+              const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
+              await downloadFile(
+                urls[0].url,
+                localPath,
+                file.hash,
+              );
+              const downloadedStat = await stat(localPath);
+              syncState.files[file.path] = {
+                hash: file.hash,
+                mtime: downloadedStat.mtimeMs,
+                size: downloadedStat.size,
+                lastSyncedHash: file.hash,
+              };
+              capSyncStateFiles(syncState);
+              if (event.manifestVersion !== undefined) {
+                syncState.manifestVersion = Math.max(
+                  syncState.manifestVersion,
+                  event.manifestVersion,
+                );
+              }
+              await saveSyncState(stateFile, syncState);
             }
+          } catch (err) {
+            if (exitOnAuthFailure(err, logger)) return;
+            logger.error({ err, path: file.path }, "Download failed");
           }
-          delete syncState.files[event.path];
-          await saveSyncState(stateFile, syncState);
-        } catch (err) {
-          logger.error(
-            { err, path: event.path },
-            "Local delete failed",
-          );
+        } else {
+          try {
+            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
+            const { unlink: unlinkFile } = await import("node:fs/promises");
+            try {
+              await unlinkFile(localPath);
+            } catch (err: unknown) {
+              if (
+                !(err instanceof Error) ||
+                !("code" in err) ||
+                (err as NodeJS.ErrnoException).code !== "ENOENT"
+              ) {
+                throw err;
+              }
+            }
+            delete syncState.files[file.path];
+            if (event.manifestVersion !== undefined) {
+              syncState.manifestVersion = Math.max(
+                syncState.manifestVersion,
+                event.manifestVersion,
+              );
+            }
+            await saveSyncState(stateFile, syncState);
+          } catch (err) {
+            logger.error(
+              { err, path: file.path },
+              "Local delete failed",
+            );
+          }
         }
       }
     }),

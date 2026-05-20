@@ -60,12 +60,18 @@ export const ConflictRecordSchema = z.object({
 });
 export type ConflictRecord = z.infer<typeof ConflictRecordSchema>;
 
-export type SyncChangeEvent = {
-  type: "sync:change";
+export type SyncChangeFile = {
   path: string;
   hash: string;
+  size: number;
+  action: "add" | "create" | "update" | "delete";
+};
+
+export type SyncChangeEvent = {
+  type: "sync:change";
+  files: SyncChangeFile[];
   peerId: string;
-  action: "create" | "update" | "delete";
+  manifestVersion?: number;
 };
 
 export type SyncConflictEvent = {
