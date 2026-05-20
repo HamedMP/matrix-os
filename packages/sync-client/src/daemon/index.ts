@@ -1,6 +1,6 @@
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
@@ -8,7 +8,13 @@ import {
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
-import { clearProfileAuth, isExpired, loadAuth, loadProfileAuth } from "../auth/token-store.js";
+import {
+  clearProfileAuth,
+  isExpired,
+  loadAuth,
+  loadProfileAuth,
+  type AuthData,
+} from "../auth/token-store.js";
 import { loadProfiles } from "../lib/profiles.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
@@ -349,7 +355,36 @@ export function parseRemoteManifestEnvelope(body: unknown): RemoteManifestEnvelo
   return parsed.data;
 }
 
+export interface DaemonAuthResolution {
+  auth: AuthData | null;
+  profileName: string;
+  source: "profile" | "legacy" | "none";
+}
+
+export async function resolveDaemonAuth(
+  config: Pick<SyncConfig, "profile">,
+  authConfigDir = configDir,
+): Promise<DaemonAuthResolution> {
+  const profiles = await loadProfiles({
+    configDir: authConfigDir,
+    migrateLegacyFiles: false,
+  });
+  const profileName = config.profile ?? profiles.active;
+  const profileAuth = await loadProfileAuth(profileName, authConfigDir);
+  if (profileAuth) {
+    return { auth: profileAuth, profileName, source: "profile" };
+  }
+
+  const legacyAuth = await loadAuth(join(authConfigDir, "auth.json"));
+  if (legacyAuth) {
+    return { auth: legacyAuth, profileName, source: "legacy" };
+  }
+
+  return { auth: null, profileName, source: "none" };
+}
+
 export async function startDaemon(): Promise<void> {
+  await mkdir(join(configDir, "logs"), { recursive: true, mode: 0o700 });
   const logger = pino({
     transport: {
       target: "pino/file",
@@ -363,9 +398,9 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
-  const auth = await loadAuth();
+  const { auth, profileName } = await resolveDaemonAuth(config);
   if (!auth) {
-    logger.error("Not logged in. Run 'matrixos login' first.");
+    logger.error(`Not logged in for profile "${profileName}". Run 'matrixos login' first.`);
     process.exit(1);
   }
   if (isExpired(auth)) {

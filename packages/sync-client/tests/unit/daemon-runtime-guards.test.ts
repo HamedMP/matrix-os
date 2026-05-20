@@ -6,13 +6,16 @@ import {
   adoptRemoteManifestVersion,
   capSyncStateFiles,
   createSerialTaskQueue,
-    exitOnAuthFailure,
-    parseRemoteManifestEnvelope,
-    persistPauseState,
-    resolveWithinSyncRoot,
-    writePidFileExclusive,
-  } from "../../src/daemon/index.js";
+  exitOnAuthFailure,
+  parseRemoteManifestEnvelope,
+  persistPauseState,
+  resolveDaemonAuth,
+  resolveWithinSyncRoot,
+  writePidFileExclusive,
+} from "../../src/daemon/index.js";
+import { saveAuth, saveProfileAuth } from "../../src/auth/token-store.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
+import { saveProfiles } from "../../src/lib/profiles.js";
 import { AuthRejectedError, VersionConflictError } from "../../src/daemon/r2-client.js";
 import type { SyncState } from "../../src/daemon/types.js";
 
@@ -88,6 +91,64 @@ describe("daemon runtime guards", () => {
 
     expect(config.pauseSync).toBe(true);
     await expect(loadConfig(configPath)).resolves.toMatchObject({ pauseSync: true });
+  });
+
+  it("loads daemon auth from the config-selected profile", async () => {
+    await saveProfiles({
+      active: "cloud",
+      profiles: {
+        cloud: {
+          platformUrl: "https://app.matrix-os.com",
+          gatewayUrl: "https://app.matrix-os.com",
+        },
+        local: {
+          platformUrl: "http://localhost:9000",
+          gatewayUrl: "http://localhost:4000",
+        },
+      },
+    }, tempDir);
+    await saveProfileAuth("local", {
+      accessToken: "local-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_dev",
+      handle: "dev",
+    }, tempDir);
+
+    await expect(resolveDaemonAuth({ profile: "local" }, tempDir)).resolves.toMatchObject({
+      auth: { accessToken: "local-token" },
+      profileName: "local",
+      source: "profile",
+    });
+  });
+
+  it("falls back to legacy global auth when the selected profile has no auth", async () => {
+    const legacyAuthPath = join(tempDir, "auth.json");
+    await saveProfiles({
+      active: "local",
+      profiles: {
+        cloud: {
+          platformUrl: "https://app.matrix-os.com",
+          gatewayUrl: "https://app.matrix-os.com",
+        },
+        local: {
+          platformUrl: "http://localhost:9000",
+          gatewayUrl: "http://localhost:4000",
+        },
+      },
+    }, tempDir);
+    await saveAuth({
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_legacy",
+      handle: "legacy",
+    }, legacyAuthPath);
+
+    await expect(resolveDaemonAuth({ profile: "local" }, tempDir)).resolves.toMatchObject({
+      auth: { accessToken: "legacy-token" },
+      profileName: "local",
+      source: "legacy",
+    });
+    await expect(readFile(legacyAuthPath, "utf-8")).resolves.toContain("legacy-token");
   });
 
   it("logs serial queue task failures and keeps later tasks running", async () => {
