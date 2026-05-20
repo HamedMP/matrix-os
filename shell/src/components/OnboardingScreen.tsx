@@ -31,7 +31,7 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const mic = useMicPermission();
-  const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
+  const [phase, setPhase] = useState<"idle" | "lifting" | "dimming" | "black" | "revealing">("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualStep, setManualStep] = useState(0);
@@ -39,6 +39,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [headingVisible, setHeadingVisible] = useState(false);
   const [bodyVisible, setBodyVisible] = useState(false);
   const [buttonVisible, setButtonVisible] = useState(false);
+  const [lineVisible, setLineVisible] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -79,13 +80,16 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     setHeadingVisible(false);
     setBodyVisible(false);
     setButtonVisible(false);
+    setLineVisible(false);
 
-    const t1 = setTimeout(() => setStepVisible(true), 200);
-    const t2 = setTimeout(() => setHeadingVisible(true), 600);
-    const t3 = setTimeout(() => setBodyVisible(true), 1100);
-    const t4 = setTimeout(() => setButtonVisible(true), 1600);
+    const t0 = setTimeout(() => setLineVisible(true), 300);
+    const t1 = setTimeout(() => setStepVisible(true), 500);
+    const t2 = setTimeout(() => setHeadingVisible(true), 900);
+    const t3 = setTimeout(() => setBodyVisible(true), 1500);
+    const t4 = setTimeout(() => setButtonVisible(true), 2100);
 
     return () => {
+      clearTimeout(t0);
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);
@@ -115,30 +119,36 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   }
 
   function handleStartVoice() {
-    setPhase("dimming");
+    setPhase("lifting");
     setTimeout(() => {
-      setPhase("black");
-      startAmbientAudio();
-      ob.start(true);
-      setTimeout(() => setPhase("revealing"), 400);
-    }, 1200);
+      setPhase("dimming");
+      setTimeout(() => {
+        setPhase("black");
+        startAmbientAudio();
+        ob.start(true);
+        setTimeout(() => setPhase("revealing"), 500);
+      }, 1400);
+    }, 600);
   }
 
   function handleStartManual() {
     setManualMode(true);
-    setPhase("dimming");
+    setPhase("lifting");
     setTimeout(() => {
-      setPhase("black");
-      setTimeout(() => setPhase("revealing"), 800);
-    }, 1800);
+      setPhase("dimming");
+      setTimeout(() => {
+        setPhase("black");
+        setTimeout(() => setPhase("revealing"), 1000);
+      }, 2000);
+    }, 800);
   }
 
   function handleManualNext() {
-    // Fade everything out
     setButtonVisible(false);
-    setTimeout(() => setBodyVisible(false), 100);
-    setTimeout(() => setHeadingVisible(false), 200);
-    setTimeout(() => setStepVisible(false), 300);
+    setTimeout(() => setBodyVisible(false), 80);
+    setTimeout(() => setHeadingVisible(false), 160);
+    setTimeout(() => setLineVisible(false), 240);
+    setTimeout(() => setStepVisible(false), 320);
 
     setTimeout(() => {
       if (manualStep < MANUAL_STEPS.length - 1) {
@@ -147,7 +157,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         setManualMode(false);
         ob.start(false);
       }
-    }, 700);
+    }, 800);
   }
 
   const handleVoiceMode = useCallback(async () => {
@@ -178,11 +188,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     return null;
   }
 
+  const isTransitioning = phase !== "idle";
+  const isLifting = phase === "lifting" || phase === "dimming" || phase === "black";
+
   return (
     <>
     {/* Landing screen — stays mounted as overlay during transition */}
     {phase !== "revealing" && (
-      <div className="fixed inset-0 z-[60] flex flex-col bg-background">
+      <div className="fixed inset-0 z-[60] flex flex-col" style={{ backgroundColor: "var(--background)" }}>
         <MicPermissionDialog
           open={showMicDialog}
           permissionState={mic.state}
@@ -191,106 +204,198 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         />
 
         <div className="flex-1 flex flex-col items-center justify-center gap-16">
-          {/* Title — original "Enter Matrix OS" shimmer + scale */}
+          {/* Title — "Enter Matrix OS" with gilded shimmer */}
           <h1
-            className="text-4xl font-light tracking-tight text-foreground hover:scale-110 transition-transform duration-700 ease-out cursor-default"
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+            className="cursor-default select-none"
+            style={{
+              fontFamily: "var(--font-serif), Georgia, serif",
+              fontSize: "clamp(2rem, 5vw, 3rem)",
+              fontWeight: 300,
+              letterSpacing: "-0.02em",
+              lineHeight: 1.1,
+              transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+              transform: isLifting ? "translateY(-24px) scale(1.06)" : "translateY(0) scale(1)",
+              opacity: phase === "black" ? 0 : 1,
+            }}
           >
             <span
-              className="bg-clip-text text-transparent"
               style={{
-                backgroundImage:
-                  phase === "dimming"
-                    ? "linear-gradient(90deg, var(--primary) 0%, var(--primary) 100%)"
-                    : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 35%, var(--primary) 50%, var(--foreground) 65%, var(--foreground) 100%)",
-                backgroundSize: "200% 100%",
-                animation: phase === "idle" ? "shimmer 6s ease-in-out infinite" : "none",
-                transition: "all 1.2s ease-in-out",
+                backgroundClip: "text",
+                WebkitBackgroundClip: "text",
+                color: "transparent",
+                backgroundImage: isTransitioning
+                  ? "linear-gradient(90deg, #C4A265 0%, #C4A265 100%)"
+                  : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 25%, #C4A265 50%, var(--foreground) 75%, var(--foreground) 100%)",
+                backgroundSize: "300% 100%",
+                animation: !isTransitioning
+                  ? "onboard-shimmer 6s ease-in-out infinite, onboard-glow 6s ease-in-out infinite"
+                  : "none",
+                transition: "background-image 1.6s cubic-bezier(0.16, 1, 0.3, 1)",
               }}
             >
               Enter Matrix OS
             </span>
           </h1>
 
-          {/* Mode picker */}
+          {/* Mode picker — separated left/right */}
           <div
-            className="flex items-center gap-3 transition-all duration-700 ease-out"
             style={{
-              opacity: phase !== "idle" ? 0 : 1,
-              transform: phase !== "idle" ? "translateY(8px)" : "translateY(0)",
-              pointerEvents: phase !== "idle" ? "none" : "auto",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "3rem",
+              transition: "all 1s cubic-bezier(0.16, 1, 0.3, 1)",
+              opacity: isTransitioning ? 0 : 1,
+              transform: isTransitioning ? "translateY(12px)" : "translateY(0)",
+              pointerEvents: isTransitioning ? "none" : "auto",
             }}
           >
             <button
               onClick={handleVoiceMode}
-              disabled={phase !== "idle"}
-              className="text-sm font-light text-muted-foreground/70 hover:text-foreground transition-colors duration-300"
-              style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+              disabled={isTransitioning}
+              style={{
+                fontFamily: "var(--font-serif), Georgia, serif",
+                fontSize: "0.875rem",
+                fontWeight: 300,
+                color: "var(--muted-foreground)",
+                opacity: 0.6,
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "0.25rem 0",
+                transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+                borderBottom: "1px solid transparent",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = "1";
+                e.currentTarget.style.color = "var(--foreground)";
+                e.currentTarget.style.borderBottomColor = "var(--foreground)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = "0.6";
+                e.currentTarget.style.color = "var(--muted-foreground)";
+                e.currentTarget.style.borderBottomColor = "transparent";
+              }}
             >
               Interactive mode
             </button>
 
-            <span className="text-muted-foreground/30 text-sm select-none">or</span>
-
             <button
               onClick={handleStartManual}
-              disabled={phase !== "idle"}
-              className="text-sm font-light text-muted-foreground/70 hover:text-foreground transition-colors duration-300"
-              style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+              disabled={isTransitioning}
+              style={{
+                fontFamily: "var(--font-serif), Georgia, serif",
+                fontSize: "0.875rem",
+                fontWeight: 300,
+                color: "var(--muted-foreground)",
+                opacity: 0.6,
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "0.25rem 0",
+                transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+                borderBottom: "1px solid transparent",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = "1";
+                e.currentTarget.style.color = "var(--foreground)";
+                e.currentTarget.style.borderBottomColor = "var(--foreground)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = "0.6";
+                e.currentTarget.style.color = "var(--muted-foreground)";
+                e.currentTarget.style.borderBottomColor = "transparent";
+              }}
             >
               Manual mode
             </button>
           </div>
         </div>
 
+        {/* Skip — anchored to bottom */}
         <div
-          className="flex justify-center mb-8 transition-opacity duration-500"
-          style={{ opacity: phase !== "idle" ? 0 : 1 }}
+          className="flex justify-center mb-8"
+          style={{
+            transition: "opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
+            opacity: isTransitioning ? 0 : 1,
+          }}
         >
           <button
             onClick={() => {
               onOpenTerminal();
               onComplete();
             }}
-            className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+            style={{
+              fontFamily: "var(--font-serif), Georgia, serif",
+              fontSize: "0.625rem",
+              fontStyle: "italic",
+              color: "var(--muted-foreground)",
+              opacity: 0.35,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              transition: "opacity 0.3s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.35"; }}
           >
             Skip first-time setup
           </button>
         </div>
 
-        {/* Dimming overlay — slower for manual mode */}
+        {/* Dimming overlay */}
         <div
-          className="absolute inset-0 bg-background pointer-events-none transition-opacity ease-in-out"
+          className="absolute inset-0 pointer-events-none"
           style={{
+            backgroundColor: "var(--background)",
             opacity: phase === "dimming" || phase === "black" ? 1 : 0,
-            transitionDuration: phase === "dimming" ? (manualMode ? "1.8s" : "1.2s") : "0s",
+            transition: `opacity ${phase === "dimming" ? (manualMode ? "2s" : "1.4s") : "0s"} cubic-bezier(0.4, 0, 0.2, 1)`,
           }}
         />
       </div>
     )}
 
-    <div className="fixed inset-0 z-50 flex flex-col bg-background overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-muted/30" />
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden" style={{ backgroundColor: "var(--background)" }}>
 
       {/* ── Manual guided walkthrough ── */}
       {manualMode && phase === "revealing" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center px-6">
-          <div className="max-w-lg text-center flex flex-col items-center gap-8">
+          <div
+            className="max-w-lg text-center flex flex-col items-center"
+            style={{ gap: "2rem" }}
+          >
+            {/* Decorative line — grows from center */}
+            <div
+              style={{
+                width: "3rem",
+                height: "1px",
+                backgroundColor: "var(--border)",
+                transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                transform: lineVisible ? "scaleX(1)" : "scaleX(0)",
+                opacity: lineVisible ? 1 : 0,
+              }}
+            />
+
             {/* Step indicator */}
             <div
-              className="flex gap-2 mb-2 transition-all duration-1000 ease-out"
               style={{
-                opacity: stepVisible ? 1 : 0,
-                transform: stepVisible ? "translateY(0)" : "translateY(-8px)",
+                display: "flex",
+                gap: "0.5rem",
+                transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                opacity: stepVisible ? 0.6 : 0,
+                transform: stepVisible ? "translateY(0)" : "translateY(-6px)",
               }}
             >
               {MANUAL_STEPS.map((_, i) => (
                 <div
                   key={i}
-                  className="h-0.5 rounded-full transition-all duration-700 ease-out"
                   style={{
-                    width: i === manualStep ? "2rem" : "1.5rem",
-                    backgroundColor: i <= manualStep ? "var(--primary)" : "var(--border)",
+                    height: "2px",
+                    borderRadius: "1px",
+                    transition: "all 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
+                    width: i === manualStep ? "2rem" : "1rem",
+                    backgroundColor: i <= manualStep ? "var(--foreground)" : "var(--border)",
+                    opacity: i <= manualStep ? 0.4 : 0.3,
                   }}
                 />
               ))}
@@ -298,11 +403,16 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
             {/* Heading */}
             <h2
-              className="text-3xl md:text-4xl font-light text-foreground transition-all duration-1000 ease-out"
               style={{
                 fontFamily: "var(--font-serif), Georgia, serif",
+                fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+                fontWeight: 300,
+                color: "var(--foreground)",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
+                transition: "all 1.4s cubic-bezier(0.16, 1, 0.3, 1)",
                 opacity: headingVisible ? 1 : 0,
-                transform: headingVisible ? "translateY(0)" : "translateY(20px)",
+                transform: headingVisible ? "translateY(0)" : "translateY(32px)",
               }}
             >
               {MANUAL_STEPS[manualStep].heading}
@@ -310,26 +420,54 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
             {/* Body */}
             <p
-              className="text-base md:text-lg text-muted-foreground leading-relaxed max-w-md transition-all duration-1000 ease-out"
               style={{
+                fontFamily: "var(--font-serif), Georgia, serif",
+                fontSize: "1.05rem",
+                fontWeight: 300,
+                color: "var(--muted-foreground)",
+                lineHeight: 1.8,
+                maxWidth: "28rem",
+                transition: "all 1.4s cubic-bezier(0.16, 1, 0.3, 1)",
                 opacity: bodyVisible ? 1 : 0,
-                transform: bodyVisible ? "translateY(0)" : "translateY(20px)",
+                transform: bodyVisible ? "translateY(0)" : "translateY(32px)",
               }}
             >
               {MANUAL_STEPS[manualStep].body}
             </p>
 
-            {/* Continue button */}
+            {/* Continue button — minimal, editorial */}
             <button
               onClick={handleManualNext}
-              className="mt-2 flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 hover:gap-3 transition-all duration-500 ease-out"
               style={{
+                marginTop: "0.5rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                fontFamily: "var(--font-serif), Georgia, serif",
+                fontSize: "0.875rem",
+                fontWeight: 300,
+                fontStyle: "italic",
+                color: "var(--foreground)",
+                background: "none",
+                border: "none",
+                borderBottom: "1px solid var(--border)",
+                paddingBottom: "0.25rem",
+                cursor: "pointer",
+                transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
                 opacity: buttonVisible ? 1 : 0,
-                transform: buttonVisible ? "translateY(0)" : "translateY(16px)",
+                transform: buttonVisible ? "translateY(0)" : "translateY(24px)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.gap = "0.75rem";
+                e.currentTarget.style.borderBottomColor = "var(--foreground)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.gap = "0.5rem";
+                e.currentTarget.style.borderBottomColor = "var(--border)";
               }}
             >
               {manualStep < MANUAL_STEPS.length - 1 ? "Continue" : "Get started"}
-              <ArrowRightIcon className="size-4" />
+              <ArrowRightIcon style={{ width: "14px", height: "14px" }} />
             </button>
           </div>
 
@@ -340,13 +478,26 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               onOpenTerminal();
               onComplete();
             }}
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-2"
             style={{
-              opacity: buttonVisible ? 1 : 0,
-              transition: "opacity 1s ease-out, color 0.2s",
+              position: "absolute",
+              bottom: "1.5rem",
+              left: "50%",
+              transform: "translateX(-50%)",
+              fontFamily: "var(--font-serif), Georgia, serif",
+              fontSize: "0.625rem",
+              fontStyle: "italic",
+              letterSpacing: "0.15em",
+              color: "var(--muted-foreground)",
+              opacity: buttonVisible ? 0.35 : 0,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              transition: "opacity 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.35"; }}
           >
-            <span className="text-base leading-none">&rsaquo;</span> Skip
+            skip
           </button>
         </div>
       )}
@@ -442,7 +593,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             className="text-2xl font-light text-foreground"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
-            You're all set
+            You&rsquo;re all set
           </p>
           <p className="text-sm text-muted-foreground">Loading your workspace...</p>
         </div>
