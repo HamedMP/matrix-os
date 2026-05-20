@@ -298,6 +298,46 @@ describe("device routes", () => {
       expect(res.status).toBe(401);
     });
 
+    it("leaves the device code pending when approval only carries the CSRF cookie", async () => {
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+
+      const approveRes = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({ userCode: code.userCode, csrf }).toString(),
+      });
+      expect(approveRes.status).toBe(401);
+
+      const tokenRes = await app.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceCode: code.deviceCode,
+          clientId: "matrixos-cli",
+        }),
+      });
+      expect(tokenRes.status).toBe(428);
+      await expect(tokenRes.json()).resolves.toEqual({
+        error: "authorization_pending",
+      });
+    });
+
     it("rejects with 403 when CSRF cookie does not match form field", async () => {
       const code = await app
         .request("/api/auth/device/code", {
@@ -377,6 +417,26 @@ describe("device routes", () => {
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
+    });
+
+    it("submits approval with an explicit Clerk bearer token", async () => {
+      const res = await app.request("/auth/device?user_code=BCDF-GHJK");
+      const html = await res.text();
+
+      expect(html).toContain("window.Clerk.session.getToken()");
+      expect(html).toContain("Authorization: `Bearer ${token}`");
+      expect(html).toContain("new URLSearchParams");
+      expect(html).toContain("userCode");
+      expect(html).toContain("csrf");
+      expect(html).not.toContain('method="POST" action="/auth/device/approve"');
+      expect(html).toContain('<form id="confirm-area" style="display:block">');
+      expect(html).toContain('id="confirm-button"');
+      expect(html).toContain('id="clerk-script"');
+      expect(html).not.toContain('onload="initClerk()"');
+      expect(html).toContain("forceRedirectUrl: approvalUrl");
+      expect(html).toContain("fallbackRedirectUrl: approvalUrl");
+      expect(html).toContain("signUpForceRedirectUrl: approvalUrl");
+      expect(html).not.toContain("afterSignInUrl");
     });
 
     it("escapes the Clerk publishable key in the approval page", async () => {

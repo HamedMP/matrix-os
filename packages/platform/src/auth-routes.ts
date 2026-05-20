@@ -118,10 +118,10 @@ function approvalPage(
   scriptNonce: string,
 ): string {
   // Renders an HTML page that lets a Clerk-authenticated user confirm the
-  // device pairing. The Clerk widget is loaded for sign-in if needed; once
-  // a session exists, the form POSTs to /auth/device/approve. The CSRF
-  // value is also written as a cookie via Set-Cookie on this response so
-  // POST /auth/device/approve can verify the double-submit.
+  // device pairing. The Clerk widget is loaded for sign-in if needed; once a
+  // session exists, JS sends an explicit bearer token to /auth/device/approve.
+  // The CSRF value is also written as a cookie via Set-Cookie on this response
+  // so POST /auth/device/approve can verify the double-submit.
   const escapedCode = userCode.replace(/[^A-Z0-9-]/gi, '');
   const escapedCsrf = csrf.replace(/[^a-f0-9]/gi, '');
   const escapedPublishableKey = publishableKey
@@ -129,24 +129,128 @@ function approvalPage(
     : null;
   const clerkScript = publishableKey
     ? `
+  <script nonce="${scriptNonce}">
+    var userCode = "${escapedCode}";
+    var csrf = "${escapedCsrf}";
+    var approvalUrl = window.location.href;
+
+    function setStatus(message) {
+      var status = document.getElementById('status');
+      if (status) status.textContent = message;
+    }
+
+    function setBusy(isBusy) {
+      var button = document.getElementById('confirm-button');
+      if (button) {
+        button.disabled = isBusy;
+        button.textContent = isBusy ? 'Authorizing...' : 'Confirm';
+      }
+    }
+
+    async function submitApproval(event) {
+      event.preventDefault();
+      setStatus('');
+      setBusy(true);
+
+      try {
+        if (!window.Clerk || !window.Clerk.session) {
+          setStatus('Sign in before authorizing this device.');
+          if (window.Clerk) showSignIn();
+          return;
+        }
+
+        var token = await window.Clerk.session.getToken();
+        if (!token) {
+          setStatus('Sign in before authorizing this device.');
+          showSignIn();
+          return;
+        }
+
+        var body = new URLSearchParams({ userCode: userCode, csrf: csrf });
+        var res = await fetch('/auth/device/approve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Authorization: \`Bearer \${token}\`,
+          },
+          body: body,
+          credentials: 'same-origin',
+        });
+
+        if (res.ok) {
+          document.open();
+          document.write(await res.text());
+          document.close();
+          return;
+        }
+
+        setStatus('Could not authorize this device. Refresh and try again.');
+      } catch (_) {
+        setStatus('Could not authorize this device. Refresh and try again.');
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function showConfirm() {
+      var signin = document.getElementById('signin-area');
+      var confirm = document.getElementById('confirm-area');
+      if (signin) signin.style.display = 'none';
+      if (confirm) confirm.style.display = 'block';
+    }
+
+    function showSignIn() {
+      var signin = document.getElementById('signin-area');
+      var confirm = document.getElementById('confirm-area');
+      if (signin) signin.style.display = 'block';
+      if (confirm) confirm.style.display = 'block';
+      if (signin && !signin.dataset.mounted) {
+        signin.dataset.mounted = 'true';
+        window.Clerk.mountSignIn(signin, {
+          forceRedirectUrl: approvalUrl,
+          fallbackRedirectUrl: approvalUrl,
+          signUpForceRedirectUrl: approvalUrl,
+          signUpFallbackRedirectUrl: approvalUrl,
+          oauthFlow: 'redirect',
+        });
+      }
+    }
+
+    function initClerk() {
+      window.Clerk.load().then(function() {
+        if (window.Clerk.user && window.Clerk.session) {
+          showConfirm();
+        } else {
+          showSignIn();
+        }
+      }).catch(function() {
+        setStatus('Could not load sign-in. Refresh and try again.');
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      var form = document.getElementById('confirm-area');
+      var clerkScript = document.getElementById('clerk-script');
+      if (form) form.addEventListener('submit', submitApproval);
+      if (window.Clerk) {
+        initClerk();
+      } else if (clerkScript) {
+        clerkScript.addEventListener('load', initClerk);
+        clerkScript.addEventListener('error', function() {
+          setStatus('Could not load sign-in. Refresh and try again.');
+        });
+      }
+    });
+  </script>`
+    : '';
+  const clerkLoader = publishableKey
+    ? `
   <script
+    id="clerk-script"
     nonce="${scriptNonce}"
     async crossorigin="anonymous"
     data-clerk-publishable-key="${escapedPublishableKey}"
-    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
-    onload="initClerk()"></script>
-  <script nonce="${scriptNonce}">
-    function initClerk() {
-      window.Clerk.load().then(function() {
-        var hasSession = !!window.Clerk.user;
-        document.getElementById('signin-area').style.display = hasSession ? 'none' : 'block';
-        document.getElementById('confirm-area').style.display = hasSession ? 'block' : 'none';
-        if (!hasSession) {
-          window.Clerk.mountSignIn(document.getElementById('signin-area'));
-        }
-      });
-    }
-  </script>`
+    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>`
     : '';
   return `<!DOCTYPE html>
 <html lang="en">
@@ -160,6 +264,8 @@ function approvalPage(
     h1 { margin: 0 0 1rem; font-size: 1.25rem; }
     .code { font-family: monospace; font-size: 1.5rem; letter-spacing: 0.1em; padding: 0.5rem 1rem; background: #1f1f1f; border-radius: 6px; margin: 1rem 0; }
     button { background: #3b82f6; color: white; border: 0; padding: 0.6rem 1.2rem; font-size: 1rem; border-radius: 6px; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .status { min-height: 1.25rem; margin: 1rem 0 0; color: #fca5a5; }
   </style>
 </head>
 <body>
@@ -168,12 +274,14 @@ function approvalPage(
     <p>You're approving:</p>
     <div class="code">${escapedCode}</div>
     <div id="signin-area" style="display:none"></div>
-    <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
+    <form id="confirm-area" style="display:block">
       <input type="hidden" name="userCode" value="${escapedCode}">
       <input type="hidden" name="csrf" value="${escapedCsrf}">
-      <button type="submit">Confirm</button>
+      <button id="confirm-button" type="submit">Confirm</button>
     </form>
+    <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
   </div>
+  ${clerkLoader}
   ${clerkScript}
 </body>
 </html>`;
@@ -198,6 +306,21 @@ function applyNoFrameHeaders(
     'Content-Security-Policy',
     `frame-ancestors 'none'; script-src ${scriptSrc}; object-src 'none'; base-uri 'none'`,
   );
+}
+
+function logDeviceApprovalAuthFailure(
+  c: import('hono').Context,
+  reason: string,
+  tokenPresent: boolean,
+  clerkVerified?: boolean,
+): void {
+  console.warn('[device/approve] auth failed:', {
+    reason,
+    authHeaderPresent: Boolean(c.req.header('authorization')),
+    cookieHeaderPresent: Boolean(c.req.header('cookie')),
+    tokenPresent,
+    clerkVerified,
+  });
 }
 
 export function createAuthRoutes(config: AuthRoutesConfig): Hono {
@@ -353,10 +476,12 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         c.req.header('cookie'),
       );
       if (!token) {
+        logDeviceApprovalAuthFailure(c, 'missing_token', false);
         return c.json({ error: 'unauthorized' }, 401);
       }
       const verifyResult = await config.clerkAuth.verify(token);
       if (!verifyResult.authenticated || !verifyResult.userId) {
+        logDeviceApprovalAuthFailure(c, 'verify_failed', true, false);
         return c.json({ error: 'unauthorized' }, 401);
       }
 
