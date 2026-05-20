@@ -2,7 +2,11 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Kysely, SqliteDialect } from "kysely";
 import { createManifestDb } from "../../../packages/gateway/src/sync/db-impl.js";
-import type { SyncDatabase } from "../../../packages/gateway/src/sync/sharing-db.js";
+import {
+  deriveGatewaySyncUserSeeds,
+  ensureSyncUser,
+  type SyncDatabase,
+} from "../../../packages/gateway/src/sync/sharing-db.js";
 
 describe("createManifestDb", () => {
   let sqlite: Database.Database;
@@ -10,9 +14,14 @@ describe("createManifestDb", () => {
 
   beforeEach(() => {
     sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
     sqlite.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        handle TEXT UNIQUE
+      );
       CREATE TABLE sync_manifests (
-        user_id TEXT PRIMARY KEY,
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         version INTEGER NOT NULL,
         file_count INTEGER NOT NULL,
         total_size INTEGER NOT NULL,
@@ -32,6 +41,7 @@ describe("createManifestDb", () => {
 
   it("does not regress manifest metadata when a stale repair races with a newer write", async () => {
     const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
     sqlite.prepare(`
       INSERT INTO sync_manifests (user_id, version, file_count, total_size, etag, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -60,5 +70,92 @@ describe("createManifestDb", () => {
     expect(row.file_count).toBe(2);
     expect(row.total_size).toBe(200);
     expect(row.etag).toBe('"etag-6"');
+  });
+
+  it("requires a seeded sync user before manifest metadata writes", async () => {
+    const manifestDb = createManifestDb(db);
+    const meta = {
+      version: 1,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-1"',
+    };
+
+    await expect(manifestDb.upsertManifestMeta("dev-user", meta)).rejects.toThrow(
+      /FOREIGN KEY constraint failed/i,
+    );
+
+    await ensureSyncUser(db, { id: "dev-user", handle: "dev-user" });
+    await expect(manifestDb.upsertManifestMeta("dev-user", meta)).resolves.toBeUndefined();
+
+    const row = sqlite.prepare(`
+      SELECT user_id, version, file_count, total_size, etag
+      FROM sync_manifests
+      WHERE user_id = ?
+    `).get("dev-user");
+    expect(row).toEqual({
+      user_id: "dev-user",
+      version: 1,
+      file_count: 1,
+      total_size: 42,
+      etag: '"etag-1"',
+    });
+  });
+
+  it("seeds sync users idempotently by id", async () => {
+    await ensureSyncUser(db, { id: "dev-user", handle: "dev-user" });
+    await ensureSyncUser(db, { id: "dev-user", handle: "developer" });
+
+    const row = sqlite.prepare("SELECT id, handle FROM users WHERE id = ?").get("dev-user");
+    expect(row).toEqual({ id: "dev-user", handle: "developer" });
+  });
+
+  it("rejects unsafe sync user seed values before writing rows", async () => {
+    await expect(ensureSyncUser(db, { id: "../secret", handle: "safe" })).rejects.toThrow(
+      /Invalid sync user id/,
+    );
+    await expect(ensureSyncUser(db, { id: "safe", handle: "" })).rejects.toThrow(
+      /Invalid sync user handle/,
+    );
+    await expect(ensureSyncUser(db, { id: "safe", handle: "bad/handle" })).rejects.toThrow(
+      /Invalid sync user handle/,
+    );
+
+    const count = sqlite.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number };
+    expect(count.count).toBe(0);
+  });
+
+  it("derives configured gateway sync user seeds", () => {
+    expect(deriveGatewaySyncUserSeeds({
+      MATRIX_USER_ID: "user_123",
+      MATRIX_HANDLE: "alice",
+      NODE_ENV: "production",
+    })).toEqual([{ id: "user_123", handle: "alice" }]);
+
+    expect(deriveGatewaySyncUserSeeds({
+      NODE_ENV: "development",
+    })).toEqual([{ id: "default", handle: "default" }]);
+
+    expect(deriveGatewaySyncUserSeeds({
+      NODE_ENV: "production",
+    })).toEqual([]);
+
+    expect(() =>
+      deriveGatewaySyncUserSeeds({
+        MATRIX_USER_ID: "../secret",
+        NODE_ENV: "production",
+      }),
+    ).toThrow(/Invalid sync user id/);
+  });
+
+  it("derives home-mirror development fallback seeds", () => {
+    expect(deriveGatewaySyncUserSeeds({
+      MATRIX_HANDLE: "alice",
+      MATRIX_HOME_MIRROR: "true",
+      NODE_ENV: "development",
+    })).toEqual([
+      { id: "default", handle: "default" },
+      { id: "alice", handle: "alice" },
+    ]);
   });
 });
