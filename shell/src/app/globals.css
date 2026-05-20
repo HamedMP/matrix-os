@@ -19,6 +19,24 @@
   50% { filter: brightness(1.12); }
 }
 
+@keyframes onboard-ascend {
+  0% { transform: translateY(0) scale(1); opacity: 1; filter: brightness(1); }
+  40% { transform: translateY(-30px) scale(1.08); opacity: 1; filter: brightness(1.4); }
+  100% { transform: translateY(-120px) scale(1.15); opacity: 0; filter: brightness(2); }
+}
+
+@keyframes onboard-bloom {
+  0% { transform: scale(0); opacity: 0; }
+  30% { opacity: 0.6; }
+  100% { transform: scale(4); opacity: 0; }
+}
+
+@keyframes onboard-whiteout {
+  0% { opacity: 0; }
+  40% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;

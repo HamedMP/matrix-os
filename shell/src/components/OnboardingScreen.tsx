@@ -23,6 +23,8 @@ const MANUAL_STEPS = [
   },
 ];
 
+type Phase = "idle" | "lifting" | "ascending" | "whiteout" | "dimming" | "black" | "revealing";
+
 interface OnboardingScreenProps {
   onComplete: () => void;
   onOpenTerminal: () => void;
@@ -31,7 +33,7 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const mic = useMicPermission();
-  const [phase, setPhase] = useState<"idle" | "lifting" | "dimming" | "black" | "revealing">("idle");
+  const [phase, setPhase] = useState<Phase>("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualStep, setManualStep] = useState(0);
@@ -131,16 +133,19 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     }, 600);
   }
 
+  // Heavenly ascension: title glows gold and rises → light bloom from center → pure white wash → walkthrough fades in
   function handleStartManual() {
     setManualMode(true);
-    setPhase("lifting");
+    // Phase 1: title glows and ascends
+    setPhase("ascending");
+    // Phase 2: screen blooms to white
     setTimeout(() => {
-      setPhase("dimming");
+      setPhase("whiteout");
+      // Phase 3: hold in pure white, then reveal content
       setTimeout(() => {
-        setPhase("black");
-        setTimeout(() => setPhase("revealing"), 1000);
-      }, 2000);
-    }, 800);
+        setPhase("revealing");
+      }, 1800);
+    }, 1600);
   }
 
   function handleManualNext() {
@@ -189,13 +194,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   }
 
   const isTransitioning = phase !== "idle";
-  const isLifting = phase === "lifting" || phase === "dimming" || phase === "black";
+  const isPreReveal = phase === "lifting" || phase === "dimming" || phase === "black" || phase === "ascending" || phase === "whiteout";
 
   return (
     <>
-    {/* Landing screen — stays mounted as overlay during transition */}
+    {/* Landing screen — stays mounted as overlay during ascension/transition */}
     {phase !== "revealing" && (
-      <div className="fixed inset-0 z-[60] flex flex-col" style={{ backgroundColor: "var(--background)" }}>
+      <div className="fixed inset-0 z-[60] flex flex-col" style={{ backgroundColor: "var(--background)", overflow: "hidden" }}>
         <MicPermissionDialog
           open={showMicDialog}
           permissionState={mic.state}
@@ -203,7 +208,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-16">
+        <div className="flex-1 flex flex-col items-center justify-center gap-16" style={{ position: "relative", zIndex: 2 }}>
           {/* Title — "Enter Matrix OS" with gilded shimmer */}
           <h1
             className="cursor-default select-none"
@@ -213,9 +218,15 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               fontWeight: 300,
               letterSpacing: "-0.02em",
               lineHeight: 1.1,
-              transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
-              transform: isLifting ? "translateY(-24px) scale(1.06)" : "translateY(0) scale(1)",
-              opacity: phase === "black" ? 0 : 1,
+              ...(phase === "ascending" || phase === "whiteout"
+                ? {
+                    animation: "onboard-ascend 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                  }
+                : {
+                    transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                    transform: isPreReveal ? "translateY(-24px) scale(1.06)" : "translateY(0) scale(1)",
+                    opacity: phase === "black" ? 0 : 1,
+                  }),
             }}
           >
             <span
@@ -322,6 +333,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           style={{
             transition: "opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
             opacity: isTransitioning ? 0 : 1,
+            position: "relative",
+            zIndex: 2,
           }}
         >
           <button
@@ -347,19 +360,65 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           </button>
         </div>
 
-        {/* Dimming overlay */}
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            backgroundColor: "var(--background)",
-            opacity: phase === "dimming" || phase === "black" ? 1 : 0,
-            transition: `opacity ${phase === "dimming" ? (manualMode ? "2s" : "1.4s") : "0s"} cubic-bezier(0.4, 0, 0.2, 1)`,
-          }}
-        />
+        {/* Light bloom — radial burst from center during ascension */}
+        {(phase === "ascending" || phase === "whiteout") && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                width: "40vmin",
+                height: "40vmin",
+                borderRadius: "50%",
+                background: "radial-gradient(circle, rgba(255,253,240,0.95) 0%, rgba(196,162,101,0.3) 40%, transparent 70%)",
+                animation: "onboard-bloom 2.8s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+              }}
+            />
+          </div>
+        )}
+
+        {/* Dimming overlay — for voice mode */}
+        {!manualMode && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundColor: "var(--background)",
+              opacity: phase === "dimming" || phase === "black" ? 1 : 0,
+              transition: `opacity ${phase === "dimming" ? "1.4s" : "0s"} cubic-bezier(0.4, 0, 0.2, 1)`,
+              zIndex: 3,
+            }}
+          />
+        )}
+
+        {/* White wash — for manual mode heavenly transition */}
+        {manualMode && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: "linear-gradient(180deg, #FFFDF6 0%, #FFF9EC 50%, #FFFDF6 100%)",
+              opacity: phase === "whiteout" ? 1 : 0,
+              transition: `opacity ${phase === "ascending" ? "0s" : "1.4s"} cubic-bezier(0.4, 0, 0.2, 1)`,
+              zIndex: 3,
+            }}
+          />
+        )}
       </div>
     )}
 
-    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden" style={{ backgroundColor: "var(--background)" }}>
+    <div
+      className="fixed inset-0 z-50 flex flex-col overflow-hidden"
+      style={{
+        backgroundColor: manualMode ? "#FFFDF6" : "var(--background)",
+      }}
+    >
 
       {/* ── Manual guided walkthrough ── */}
       {manualMode && phase === "revealing" && (
@@ -373,7 +432,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               style={{
                 width: "3rem",
                 height: "1px",
-                backgroundColor: "var(--border)",
+                backgroundColor: "#D6D0C4",
                 transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
                 transform: lineVisible ? "scaleX(1)" : "scaleX(0)",
                 opacity: lineVisible ? 1 : 0,
@@ -398,8 +457,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                     borderRadius: "1px",
                     transition: "all 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
                     width: i === manualStep ? "2rem" : "1rem",
-                    backgroundColor: i <= manualStep ? "var(--foreground)" : "var(--border)",
-                    opacity: i <= manualStep ? 0.4 : 0.3,
+                    backgroundColor: i <= manualStep ? "#8A7D6B" : "#D6D0C4",
+                    opacity: i <= manualStep ? 0.5 : 0.3,
                   }}
                 />
               ))}
@@ -411,7 +470,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 fontFamily: "var(--font-serif), Georgia, serif",
                 fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
                 fontWeight: 300,
-                color: "var(--foreground)",
+                color: "#32352E",
                 letterSpacing: "-0.02em",
                 lineHeight: 1.2,
                 transition: "all 1.4s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -428,7 +487,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 fontFamily: "var(--font-serif), Georgia, serif",
                 fontSize: "1.05rem",
                 fontWeight: 300,
-                color: "var(--muted-foreground)",
+                color: "#7A7768",
                 lineHeight: 1.8,
                 maxWidth: "28rem",
                 transition: "all 1.4s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -451,10 +510,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 fontSize: "0.875rem",
                 fontWeight: 300,
                 fontStyle: "italic",
-                color: "var(--foreground)",
+                color: "#32352E",
                 background: "none",
                 border: "none",
-                borderBottom: "1px solid var(--border)",
+                borderBottom: "1px solid #D6D0C4",
                 paddingBottom: "0.25rem",
                 cursor: "pointer",
                 transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -463,11 +522,11 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.gap = "0.75rem";
-                e.currentTarget.style.borderBottomColor = "var(--foreground)";
+                e.currentTarget.style.borderBottomColor = "#32352E";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.gap = "0.5rem";
-                e.currentTarget.style.borderBottomColor = "var(--border)";
+                e.currentTarget.style.borderBottomColor = "#D6D0C4";
               }}
             >
               {manualStep < MANUAL_STEPS.length - 1 ? "Continue" : "Get started"}
@@ -491,7 +550,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               fontSize: "0.625rem",
               fontStyle: "italic",
               letterSpacing: "0.15em",
-              color: "var(--muted-foreground)",
+              color: "#7A7768",
               opacity: buttonVisible ? 0.35 : 0,
               background: "none",
               border: "none",
