@@ -427,43 +427,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             className="max-w-lg text-center flex flex-col items-center"
             style={{ gap: "2rem" }}
           >
-            {/* Decorative line — grows from center */}
-            <div
-              style={{
-                width: "3rem",
-                height: "1px",
-                backgroundColor: "#D6D0C4",
-                transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                transform: lineVisible ? "scaleX(1)" : "scaleX(0)",
-                opacity: lineVisible ? 1 : 0,
-              }}
-            />
-
-            {/* Step indicator */}
-            <div
-              style={{
-                display: "flex",
-                gap: "0.5rem",
-                transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                opacity: stepVisible ? 0.6 : 0,
-                transform: stepVisible ? "translateY(0)" : "translateY(-6px)",
-              }}
-            >
-              {MANUAL_STEPS.map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    height: "2px",
-                    borderRadius: "1px",
-                    transition: "all 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
-                    width: i === manualStep ? "2rem" : "1rem",
-                    backgroundColor: i <= manualStep ? "#8A7D6B" : "#D6D0C4",
-                    opacity: i <= manualStep ? 0.5 : 0.3,
-                  }}
-                />
-              ))}
-            </div>
-
             {/* Heading — Apple "Hello" style animation */}
             <h2
               key={`heading-${manualStep}`}
