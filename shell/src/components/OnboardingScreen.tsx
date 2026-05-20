@@ -451,7 +451,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             {/* Body */}
             <p
               style={{
-                fontFamily: "var(--font-serif), Georgia, serif",
+                fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "1.05rem",
                 fontWeight: 300,
                 color: "#7A7768",
@@ -473,10 +473,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
-                fontFamily: "var(--font-serif), Georgia, serif",
+                fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "0.875rem",
-                fontWeight: 300,
-                fontStyle: "italic",
+                fontWeight: 400,
                 color: "#32352E",
                 background: "none",
                 border: "none",
