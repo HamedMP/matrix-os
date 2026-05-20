@@ -1,16 +1,20 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import {
   adoptRemoteManifestVersion,
   adoptSyncChangeManifestVersion,
+  capSyncStateConflicts,
   capSyncStateFiles,
   createDaemonAuthFileAccessors,
   createSerialTaskQueue,
   exitOnAuthFailure,
   parseRemoteManifestEnvelope,
   persistPauseState,
+  reconcileRemoteDelete,
+  reconcileRemoteFileChange,
   resolveDaemonAuth,
   resolveWithinSyncRoot,
   writePidFileExclusive,
@@ -19,7 +23,11 @@ import { loadAuth, loadProfileAuth, saveAuth, saveProfileAuth } from "../../src/
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
 import { saveProfiles } from "../../src/lib/profiles.js";
 import { AuthRejectedError, VersionConflictError } from "../../src/daemon/r2-client.js";
-import type { SyncState } from "../../src/daemon/types.js";
+import { SyncStateSchema, type SyncState } from "../../src/daemon/types.js";
+
+function sha256(content: string | Buffer): string {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
 
 describe("daemon runtime guards", () => {
   let tempDir: string;
@@ -380,6 +388,384 @@ describe("daemon runtime guards", () => {
     expect(syncState.files["file-0.txt"]).toBeUndefined();
     expect(syncState.files["file-1.txt"]).toBeUndefined();
     expect(syncState.files["file-50001.txt"]).toBeDefined();
+  });
+
+  it("preserves local edits and writes remote content to a conflict copy", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const localRel = "note.md";
+    const remotePath = "note.md";
+    const localPath = join(syncRoot, localRel);
+    const baseContent = "hello from base\n";
+    const localContent = "hello from LOCAL EDIT\n";
+    const remoteContent = "hello from REMOTE EDIT\n";
+    await writeFile(localPath, localContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        [remotePath]: {
+          hash: sha256(localContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(localContent),
+          lastSyncedHash: sha256(baseContent),
+        },
+      },
+    };
+
+    const result = await reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel,
+      remotePath,
+      remoteHash: sha256(remoteContent),
+      remoteSize: Buffer.byteLength(remoteContent),
+      remotePeerId: "peer/with/slashes",
+      date: new Date("2026-05-20T12:00:00Z"),
+      downloadRemote: async (targetPath) => {
+        await writeFile(targetPath, remoteContent);
+      },
+    });
+
+    expect(result.status).toBe("conflict-created");
+    expect(await readFile(localPath, "utf-8")).toBe(localContent);
+    expect(await readFile(join(syncRoot, "note (conflict - peer_with_slashes - 2026-05-20).md"), "utf-8")).toBe(remoteContent);
+    expect(syncState.files[remotePath]).toMatchObject({
+      hash: sha256(localContent),
+      lastSyncedHash: sha256(baseContent),
+    });
+    expect(syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"]).toMatchObject({
+      hash: sha256(remoteContent),
+      lastSyncedHash: sha256(remoteContent),
+    });
+    expect(syncState.conflicts?.[remotePath]).toMatchObject({
+      path: remotePath,
+      conflictPath: "note (conflict - peer_with_slashes - 2026-05-20).md",
+      localHash: sha256(localContent),
+      remoteHash: sha256(remoteContent),
+      remotePeerId: "peer/with/slashes",
+      resolved: false,
+    });
+  });
+
+  it("does not overwrite an earlier conflict copy for the same file and peer", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const localRel = "note.md";
+    const remotePath = "note.md";
+    const localPath = join(syncRoot, localRel);
+    const existingConflictPath = join(
+      syncRoot,
+      "note (conflict - peer-2 - 2026-05-20).md",
+    );
+    const baseContent = "base\n";
+    const localContent = "local edit\n";
+    const firstRemoteContent = "first remote edit\n";
+    const secondRemoteContent = "second remote edit\n";
+    await writeFile(localPath, localContent);
+    await writeFile(existingConflictPath, firstRemoteContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        [remotePath]: {
+          hash: sha256(localContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(localContent),
+          lastSyncedHash: sha256(baseContent),
+        },
+      },
+    };
+
+    const result = await reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel,
+      remotePath,
+      remoteHash: sha256(secondRemoteContent),
+      remoteSize: Buffer.byteLength(secondRemoteContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+      downloadRemote: async (targetPath) => {
+        await writeFile(targetPath, secondRemoteContent);
+      },
+    });
+
+    expect(result.status).toBe("conflict-created");
+    expect(result.conflictPath).toBe("note (conflict - peer-2 - 2026-05-20) 2.md");
+    expect(await readFile(existingConflictPath, "utf-8")).toBe(firstRemoteContent);
+    expect(
+      await readFile(
+        join(syncRoot, "note (conflict - peer-2 - 2026-05-20) 2.md"),
+        "utf-8",
+      ),
+    ).toBe(secondRemoteContent);
+  });
+
+  it("replaces local content when local still matches lastSyncedHash", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const localPath = join(syncRoot, "note.md");
+    const baseContent = "hello from base\n";
+    const remoteContent = "hello from REMOTE EDIT\n";
+    await writeFile(localPath, baseContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        "note.md": {
+          hash: sha256(baseContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(baseContent),
+          lastSyncedHash: sha256(baseContent),
+        },
+      },
+    };
+
+    const result = await reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(remoteContent),
+      remoteSize: Buffer.byteLength(remoteContent),
+      remotePeerId: "peer-2",
+      downloadRemote: async (targetPath) => {
+        await writeFile(targetPath, remoteContent);
+      },
+    });
+
+    expect(result.status).toBe("downloaded");
+    expect(await readFile(localPath, "utf-8")).toBe(remoteContent);
+    expect(syncState.files["note.md"]).toMatchObject({
+      hash: sha256(remoteContent),
+      lastSyncedHash: sha256(remoteContent),
+    });
+    expect(syncState.conflicts).toBeUndefined();
+  });
+
+  it("downloads remote content when the local file is missing", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const remoteContent = "remote-only\n";
+    const syncState: SyncState = { manifestVersion: 1, lastSyncAt: 0, files: {} };
+
+    const result = await reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel: "nested/note.md",
+      remotePath: "nested/note.md",
+      remoteHash: sha256(remoteContent),
+      remoteSize: Buffer.byteLength(remoteContent),
+      remotePeerId: "peer-2",
+      downloadRemote: async (targetPath) => {
+        await mkdir(dirname(targetPath), { recursive: true });
+        await writeFile(targetPath, remoteContent);
+      },
+    });
+
+    expect(result.status).toBe("downloaded");
+    expect(await readFile(join(syncRoot, "nested/note.md"), "utf-8")).toBe(remoteContent);
+    expect(syncState.files["nested/note.md"]).toMatchObject({
+      hash: sha256(remoteContent),
+      lastSyncedHash: sha256(remoteContent),
+    });
+  });
+
+  it("marks equal local and remote hashes as synced without downloading", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const content = "same\n";
+    await writeFile(join(syncRoot, "note.md"), content);
+    const syncState: SyncState = { manifestVersion: 1, lastSyncAt: 0, files: {} };
+    const downloadRemote = vi.fn();
+
+    const result = await reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(content),
+      remoteSize: Buffer.byteLength(content),
+      remotePeerId: "peer-2",
+      downloadRemote,
+    });
+
+    expect(result.status).toBe("already-synced");
+    expect(downloadRemote).not.toHaveBeenCalled();
+    expect(syncState.files["note.md"]).toMatchObject({
+      hash: sha256(content),
+      lastSyncedHash: sha256(content),
+    });
+  });
+
+  it("deletes local content when a remote delete targets an unchanged file", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const content = "synced\n";
+    const localPath = join(syncRoot, "note.md");
+    await writeFile(localPath, content);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        "note.md": {
+          hash: sha256(content),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(content),
+          lastSyncedHash: sha256(content),
+        },
+      },
+    };
+
+    const result = await reconcileRemoteDelete(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(content),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+    });
+
+    expect(result.status).toBe("deleted-local");
+    await expect(readFile(localPath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(syncState.files["note.md"]).toBeUndefined();
+  });
+
+  it("keeps locally edited content when a remote delete conflicts", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const baseContent = "base\n";
+    const localContent = "local edit\n";
+    const localPath = join(syncRoot, "note.md");
+    await writeFile(localPath, localContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        "note.md": {
+          hash: sha256(localContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(localContent),
+          lastSyncedHash: sha256(baseContent),
+        },
+      },
+    };
+
+    const result = await reconcileRemoteDelete(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(baseContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+    });
+
+    expect(result.status).toBe("delete-skipped-conflict");
+    expect(result.conflictPath).toBeUndefined();
+    expect(await readFile(localPath, "utf-8")).toBe(localContent);
+    expect(syncState.files["note.md"]).toMatchObject({
+      hash: sha256(localContent),
+      lastSyncedHash: sha256(baseContent),
+    });
+    expect(syncState.conflicts?.["note.md"]).toMatchObject({
+      path: "note.md",
+      localHash: sha256(localContent),
+      remoteHash: sha256(baseContent),
+      remotePeerId: "peer-2",
+    });
+    expect(syncState.conflicts?.["note.md"]?.conflictPath).toBeUndefined();
+  });
+
+  it("keeps local content on remote delete when there is no cached base hash", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const localContent = "unsynced local file\n";
+    const remoteContent = "remote file that got deleted\n";
+    const localPath = join(syncRoot, "note.md");
+    await writeFile(localPath, localContent);
+    const syncState: SyncState = { manifestVersion: 1, lastSyncAt: 0, files: {} };
+
+    const result = await reconcileRemoteDelete(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(remoteContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+    });
+
+    expect(result.status).toBe("delete-skipped-conflict");
+    expect(await readFile(localPath, "utf-8")).toBe(localContent);
+    expect(syncState.files["note.md"]).toMatchObject({
+      hash: sha256(localContent),
+      lastSyncedHash: undefined,
+    });
+  });
+
+  it("caps syncState.conflicts to the most recent 500 entries", () => {
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {},
+      conflicts: {},
+    };
+
+    for (let i = 0; i < 502; i++) {
+      syncState.conflicts![`file-${i}.txt`] = {
+        path: `file-${i}.txt`,
+        conflictPath: `file-${i} (conflict).txt`,
+        localHash: `sha256:${"a".repeat(63)}${i % 10}`,
+        remoteHash: `sha256:${"b".repeat(63)}${i % 10}`,
+        remotePeerId: "peer",
+        detectedAt: i,
+        resolved: false,
+      };
+    }
+
+    const trimmed = capSyncStateConflicts(syncState);
+
+    expect(trimmed).toBe(true);
+    expect(Object.keys(syncState.conflicts ?? {})).toHaveLength(500);
+    expect(syncState.conflicts?.["file-0.txt"]).toBeUndefined();
+    expect(syncState.conflicts?.["file-1.txt"]).toBeUndefined();
+    expect(syncState.conflicts?.["file-501.txt"]).toBeDefined();
+  });
+
+  it("rejects malformed conflict hashes in sync state", () => {
+    const parsed = SyncStateSchema.safeParse({
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {},
+      conflicts: {
+        "note.md": {
+          path: "note.md",
+          conflictPath: "note.conflict.md",
+          localHash: "not-a-hash",
+          remoteHash: `sha256:${"a".repeat(64)}`,
+          remotePeerId: "peer-2",
+          detectedAt: 0,
+          resolved: false,
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("loads old sync state files without conflicts", async () => {
+    const statePath = join(tempDir, "sync-state.json");
+    await writeFile(statePath, JSON.stringify({
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {},
+    }));
+
+    const { loadSyncState } = await import("../../src/daemon/manifest-cache.js");
+    await expect(loadSyncState(statePath)).resolves.toMatchObject({
+      manifestVersion: 1,
+      files: {},
+    });
   });
 
   it("rejects malformed remote manifest envelopes", () => {

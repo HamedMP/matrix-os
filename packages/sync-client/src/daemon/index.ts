@@ -1,6 +1,6 @@
-import { join, resolve, sep } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
@@ -19,6 +19,7 @@ import {
 import { loadProfiles } from "../lib/profiles.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
+import { hashFile } from "../lib/hash.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
@@ -26,15 +27,16 @@ import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
+import { generateConflictPath } from "./conflict-resolver.js";
 import {
   requestPresignedUrls,
   uploadFile,
   downloadFile,
   commitFiles,
-    fetchManifest,
-    AuthRejectedError,
-    VersionConflictError,
-  } from "./r2-client.js";
+  fetchManifest,
+  AuthRejectedError,
+  VersionConflictError,
+} from "./r2-client.js";
 import {
   RemoteManifestEnvelopeSchema,
   type RemoteManifestEnvelope,
@@ -47,6 +49,7 @@ const stateFile = join(configDir, "sync-state.json");
 const socketPath = join(configDir, "daemon.sock");
 const pidFile = join(configDir, "daemon.pid");
 const SYNC_STATE_FILE_CAP = 50_000;
+const SYNC_STATE_CONFLICT_CAP = 500;
 
 interface PollLogger {
   info: (msg: string) => void;
@@ -353,6 +356,254 @@ export function capSyncStateFiles(syncState: SyncState): boolean {
   return true;
 }
 
+export function capSyncStateConflicts(syncState: SyncState): boolean {
+  const entries = Object.entries(syncState.conflicts ?? {});
+  if (entries.length <= SYNC_STATE_CONFLICT_CAP) {
+    return false;
+  }
+
+  syncState.conflicts ??= {};
+  entries
+    .sort(([, left], [, right]) => left.detectedAt - right.detectedAt)
+    .slice(0, entries.length - SYNC_STATE_CONFLICT_CAP)
+    .forEach(([path]) => {
+      delete syncState.conflicts![path];
+    });
+
+  return true;
+}
+
+function isENOENT(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    (err as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
+function recordSyncConflict(
+  syncState: SyncState,
+  input: {
+    path: string;
+    conflictPath?: string;
+    localHash: string;
+    remoteHash: string;
+    remotePeerId: string;
+    detectedAt?: number;
+  },
+): void {
+  syncState.conflicts ??= {};
+  syncState.conflicts[input.path] = {
+    path: input.path,
+    ...(input.conflictPath ? { conflictPath: input.conflictPath } : {}),
+    localHash: input.localHash,
+    remoteHash: input.remoteHash,
+    remotePeerId: input.remotePeerId,
+    detectedAt: input.detectedAt ?? Date.now(),
+    resolved: false,
+  };
+  capSyncStateConflicts(syncState);
+}
+
+function appendConflictCollisionSuffix(conflictPath: string, attempt: number): string {
+  const ext = extname(conflictPath);
+  const base = conflictPath.slice(0, conflictPath.length - ext.length);
+  return `${base} ${attempt}${ext}`;
+}
+
+async function reserveAvailableConflictPath(
+  syncRoot: string,
+  preferredPath: string,
+): Promise<{ conflictPath: string; absolutePath: string }> {
+  for (let attempt = 1; attempt <= 1_000; attempt++) {
+    const conflictPath = attempt === 1
+      ? preferredPath
+      : appendConflictCollisionSuffix(preferredPath, attempt);
+    const absolutePath = resolveWithinSyncRoot(syncRoot, conflictPath);
+    try {
+      await lstat(absolutePath);
+    } catch (err: unknown) {
+      if (isENOENT(err)) {
+        return { conflictPath, absolutePath };
+      }
+      throw err;
+    }
+  }
+
+  throw new Error("Could not reserve a unique sync conflict path");
+}
+
+export type RemoteReconcileStatus =
+  | "downloaded"
+  | "already-synced"
+  | "conflict-created"
+  | "delete-skipped-conflict"
+  | "deleted-local";
+
+interface RemoteFileReconcileInput {
+  syncRoot: string;
+  localRel: string;
+  remotePath: string;
+  remoteHash: string;
+  remoteSize: number;
+  remotePeerId: string;
+  downloadRemote: (targetPath: string) => Promise<void>;
+  toRemotePath?: (localRel: string) => string;
+  date?: Date;
+}
+
+export async function reconcileRemoteFileChange(
+  syncState: SyncState,
+  input: RemoteFileReconcileInput,
+): Promise<{ status: RemoteReconcileStatus; conflictPath?: string }> {
+  const localPath = resolveWithinSyncRoot(input.syncRoot, input.localRel);
+  const cached = syncState.files[input.remotePath];
+
+  let localHash: string | null = null;
+  let localSize = 0;
+  let localMtime = 0;
+  try {
+    const [hash, fileStat] = await Promise.all([hashFile(localPath), stat(localPath)]);
+    localHash = hash;
+    localSize = fileStat.size;
+    localMtime = fileStat.mtimeMs;
+  } catch (err: unknown) {
+    if (!isENOENT(err)) {
+      throw err;
+    }
+  }
+
+  const updateDownloadedState = async (targetPath: string, remotePath: string) => {
+    const downloadedStat = await stat(targetPath);
+    syncState.files[remotePath] = {
+      hash: input.remoteHash,
+      mtime: downloadedStat.mtimeMs,
+      size: downloadedStat.size,
+      lastSyncedHash: input.remoteHash,
+    };
+    capSyncStateFiles(syncState);
+  };
+
+  if (!localHash) {
+    await input.downloadRemote(localPath);
+    await updateDownloadedState(localPath, input.remotePath);
+    return { status: "downloaded" };
+  }
+
+  if (localHash === input.remoteHash) {
+    syncState.files[input.remotePath] = {
+      hash: input.remoteHash,
+      mtime: localMtime,
+      size: localSize,
+      lastSyncedHash: input.remoteHash,
+    };
+    capSyncStateFiles(syncState);
+    return { status: "already-synced" };
+  }
+
+  if (cached?.lastSyncedHash && localHash === cached.lastSyncedHash) {
+    await input.downloadRemote(localPath);
+    await updateDownloadedState(localPath, input.remotePath);
+    return { status: "downloaded" };
+  }
+
+  const preferredConflictPath = generateConflictPath(
+    input.localRel,
+    input.remotePeerId,
+    input.date ?? new Date(),
+  );
+  const {
+    conflictPath,
+    absolutePath: conflictAbsPath,
+  } = await reserveAvailableConflictPath(input.syncRoot, preferredConflictPath);
+  const conflictRemotePath = input.toRemotePath?.(conflictPath) ?? conflictPath;
+  await input.downloadRemote(conflictAbsPath);
+  await updateDownloadedState(conflictAbsPath, conflictRemotePath);
+  syncState.files[input.remotePath] = {
+    hash: localHash,
+    mtime: localMtime,
+    size: localSize,
+    lastSyncedHash: cached?.lastSyncedHash,
+  };
+  capSyncStateFiles(syncState);
+  recordSyncConflict(syncState, {
+    path: input.remotePath,
+    conflictPath: conflictRemotePath,
+    localHash,
+    remoteHash: input.remoteHash,
+    remotePeerId: input.remotePeerId,
+    detectedAt: input.date?.getTime(),
+  });
+
+  return { status: "conflict-created", conflictPath: conflictRemotePath };
+}
+
+interface RemoteDeleteReconcileInput {
+  syncRoot: string;
+  localRel: string;
+  remotePath: string;
+  remoteHash: string;
+  remotePeerId: string;
+  toRemotePath?: (localRel: string) => string;
+  date?: Date;
+}
+
+export async function reconcileRemoteDelete(
+  syncState: SyncState,
+  input: RemoteDeleteReconcileInput,
+): Promise<{ status: RemoteReconcileStatus; conflictPath?: string }> {
+  const localPath = resolveWithinSyncRoot(input.syncRoot, input.localRel);
+  const cached = syncState.files[input.remotePath];
+
+  let localHash: string | null = null;
+  let localSize = 0;
+  let localMtime = 0;
+  try {
+    const [hash, fileStat] = await Promise.all([hashFile(localPath), stat(localPath)]);
+    localHash = hash;
+    localSize = fileStat.size;
+    localMtime = fileStat.mtimeMs;
+  } catch (err: unknown) {
+    if (!isENOENT(err)) {
+      throw err;
+    }
+  }
+
+  if (!localHash) {
+    delete syncState.files[input.remotePath];
+    return { status: "deleted-local" };
+  }
+
+  if (localHash === input.remoteHash || (cached?.lastSyncedHash && localHash === cached.lastSyncedHash)) {
+    try {
+      await unlink(localPath);
+    } catch (err: unknown) {
+      if (!isENOENT(err)) {
+        throw err;
+      }
+    }
+    delete syncState.files[input.remotePath];
+    return { status: "deleted-local" };
+  }
+
+  syncState.files[input.remotePath] = {
+    hash: localHash,
+    mtime: localMtime,
+    size: localSize,
+    lastSyncedHash: cached?.lastSyncedHash,
+  };
+  capSyncStateFiles(syncState);
+  recordSyncConflict(syncState, {
+    path: input.remotePath,
+    localHash,
+    remoteHash: input.remoteHash,
+    remotePeerId: input.remotePeerId,
+    detectedAt: input.date?.getTime(),
+  });
+
+  return { status: "delete-skipped-conflict" };
+}
+
 export function exitOnAuthFailure(
   err: unknown,
   logger: { error: (msg: string) => void },
@@ -622,20 +873,26 @@ export async function startDaemon(): Promise<void> {
               shouldAdvanceManifestVersion = false;
               continue;
             }
-            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-            await downloadFile(
-              urls[0].url,
-              localPath,
-              file.hash,
-            );
-            const downloadedStat = await stat(localPath);
-            syncState.files[file.path] = {
-              hash: file.hash,
-              mtime: downloadedStat.mtimeMs,
-              size: downloadedStat.size,
-              lastSyncedHash: file.hash,
-            };
-            capSyncStateFiles(syncState);
+            const result = await reconcileRemoteFileChange(syncState, {
+              syncRoot: config.syncPath,
+              localRel,
+              remotePath: file.path,
+              remoteHash: file.hash,
+              remoteSize: file.size,
+              remotePeerId: event.peerId,
+              toRemotePath: toRemote,
+              downloadRemote: (targetPath) => downloadFile(
+                urls[0]!.url,
+                targetPath,
+                file.hash,
+              ),
+            });
+            if (result.status === "conflict-created") {
+              logger.warn(
+                { path: file.path, conflictPath: result.conflictPath },
+                "Remote change conflicted with local edits; preserved both files",
+              );
+            }
             await saveSyncState(stateFile, syncState);
           } catch (err) {
             shouldAdvanceManifestVersion = false;
@@ -644,20 +901,20 @@ export async function startDaemon(): Promise<void> {
           }
         } else {
           try {
-            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-            const { unlink: unlinkFile } = await import("node:fs/promises");
-            try {
-              await unlinkFile(localPath);
-            } catch (err: unknown) {
-              if (
-                !(err instanceof Error) ||
-                !("code" in err) ||
-                (err as NodeJS.ErrnoException).code !== "ENOENT"
-              ) {
-                throw err;
-              }
+            const result = await reconcileRemoteDelete(syncState, {
+              syncRoot: config.syncPath,
+              localRel,
+              remotePath: file.path,
+              remoteHash: file.hash,
+              remotePeerId: event.peerId,
+              toRemotePath: toRemote,
+            });
+            if (result.status === "delete-skipped-conflict") {
+              logger.warn(
+                { path: file.path, conflictPath: result.conflictPath },
+                "Remote delete conflicted with local edits; kept local file",
+              );
             }
-            delete syncState.files[file.path];
             await saveSyncState(stateFile, syncState);
           } catch (err) {
             shouldAdvanceManifestVersion = false;
@@ -779,14 +1036,26 @@ export async function startDaemon(): Promise<void> {
         ]);
         if (!urls[0]) continue;
 
-        const localAbsPath = resolveWithinSyncRoot(config.syncPath, localRel);
-        await downloadFile(urls[0].url, localAbsPath, entry.hash);
-        syncState.files[remotePath] = {
-          hash: entry.hash,
-          mtime: entry.mtime,
-          size: entry.size,
-          lastSyncedHash: entry.hash,
-        };
+        const result = await reconcileRemoteFileChange(syncState, {
+          syncRoot: config.syncPath,
+          localRel,
+          remotePath,
+          remoteHash: entry.hash,
+          remoteSize: entry.size,
+          remotePeerId: entry.peerId,
+          toRemotePath: toRemote,
+          downloadRemote: (targetPath) => downloadFile(
+            urls[0]!.url,
+            targetPath,
+            entry.hash,
+          ),
+        });
+        if (result.status === "conflict-created") {
+          logger.warn(
+            { path: remotePath, conflictPath: result.conflictPath },
+            "Initial pull conflicted with local edits; preserved both files",
+          );
+        }
         pulled++;
       } catch (err) {
         if (exitOnAuthFailure(err, logger)) return;
