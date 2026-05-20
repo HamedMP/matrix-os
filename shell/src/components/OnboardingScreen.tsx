@@ -6,7 +6,22 @@ import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
 import { MicPermissionDialog } from "./MicPermissionDialog";
-import { MicIcon, KeyboardIcon } from "lucide-react";
+import { MicIcon, BookOpenIcon, ArrowRightIcon } from "lucide-react";
+
+const MANUAL_STEPS = [
+  {
+    heading: "This is Matrix OS",
+    body: "A personal operating system that lives in the cloud. Your files, your apps, your AI — all in one place, accessible from anywhere.",
+  },
+  {
+    heading: "Your workspace, your way",
+    body: "Matrix OS learns how you work. It sets up your environment based on what you care about — your tools, your workflows, your preferences.",
+  },
+  {
+    heading: "One last thing",
+    body: "To unlock the full experience, you’ll need an Anthropic API key. This powers the AI that runs throughout Matrix OS.",
+  },
+];
 
 interface OnboardingScreenProps {
   onComplete: () => void;
@@ -16,26 +31,23 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const mic = useMicPermission();
-  const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [manualStep, setManualStep] = useState(0);
+  const [stepVisible, setStepVisible] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // Live subtitle — accumulated AI transcript fragments, synced with voice
   const subtitle = ob.currentSubtitle;
 
-  // If onboarding is already complete, tell the parent to unmount us.
-  // This must run as an effect -- calling onComplete() during render
-  // triggers a parent setState mid-child-render, which React rejects.
   useEffect(() => {
     if (ob.alreadyComplete) {
       onComplete();
     }
   }, [ob.alreadyComplete, onComplete]);
 
-  // Fade out ambient audio when done
   useEffect(() => {
     if (ob.alreadyComplete) return;
     if (ob.stage === "done" && gainNodeRef.current && audioCtxRef.current) {
@@ -55,6 +67,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       audioCtxRef.current?.close();
     };
   }, []);
+
+  // Fade in each manual step after the screen transitions
+  useEffect(() => {
+    if (manualMode && phase === "revealing") {
+      const t = setTimeout(() => setStepVisible(true), 100);
+      return () => clearTimeout(t);
+    }
+  }, [manualMode, phase, manualStep]);
 
   function startAmbientAudio() {
     const audio = new Audio("/onboarding-ambient.wav");
@@ -77,25 +97,42 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     });
   }
 
-  function handleStart(useVoice: boolean) {
-    // Phase 1: dim into light (text glows and screen fades to white/black)
+  function handleStartVoice() {
     setPhase("dimming");
     setTimeout(() => {
-      // Phase 2: fully dark
       setPhase("black");
-      setStarted(true);
       startAmbientAudio();
-      ob.start(useVoice);
-      setTimeout(() => {
-        // Phase 3: reveal destination
-        setPhase("revealing");
-      }, 400);
+      ob.start(true);
+      setTimeout(() => setPhase("revealing"), 400);
     }, 1200);
+  }
+
+  function handleStartManual() {
+    setManualMode(true);
+    setPhase("dimming");
+    setTimeout(() => {
+      setPhase("black");
+      setTimeout(() => setPhase("revealing"), 400);
+    }, 1200);
+  }
+
+  function handleManualNext() {
+    if (manualStep < MANUAL_STEPS.length - 1) {
+      setStepVisible(false);
+      setTimeout(() => {
+        setManualStep((s) => s + 1);
+        setStepVisible(true);
+      }, 400);
+    } else {
+      // Last step → go to API key via the onboarding hook
+      setManualMode(false);
+      ob.start(false);
+    }
   }
 
   const handleVoiceMode = useCallback(async () => {
     if (mic.state === "granted") {
-      handleStart(true);
+      handleStartVoice();
       return;
     }
     if (mic.state === "denied") {
@@ -103,28 +140,20 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       return;
     }
     const granted = await mic.requestAccess();
-    if (granted) handleStart(true);
+    if (granted) handleStartVoice();
     else setShowMicDialog(true);
   }, [mic.state, mic.requestAccess]);
-
-  const handleManualMode = useCallback(() => {
-    handleStart(false);
-  }, []);
 
   const handleMicAllow = useCallback(async () => {
     const granted = await mic.requestAccess();
     setShowMicDialog(false);
     if (granted) {
-      handleStart(true);
+      handleStartVoice();
     }
   }, [mic.requestAccess]);
 
-  // ── Voice conversation screen (editorial style) ─────────────
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
 
-  // Render nothing for the one frame between "alreadyComplete" becoming
-  // true and the parent unmounting us via the effect above. Placing this
-  // return AFTER all hooks keeps hook ordering stable.
   if (ob.alreadyComplete) {
     return null;
   }
@@ -190,24 +219,24 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               </div>
             </button>
 
-            {/* Manual / text mode */}
+            {/* Manual guided mode */}
             <button
-              onClick={handleManualMode}
+              onClick={handleStartManual}
               disabled={phase !== "idle"}
               className="group relative flex flex-col items-center gap-4 px-10 py-8 rounded-2xl border border-border/50 bg-card/50 hover:bg-card hover:border-primary/30 hover:shadow-lg transition-all duration-300"
             >
               <div className="size-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors duration-300">
-                <KeyboardIcon className="size-5 text-primary" />
+                <BookOpenIcon className="size-5 text-primary" />
               </div>
               <div className="flex flex-col items-center gap-1">
                 <span
                   className="text-base font-light text-foreground"
                   style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
                 >
-                  Type instead
+                  Read &amp; explore
                 </span>
                 <span className="text-[11px] text-muted-foreground/70">
-                  Text conversation
+                  Guided walkthrough
                 </span>
               </div>
             </button>
@@ -241,23 +270,76 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     )}
 
     <div className="fixed inset-0 z-50 flex flex-col bg-background overflow-hidden">
-      {/* Background — subtle gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-muted/30" />
 
-      {/* Conversing layout: transcript centered, wave below, skip at bottom */}
-      {isConversing && (
+      {/* ── Manual guided walkthrough ── */}
+      {manualMode && phase === "revealing" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-6">
+          <div
+            className="max-w-lg text-center flex flex-col items-center gap-6 transition-all duration-700 ease-out"
+            style={{
+              opacity: stepVisible ? 1 : 0,
+              transform: stepVisible ? "translateY(0)" : "translateY(12px)",
+            }}
+          >
+            {/* Step indicator */}
+            <div className="flex gap-2 mb-2">
+              {MANUAL_STEPS.map((_, i) => (
+                <div
+                  key={i}
+                  className="h-0.5 w-6 rounded-full transition-colors duration-500"
+                  style={{
+                    backgroundColor: i <= manualStep ? "var(--primary)" : "var(--border)",
+                  }}
+                />
+              ))}
+            </div>
+
+            <h2
+              className="text-3xl font-light text-foreground"
+              style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+            >
+              {MANUAL_STEPS[manualStep].heading}
+            </h2>
+
+            <p className="text-base text-muted-foreground leading-relaxed">
+              {MANUAL_STEPS[manualStep].body}
+            </p>
+
+            <button
+              onClick={handleManualNext}
+              className="mt-4 flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              {manualStep < MANUAL_STEPS.length - 1 ? "Continue" : "Get started"}
+              <ArrowRightIcon className="size-4" />
+            </button>
+          </div>
+
+          {/* Skip */}
+          <button
+            onClick={() => {
+              ob.chooseClaudeCode();
+              onOpenTerminal();
+              onComplete();
+            }}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-2"
+          >
+            <span className="text-base leading-none">&rsaquo;</span> Skip
+          </button>
+        </div>
+      )}
+
+      {/* ── Voice conversation screen ── */}
+      {!manualMode && isConversing && (
         <>
-          {/* Center block: label + transcript */}
           <div className="absolute inset-x-0 flex flex-col items-center px-6" style={{ bottom: "28%" }}>
-            {/* Label */}
             <p
               className="text-[11px] uppercase tracking-[0.25em] text-muted-foreground/70 mb-4"
               style={{ fontFamily: "var(--font-inter), system-ui, sans-serif" }}
             >
-              Aoede · Matrix OS
+              Aoede &middot; Matrix OS
             </p>
 
-            {/* Live transcript — serif, editorial */}
             <div className="max-w-xl text-center min-h-[2em]">
               <p
                 className="text-xl md:text-2xl font-light text-foreground/90 leading-relaxed transition-opacity duration-300"
@@ -270,7 +352,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               </p>
             </div>
 
-            {/* Text input (text mode only) */}
             {!ob.isVoiceMode && (
               <form
                 onSubmit={(e) => {
@@ -300,12 +381,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             )}
           </div>
 
-          {/* Voice wave — full width, below transcript */}
           <div className="absolute inset-x-0 bottom-[8%] h-[160px]">
             <VoiceWave state={ob.voiceState} />
           </div>
 
-          {/* Skip intro — bottom */}
           <button
             onClick={() => {
               ob.chooseClaudeCode();
@@ -314,7 +393,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             }}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-2"
           >
-            <span className="text-base leading-none">›</span> Skip Intro
+            <span className="text-base leading-none">&rsaquo;</span> Skip Intro
           </button>
         </>
       )}
