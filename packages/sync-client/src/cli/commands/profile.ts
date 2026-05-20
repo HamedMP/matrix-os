@@ -2,7 +2,6 @@ import { defineCommand } from "citty";
 import {
   loadProfiles,
   saveProfiles,
-  setActiveProfile,
   type Profile,
   type ProfilesFile,
 } from "../../lib/profiles.js";
@@ -26,6 +25,10 @@ function listProfileViews(profiles: ProfilesFile): ProfileView[] {
   return Object.entries(profiles.profiles)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, profile]) => profileView(name, profile, profiles.active));
+}
+
+function loadProfileRegistry(): Promise<ProfilesFile> {
+  return loadProfiles({ migrateLegacyFiles: false });
 }
 
 function requireString(value: unknown, code: string): string {
@@ -73,7 +76,7 @@ export const profileCommand = defineCommand({
         json: { type: "boolean", required: false, default: false },
       },
       run: async ({ args }) => runProfileCommand(args, async (json) => {
-        const profiles = await loadProfiles();
+        const profiles = await loadProfileRegistry();
         const data = {
           active: profiles.active,
           profiles: listProfileViews(profiles),
@@ -95,7 +98,7 @@ export const profileCommand = defineCommand({
         json: { type: "boolean", required: false, default: false },
       },
       run: async ({ args }) => runProfileCommand(args, async (json) => {
-        const profiles = await loadProfiles();
+        const profiles = await loadProfileRegistry();
         const name = typeof args.name === "string" ? args.name : profiles.active;
         const profile = profiles.profiles[name];
         if (!profile) {
@@ -113,7 +116,11 @@ export const profileCommand = defineCommand({
       },
       run: async ({ args }) => runProfileCommand(args, async (json) => {
         const name = requireString(args.name, "profile_name_required");
-        await setActiveProfile(name);
+        const profiles = await loadProfileRegistry();
+        if (!profiles.profiles[name]) {
+          throw Object.assign(new Error("profile_not_found"), { code: "profile_not_found" });
+        }
+        await saveProfiles({ ...profiles, active: name });
         const data = { active: name };
         console.log(json ? formatCliSuccess(data) : `Active profile: ${name}`);
       }),
@@ -128,7 +135,7 @@ export const profileCommand = defineCommand({
       },
       run: async ({ args }) => runProfileCommand(args, async (json) => {
         const name = requireString(args.name, "profile_name_required");
-        const profiles = await loadProfiles();
+        const profiles = await loadProfileRegistry();
         const existing = profiles.profiles[name];
         const platformUrl =
           typeof args.platform === "string" ? args.platform : existing?.platformUrl;
