@@ -77,15 +77,14 @@ const TOUR_STEPS: TourStep[] = [
     position: "right",
   },
   {
-    selector: "[data-canvas-area]",
+    selector: null,
     title: "Your Canvas",
     body: (
       <>
         Try scrolling around — your workspace is an infinite canvas. Hold <Kbd>⌘</Kbd> and scroll to zoom.
       </>
     ),
-    position: "bottom",
-    padding: 0,
+    position: "center",
     interaction: { type: "scroll" },
     successMessage: "Well done! Press ⌘0 anytime to fit everything back on screen.",
   },
@@ -181,7 +180,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
     return () => window.removeEventListener("wheel", onWheel);
   }, [step, actionDone, current]);
 
-  // Interactive: listen for key combo
+  // Interactive: listen for key combo (capture phase to intercept before app handlers)
   useEffect(() => {
     if (current?.interaction?.type !== "keycombo" || actionDone) return;
     const combo = current.interaction;
@@ -189,11 +188,12 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key.toLowerCase() === combo.key && (!combo.metaKey || e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         setActionDone(true);
       }
     }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [step, actionDone, current]);
 
   // Auto-advance after success message shown
@@ -325,8 +325,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
               )`
             : "none",
           zIndex: 81,
-          // Allow scroll events to pass through for canvas interaction
-          pointerEvents: current?.interaction?.type === "scroll" ? "none" : "auto",
+          pointerEvents: current?.interaction?.type === "scroll" && !actionDone ? "none" : "auto",
         }}
       />
 
