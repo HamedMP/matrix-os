@@ -191,9 +191,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         />
 
         <div className="flex-1 flex flex-col items-center justify-center gap-16">
-          {/* Title — original "Enter Matrix OS" shimmer */}
+          {/* Title — original "Enter Matrix OS" shimmer + scale */}
           <h1
-            className="text-4xl font-light tracking-tight text-foreground"
+            className="text-4xl font-light tracking-tight text-foreground hover:scale-110 transition-transform duration-700 ease-out cursor-default"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             <span
