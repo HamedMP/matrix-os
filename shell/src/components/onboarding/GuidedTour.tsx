@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon } from "lucide-react";
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
@@ -29,12 +29,19 @@ function Kbd({ children }: { children: ReactNode }) {
   );
 }
 
+type StepInteraction =
+  | { type: "none" }
+  | { type: "scroll" }
+  | { type: "keycombo"; key: string; metaKey?: boolean };
+
 interface TourStep {
-  selector: string;
+  selector: string | null;
   title: string;
   body: ReactNode;
-  position?: "top" | "bottom" | "left" | "right";
+  position?: "top" | "bottom" | "left" | "right" | "center";
   padding?: number;
+  interaction?: StepInteraction;
+  successMessage?: string;
 }
 
 const TOUR_STEPS: TourStep[] = [
@@ -46,14 +53,16 @@ const TOUR_STEPS: TourStep[] = [
     padding: 4,
   },
   {
-    selector: "[data-menu-bar]",
+    selector: null,
     title: "Quick Search",
     body: (
       <>
-        Press <Kbd>⌘</Kbd> <Kbd>K</Kbd> anytime to open the command palette. Search apps, run actions, and navigate your workspace instantly.
+        Try it now — press <Kbd>⌘</Kbd> <Kbd>K</Kbd> to open the command palette.
       </>
     ),
-    position: "bottom",
+    position: "center",
+    interaction: { type: "keycombo", key: "k", metaKey: true },
+    successMessage: "Nice! You can search apps and run actions from here anytime.",
   },
   {
     selector: '[data-testid="dock-chat"]',
@@ -68,15 +77,17 @@ const TOUR_STEPS: TourStep[] = [
     position: "right",
   },
   {
-    selector: "[data-menu-bar]",
-    title: "Canvas Navigation",
+    selector: "[data-canvas-area]",
+    title: "Your Canvas",
     body: (
       <>
-        Your workspace is an infinite canvas. Scroll to pan around, or hold <Kbd>⌘</Kbd> and scroll to zoom. Press <Kbd>⌘</Kbd> <Kbd>0</Kbd> to fit everything on screen.
+        Try scrolling around — your workspace is an infinite canvas. Hold <Kbd>⌘</Kbd> and scroll to zoom.
       </>
     ),
     position: "bottom",
     padding: 0,
+    interaction: { type: "scroll" },
+    successMessage: "Well done! Press ⌘0 anytime to fit everything back on screen.",
   },
   {
     selector: '[data-testid="dock-vocal"]',
@@ -100,16 +111,18 @@ interface GuidedTourProps {
 export function GuidedTour({ onComplete }: GuidedTourProps) {
   const [step, setStep] = useState(0);
   const [rect, setRect] = useState<SpotlightRect | null>(null);
-  const [prevRect, setPrevRect] = useState<SpotlightRect | null>(null);
   const [visible, setVisible] = useState(false);
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [actionDone, setActionDone] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const current = TOUR_STEPS[step];
+  const isInteractive = current?.interaction && current.interaction.type !== "none";
+  const isCentered = current?.position === "center" || current?.selector === null;
 
   const measureTarget = useCallback(() => {
-    if (!current) return null;
+    if (!current?.selector) return null;
     const el = document.querySelector(current.selector);
     if (!el) return null;
     const r = el.getBoundingClientRect();
@@ -130,18 +143,20 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
       setVisible(true);
       setTimeout(() => setTooltipVisible(true), 500);
     }, 600);
-
     return () => clearTimeout(t);
   }, []);
 
   // Step changes (not initial)
   useEffect(() => {
     if (step === 0) return;
-
-    const r = measureTarget();
-    if (r) setRect(r);
+    setActionDone(false);
+    if (current?.selector) {
+      const r = measureTarget();
+      if (r) setRect(r);
+    } else {
+      setRect(null);
+    }
     const t = setTimeout(() => setTooltipVisible(true), 400);
-
     return () => clearTimeout(t);
   }, [step, measureTarget]);
 
@@ -155,6 +170,39 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
     return () => window.removeEventListener("resize", onResize);
   }, [measureTarget]);
 
+  // Interactive: listen for scroll
+  useEffect(() => {
+    if (current?.interaction?.type !== "scroll" || actionDone) return;
+
+    function onWheel() {
+      setActionDone(true);
+    }
+    window.addEventListener("wheel", onWheel, { passive: true });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [step, actionDone, current]);
+
+  // Interactive: listen for key combo
+  useEffect(() => {
+    if (current?.interaction?.type !== "keycombo" || actionDone) return;
+    const combo = current.interaction;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key.toLowerCase() === combo.key && (!combo.metaKey || e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setActionDone(true);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [step, actionDone, current]);
+
+  // Auto-advance after success message shown
+  useEffect(() => {
+    if (!actionDone) return;
+    const t = setTimeout(() => goNext(), 2200);
+    return () => clearTimeout(t);
+  }, [actionDone]);
+
   function goNext() {
     if (transitioning) return;
     setTransitioning(true);
@@ -162,7 +210,6 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
 
     setTimeout(() => {
       if (step < TOUR_STEPS.length - 1) {
-        setPrevRect(rect);
         setStep((s) => s + 1);
         setTransitioning(false);
       } else {
@@ -179,8 +226,6 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
   }
 
   function getTooltipStyle(): React.CSSProperties {
-    if (!rect) return { opacity: 0 };
-    const pos = current?.position ?? "right";
     const base: React.CSSProperties = {
       position: "fixed",
       zIndex: 82,
@@ -188,6 +233,20 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
       transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
       opacity: tooltipVisible ? 1 : 0,
     };
+
+    if (isCentered) {
+      return {
+        ...base,
+        top: "50%",
+        left: "50%",
+        transform: tooltipVisible
+          ? "translate(-50%, -50%) scale(1)"
+          : "translate(-50%, -50%) scale(0.95)",
+      };
+    }
+
+    if (!rect) return { ...base, opacity: 0 };
+    const pos = current?.position ?? "right";
 
     switch (pos) {
       case "bottom":
@@ -232,6 +291,8 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
 
   if (!current) return null;
 
+  const showNextButton = !isInteractive || actionDone;
+
   return (
     <div
       ref={overlayRef}
@@ -249,8 +310,8 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
         style={{
           position: "fixed",
           inset: 0,
-          backgroundColor: "rgba(0, 0, 0, 0.55)",
-          transition: "clip-path 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+          backgroundColor: isCentered ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
+          transition: "clip-path 0.6s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.6s",
           clipPath: rect
             ? `polygon(
                 0% 0%, 0% 100%,
@@ -264,11 +325,13 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
               )`
             : "none",
           zIndex: 81,
+          // Allow scroll events to pass through for canvas interaction
+          pointerEvents: current?.interaction?.type === "scroll" ? "none" : "auto",
         }}
       />
 
       {/* Spotlight glow ring */}
-      {rect && (
+      {rect && !isCentered && (
         <div
           style={{
             position: "fixed",
@@ -294,100 +357,149 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
             padding: "1.25rem 1.5rem",
             boxShadow: "0 12px 40px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.06)",
             border: "1px solid #E8E2D6",
+            minWidth: isCentered ? "18rem" : undefined,
+            textAlign: isCentered ? "center" : undefined,
           }}
         >
-          <h3
-            style={{
-              fontFamily: "var(--font-serif), Georgia, serif",
-              fontSize: "1.1rem",
-              fontWeight: 400,
-              color: "#32352E",
-              marginBottom: "0.5rem",
-              letterSpacing: "-0.01em",
-            }}
-          >
-            {current.title}
-          </h3>
-          <div
-            style={{
-              fontFamily: "Arial, Helvetica, sans-serif",
-              fontSize: "0.8rem",
-              fontWeight: 400,
-              color: "#7A7768",
-              lineHeight: 1.7,
-              marginBottom: "1.1rem",
-            }}
-          >
-            {current.body}
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <button
-              onClick={skip}
-              style={{
-                fontFamily: "Arial, Helvetica, sans-serif",
-                fontSize: "0.7rem",
-                color: "#7A7768",
-                opacity: 0.5,
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: 0,
-                transition: "opacity 0.2s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
-            >
-              Skip tour
-            </button>
-
-            <button
-              onClick={goNext}
+          {/* Success state */}
+          {actionDone && current.successMessage ? (
+            <div
               style={{
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
-                gap: "0.35rem",
-                fontFamily: "Arial, Helvetica, sans-serif",
-                fontSize: "0.8rem",
-                fontWeight: 500,
-                color: "#FFFDF6",
-                backgroundColor: "#434E3F",
-                border: "none",
-                borderRadius: "8px",
-                padding: "0.5rem 1rem",
-                cursor: "pointer",
-                transition: "all 0.2s",
+                gap: "0.6rem",
+                padding: "0.25rem 0",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#374032"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#434E3F"; }}
             >
-              {step < TOUR_STEPS.length - 1 ? "Next" : "Done"}
-              {step < TOUR_STEPS.length - 1 && <ArrowRightIcon style={{ width: "12px", height: "12px" }} />}
-            </button>
-          </div>
+              <div
+                style={{
+                  width: "2rem",
+                  height: "2rem",
+                  borderRadius: "50%",
+                  backgroundColor: "#3A7D44",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  animation: "onboard-hello 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                }}
+              >
+                <CheckIcon style={{ width: "14px", height: "14px", color: "#fff" }} />
+              </div>
+              <p
+                style={{
+                  fontFamily: "Arial, Helvetica, sans-serif",
+                  fontSize: "0.8rem",
+                  fontWeight: 400,
+                  color: "#7A7768",
+                  lineHeight: 1.6,
+                }}
+              >
+                {current.successMessage}
+              </p>
+            </div>
+          ) : (
+            <>
+              <h3
+                style={{
+                  fontFamily: "var(--font-serif), Georgia, serif",
+                  fontSize: isCentered ? "1.25rem" : "1.1rem",
+                  fontWeight: 400,
+                  color: "#32352E",
+                  marginBottom: "0.5rem",
+                  letterSpacing: "-0.01em",
+                }}
+              >
+                {current.title}
+              </h3>
+              <div
+                style={{
+                  fontFamily: "Arial, Helvetica, sans-serif",
+                  fontSize: "0.8rem",
+                  fontWeight: 400,
+                  color: "#7A7768",
+                  lineHeight: 1.7,
+                  marginBottom: showNextButton ? "1.1rem" : "0.25rem",
+                }}
+              >
+                {current.body}
+              </div>
+
+              {showNextButton && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: isCentered ? "center" : "space-between", gap: "1rem" }}>
+                  {!isCentered && (
+                    <button
+                      onClick={skip}
+                      style={{
+                        fontFamily: "Arial, Helvetica, sans-serif",
+                        fontSize: "0.7rem",
+                        color: "#7A7768",
+                        opacity: 0.5,
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 0,
+                        transition: "opacity 0.2s",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
+                    >
+                      Skip tour
+                    </button>
+                  )}
+
+                  <button
+                    onClick={goNext}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                      fontFamily: "Arial, Helvetica, sans-serif",
+                      fontSize: "0.8rem",
+                      fontWeight: 500,
+                      color: "#FFFDF6",
+                      backgroundColor: "#434E3F",
+                      border: "none",
+                      borderRadius: "8px",
+                      padding: "0.5rem 1rem",
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#374032"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#434E3F"; }}
+                  >
+                    {step < TOUR_STEPS.length - 1 ? "Next" : "Done"}
+                    {step < TOUR_STEPS.length - 1 && <ArrowRightIcon style={{ width: "12px", height: "12px" }} />}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
 
           {/* Step dots */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "0.3rem",
-              marginTop: "0.85rem",
-            }}
-          >
-            {TOUR_STEPS.map((_, i) => (
-              <div
-                key={i}
-                style={{
-                  width: i === step ? "1.1rem" : "0.3rem",
-                  height: "0.3rem",
-                  borderRadius: "2px",
-                  backgroundColor: i === step ? "#434E3F" : "#D6D0C4",
-                  transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-                }}
-              />
-            ))}
-          </div>
+          {!actionDone && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                gap: "0.3rem",
+                marginTop: "0.85rem",
+              }}
+            >
+              {TOUR_STEPS.map((_, i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: i === step ? "1.1rem" : "0.3rem",
+                    height: "0.3rem",
+                    borderRadius: "2px",
+                    backgroundColor: i === step ? "#434E3F" : "#D6D0C4",
+                    transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -1656,7 +1656,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           </nav>
         )}
 
-        <div className="relative flex-1 min-h-0 overflow-hidden">
+        <div data-canvas-area className="relative flex-1 min-h-0 overflow-hidden">
           <DotGrid />
           <MissionControl
             open={taskBoardOpen}
