@@ -62,6 +62,9 @@ export function CanvasTransform({
       target === zoomOverlayRef.current ||
       target === transformRef.current
     ) return true;
+    if (target instanceof Element && target.closest("[data-canvas-interaction-overlay]")) {
+      return true;
+    }
     return false;
   }, []);
 

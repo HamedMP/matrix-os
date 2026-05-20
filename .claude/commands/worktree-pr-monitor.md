@@ -14,7 +14,8 @@ $ARGUMENTS
 
 ## Goal
 
-Move the requested change through the full Matrix OS PR loop:
+Move an explicitly requested manual git worktree change through the full Matrix
+OS PR loop:
 
 1. create or use an isolated git worktree,
 2. implement and validate the change,
@@ -25,6 +26,10 @@ Move the requested change through the full Matrix OS PR loop:
 
 ## Rules
 
+- Use this command only when the requester explicitly asks for a worktree PR
+  workflow. Otherwise, follow the repo's current-branch agent workflow.
+- This command does not authorize Swarm `isolation: "worktree"`; that repo-level
+  Swarm ban still applies.
 - Keep `/home/deploy/matrix-os` on `main`. Put feature work under `/home/deploy/matrix-os.worktrees/<slug>`.
 - Use a semantic branch and PR title. Do not prefix the PR title with agent/tool tags.
 - Never stage unrelated changes. Inspect `git status --short --branch` before staging.
