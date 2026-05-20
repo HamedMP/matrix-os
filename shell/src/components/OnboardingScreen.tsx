@@ -19,7 +19,7 @@ const MANUAL_STEPS = [
   },
   {
     heading: "One last thing",
-    body: "To unlock the full experience, you’ll need an Anthropic API key. This powers the AI that runs throughout Matrix OS.",
+    body: "To unlock the full experience, you'll need an Anthropic API key. This powers the AI that runs throughout Matrix OS.",
   },
 ];
 
@@ -36,6 +36,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [manualMode, setManualMode] = useState(false);
   const [manualStep, setManualStep] = useState(0);
   const [stepVisible, setStepVisible] = useState(false);
+  const [headingVisible, setHeadingVisible] = useState(false);
+  const [bodyVisible, setBodyVisible] = useState(false);
+  const [buttonVisible, setButtonVisible] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -68,12 +71,26 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     };
   }, []);
 
-  // Fade in each manual step after the screen transitions
+  // Staggered reveal for manual walkthrough steps
   useEffect(() => {
-    if (manualMode && phase === "revealing") {
-      const t = setTimeout(() => setStepVisible(true), 100);
-      return () => clearTimeout(t);
-    }
+    if (!manualMode || phase !== "revealing") return;
+
+    setStepVisible(false);
+    setHeadingVisible(false);
+    setBodyVisible(false);
+    setButtonVisible(false);
+
+    const t1 = setTimeout(() => setStepVisible(true), 200);
+    const t2 = setTimeout(() => setHeadingVisible(true), 600);
+    const t3 = setTimeout(() => setBodyVisible(true), 1100);
+    const t4 = setTimeout(() => setButtonVisible(true), 1600);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+    };
   }, [manualMode, phase, manualStep]);
 
   function startAmbientAudio() {
@@ -112,22 +129,25 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     setPhase("dimming");
     setTimeout(() => {
       setPhase("black");
-      setTimeout(() => setPhase("revealing"), 400);
-    }, 1200);
+      setTimeout(() => setPhase("revealing"), 800);
+    }, 1800);
   }
 
   function handleManualNext() {
-    if (manualStep < MANUAL_STEPS.length - 1) {
-      setStepVisible(false);
-      setTimeout(() => {
+    // Fade everything out
+    setButtonVisible(false);
+    setTimeout(() => setBodyVisible(false), 100);
+    setTimeout(() => setHeadingVisible(false), 200);
+    setTimeout(() => setStepVisible(false), 300);
+
+    setTimeout(() => {
+      if (manualStep < MANUAL_STEPS.length - 1) {
         setManualStep((s) => s + 1);
-        setStepVisible(true);
-      }, 400);
-    } else {
-      // Last step → go to API key via the onboarding hook
-      setManualMode(false);
-      ob.start(false);
-    }
+      } else {
+        setManualMode(false);
+        ob.start(false);
+      }
+    }, 700);
   }
 
   const handleVoiceMode = useCallback(async () => {
@@ -170,8 +190,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-12">
-          {/* Title */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-16">
+          {/* Title — original "Enter Matrix OS" shimmer */}
           <h1
             className="text-4xl font-light tracking-tight text-foreground"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
@@ -188,14 +208,18 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 transition: "all 1.2s ease-in-out",
               }}
             >
-              Welcome to Matrix OS
+              Enter Matrix OS
             </span>
           </h1>
 
           {/* Mode picker */}
           <div
-            className="flex gap-4 transition-opacity duration-500"
-            style={{ opacity: phase !== "idle" ? 0 : 1, pointerEvents: phase !== "idle" ? "none" : "auto" }}
+            className="flex gap-5 transition-all duration-700 ease-out"
+            style={{
+              opacity: phase !== "idle" ? 0 : 1,
+              transform: phase !== "idle" ? "translateY(8px)" : "translateY(0)",
+              pointerEvents: phase !== "idle" ? "none" : "auto",
+            }}
           >
             {/* Voice mode */}
             <button
@@ -258,12 +282,12 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           </button>
         </div>
 
-        {/* Dimming overlay */}
+        {/* Dimming overlay — slower for manual mode */}
         <div
           className="absolute inset-0 bg-background pointer-events-none transition-opacity ease-in-out"
           style={{
             opacity: phase === "dimming" || phase === "black" ? 1 : 0,
-            transitionDuration: phase === "dimming" ? "1.2s" : "0s",
+            transitionDuration: phase === "dimming" ? (manualMode ? "1.8s" : "1.2s") : "0s",
           }}
         />
       </div>
@@ -275,40 +299,58 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       {/* ── Manual guided walkthrough ── */}
       {manualMode && phase === "revealing" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center px-6">
-          <div
-            className="max-w-lg text-center flex flex-col items-center gap-6 transition-all duration-700 ease-out"
-            style={{
-              opacity: stepVisible ? 1 : 0,
-              transform: stepVisible ? "translateY(0)" : "translateY(12px)",
-            }}
-          >
+          <div className="max-w-lg text-center flex flex-col items-center gap-8">
             {/* Step indicator */}
-            <div className="flex gap-2 mb-2">
+            <div
+              className="flex gap-2 mb-2 transition-all duration-1000 ease-out"
+              style={{
+                opacity: stepVisible ? 1 : 0,
+                transform: stepVisible ? "translateY(0)" : "translateY(-8px)",
+              }}
+            >
               {MANUAL_STEPS.map((_, i) => (
                 <div
                   key={i}
-                  className="h-0.5 w-6 rounded-full transition-colors duration-500"
+                  className="h-0.5 rounded-full transition-all duration-700 ease-out"
                   style={{
+                    width: i === manualStep ? "2rem" : "1.5rem",
                     backgroundColor: i <= manualStep ? "var(--primary)" : "var(--border)",
                   }}
                 />
               ))}
             </div>
 
+            {/* Heading */}
             <h2
-              className="text-3xl font-light text-foreground"
-              style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+              className="text-3xl md:text-4xl font-light text-foreground transition-all duration-1000 ease-out"
+              style={{
+                fontFamily: "var(--font-serif), Georgia, serif",
+                opacity: headingVisible ? 1 : 0,
+                transform: headingVisible ? "translateY(0)" : "translateY(20px)",
+              }}
             >
               {MANUAL_STEPS[manualStep].heading}
             </h2>
 
-            <p className="text-base text-muted-foreground leading-relaxed">
+            {/* Body */}
+            <p
+              className="text-base md:text-lg text-muted-foreground leading-relaxed max-w-md transition-all duration-1000 ease-out"
+              style={{
+                opacity: bodyVisible ? 1 : 0,
+                transform: bodyVisible ? "translateY(0)" : "translateY(20px)",
+              }}
+            >
               {MANUAL_STEPS[manualStep].body}
             </p>
 
+            {/* Continue button */}
             <button
               onClick={handleManualNext}
-              className="mt-4 flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              className="mt-2 flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 hover:gap-3 transition-all duration-500 ease-out"
+              style={{
+                opacity: buttonVisible ? 1 : 0,
+                transform: buttonVisible ? "translateY(0)" : "translateY(16px)",
+              }}
             >
               {manualStep < MANUAL_STEPS.length - 1 ? "Continue" : "Get started"}
               <ArrowRightIcon className="size-4" />
@@ -323,6 +365,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               onComplete();
             }}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-2"
+            style={{
+              opacity: buttonVisible ? 1 : 0,
+              transition: "opacity 1s ease-out, color 0.2s",
+            }}
           >
             <span className="text-base leading-none">&rsaquo;</span> Skip
           </button>
