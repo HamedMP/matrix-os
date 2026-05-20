@@ -489,8 +489,13 @@ describe("device routes", () => {
       expect(html).toContain("new URLSearchParams");
       expect(html).toContain("userCode");
       expect(html).toContain("csrf");
-      expect(html).not.toContain('method="POST" action="/auth/device/approve"');
-      expect(html).toContain('<form id="confirm-area" style="display:block">');
+      expect(html).toContain(
+        '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">',
+      );
+      expect(html).toContain("var html = await res.text();");
+      expect(html.indexOf("var html = await res.text();")).toBeLessThan(
+        html.indexOf("document.open();"),
+      );
       expect(html).toContain('id="confirm-button"');
       expect(html).toContain('id="clerk-script"');
       expect(html).not.toContain('onload="initClerk()"');

@@ -110,6 +110,38 @@ describe("createManifestDb", () => {
     expect(row).toEqual({ id: "dev-user", handle: "developer" });
   });
 
+  it("seeds sync users idempotently by unique handle", async () => {
+    sqlite.prepare("INSERT INTO users (id, handle) VALUES (?, ?)").run(
+      "legacy-user",
+      "developer",
+    );
+
+    await ensureSyncUser(db, { id: "dev-user", handle: "developer" });
+
+    const rows = sqlite.prepare("SELECT id, handle FROM users ORDER BY handle").all();
+    expect(rows).toEqual([{ id: "dev-user", handle: "developer" }]);
+  });
+
+  it("does not crash when seed id and handle already belong to different rows", async () => {
+    sqlite.prepare("INSERT INTO users (id, handle) VALUES (?, ?)").run(
+      "dev-user",
+      "old-dev",
+    );
+    sqlite.prepare("INSERT INTO users (id, handle) VALUES (?, ?)").run(
+      "legacy-user",
+      "developer",
+    );
+
+    await expect(ensureSyncUser(db, { id: "dev-user", handle: "developer" }))
+      .resolves.toBeUndefined();
+
+    const rows = sqlite.prepare("SELECT id, handle FROM users ORDER BY id").all();
+    expect(rows).toEqual([
+      { id: "dev-user", handle: "old-dev" },
+      { id: "legacy-user", handle: "developer" },
+    ]);
+  });
+
   it("rejects unsafe sync user seed values before writing rows", async () => {
     await expect(ensureSyncUser(db, { id: "../secret", handle: "safe" })).rejects.toThrow(
       /Invalid sync user id/,

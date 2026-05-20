@@ -9,7 +9,7 @@ export const SyncConfigSchema = z.object({
   // Profile whose auth/config should be used by the background daemon.
   // Older configs omitted this; daemon startup falls back to the active
   // profile, then legacy global auth for compatibility.
-  profile: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/).optional(),
+  profile: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,30}$/).optional(),
   // platformUrl owns identity: device-flow login, JWT issuance, /api/me.
   // gatewayUrl is the per-user data plane (sync API + WS). They differ in
   // production (both terminate at https://app.matrix-os.com since spec 066

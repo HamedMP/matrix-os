@@ -365,11 +365,14 @@ export async function resolveDaemonAuth(
   config: Pick<SyncConfig, "profile">,
   authConfigDir = configDir,
 ): Promise<DaemonAuthResolution> {
-  const profiles = await loadProfiles({
-    configDir: authConfigDir,
-    migrateLegacyFiles: false,
-  });
-  const profileName = config.profile ?? profiles.active;
+  let profileName = config.profile;
+  if (!profileName) {
+    const profiles = await loadProfiles({
+      configDir: authConfigDir,
+      migrateLegacyFiles: false,
+    });
+    profileName = profiles.active;
+  }
   const profileAuth = await loadProfileAuth(profileName, authConfigDir);
   if (profileAuth) {
     return { auth: profileAuth, profileName, source: "profile" };
@@ -559,42 +562,43 @@ export async function startDaemon(): Promise<void> {
       if (config.pauseSync) return;
       if (event.type !== "sync:change") return;
 
+      let shouldAdvanceManifestVersion = true;
+      let processedMatchingFile = false;
+
       for (const file of event.files) {
         // Only react to events for files inside our prefix. A daemon syncing
         // `~/audit` (prefix "audit") ignores changes another peer made to
         // `notes/foo.md`.
         const localRel = toLocal(file.path);
         if (!localRel) continue;
+        processedMatchingFile = true;
 
         if (file.action !== "delete") {
           try {
             const urls = await requestPresignedUrls(gatewayClient, [
               { path: file.path, action: "get" },
             ]);
-            if (urls[0]) {
-              const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-              await downloadFile(
-                urls[0].url,
-                localPath,
-                file.hash,
-              );
-              const downloadedStat = await stat(localPath);
-              syncState.files[file.path] = {
-                hash: file.hash,
-                mtime: downloadedStat.mtimeMs,
-                size: downloadedStat.size,
-                lastSyncedHash: file.hash,
-              };
-              capSyncStateFiles(syncState);
-              if (event.manifestVersion !== undefined) {
-                syncState.manifestVersion = Math.max(
-                  syncState.manifestVersion,
-                  event.manifestVersion,
-                );
-              }
-              await saveSyncState(stateFile, syncState);
+            if (!urls[0]) {
+              shouldAdvanceManifestVersion = false;
+              continue;
             }
+            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
+            await downloadFile(
+              urls[0].url,
+              localPath,
+              file.hash,
+            );
+            const downloadedStat = await stat(localPath);
+            syncState.files[file.path] = {
+              hash: file.hash,
+              mtime: downloadedStat.mtimeMs,
+              size: downloadedStat.size,
+              lastSyncedHash: file.hash,
+            };
+            capSyncStateFiles(syncState);
+            await saveSyncState(stateFile, syncState);
           } catch (err) {
+            shouldAdvanceManifestVersion = false;
             if (exitOnAuthFailure(err, logger)) return;
             logger.error({ err, path: file.path }, "Download failed");
           }
@@ -614,14 +618,9 @@ export async function startDaemon(): Promise<void> {
               }
             }
             delete syncState.files[file.path];
-            if (event.manifestVersion !== undefined) {
-              syncState.manifestVersion = Math.max(
-                syncState.manifestVersion,
-                event.manifestVersion,
-              );
-            }
             await saveSyncState(stateFile, syncState);
           } catch (err) {
+            shouldAdvanceManifestVersion = false;
             logger.error(
               { err, path: file.path },
               "Local delete failed",
@@ -629,29 +628,35 @@ export async function startDaemon(): Promise<void> {
           }
         }
       }
+
+      if (
+        event.manifestVersion !== undefined &&
+        shouldAdvanceManifestVersion &&
+        processedMatchingFile
+      ) {
+        syncState.manifestVersion = Math.max(
+          syncState.manifestVersion,
+          event.manifestVersion,
+        );
+        await saveSyncState(stateFile, syncState);
+      }
     }),
     onConnect: () => logger.info("Connected to gateway"),
     onDisconnect: () => logger.info("Disconnected from gateway"),
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
-  const loadActiveProfileAuth = async () => {
-    const profiles = await loadProfiles();
-    return loadProfileAuth(profiles.active);
-  };
-  const clearActiveProfileAuth = async () => {
-    const profiles = await loadProfiles();
-    await clearProfileAuth(profiles.active);
-  };
+  const loadDaemonProfileAuth = () => loadProfileAuth(profileName, configDir);
+  const clearDaemonProfileAuth = () => clearProfileAuth(profileName, configDir);
   const ipcHandler = createIpcHandler({
     config,
     syncState,
     logger: { info: (msg) => logger.info(msg) },
     saveConfig: (next) => saveConfig(next),
     persistPauseState,
-    clearAuth: clearActiveProfileAuth,
-    loadAuth: loadActiveProfileAuth,
-    shell: createDaemonShellControlClient({ config, loadAuth: loadActiveProfileAuth }),
+    clearAuth: clearDaemonProfileAuth,
+    loadAuth: loadDaemonProfileAuth,
+    shell: createDaemonShellControlClient({ config, loadAuth: loadDaemonProfileAuth }),
     exit: (code) => process.exit(code),
   });
   const ipcServer = new IpcServer({ socketPath, handler: ipcHandler });

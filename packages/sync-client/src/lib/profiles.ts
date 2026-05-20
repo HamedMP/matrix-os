@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { DEFAULT_GATEWAY_URL, DEFAULT_PLATFORM_URL } from "./config.js";
 
-const PROFILE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
+const PROFILE_SLUG = /^[A-Za-z][A-Za-z0-9_-]{0,30}$/;
 
 export const ProfileSchema = z.object({
   platformUrl: z.url(),

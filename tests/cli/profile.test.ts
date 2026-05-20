@@ -135,6 +135,32 @@ describe("profile CLI command", () => {
     ]);
   });
 
+  it("accepts profile names with uppercase letters and underscores", async () => {
+    const logs = captureLogs();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "Dev_Profile",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+    await profileCommand.subCommands!.use.run!({
+      args: { name: "Dev_Profile", json: true },
+    } as never);
+
+    expect(logs.map((line) => JSON.parse(line).data)).toEqual([
+      {
+        name: "Dev_Profile",
+        active: false,
+        platformUrl: "https://platform.example",
+        gatewayUrl: "https://gateway.example",
+      },
+      { active: "Dev_Profile" },
+    ]);
+  });
+
   it("switches the active profile without changing other profile data", async () => {
     const home = process.env.HOME!;
     const logs = captureLogs();

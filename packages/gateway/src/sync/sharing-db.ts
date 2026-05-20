@@ -96,15 +96,50 @@ export async function ensureSyncUser(
   assertSafeSyncUserId(input.id);
   assertSafeSyncUserHandle(input.handle);
 
-  await db
-    .insertInto("users")
-    .values({ id: input.id, handle: input.handle })
-    .onConflict((oc) =>
-      oc.column("id").doUpdateSet({
-        handle: input.handle,
-      }),
-    )
-    .execute();
+  await db.transaction().execute(async (trx) => {
+    const rowById = await trx
+      .selectFrom("users")
+      .select(["id", "handle"])
+      .where("id", "=", input.id)
+      .executeTakeFirst();
+    const rowByHandle = await trx
+      .selectFrom("users")
+      .select(["id", "handle"])
+      .where("handle", "=", input.handle)
+      .executeTakeFirst();
+
+    if (rowById && rowByHandle && rowByHandle.id !== input.id) {
+      return;
+    }
+
+    if (rowById) {
+      await trx
+        .updateTable("users")
+        .set({ handle: input.handle })
+        .where("id", "=", input.id)
+        .execute();
+      return;
+    }
+
+    if (rowByHandle) {
+      await trx
+        .updateTable("users")
+        .set({ id: input.id })
+        .where("handle", "=", input.handle)
+        .execute();
+      return;
+    }
+
+    await trx
+      .insertInto("users")
+      .values({ id: input.id, handle: input.handle })
+      .onConflict((oc) =>
+        oc.column("id").doUpdateSet({
+          handle: input.handle,
+        }),
+      )
+      .execute();
+  });
 }
 
 function isLocalDevelopmentEnv(env: NodeJS.ProcessEnv): boolean {

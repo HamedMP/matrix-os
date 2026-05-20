@@ -121,6 +121,22 @@ describe("daemon runtime guards", () => {
     });
   });
 
+  it("loads pinned daemon auth without parsing the active profile registry", async () => {
+    await writeFile(join(tempDir, "profiles.json"), "{not valid json");
+    await saveProfileAuth("local", {
+      accessToken: "local-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_dev",
+      handle: "dev",
+    }, tempDir);
+
+    await expect(resolveDaemonAuth({ profile: "local" }, tempDir)).resolves.toMatchObject({
+      auth: { accessToken: "local-token" },
+      profileName: "local",
+      source: "profile",
+    });
+  });
+
   it("falls back to legacy global auth when the selected profile has no auth", async () => {
     const legacyAuthPath = join(tempDir, "auth.json");
     await saveProfiles({

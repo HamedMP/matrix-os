@@ -183,8 +183,9 @@ function approvalPage(
         });
 
         if (res.ok) {
+          var html = await res.text();
           document.open();
-          document.write(await res.text());
+          document.write(html);
           document.close();
           return;
         }
@@ -279,7 +280,7 @@ function approvalPage(
     <p>You're approving:</p>
     <div class="code">${escapedCode}</div>
     <div id="signin-area" style="display:none"></div>
-    <form id="confirm-area" style="display:block">
+    <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
       <input type="hidden" name="userCode" value="${escapedCode}">
       <input type="hidden" name="csrf" value="${escapedCsrf}">
       <button id="confirm-button" type="submit">Confirm</button>
