@@ -40,10 +40,12 @@ async function runStart(
         ...previous,
         platformUrl: profile.platformUrl,
         gatewayUrl: profile.gatewayUrl,
+        profile: profile.name,
         syncPath,
         gatewayFolder,
       }
     : {
+        profile: profile.name,
         platformUrl: profile.platformUrl,
         gatewayUrl: profile.gatewayUrl,
         syncPath,

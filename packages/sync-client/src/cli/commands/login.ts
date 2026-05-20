@@ -99,6 +99,7 @@ export const loginCommand = defineCommand({
       // and peerId if a config already exists.
         const existingDev = await loadConfig();
         const next: SyncConfig = {
+          profile: "local",
           platformUrl: localProfile.platformUrl,
           gatewayUrl: localProfile.gatewayUrl,
           syncPath: existingDev?.syncPath ?? defaultSyncPath(),
@@ -203,6 +204,7 @@ export const loginCommand = defineCommand({
       ? ctx.args.gateway
       : undefined;
     const next: SyncConfig = {
+      profile: profileName,
       platformUrl,
       // Prefer the server-supplied gatewayUrl (PR 1 always returns
       // app.matrix-os.com); fall back to the client's known default
