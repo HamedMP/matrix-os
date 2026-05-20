@@ -37,6 +37,25 @@
   100% { opacity: 1; }
 }
 
+@keyframes onboard-hello {
+  0% {
+    opacity: 0;
+    transform: scale(0.72) translateY(24px);
+    filter: blur(12px);
+    letter-spacing: 0.06em;
+  }
+  40% {
+    opacity: 1;
+    filter: blur(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+    letter-spacing: -0.02em;
+  }
+}
+
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;

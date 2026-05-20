@@ -84,11 +84,11 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     setButtonVisible(false);
     setLineVisible(false);
 
-    const t0 = setTimeout(() => setLineVisible(true), 300);
-    const t1 = setTimeout(() => setStepVisible(true), 500);
-    const t2 = setTimeout(() => setHeadingVisible(true), 900);
-    const t3 = setTimeout(() => setBodyVisible(true), 1500);
-    const t4 = setTimeout(() => setButtonVisible(true), 2100);
+    const t0 = setTimeout(() => setLineVisible(true), 200);
+    const t1 = setTimeout(() => setStepVisible(true), 400);
+    const t2 = setTimeout(() => setHeadingVisible(true), 700);
+    const t3 = setTimeout(() => setBodyVisible(true), 2200);
+    const t4 = setTimeout(() => setButtonVisible(true), 3000);
 
     return () => {
       clearTimeout(t0);
@@ -464,18 +464,22 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               ))}
             </div>
 
-            {/* Heading */}
+            {/* Heading — Apple "Hello" style animation */}
             <h2
+              key={`heading-${manualStep}`}
               style={{
                 fontFamily: "var(--font-serif), Georgia, serif",
-                fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+                fontSize: "clamp(2.2rem, 6vw, 3.5rem)",
                 fontWeight: 300,
                 color: "#32352E",
                 letterSpacing: "-0.02em",
-                lineHeight: 1.2,
-                transition: "all 1.4s cubic-bezier(0.16, 1, 0.3, 1)",
-                opacity: headingVisible ? 1 : 0,
-                transform: headingVisible ? "translateY(0)" : "translateY(32px)",
+                lineHeight: 1.1,
+                opacity: 0,
+                ...(headingVisible
+                  ? {
+                      animation: "onboard-hello 2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                    }
+                  : {}),
               }}
             >
               {MANUAL_STEPS[manualStep].heading}
