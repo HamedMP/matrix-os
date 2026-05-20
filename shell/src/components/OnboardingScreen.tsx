@@ -93,7 +93,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     }, 1200);
   }
 
-  const handleTalkToMe = useCallback(async () => {
+  const handleVoiceMode = useCallback(async () => {
     if (mic.state === "granted") {
       handleStart(true);
       return;
@@ -102,11 +102,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       setShowMicDialog(true);
       return;
     }
-    // "prompt" or "checking": trigger the native browser prompt directly.
     const granted = await mic.requestAccess();
     if (granted) handleStart(true);
     else setShowMicDialog(true);
   }, [mic.state, mic.requestAccess]);
+
+  const handleManualMode = useCallback(() => {
+    handleStart(false);
+  }, []);
 
   const handleMicAllow = useCallback(async () => {
     const granted = await mic.requestAccess();
@@ -138,11 +141,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        <div className="flex-1 flex items-center justify-center">
-          <button
-            onClick={handleTalkToMe}
-            disabled={phase !== "idle"}
-            className="text-4xl font-light tracking-tight text-foreground hover:scale-110 transition-transform duration-700 ease-out"
+        <div className="flex-1 flex flex-col items-center justify-center gap-12">
+          {/* Title */}
+          <h1
+            className="text-4xl font-light tracking-tight text-foreground"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             <span
@@ -157,9 +159,59 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 transition: "all 1.2s ease-in-out",
               }}
             >
-              Enter Matrix OS
+              Welcome to Matrix OS
             </span>
-          </button>
+          </h1>
+
+          {/* Mode picker */}
+          <div
+            className="flex gap-4 transition-opacity duration-500"
+            style={{ opacity: phase !== "idle" ? 0 : 1, pointerEvents: phase !== "idle" ? "none" : "auto" }}
+          >
+            {/* Voice mode */}
+            <button
+              onClick={handleVoiceMode}
+              disabled={phase !== "idle"}
+              className="group relative flex flex-col items-center gap-4 px-10 py-8 rounded-2xl border border-border/50 bg-card/50 hover:bg-card hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+            >
+              <div className="size-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors duration-300">
+                <MicIcon className="size-5 text-primary" />
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span
+                  className="text-base font-light text-foreground"
+                  style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+                >
+                  Talk to Aoede
+                </span>
+                <span className="text-[11px] text-muted-foreground/70">
+                  Voice conversation
+                </span>
+              </div>
+            </button>
+
+            {/* Manual / text mode */}
+            <button
+              onClick={handleManualMode}
+              disabled={phase !== "idle"}
+              className="group relative flex flex-col items-center gap-4 px-10 py-8 rounded-2xl border border-border/50 bg-card/50 hover:bg-card hover:border-primary/30 hover:shadow-lg transition-all duration-300"
+            >
+              <div className="size-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors duration-300">
+                <KeyboardIcon className="size-5 text-primary" />
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span
+                  className="text-base font-light text-foreground"
+                  style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+                >
+                  Type instead
+                </span>
+                <span className="text-[11px] text-muted-foreground/70">
+                  Text conversation
+                </span>
+              </div>
+            </button>
+          </div>
         </div>
 
         <div
