@@ -225,7 +225,6 @@ matrix
 |     `-- push|pull <local> <remote>          NEW -- one-shot transfer
 |
 +-- peers
-|     `-- rm <key-id>                         NEW
 |
 +-- instance                                  NEW -- your container ops
 |     +-- info                                hits platform: GET  /api/instance
