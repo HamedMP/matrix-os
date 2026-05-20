@@ -237,13 +237,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             </span>
           </h1>
 
-          {/* Mode picker — separated left/right */}
+          {/* Mode picker — split at screen center */}
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "3rem",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              width: "100%",
+              maxWidth: "32rem",
               transition: "all 1s cubic-bezier(0.16, 1, 0.3, 1)",
               opacity: isTransitioning ? 0 : 1,
               transform: isTransitioning ? "translateY(12px)" : "translateY(0)",
@@ -263,6 +263,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 border: "none",
                 cursor: "pointer",
                 padding: "0.25rem 0",
+                textAlign: "right",
+                paddingRight: "1.5rem",
                 transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
                 borderBottom: "1px solid transparent",
               }}
@@ -293,6 +295,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 border: "none",
                 cursor: "pointer",
                 padding: "0.25rem 0",
+                textAlign: "left",
+                paddingLeft: "1.5rem",
                 transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
                 borderBottom: "1px solid transparent",
               }}
