@@ -114,6 +114,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [actionDone, setActionDone] = useState(false);
+  const [curtainVisible, setCurtainVisible] = useState(true);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const current = TOUR_STEPS[step];
@@ -134,15 +135,16 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
     };
   }, [current]);
 
-  // Initial mount
+  // Initial mount — fade out the white curtain, then reveal tour
   useEffect(() => {
+    const t0 = setTimeout(() => setCurtainVisible(false), 100);
     const t = setTimeout(() => {
       const r = measureTarget();
       if (r) setRect(r);
       setVisible(true);
       setTimeout(() => setTooltipVisible(true), 500);
-    }, 600);
-    return () => clearTimeout(t);
+    }, 900);
+    return () => { clearTimeout(t0); clearTimeout(t); };
   }, []);
 
   // Step changes (not initial)
@@ -199,7 +201,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
   // Auto-advance after success message shown
   useEffect(() => {
     if (!actionDone) return;
-    const t = setTimeout(() => goNext(), 2200);
+    const t = setTimeout(() => goNext(), 3200);
     return () => clearTimeout(t);
   }, [actionDone]);
 
@@ -501,6 +503,19 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
           )}
         </div>
       </div>
+
+      {/* White curtain — bridges the walkthrough → desktop transition */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          backgroundColor: "#FFFDF6",
+          zIndex: 90,
+          transition: "opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1)",
+          opacity: curtainVisible ? 1 : 0,
+          pointerEvents: "none",
+        }}
+      />
     </div>
   );
 }
