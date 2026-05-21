@@ -200,7 +200,18 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-16" style={{ position: "relative", zIndex: 2 }}>
+        <div
+          className="flex-1 flex flex-col items-center justify-center gap-16"
+          style={{
+            position: "relative",
+            zIndex: 2,
+            // Subtle camera-tilt-up: the whole page scales slightly as you ascend into the light
+            transformOrigin: "center 40%",
+            transition: "transform 3.5s cubic-bezier(0.22, 1, 0.36, 1), filter 3.5s cubic-bezier(0.22, 1, 0.36, 1)",
+            transform: (phase === "ascending" || phase === "whiteout") ? "scale(1.04) translateY(-8px)" : "scale(1) translateY(0)",
+            filter: (phase === "ascending" || phase === "whiteout") ? "brightness(1.08)" : "brightness(1)",
+          }}
+        >
           {/* Title — "Enter Matrix OS" with gilded shimmer */}
           <h1
             className="cursor-default select-none"
@@ -349,29 +360,22 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           </button>
         </div>
 
-        {/* Light bloom — radial burst from center during ascension */}
+        {/* Brightening overlay — full-screen radial gradient, no visible edges */}
         {(phase === "ascending" || phase === "whiteout") && (
           <div
             style={{
               position: "absolute",
               inset: 0,
               zIndex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
               pointerEvents: "none",
+              // Soft radial that brightens the entire page from center outward,
+              // with edges that blend into the warm cream background so no
+              // discrete circle is visible.
+              background:
+                "radial-gradient(ellipse at center, rgba(255,253,240,0.95) 0%, rgba(252,246,232,0.85) 35%, rgba(247,241,231,0.6) 60%, rgba(247,241,231,0) 100%)",
+              animation: "onboard-brighten 3s cubic-bezier(0.22, 1, 0.36, 1) forwards",
             }}
-          >
-            <div
-              style={{
-                width: "40vmin",
-                height: "40vmin",
-                borderRadius: "50%",
-                background: "radial-gradient(circle, rgba(255,253,240,0.95) 0%, rgba(196,162,101,0.3) 40%, transparent 70%)",
-                animation: "onboard-bloom 2.8s cubic-bezier(0.16, 1, 0.3, 1) forwards",
-              }}
-            />
-          </div>
+          />
         )}
 
         {/* Dimming overlay — for voice mode */}

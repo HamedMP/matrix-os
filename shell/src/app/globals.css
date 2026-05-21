@@ -31,6 +31,33 @@
   100% { transform: scale(4); opacity: 0; }
 }
 
+/* Full-screen brightening — no visible edges, just light filling the room */
+@keyframes onboard-brighten {
+  0% {
+    opacity: 0;
+    transform: scale(1.05);
+  }
+  60% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Subtle camera-tilt-up: scales the page content while ascending */
+@keyframes onboard-rise-into {
+  0% {
+    transform: scale(1) translateY(0);
+    filter: brightness(1);
+  }
+  100% {
+    transform: scale(1.04) translateY(-8px);
+    filter: brightness(1.1);
+  }
+}
+
 @keyframes onboard-whiteout {
   0% { opacity: 0; }
   40% { opacity: 0; }
