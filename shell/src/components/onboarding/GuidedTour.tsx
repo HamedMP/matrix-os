@@ -307,32 +307,8 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
         pointerEvents: visible ? "auto" : "none",
       }}
     >
-      {/* Dark backdrop with spotlight cutout */}
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          backgroundColor: isCentered ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
-          transition: "clip-path 0.6s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.6s",
-          clipPath: rect
-            ? `polygon(
-                0% 0%, 0% 100%,
-                ${rect.left}px 100%,
-                ${rect.left}px ${rect.top}px,
-                ${rect.left + rect.width}px ${rect.top}px,
-                ${rect.left + rect.width}px ${rect.top + rect.height}px,
-                ${rect.left}px ${rect.top + rect.height}px,
-                ${rect.left}px 100%,
-                100% 100%, 100% 0%
-              )`
-            : "none",
-          zIndex: 81,
-          pointerEvents: current?.interaction?.type === "scroll" && !actionDone ? "none" : "auto",
-        }}
-      />
-
-      {/* Spotlight glow ring */}
-      {rect && !isCentered && (
+      {/* Dark backdrop with rounded spotlight cutout */}
+      {rect && !isCentered ? (
         <div
           style={{
             position: "fixed",
@@ -340,11 +316,23 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
             left: rect.left,
             width: rect.width,
             height: rect.height,
-            borderRadius: "12px",
-            boxShadow: "0 0 0 2px rgba(196,162,101,0.35), 0 0 24px rgba(196,162,101,0.12)",
+            borderRadius: "16px",
+            boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.55), 0 0 0 2px rgba(196,162,101,0.35), 0 0 24px rgba(196,162,101,0.12)",
             transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
             pointerEvents: "none",
-            zIndex: 82,
+            zIndex: 81,
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.6)",
+            transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+            opacity: isCentered ? 1 : 0,
+            zIndex: 81,
+            pointerEvents: current?.interaction?.type === "scroll" && !actionDone ? "none" : "auto",
           }}
         />
       )}
