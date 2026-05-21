@@ -4,11 +4,38 @@ import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
 
+const SHELL_USAGE = "Usage: matrix shell ls|new|attach|rm|tab|pane|layout";
+
 async function clientFromArgs(args: Record<string, unknown>) {
   const profile = await resolveCliProfile(args);
   const auth = profile.token ? null : await loadProfileAuth(profile.name);
   const token = profile.token ?? auth?.accessToken;
   return createShellClient({ gatewayUrl: profile.gatewayUrl, token });
+}
+
+function invalidRequestError(): Error {
+  return Object.assign(new Error("Request failed"), { code: "invalid_request" });
+}
+
+function parseTabIndex(value: unknown): number {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/.test(value)) {
+    throw invalidRequestError();
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw invalidRequestError();
+  }
+  return parsed;
+}
+
+function parsePaneDirection(value: unknown): "right" | "down" {
+  if (value === undefined) {
+    return "right";
+  }
+  if (value !== "right" && value !== "down") {
+    throw invalidRequestError();
+  }
+  return value;
 }
 
 function writeError(err: unknown, json: boolean): void {
@@ -204,14 +231,14 @@ export const shellCommand = defineCommand({
           meta: { name: "go", description: "Switch tab" },
           args: { session: { type: "string", required: true }, tab: { type: "string", required: true }, ...commonArgs },
           run: async ({ args }) => runShellJsonCommand(args, async () => (
-            await (await clientFromArgs(args)).switchTab(String(args.session), Number(args.tab))
+            await (await clientFromArgs(args)).switchTab(String(args.session), parseTabIndex(args.tab))
           ), () => "Switched tab"),
         }),
         close: defineCommand({
           meta: { name: "close", description: "Close tab" },
           args: { session: { type: "string", required: true }, tab: { type: "string", required: true }, ...commonArgs },
           run: async ({ args }) => runShellJsonCommand(args, async () => (
-            await (await clientFromArgs(args)).closeTab(String(args.session), Number(args.tab))
+            await (await clientFromArgs(args)).closeTab(String(args.session), parseTabIndex(args.tab))
           ), () => "Closed tab"),
         }),
       },
@@ -230,7 +257,7 @@ export const shellCommand = defineCommand({
           },
           run: async ({ args }) => runShellJsonCommand(args, async () => (
             await (await clientFromArgs(args)).splitPane(String(args.session), {
-              direction: args.direction === "down" ? "down" : "right",
+              direction: parsePaneDirection(args.direction),
               cwd: typeof args.cwd === "string" ? args.cwd : undefined,
               cmd: typeof args.cmd === "string" ? args.cmd : undefined,
             })
@@ -294,6 +321,6 @@ export const shellCommand = defineCommand({
     }),
   },
   run: () => {
-    console.log("Usage: matrix shell ls|new|attach|rm");
+    console.log(SHELL_USAGE);
   },
 });
