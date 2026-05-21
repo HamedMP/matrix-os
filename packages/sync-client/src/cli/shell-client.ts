@@ -50,6 +50,8 @@ export interface ShellAttachOptions {
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
 }
 
+export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -212,6 +214,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let settled = false;
         let socketOpen = false;
         const queuedFrames: string[] = [];
+        let queuedFrameBytes = 0;
         const timeout = setTimeout(() => {
           ws.close();
           settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
@@ -242,9 +245,23 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           for (const frame of queuedFrames.splice(0)) {
             sendFrame(frame);
           }
+          queuedFrameBytes = 0;
         };
         const sendFrame = (frame: string) => {
+          if (settled) {
+            return;
+          }
           if (!socketOpen) {
+            const nextQueuedBytes = queuedFrameBytes + Buffer.byteLength(frame, "utf8");
+            if (nextQueuedBytes > SHELL_ATTACH_MAX_QUEUED_BYTES) {
+              errorOutput.write("Shell attach failed\n");
+              settle(() => reject(Object.assign(new Error("Request failed"), {
+                code: "attach_failed",
+              })));
+              ws.close();
+              return;
+            }
+            queuedFrameBytes = nextQueuedBytes;
             queuedFrames.push(frame);
             return;
           }
