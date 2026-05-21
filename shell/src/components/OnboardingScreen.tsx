@@ -237,7 +237,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                     ? "linear-gradient(90deg, #D9B673 0%, #E8C988 50%, #D9B673 100%)"
                     : isTransitioning
                       ? "linear-gradient(90deg, #C4A265 0%, #C4A265 100%)"
-                      : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 25%, #C4A265 50%, var(--foreground) 75%, var(--foreground) 100%)",
+                      : "linear-gradient(90deg, #2F392C 0%, #2F392C 25%, #C4A265 50%, #2F392C 75%, #2F392C 100%)",
                 backgroundSize: "300% 100%",
                 animation: !isTransitioning
                   ? "onboard-shimmer 6s ease-in-out infinite, onboard-glow 6s ease-in-out infinite"
@@ -269,7 +269,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontFamily: "var(--font-serif), Georgia, serif",
                 fontSize: "0.875rem",
                 fontWeight: 300,
-                color: "var(--muted-foreground)",
+                color: "#2F392C",
                 opacity: 0.6,
                 background: "none",
                 border: "none",
@@ -281,11 +281,11 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = "var(--foreground)";
+                e.currentTarget.style.color = "#2F392C";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.opacity = "0.6";
-                e.currentTarget.style.color = "var(--muted-foreground)";
+                e.currentTarget.style.color = "#2F392C";
               }}
             >
               Interactive mode
@@ -298,7 +298,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontFamily: "var(--font-serif), Georgia, serif",
                 fontSize: "0.875rem",
                 fontWeight: 300,
-                color: "var(--muted-foreground)",
+                color: "#2F392C",
                 opacity: 0.6,
                 background: "none",
                 border: "none",
@@ -310,11 +310,11 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = "var(--foreground)";
+                e.currentTarget.style.color = "#2F392C";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.opacity = "0.6";
-                e.currentTarget.style.color = "var(--muted-foreground)";
+                e.currentTarget.style.color = "#2F392C";
               }}
             >
               Manual mode
@@ -341,7 +341,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               fontFamily: "var(--font-serif), Georgia, serif",
               fontSize: "0.625rem",
               fontStyle: "italic",
-              color: "var(--muted-foreground)",
+              color: "#2F392C",
               opacity: 0.35,
               background: "none",
               border: "none",
@@ -368,18 +368,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           />
         )}
 
-        {/* Manual mode panel — clean slide-up from below */}
-        {manualMode && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              backgroundColor: "#FFFDF6",
-              zIndex: 3,
-              animation: "onboard-panel-rise 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards",
-            }}
-          />
-        )}
       </div>
     )}
 
@@ -404,7 +392,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontFamily: "var(--font-serif), Georgia, serif",
                 fontSize: "clamp(2.2rem, 6vw, 3.5rem)",
                 fontWeight: 300,
-                color: "#32352E",
+                color: "#2F392C",
                 letterSpacing: "-0.02em",
                 lineHeight: 1.1,
                 opacity: 0,
@@ -426,7 +414,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "1.05rem",
                 fontWeight: 300,
-                color: "#7A7768",
+                color: "#2F392C",
                 lineHeight: 1.8,
                 maxWidth: "28rem",
                 opacity: 0,
@@ -453,7 +441,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "0.875rem",
                 fontWeight: 400,
-                color: "#32352E",
+                color: "#2F392C",
                 background: "none",
                 border: "none",
                 borderBottom: "1px solid #D6D0C4",
@@ -470,7 +458,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.gap = "0.75rem";
-                e.currentTarget.style.borderBottomColor = "#32352E";
+                e.currentTarget.style.borderBottomColor = "#2F392C";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.gap = "0.5rem";
@@ -498,7 +486,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               fontSize: "0.625rem",
               fontStyle: "italic",
               letterSpacing: "0.15em",
-              color: "#7A7768",
+              color: "#2F392C",
               opacity: buttonVisible ? 0.35 : 0,
               background: "none",
               border: "none",

@@ -83,17 +83,7 @@
   }
 }
 
-/* Page rise — a clean slide-up panel that reveals the walkthrough underneath */
-@keyframes onboard-panel-rise {
-  0% {
-    transform: translateY(100%);
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-
-/* Landing screen exits as the panel rises — scales down slightly and dims */
+/* Landing screen exits — scales down slightly and dims */
 @keyframes onboard-landing-exit {
   0% {
     opacity: 1;

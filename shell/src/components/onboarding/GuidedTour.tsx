@@ -35,7 +35,7 @@ function CanvasProgress({ actions }: { actions: CanvasActions }) {
             fontFamily: "Arial, Helvetica, sans-serif",
             fontSize: "0.8rem",
             fontWeight: 400,
-            color: item.done ? "#32352E" : "#7A7768",
+            color: item.done ? "#2F392C" : "#2F392C",
             lineHeight: 1.5,
             transition: "color 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
           }}
@@ -76,7 +76,7 @@ function Kbd({ children }: { children: ReactNode }) {
         fontFamily: "Arial, Helvetica, sans-serif",
         fontSize: "0.7rem",
         fontWeight: 600,
-        color: "#32352E",
+        color: "#2F392C",
         backgroundColor: "#F0ECE3",
         border: "1px solid #D6D0C4",
         borderBottom: "2px solid #C8C2B6",
@@ -556,7 +556,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                 fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "0.8rem",
                 fontWeight: 400,
-                color: "#7A7768",
+                color: "#2F392C",
                 lineHeight: 1.6,
               }}
             >
@@ -570,7 +570,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                 fontFamily: "var(--font-serif), Georgia, serif",
                 fontSize: isCentered || isCanvasStep ? "1.25rem" : "1.1rem",
                 fontWeight: 400,
-                color: "#32352E",
+                color: "#2F392C",
                 marginBottom: "0.5rem",
                 letterSpacing: "-0.01em",
               }}
@@ -585,7 +585,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                   fontFamily: "Arial, Helvetica, sans-serif",
                   fontSize: "0.8rem",
                   fontWeight: 400,
-                  color: "#7A7768",
+                  color: "#2F392C",
                   lineHeight: 1.7,
                   marginBottom: showNextButton ? "1.1rem" : "0.25rem",
                 }}
@@ -602,7 +602,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
                     style={{
                       fontFamily: "Arial, Helvetica, sans-serif",
                       fontSize: "0.7rem",
-                      color: "#7A7768",
+                      color: "#2F392C",
                       opacity: 0.5,
                       background: "none",
                       border: "none",
