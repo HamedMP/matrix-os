@@ -82,8 +82,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     setButtonVisible(false);
 
     const t0 = setTimeout(() => setHeadingVisible(true), 150);
-    const t1 = setTimeout(() => setBodyVisible(true), 1200);
-    const t2 = setTimeout(() => setButtonVisible(true), 1900);
+    const t1 = setTimeout(() => setBodyVisible(true), 600);
+    const t2 = setTimeout(() => setButtonVisible(true), 1100);
 
     return () => {
       clearTimeout(t0);
@@ -420,7 +420,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
             className="max-w-lg text-center flex flex-col items-center"
             style={{ gap: "2rem" }}
           >
-            {/* Heading — left-to-right sweep reveal */}
+            {/* Heading — clean scale-up reveal */}
             <h2
               key={`heading-${manualStep}`}
               style={{
@@ -431,9 +431,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 letterSpacing: "-0.02em",
                 lineHeight: 1.1,
                 opacity: 0,
+                transform: "scale(0.94) translateY(10px)",
                 ...(headingVisible
                   ? {
-                      animation: "onboard-reveal-sweep-slow 1.8s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+                      animation: "onboard-text-rise 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                     }
                   : {}),
               }}
@@ -441,7 +442,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               {MANUAL_STEPS[manualStep].heading}
             </h2>
 
-            {/* Body — left-to-right sweep */}
+            {/* Body — clean scale-up reveal */}
             <p
               key={`body-${manualStep}`}
               style={{
@@ -452,9 +453,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 lineHeight: 1.8,
                 maxWidth: "28rem",
                 opacity: 0,
+                transform: "scale(0.94) translateY(10px)",
                 ...(bodyVisible
                   ? {
-                      animation: "onboard-reveal-sweep 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+                      animation: "onboard-text-rise 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                     }
                   : {}),
               }}
@@ -462,7 +464,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               {MANUAL_STEPS[manualStep].body}
             </p>
 
-            {/* Continue button — left-to-right sweep */}
+            {/* Continue button — clean scale-up reveal */}
             <button
               key={`btn-${manualStep}`}
               onClick={handleManualNext}
@@ -481,9 +483,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 paddingBottom: "0.25rem",
                 cursor: "pointer",
                 opacity: 0,
+                transform: "scale(0.94) translateY(10px)",
                 ...(buttonVisible
                   ? {
-                      animation: "onboard-reveal-sweep 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+                      animation: "onboard-text-rise 1s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                     }
                   : {}),
                 transition: "gap 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-bottom-color 0.3s",

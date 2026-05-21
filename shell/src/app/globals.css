@@ -110,35 +110,16 @@
   }
 }
 
-/* Left-to-right text reveal — text appears wiped in from left edge */
-@keyframes onboard-reveal-sweep {
+/* Clean scale-up text reveal — quick start, slow finish (ease-out-expo).
+   Animates only transform + opacity for 60fps and no visual artifacts. */
+@keyframes onboard-text-rise {
   0% {
-    clip-path: inset(0 100% 0 0);
     opacity: 0;
-    transform: translateX(-8px);
-  }
-  20% {
-    opacity: 1;
+    transform: scale(0.94) translateY(10px);
   }
   100% {
-    clip-path: inset(0 0 0 0);
     opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Slower, more graceful version for headings */
-@keyframes onboard-reveal-sweep-slow {
-  0% {
-    clip-path: inset(0 100% 0 0);
-    opacity: 0;
-  }
-  15% {
-    opacity: 1;
-  }
-  100% {
-    clip-path: inset(0 0 0 0);
-    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
 
