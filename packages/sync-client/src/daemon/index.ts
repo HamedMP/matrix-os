@@ -1,6 +1,6 @@
-import { extname, join, resolve, sep } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lstat, mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
@@ -373,6 +373,12 @@ export function capSyncStateConflicts(syncState: SyncState): boolean {
   return true;
 }
 
+export function capLoadedSyncState(syncState: SyncState): boolean {
+  const filesTrimmed = capSyncStateFiles(syncState);
+  const conflictsTrimmed = capSyncStateConflicts(syncState);
+  return filesTrimmed || conflictsTrimmed;
+}
+
 function isENOENT(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -421,10 +427,16 @@ async function reserveAvailableConflictPath(
       : appendConflictCollisionSuffix(preferredPath, attempt);
     const absolutePath = resolveWithinSyncRoot(syncRoot, conflictPath);
     try {
-      await lstat(absolutePath);
+      await mkdir(dirname(absolutePath), { recursive: true, mode: 0o700 });
+      await writeFile(absolutePath, "", { flag: "wx", mode: 0o600 });
+      return { conflictPath, absolutePath };
     } catch (err: unknown) {
-      if (isENOENT(err)) {
-        return { conflictPath, absolutePath };
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "EEXIST"
+      ) {
+        continue;
       }
       throw err;
     }
@@ -473,13 +485,17 @@ export async function reconcileRemoteFileChange(
     }
   }
 
-  const updateDownloadedState = async (targetPath: string, remotePath: string) => {
+  const updateDownloadedState = async (
+    targetPath: string,
+    remotePath: string,
+    options: { markRemoteSynced?: boolean } = { markRemoteSynced: true },
+  ) => {
     const downloadedStat = await stat(targetPath);
     syncState.files[remotePath] = {
       hash: input.remoteHash,
       mtime: downloadedStat.mtimeMs,
       size: downloadedStat.size,
-      lastSyncedHash: input.remoteHash,
+      ...(options.markRemoteSynced === false ? {} : { lastSyncedHash: input.remoteHash }),
     };
     capSyncStateFiles(syncState);
   };
@@ -517,13 +533,26 @@ export async function reconcileRemoteFileChange(
     absolutePath: conflictAbsPath,
   } = await reserveAvailableConflictPath(input.syncRoot, preferredConflictPath);
   const conflictRemotePath = input.toRemotePath?.(conflictPath) ?? conflictPath;
-  await input.downloadRemote(conflictAbsPath);
-  await updateDownloadedState(conflictAbsPath, conflictRemotePath);
+  try {
+    await input.downloadRemote(conflictAbsPath);
+  } catch (err) {
+    try {
+      await unlink(conflictAbsPath);
+    } catch (cleanupErr: unknown) {
+      if (!isENOENT(cleanupErr)) {
+        throw cleanupErr;
+      }
+    }
+    throw err;
+  }
+  await updateDownloadedState(conflictAbsPath, conflictRemotePath, {
+    markRemoteSynced: false,
+  });
   syncState.files[input.remotePath] = {
     hash: localHash,
     mtime: localMtime,
     size: localSize,
-    lastSyncedHash: cached?.lastSyncedHash,
+    lastSyncedHash: input.remoteHash,
   };
   capSyncStateFiles(syncState);
   recordSyncConflict(syncState, {
@@ -732,7 +761,7 @@ export async function startDaemon(): Promise<void> {
 
   const ignorePatterns = await loadSyncIgnore(config.syncPath);
   let syncState = await loadSyncState(stateFile);
-  if (capSyncStateFiles(syncState)) {
+  if (capLoadedSyncState(syncState)) {
     await saveSyncState(stateFile, syncState);
   }
 

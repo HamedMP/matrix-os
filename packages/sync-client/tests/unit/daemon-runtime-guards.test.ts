@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import {
   adoptRemoteManifestVersion,
   adoptSyncChangeManifestVersion,
+  capLoadedSyncState,
   capSyncStateConflicts,
   capSyncStateFiles,
   createDaemonAuthFileAccessors,
@@ -390,6 +391,42 @@ describe("daemon runtime guards", () => {
     expect(syncState.files["file-50001.txt"]).toBeDefined();
   });
 
+  it("caps files and conflicts together after loading sync state", () => {
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {},
+      conflicts: {},
+    };
+
+    for (let i = 0; i < 50_002; i++) {
+      syncState.files[`file-${i}.txt`] = {
+        hash: `sha256:${"a".repeat(63)}${i % 10}`,
+        mtime: i,
+        size: i,
+      };
+    }
+    for (let i = 0; i < 502; i++) {
+      syncState.conflicts![`conflict-${i}.txt`] = {
+        path: `conflict-${i}.txt`,
+        conflictPath: `conflict-${i} (conflict).txt`,
+        localHash: `sha256:${"a".repeat(63)}${i % 10}`,
+        remoteHash: `sha256:${"b".repeat(63)}${i % 10}`,
+        remotePeerId: "peer",
+        detectedAt: i,
+        resolved: false,
+      };
+    }
+
+    const trimmed = capLoadedSyncState(syncState);
+
+    expect(trimmed).toBe(true);
+    expect(Object.keys(syncState.files)).toHaveLength(50_000);
+    expect(Object.keys(syncState.conflicts ?? {})).toHaveLength(500);
+    expect(syncState.files["file-0.txt"]).toBeUndefined();
+    expect(syncState.conflicts?.["conflict-0.txt"]).toBeUndefined();
+  });
+
   it("preserves local edits and writes remote content to a conflict copy", async () => {
     const syncRoot = join(tempDir, "sync");
     await mkdir(syncRoot, { recursive: true });
@@ -413,6 +450,7 @@ describe("daemon runtime guards", () => {
         },
       },
     };
+    let reservedBeforeDownload = false;
 
     const result = await reconcileRemoteFileChange(syncState, {
       syncRoot,
@@ -423,21 +461,26 @@ describe("daemon runtime guards", () => {
       remotePeerId: "peer/with/slashes",
       date: new Date("2026-05-20T12:00:00Z"),
       downloadRemote: async (targetPath) => {
+        reservedBeforeDownload = (await readFile(targetPath, "utf-8")) === "";
         await writeFile(targetPath, remoteContent);
       },
     });
 
     expect(result.status).toBe("conflict-created");
+    expect(reservedBeforeDownload).toBe(true);
     expect(await readFile(localPath, "utf-8")).toBe(localContent);
     expect(await readFile(join(syncRoot, "note (conflict - peer_with_slashes - 2026-05-20).md"), "utf-8")).toBe(remoteContent);
     expect(syncState.files[remotePath]).toMatchObject({
       hash: sha256(localContent),
-      lastSyncedHash: sha256(baseContent),
+      lastSyncedHash: sha256(remoteContent),
     });
     expect(syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"]).toMatchObject({
       hash: sha256(remoteContent),
-      lastSyncedHash: sha256(remoteContent),
     });
+    expect(
+      syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"]
+        ?.lastSyncedHash,
+    ).toBeUndefined();
     expect(syncState.conflicts?.[remotePath]).toMatchObject({
       path: remotePath,
       conflictPath: "note (conflict - peer_with_slashes - 2026-05-20).md",
