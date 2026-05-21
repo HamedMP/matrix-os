@@ -83,22 +83,13 @@
   }
 }
 
-/* iOS-style "page rise" — used by Apple, Linear, Vercel for major route changes.
-   The new screen literally rises from below, revealing itself like a modal that fills the viewport. */
+/* Page rise — a clean slide-up panel that reveals the walkthrough underneath */
 @keyframes onboard-panel-rise {
   0% {
     transform: translateY(100%);
-    border-top-left-radius: 32px;
-    border-top-right-radius: 32px;
-  }
-  85% {
-    border-top-left-radius: 32px;
-    border-top-right-radius: 32px;
   }
   100% {
     transform: translateY(0);
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
   }
 }
 

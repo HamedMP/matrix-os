@@ -81,9 +81,16 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     setBodyVisible(false);
     setButtonVisible(false);
 
-    const t0 = setTimeout(() => setHeadingVisible(true), 150);
-    const t1 = setTimeout(() => setBodyVisible(true), 600);
-    const t2 = setTimeout(() => setButtonVisible(true), 1100);
+    // First step: long pause after the panel rises, then slow staggered reveals.
+    // Subsequent steps: tighter timing since we're already in the flow.
+    const isFirstStep = manualStep === 0;
+    const headingDelay = isFirstStep ? 1400 : 250;
+    const bodyDelay = isFirstStep ? 3400 : 1500;
+    const buttonDelay = isFirstStep ? 5000 : 2700;
+
+    const t0 = setTimeout(() => setHeadingVisible(true), headingDelay);
+    const t1 = setTimeout(() => setBodyVisible(true), bodyDelay);
+    const t2 = setTimeout(() => setButtonVisible(true), buttonDelay);
 
     return () => {
       clearTimeout(t0);
@@ -361,17 +368,15 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           />
         )}
 
-        {/* Manual mode panel — slides up from below, covering landing.
-            Walkthrough content lives inside the next layer. */}
+        {/* Manual mode panel — clean slide-up from below */}
         {manualMode && (
           <div
             style={{
               position: "absolute",
               inset: 0,
               backgroundColor: "#FFFDF6",
-              boxShadow: "0 -24px 64px rgba(0, 0, 0, 0.18)",
               zIndex: 3,
-              animation: "onboard-panel-rise 1.1s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+              animation: "onboard-panel-rise 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards",
             }}
           />
         )}
@@ -406,7 +411,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 transform: "scale(0.94) translateY(10px)",
                 ...(headingVisible
                   ? {
-                      animation: "onboard-text-rise 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-text-rise 2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                     }
                   : {}),
               }}
@@ -428,7 +433,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 transform: "scale(0.94) translateY(10px)",
                 ...(bodyVisible
                   ? {
-                      animation: "onboard-text-rise 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-text-rise 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                     }
                   : {}),
               }}
@@ -458,7 +463,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 transform: "scale(0.94) translateY(10px)",
                 ...(buttonVisible
                   ? {
-                      animation: "onboard-text-rise 1s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-text-rise 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                     }
                   : {}),
                 transition: "gap 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-bottom-color 0.3s",
