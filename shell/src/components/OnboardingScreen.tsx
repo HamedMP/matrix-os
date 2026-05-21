@@ -82,8 +82,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     setButtonVisible(false);
 
     const t0 = setTimeout(() => setHeadingVisible(true), 150);
-    const t1 = setTimeout(() => setBodyVisible(true), 1600);
-    const t2 = setTimeout(() => setButtonVisible(true), 2400);
+    const t1 = setTimeout(() => setBodyVisible(true), 1200);
+    const t2 = setTimeout(() => setButtonVisible(true), 1900);
 
     return () => {
       clearTimeout(t0);
@@ -126,19 +126,18 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     }, 600);
   }
 
-  // Heavenly ascension: title glows gold and rises → light bloom from center → pure white wash → walkthrough fades in
+  // Luxurious manual mode entry: longer, slower phases for a sumptuous feel
   function handleStartManual() {
     setManualMode(true);
-    // Phase 1: title glows and ascends
     setPhase("ascending");
-    // Phase 2: screen blooms to white
+    // Hold the ascension longer — the title glows, lifts gracefully
     setTimeout(() => {
       setPhase("whiteout");
-      // Phase 3: hold in pure white, then reveal content
+      // Linger in pure white before revealing
       setTimeout(() => {
         setPhase("revealing");
-      }, 1800);
-    }, 1600);
+      }, 2400);
+    }, 2800);
   }
 
   function handleManualNext() {
@@ -213,7 +212,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               lineHeight: 1.1,
               ...(phase === "ascending" || phase === "whiteout"
                 ? {
-                    animation: "onboard-ascend 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                    animation: "onboard-ascend-lux 4s cubic-bezier(0.22, 1, 0.36, 1) forwards",
                   }
                 : {
                     transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -227,9 +226,12 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 backgroundClip: "text",
                 WebkitBackgroundClip: "text",
                 color: "transparent",
-                backgroundImage: isTransitioning
-                  ? "linear-gradient(90deg, #C4A265 0%, #C4A265 100%)"
-                  : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 25%, #C4A265 50%, var(--foreground) 75%, var(--foreground) 100%)",
+                backgroundImage:
+                  phase === "ascending" || phase === "whiteout"
+                    ? "linear-gradient(90deg, #D9B673 0%, #E8C988 50%, #D9B673 100%)"
+                    : isTransitioning
+                      ? "linear-gradient(90deg, #C4A265 0%, #C4A265 100%)"
+                      : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 25%, #C4A265 50%, var(--foreground) 75%, var(--foreground) 100%)",
                 backgroundSize: "300% 100%",
                 animation: !isTransitioning
                   ? "onboard-shimmer 6s ease-in-out infinite, onboard-glow 6s ease-in-out infinite"
@@ -270,17 +272,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 textAlign: "right",
                 paddingRight: "1.5rem",
                 transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-                borderBottom: "1px solid transparent",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = "1";
                 e.currentTarget.style.color = "var(--foreground)";
-                e.currentTarget.style.borderBottomColor = "var(--foreground)";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.opacity = "0.6";
                 e.currentTarget.style.color = "var(--muted-foreground)";
-                e.currentTarget.style.borderBottomColor = "transparent";
               }}
             >
               Interactive mode
@@ -302,17 +301,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 textAlign: "left",
                 paddingLeft: "1.5rem",
                 transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-                borderBottom: "1px solid transparent",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = "1";
                 e.currentTarget.style.color = "var(--foreground)";
-                e.currentTarget.style.borderBottomColor = "var(--foreground)";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.opacity = "0.6";
                 e.currentTarget.style.color = "var(--muted-foreground)";
-                e.currentTarget.style.borderBottomColor = "transparent";
               }}
             >
               Manual mode
@@ -420,7 +416,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
             className="max-w-lg text-center flex flex-col items-center"
             style={{ gap: "2rem" }}
           >
-            {/* Heading — Apple "Hello" style animation */}
+            {/* Heading — left-to-right sweep reveal */}
             <h2
               key={`heading-${manualStep}`}
               style={{
@@ -433,7 +429,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 opacity: 0,
                 ...(headingVisible
                   ? {
-                      animation: "onboard-hello 2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-reveal-sweep-slow 1.8s cubic-bezier(0.22, 1, 0.36, 1) forwards",
                     }
                   : {}),
               }}
@@ -441,8 +437,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               {MANUAL_STEPS[manualStep].heading}
             </h2>
 
-            {/* Body */}
+            {/* Body — left-to-right sweep */}
             <p
+              key={`body-${manualStep}`}
               style={{
                 fontFamily: "Arial, Helvetica, sans-serif",
                 fontSize: "1.05rem",
@@ -450,16 +447,20 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 color: "#7A7768",
                 lineHeight: 1.8,
                 maxWidth: "28rem",
-                transition: "all 1.4s cubic-bezier(0.16, 1, 0.3, 1)",
-                opacity: bodyVisible ? 1 : 0,
-                transform: bodyVisible ? "translateY(0)" : "translateY(32px)",
+                opacity: 0,
+                ...(bodyVisible
+                  ? {
+                      animation: "onboard-reveal-sweep 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+                    }
+                  : {}),
               }}
             >
               {MANUAL_STEPS[manualStep].body}
             </p>
 
-            {/* Continue button — minimal, editorial */}
+            {/* Continue button — left-to-right sweep */}
             <button
+              key={`btn-${manualStep}`}
               onClick={handleManualNext}
               style={{
                 marginTop: "0.5rem",
@@ -475,9 +476,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 borderBottom: "1px solid #D6D0C4",
                 paddingBottom: "0.25rem",
                 cursor: "pointer",
-                transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                opacity: buttonVisible ? 1 : 0,
-                transform: buttonVisible ? "translateY(0)" : "translateY(24px)",
+                opacity: 0,
+                ...(buttonVisible
+                  ? {
+                      animation: "onboard-reveal-sweep 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+                    }
+                  : {}),
+                transition: "gap 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-bottom-color 0.3s",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.gap = "0.75rem";

@@ -56,6 +56,65 @@
   }
 }
 
+/* Luxurious title ascension — slow, golden glow intensifies before lift */
+@keyframes onboard-ascend-lux {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    filter: brightness(1);
+    letter-spacing: -0.02em;
+  }
+  25% {
+    transform: translateY(-4px) scale(1.02);
+    filter: brightness(1.15);
+    letter-spacing: 0;
+  }
+  55% {
+    transform: translateY(-20px) scale(1.06);
+    filter: brightness(1.5);
+    opacity: 1;
+    letter-spacing: 0.02em;
+  }
+  100% {
+    transform: translateY(-160px) scale(1.2);
+    filter: brightness(2.5);
+    opacity: 0;
+    letter-spacing: 0.08em;
+  }
+}
+
+/* Left-to-right text reveal — text appears wiped in from left edge */
+@keyframes onboard-reveal-sweep {
+  0% {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Slower, more graceful version for headings */
+@keyframes onboard-reveal-sweep-slow {
+  0% {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;

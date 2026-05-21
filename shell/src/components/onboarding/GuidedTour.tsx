@@ -3,6 +3,66 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { ArrowRightIcon, CheckIcon } from "lucide-react";
 
+interface CanvasActions {
+  panned: boolean;
+  zoomedIn: boolean;
+  zoomedOut: boolean;
+}
+
+function CanvasProgress({ actions }: { actions: CanvasActions }) {
+  const items: { done: boolean; label: ReactNode }[] = [
+    { done: actions.panned, label: <>Scroll to pan around</> },
+    { done: actions.zoomedIn, label: <>Hold <Kbd>⌘</Kbd> + scroll up to zoom in</> },
+    { done: actions.zoomedOut, label: <>Hold <Kbd>⌘</Kbd> + scroll down to zoom out</> },
+  ];
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.5rem",
+        marginBottom: "1.1rem",
+        textAlign: "left",
+      }}
+    >
+      {items.map((item, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.6rem",
+            fontFamily: "Arial, Helvetica, sans-serif",
+            fontSize: "0.8rem",
+            fontWeight: 400,
+            color: item.done ? "#32352E" : "#7A7768",
+            lineHeight: 1.5,
+            transition: "color 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+          }}
+        >
+          <div
+            style={{
+              width: "1.1rem",
+              height: "1.1rem",
+              borderRadius: "50%",
+              border: item.done ? "none" : "1px solid #D6D0C4",
+              backgroundColor: item.done ? "#3A7D44" : "transparent",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+          >
+            {item.done && <CheckIcon style={{ width: "9px", height: "9px", color: "#fff" }} />}
+          </div>
+          <span>{item.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Kbd({ children }: { children: ReactNode }) {
   return (
     <kbd
@@ -79,11 +139,8 @@ const TOUR_STEPS: TourStep[] = [
   {
     selector: "[data-canvas-area]",
     title: "Your Canvas",
-    body: (
-      <>
-        Try scrolling around — your workspace is an infinite canvas. Hold <Kbd>⌘</Kbd> and scroll to zoom.
-      </>
-    ),
+    // Body is rendered dynamically for this step (progress list)
+    body: null,
     position: "top",
     padding: 0,
     interaction: { type: "scroll" },
@@ -118,6 +175,8 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
   const [curtainVisible, setCurtainVisible] = useState(true);
   // When true, the tour steps aside so the real UI (e.g. command palette) is visible
   const [yieldToUI, setYieldToUI] = useState(false);
+  // Canvas step: track each action completed
+  const [canvasActions, setCanvasActions] = useState({ panned: false, zoomedIn: false, zoomedOut: false });
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const current = TOUR_STEPS[step];
@@ -177,16 +236,38 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
     return () => window.removeEventListener("resize", onResize);
   }, [measureTarget]);
 
-  // Interactive: listen for scroll on the canvas
+  // Interactive: listen for canvas actions (pan, zoom in, zoom out)
   useEffect(() => {
     if (!isCanvasStep || actionDone) return;
 
-    function onWheel() {
-      setActionDone(true);
+    function onWheel(e: WheelEvent) {
+      const isZoom = e.ctrlKey || e.metaKey;
+      if (!isZoom) {
+        setCanvasActions((p) => (p.panned ? p : { ...p, panned: true }));
+      } else if (e.deltaY < 0) {
+        setCanvasActions((p) => (p.zoomedIn ? p : { ...p, zoomedIn: true }));
+      } else if (e.deltaY > 0) {
+        setCanvasActions((p) => (p.zoomedOut ? p : { ...p, zoomedOut: true }));
+      }
     }
     window.addEventListener("wheel", onWheel, { passive: true });
     return () => window.removeEventListener("wheel", onWheel);
   }, [step, actionDone, isCanvasStep]);
+
+  // Mark canvas step done when all 3 actions completed
+  useEffect(() => {
+    if (!isCanvasStep || actionDone) return;
+    if (canvasActions.panned && canvasActions.zoomedIn && canvasActions.zoomedOut) {
+      setActionDone(true);
+    }
+  }, [canvasActions, isCanvasStep, actionDone]);
+
+  // Reset canvas actions when stepping into/out of canvas step
+  useEffect(() => {
+    if (!isCanvasStep) {
+      setCanvasActions({ panned: false, zoomedIn: false, zoomedOut: false });
+    }
+  }, [step, isCanvasStep]);
 
   // Interactive: listen for key combo — let the event through to the app
   useEffect(() => {
@@ -204,12 +285,13 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [step, actionDone, isKeyComboStep, current]);
 
-  // Auto-advance after success message shown
+  // Auto-advance after success message shown (longer for interactive steps)
   useEffect(() => {
     if (!actionDone) return;
-    const t = setTimeout(() => goNext(), 3200);
+    const delay = isInteractive ? 4800 : 3200;
+    const t = setTimeout(() => goNext(), delay);
     return () => clearTimeout(t);
-  }, [actionDone]);
+  }, [actionDone, isInteractive]);
 
   function goNext() {
     if (transitioning) return;
@@ -265,15 +347,15 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
       };
     }
 
-    // ⌘K success — float at top center above the command palette
+    // ⌘K success — float below the command palette
     if (yieldToUI) {
       return {
         ...base,
-        top: "12%",
+        bottom: "15%",
         left: "50%",
         transform: tooltipVisible
           ? "translateX(-50%) translateY(0)"
-          : "translateX(-50%) translateY(-12px)",
+          : "translateX(-50%) translateY(12px)",
       };
     }
 
@@ -350,7 +432,9 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
         zIndex: yieldToUI ? 55 : 80,
         transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
         opacity: visible ? 1 : 0,
-        pointerEvents: visible && !yieldToUI ? "auto" : "none",
+        // Canvas step: let wheel events pass through to the real canvas.
+        // Yielding to UI: let clicks reach the command palette.
+        pointerEvents: visible && !yieldToUI && !isCanvasStep ? "auto" : "none",
       }}
     >
       {/* Backdrop */}
@@ -465,18 +549,22 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
             >
               {current.title}
             </h3>
-            <div
-              style={{
-                fontFamily: "Arial, Helvetica, sans-serif",
-                fontSize: "0.8rem",
-                fontWeight: 400,
-                color: "#7A7768",
-                lineHeight: 1.7,
-                marginBottom: showNextButton ? "1.1rem" : "0.25rem",
-              }}
-            >
-              {current.body}
-            </div>
+            {isCanvasStep ? (
+              <CanvasProgress actions={canvasActions} />
+            ) : (
+              <div
+                style={{
+                  fontFamily: "Arial, Helvetica, sans-serif",
+                  fontSize: "0.8rem",
+                  fontWeight: 400,
+                  color: "#7A7768",
+                  lineHeight: 1.7,
+                  marginBottom: showNextButton ? "1.1rem" : "0.25rem",
+                }}
+              >
+                {current.body}
+              </div>
+            )}
 
             {showNextButton && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: isCentered || isCanvasStep ? "center" : "space-between", gap: "1rem" }}>
