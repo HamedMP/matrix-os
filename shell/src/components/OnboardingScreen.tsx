@@ -270,22 +270,19 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontSize: "0.875rem",
                 fontWeight: 300,
                 color: "#2F392C",
-                opacity: 0.6,
                 background: "none",
                 border: "none",
                 cursor: "pointer",
                 padding: "0.25rem 0",
                 textAlign: "right",
                 paddingRight: "1.5rem",
-                transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+                transition: "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = "#2F392C";
+                e.currentTarget.style.transform = "scale(1.05)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = "0.6";
-                e.currentTarget.style.color = "#2F392C";
+                e.currentTarget.style.transform = "scale(1)";
               }}
             >
               Interactive mode
@@ -299,22 +296,19 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 fontSize: "0.875rem",
                 fontWeight: 300,
                 color: "#2F392C",
-                opacity: 0.6,
                 background: "none",
                 border: "none",
                 cursor: "pointer",
                 padding: "0.25rem 0",
                 textAlign: "left",
                 paddingLeft: "1.5rem",
-                transition: "all 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+                transition: "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = "#2F392C";
+                e.currentTarget.style.transform = "scale(1.05)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = "0.6";
-                e.currentTarget.style.color = "#2F392C";
+                e.currentTarget.style.transform = "scale(1)";
               }}
             >
               Manual mode
