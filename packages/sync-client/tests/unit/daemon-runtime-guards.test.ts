@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   adoptRemoteManifestVersion,
+  adoptSyncChangeManifestVersion,
   capSyncStateFiles,
+  createDaemonAuthFileAccessors,
   createSerialTaskQueue,
   exitOnAuthFailure,
   parseRemoteManifestEnvelope,
@@ -13,7 +15,7 @@ import {
   resolveWithinSyncRoot,
   writePidFileExclusive,
 } from "../../src/daemon/index.js";
-import { saveAuth, saveProfileAuth } from "../../src/auth/token-store.js";
+import { loadAuth, loadProfileAuth, saveAuth, saveProfileAuth } from "../../src/auth/token-store.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
 import { saveProfiles } from "../../src/lib/profiles.js";
 import { AuthRejectedError, VersionConflictError } from "../../src/daemon/r2-client.js";
@@ -137,6 +139,23 @@ describe("daemon runtime guards", () => {
     });
   });
 
+  it("falls back to legacy global auth when an unpinned profile registry is unreadable", async () => {
+    const legacyAuthPath = join(tempDir, "auth.json");
+    await writeFile(join(tempDir, "profiles.json"), "{not valid json");
+    await saveAuth({
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_legacy",
+      handle: "legacy",
+    }, legacyAuthPath);
+
+    await expect(resolveDaemonAuth({}, tempDir)).resolves.toMatchObject({
+      auth: { accessToken: "legacy-token" },
+      profileName: "legacy",
+      source: "legacy",
+    });
+  });
+
   it("falls back to legacy global auth when the selected profile has no auth", async () => {
     const legacyAuthPath = join(tempDir, "auth.json");
     await saveProfiles({
@@ -165,6 +184,59 @@ describe("daemon runtime guards", () => {
       source: "legacy",
     });
     await expect(readFile(legacyAuthPath, "utf-8")).resolves.toContain("legacy-token");
+  });
+
+  it("uses legacy auth storage for daemon IPC when startup resolved legacy auth", async () => {
+    const legacyAuthPath = join(tempDir, "auth.json");
+    await saveAuth({
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_legacy",
+      handle: "legacy",
+    }, legacyAuthPath);
+
+    const accessors = createDaemonAuthFileAccessors({
+      profileName: "local",
+      source: "legacy",
+    }, tempDir);
+
+    await expect(accessors.loadAuth()).resolves.toMatchObject({
+      accessToken: "legacy-token",
+    });
+    await accessors.clearAuth();
+
+    await expect(loadAuth(legacyAuthPath)).resolves.toBeNull();
+  });
+
+  it("uses profile auth storage for daemon IPC when startup resolved profile auth", async () => {
+    const legacyAuthPath = join(tempDir, "auth.json");
+    await saveAuth({
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_legacy",
+      handle: "legacy",
+    }, legacyAuthPath);
+    await saveProfileAuth("local", {
+      accessToken: "local-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_dev",
+      handle: "dev",
+    }, tempDir);
+
+    const accessors = createDaemonAuthFileAccessors({
+      profileName: "local",
+      source: "profile",
+    }, tempDir);
+
+    await expect(accessors.loadAuth()).resolves.toMatchObject({
+      accessToken: "local-token",
+    });
+    await accessors.clearAuth();
+
+    await expect(loadProfileAuth("local", tempDir)).resolves.toBeNull();
+    await expect(loadAuth(legacyAuthPath)).resolves.toMatchObject({
+      accessToken: "legacy-token",
+    });
   });
 
   it("logs serial queue task failures and keeps later tasks running", async () => {
@@ -205,6 +277,46 @@ describe("daemon runtime guards", () => {
 
     expect(adopted).toBe(true);
     expect(syncState.manifestVersion).toBe(7);
+  });
+
+  it("adopts sync-change manifest versions when no local file processing was needed", async () => {
+    const syncState: SyncState = {
+      manifestVersion: 3,
+      lastSyncAt: 0,
+      files: {},
+    };
+    const persist = vi.fn(async () => undefined);
+
+    const adopted = await adoptSyncChangeManifestVersion(
+      syncState,
+      { manifestVersion: 9 },
+      true,
+      persist,
+    );
+
+    expect(adopted).toBe(true);
+    expect(syncState.manifestVersion).toBe(9);
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not adopt sync-change manifest versions after local processing fails", async () => {
+    const syncState: SyncState = {
+      manifestVersion: 3,
+      lastSyncAt: 0,
+      files: {},
+    };
+    const persist = vi.fn(async () => undefined);
+
+    const adopted = await adoptSyncChangeManifestVersion(
+      syncState,
+      { manifestVersion: 9 },
+      false,
+      persist,
+    );
+
+    expect(adopted).toBe(false);
+    expect(syncState.manifestVersion).toBe(3);
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("caps syncState.files to the most recent 50k entries", () => {

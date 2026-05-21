@@ -9,6 +9,7 @@ import {
   type SyncConfig,
 } from "../lib/config.js";
 import {
+  clearAuth,
   clearProfileAuth,
   isExpired,
   loadAuth,
@@ -37,6 +38,7 @@ import {
 import {
   RemoteManifestEnvelopeSchema,
   type RemoteManifestEnvelope,
+  type SyncChangeEvent,
   type SyncState,
 } from "./types.js";
 
@@ -318,6 +320,23 @@ export async function adoptRemoteManifestVersion(
   return true;
 }
 
+export async function adoptSyncChangeManifestVersion(
+  syncState: SyncState,
+  event: Pick<SyncChangeEvent, "manifestVersion">,
+  shouldAdvance: boolean,
+  persist: () => Promise<void>,
+): Promise<boolean> {
+  if (event.manifestVersion === undefined || !shouldAdvance) {
+    return false;
+  }
+  syncState.manifestVersion = Math.max(
+    syncState.manifestVersion,
+    event.manifestVersion,
+  );
+  await persist();
+  return true;
+}
+
 export function capSyncStateFiles(syncState: SyncState): boolean {
   const entries = Object.entries(syncState.files);
   if (entries.length <= SYNC_STATE_FILE_CAP) {
@@ -361,17 +380,48 @@ export interface DaemonAuthResolution {
   source: "profile" | "legacy" | "none";
 }
 
+export interface DaemonAuthFileAccessors {
+  loadAuth: () => Promise<AuthData | null>;
+  clearAuth: () => Promise<void>;
+}
+
+export function createDaemonAuthFileAccessors(
+  resolution: Pick<DaemonAuthResolution, "profileName" | "source">,
+  authConfigDir = configDir,
+): DaemonAuthFileAccessors {
+  if (resolution.source === "legacy") {
+    const legacyAuthPath = join(authConfigDir, "auth.json");
+    return {
+      loadAuth: () => loadAuth(legacyAuthPath),
+      clearAuth: () => clearAuth(legacyAuthPath),
+    };
+  }
+
+  return {
+    loadAuth: () => loadProfileAuth(resolution.profileName, authConfigDir),
+    clearAuth: () => clearProfileAuth(resolution.profileName, authConfigDir),
+  };
+}
+
 export async function resolveDaemonAuth(
   config: Pick<SyncConfig, "profile">,
   authConfigDir = configDir,
 ): Promise<DaemonAuthResolution> {
   let profileName = config.profile;
   if (!profileName) {
-    const profiles = await loadProfiles({
-      configDir: authConfigDir,
-      migrateLegacyFiles: false,
-    });
-    profileName = profiles.active;
+    try {
+      const profiles = await loadProfiles({
+        configDir: authConfigDir,
+        migrateLegacyFiles: false,
+      });
+      profileName = profiles.active;
+    } catch (err) {
+      const legacyAuth = await loadAuth(join(authConfigDir, "auth.json"));
+      if (legacyAuth) {
+        return { auth: legacyAuth, profileName: legacyAuth.handle, source: "legacy" };
+      }
+      throw err;
+    }
   }
   const profileAuth = await loadProfileAuth(profileName, authConfigDir);
   if (profileAuth) {
@@ -401,7 +451,7 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
-  const { auth, profileName } = await resolveDaemonAuth(config);
+  const { auth, profileName, source } = await resolveDaemonAuth(config);
   if (!auth) {
     logger.error(`Not logged in for profile "${profileName}". Run 'matrixos login' first.`);
     process.exit(1);
@@ -563,7 +613,6 @@ export async function startDaemon(): Promise<void> {
       if (event.type !== "sync:change") return;
 
       let shouldAdvanceManifestVersion = true;
-      let processedMatchingFile = false;
 
       for (const file of event.files) {
         // Only react to events for files inside our prefix. A daemon syncing
@@ -571,7 +620,6 @@ export async function startDaemon(): Promise<void> {
         // `notes/foo.md`.
         const localRel = toLocal(file.path);
         if (!localRel) continue;
-        processedMatchingFile = true;
 
         if (file.action !== "delete") {
           try {
@@ -629,34 +677,28 @@ export async function startDaemon(): Promise<void> {
         }
       }
 
-      if (
-        event.manifestVersion !== undefined &&
-        shouldAdvanceManifestVersion &&
-        processedMatchingFile
-      ) {
-        syncState.manifestVersion = Math.max(
-          syncState.manifestVersion,
-          event.manifestVersion,
-        );
-        await saveSyncState(stateFile, syncState);
-      }
+      await adoptSyncChangeManifestVersion(
+        syncState,
+        event,
+        shouldAdvanceManifestVersion,
+        () => saveSyncState(stateFile, syncState),
+      );
     }),
     onConnect: () => logger.info("Connected to gateway"),
     onDisconnect: () => logger.info("Disconnected from gateway"),
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
-  const loadDaemonProfileAuth = () => loadProfileAuth(profileName, configDir);
-  const clearDaemonProfileAuth = () => clearProfileAuth(profileName, configDir);
+  const authFileAccessors = createDaemonAuthFileAccessors({ profileName, source }, configDir);
   const ipcHandler = createIpcHandler({
     config,
     syncState,
     logger: { info: (msg) => logger.info(msg) },
     saveConfig: (next) => saveConfig(next),
     persistPauseState,
-    clearAuth: clearDaemonProfileAuth,
-    loadAuth: loadDaemonProfileAuth,
-    shell: createDaemonShellControlClient({ config, loadAuth: loadDaemonProfileAuth }),
+    clearAuth: authFileAccessors.clearAuth,
+    loadAuth: authFileAccessors.loadAuth,
+    shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });
   const ipcServer = new IpcServer({ socketPath, handler: ipcHandler });

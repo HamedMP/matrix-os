@@ -22,6 +22,14 @@ function captureLogs() {
   return logs;
 }
 
+function captureErrors() {
+  const errors: string[] = [];
+  vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
+    errors.push(String(line));
+  });
+  return errors;
+}
+
 async function pathExists(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);
 }
@@ -159,6 +167,34 @@ describe("profile CLI command", () => {
       },
       { active: "Dev_Profile" },
     ]);
+  });
+
+  it("rejects profile names that collide case-insensitively", async () => {
+    const errors = captureErrors();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "Dev",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+    expect(process.exitCode).toBeUndefined();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "dev",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(errors[0]!)).toMatchObject({
+      error: { code: "profile_name_conflict" },
+    });
   });
 
   it("switches the active profile without changing other profile data", async () => {

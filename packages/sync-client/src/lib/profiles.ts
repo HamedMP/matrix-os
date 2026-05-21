@@ -25,6 +25,22 @@ export interface LoadProfilesOptions {
   migrateLegacyFiles?: boolean;
 }
 
+function profileNameConflictError(): Error & { code: string } {
+  return Object.assign(new Error("profile_name_conflict"), { code: "profile_name_conflict" });
+}
+
+function assertNoCaseCollidingProfileNames(profiles: ProfilesFile): void {
+  const seen = new Map<string, string>();
+  for (const name of Object.keys(profiles.profiles)) {
+    const normalized = name.toLowerCase();
+    const existing = seen.get(normalized);
+    if (existing && existing !== name) {
+      throw profileNameConflictError();
+    }
+    seen.set(normalized, name);
+  }
+}
+
 function defaultConfigDir(): string {
   return join(homedir(), ".matrixos");
 }
@@ -88,6 +104,7 @@ export async function loadProfiles(
   if (options.migrateLegacyFiles !== false) {
     await migrateLegacyProfileFiles(configDir);
   }
+  assertNoCaseCollidingProfileNames(profiles);
   return profiles;
 }
 
@@ -96,6 +113,7 @@ export async function saveProfiles(
   configDir = defaultConfigDir(),
 ): Promise<void> {
   const parsed = ProfilesFileSchema.parse(profiles);
+  assertNoCaseCollidingProfileNames(parsed);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await writeUtf8FileAtomic(join(configDir, "profiles.json"), JSON.stringify(parsed, null, 2), 0o600);
 }
