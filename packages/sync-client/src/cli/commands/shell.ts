@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { loadProfileAuth } from "../../auth/token-store.js";
+import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
@@ -9,7 +9,13 @@ const SHELL_USAGE = "Usage: matrix shell ls|new|attach|rm|tab|pane|layout";
 async function clientFromArgs(args: Record<string, unknown>) {
   const profile = await resolveCliProfile(args);
   const auth = profile.token ? null : await loadProfileAuth(profile.name);
-  const token = profile.token ?? auth?.accessToken;
+  const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
+  if (!token) {
+    throw Object.assign(
+      new Error(`Not logged in for profile "${profile.name}". Run \`matrix login\` first.`),
+      { code: "not_authenticated" },
+    );
+  }
   return createShellClient({ gatewayUrl: profile.gatewayUrl, token });
 }
 
@@ -43,7 +49,11 @@ function writeError(err: unknown, json: boolean): void {
     err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : "request_failed";
-  const output = json ? formatCliError(code) : `Error: Request failed (${code})`;
+  const safeMessage =
+    code === "not_authenticated" && err instanceof Error ? err.message : undefined;
+  const output = json
+    ? formatCliError(code, safeMessage)
+    : safeMessage ?? `Error: Request failed (${code})`;
   console.error(output);
 }
 
@@ -320,7 +330,10 @@ export const shellCommand = defineCommand({
       },
     }),
   },
-  run: () => {
-    console.log(SHELL_USAGE);
+  run: ({ rawArgs }) => {
+    const hasSubCommand = Array.isArray(rawArgs) && rawArgs.some((arg) => !arg.startsWith("-"));
+    if (!hasSubCommand) {
+      console.log(SHELL_USAGE);
+    }
   },
 });
