@@ -82,7 +82,7 @@ const ShellTabCreateArgsSchema = z.object({
 }).strict();
 const ShellPaneSplitArgsSchema = z.object({
   session: ShellSessionNameSchema,
-  direction: z.enum(["right", "down"]),
+  direction: z.enum(["right", "down"]).optional().default("right"),
   cwd: ShellCwdSchema.optional(),
   cmd: ShellCommandSchema.optional(),
 }).strict();

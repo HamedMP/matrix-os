@@ -2,9 +2,16 @@ import type { AuthData } from "../auth/token-store.js";
 import type { SyncConfig } from "../lib/config.js";
 import { createShellClient } from "../cli/shell-client.js";
 
+function invalidRequestError(): Error {
+  return Object.assign(new Error("Request failed"), { code: "invalid_request" });
+}
+
 function parsePaneDirection(value: unknown): "right" | "down" {
+  if (value === undefined) {
+    return "right";
+  }
   if (value !== "right" && value !== "down") {
-    throw new Error("invalid_request");
+    throw invalidRequestError();
   }
   return value;
 }
