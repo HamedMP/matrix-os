@@ -237,16 +237,44 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
   }, [measureTarget]);
 
   // Interactive: listen for canvas actions (pan, zoom in, zoom out)
+  // Uses a threshold + direction lockout to avoid trackpad momentum/bounce
+  // events being registered as the opposite direction.
   useEffect(() => {
     if (!isCanvasStep || actionDone) return;
 
+    // Threshold: ignore tiny momentum events
+    const MIN_DELTA = 6;
+    // After a zoom direction registers, ignore opposite direction for this long
+    const DIRECTION_LOCKOUT_MS = 600;
+
+    let lastZoomDirection: "in" | "out" | null = null;
+    let lastZoomTime = 0;
+
     function onWheel(e: WheelEvent) {
+      const absDelta = Math.abs(e.deltaY);
+      if (absDelta < MIN_DELTA) return;
+
       const isZoom = e.ctrlKey || e.metaKey;
       if (!isZoom) {
         setCanvasActions((p) => (p.panned ? p : { ...p, panned: true }));
-      } else if (e.deltaY < 0) {
+        return;
+      }
+
+      const direction: "in" | "out" = e.deltaY < 0 ? "in" : "out";
+      const now = Date.now();
+
+      // If we just registered a zoom in one direction and this is the opposite,
+      // it's likely trackpad bounce — ignore it
+      if (lastZoomDirection && lastZoomDirection !== direction && now - lastZoomTime < DIRECTION_LOCKOUT_MS) {
+        return;
+      }
+
+      lastZoomDirection = direction;
+      lastZoomTime = now;
+
+      if (direction === "in") {
         setCanvasActions((p) => (p.zoomedIn ? p : { ...p, zoomedIn: true }));
-      } else if (e.deltaY > 0) {
+      } else {
         setCanvasActions((p) => (p.zoomedOut ? p : { ...p, zoomedOut: true }));
       }
     }
