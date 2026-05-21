@@ -1,4 +1,5 @@
-import { sql, type Kysely } from "kysely";
+import { createHash } from "node:crypto";
+import { sql, type Kysely, type Transaction } from "kysely";
 
 const SAFE_SYNC_USER_VALUE = /^[A-Za-z0-9_-]{1,256}$/;
 
@@ -89,6 +90,70 @@ export function assertSafeSyncUserHandle(handle: string): void {
   }
 }
 
+async function reserveTemporarySyncUserHandle(
+  trx: Transaction<SyncDatabase>,
+  input: SyncUserSeed,
+  existingId: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const digest = createHash("sha256")
+      .update(`${input.id}\0${input.handle}\0${existingId}\0${attempt}`)
+      .digest("hex")
+      .slice(0, 12);
+    const prefix = "__sync_seed_";
+    const suffix = `_${digest}`;
+    const maxIdLength = 256 - prefix.length - suffix.length;
+    const handle = `${prefix}${input.id.slice(0, Math.max(1, maxIdLength))}${suffix}`;
+    const existing = await trx
+      .selectFrom("users")
+      .select("id")
+      .where("handle", "=", handle)
+      .executeTakeFirst();
+    if (!existing) {
+      return handle;
+    }
+  }
+
+  throw new Error("Could not reserve temporary sync user handle");
+}
+
+async function migrateSyncUserReferences(
+  trx: Transaction<SyncDatabase>,
+  fromId: string,
+  input: SyncUserSeed,
+): Promise<void> {
+  const temporaryHandle = await reserveTemporarySyncUserHandle(trx, input, fromId);
+
+  await trx
+    .insertInto("users")
+    .values({ id: input.id, handle: temporaryHandle })
+    .execute();
+  await trx
+    .updateTable("sync_manifests")
+    .set({ user_id: input.id })
+    .where("user_id", "=", fromId)
+    .execute();
+  await trx
+    .updateTable("sync_shares")
+    .set({ owner_id: input.id })
+    .where("owner_id", "=", fromId)
+    .execute();
+  await trx
+    .updateTable("sync_shares")
+    .set({ grantee_id: input.id })
+    .where("grantee_id", "=", fromId)
+    .execute();
+  await trx
+    .deleteFrom("users")
+    .where("id", "=", fromId)
+    .execute();
+  await trx
+    .updateTable("users")
+    .set({ handle: input.handle })
+    .where("id", "=", input.id)
+    .execute();
+}
+
 export async function ensureSyncUser(
   db: Kysely<SyncDatabase>,
   input: SyncUserSeed,
@@ -122,11 +187,7 @@ export async function ensureSyncUser(
     }
 
     if (rowByHandle) {
-      await trx
-        .updateTable("users")
-        .set({ id: input.id })
-        .where("handle", "=", input.handle)
-        .execute();
+      await migrateSyncUserReferences(trx, rowByHandle.id, input);
       return;
     }
 

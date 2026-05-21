@@ -27,6 +27,18 @@ describe("createManifestDb", () => {
         total_size INTEGER NOT NULL,
         etag TEXT,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE sync_shares (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        grantee_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'editor', 'admin')),
+        accepted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        UNIQUE (owner_id, path, grantee_id),
+        CHECK (owner_id != grantee_id)
       )
     `);
     db = new Kysely<SyncDatabase>({
@@ -120,6 +132,53 @@ describe("createManifestDb", () => {
 
     const rows = sqlite.prepare("SELECT id, handle FROM users ORDER BY handle").all();
     expect(rows).toEqual([{ id: "dev-user", handle: "developer" }]);
+  });
+
+  it("preserves manifest foreign-key links when reconciling a handle-owned user id", async () => {
+    sqlite.prepare("INSERT INTO users (id, handle) VALUES (?, ?)").run(
+      "legacy-user",
+      "developer",
+    );
+    sqlite.prepare("INSERT INTO users (id, handle) VALUES (?, ?)").run(
+      "collaborator",
+      "collaborator",
+    );
+    sqlite.prepare(`
+      INSERT INTO sync_manifests (user_id, version, file_count, total_size, etag, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run("legacy-user", 7, 3, 300, '"etag-7"', new Date().toISOString());
+    sqlite.prepare(`
+      INSERT INTO sync_shares (id, owner_id, path, grantee_id, role, accepted, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run("share-owned", "legacy-user", "notes", "collaborator", "editor", 1, new Date().toISOString());
+    sqlite.prepare(`
+      INSERT INTO sync_shares (id, owner_id, path, grantee_id, role, accepted, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run("share-granted", "collaborator", "shared", "legacy-user", "viewer", 1, new Date().toISOString());
+
+    await expect(ensureSyncUser(db, { id: "dev-user", handle: "developer" }))
+      .resolves.toBeUndefined();
+
+    const manifest = sqlite.prepare(`
+      SELECT user_id, version, file_count, total_size, etag
+      FROM sync_manifests
+    `).get();
+    expect(manifest).toEqual({
+      user_id: "dev-user",
+      version: 7,
+      file_count: 3,
+      total_size: 300,
+      etag: '"etag-7"',
+    });
+    const shares = sqlite.prepare(`
+      SELECT id, owner_id, grantee_id
+      FROM sync_shares
+      ORDER BY id
+    `).all();
+    expect(shares).toEqual([
+      { id: "share-granted", owner_id: "collaborator", grantee_id: "dev-user" },
+      { id: "share-owned", owner_id: "dev-user", grantee_id: "collaborator" },
+    ]);
   });
 
   it("does not crash when seed id and handle already belong to different rows", async () => {
