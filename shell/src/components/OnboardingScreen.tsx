@@ -81,9 +81,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     setBodyVisible(false);
     setButtonVisible(false);
 
-    const t0 = setTimeout(() => setHeadingVisible(true), 400);
-    const t1 = setTimeout(() => setBodyVisible(true), 1900);
-    const t2 = setTimeout(() => setButtonVisible(true), 2700);
+    const t0 = setTimeout(() => setHeadingVisible(true), 150);
+    const t1 = setTimeout(() => setBodyVisible(true), 1600);
+    const t2 = setTimeout(() => setButtonVisible(true), 2400);
 
     return () => {
       clearTimeout(t0);
@@ -143,8 +143,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
 
   function handleManualNext() {
     setButtonVisible(false);
-    setTimeout(() => setBodyVisible(false), 80);
-    setTimeout(() => setHeadingVisible(false), 160);
+    setTimeout(() => setBodyVisible(false), 60);
+    setTimeout(() => setHeadingVisible(false), 120);
 
     setTimeout(() => {
       if (manualStep < MANUAL_STEPS.length - 1) {
@@ -155,7 +155,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
         setManualMode(false);
         ob.start(false);
       }
-    }, 800);
+    }, 500);
   }
 
   const handleVoiceMode = useCallback(async () => {
