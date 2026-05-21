@@ -83,30 +83,36 @@
   }
 }
 
-/* Luxurious title ascension — slow, golden glow intensifies before lift */
-@keyframes onboard-ascend-lux {
+/* iOS-style "page rise" — used by Apple, Linear, Vercel for major route changes.
+   The new screen literally rises from below, revealing itself like a modal that fills the viewport. */
+@keyframes onboard-panel-rise {
   0% {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-    filter: brightness(1);
-    letter-spacing: -0.02em;
+    transform: translateY(100%);
+    border-top-left-radius: 32px;
+    border-top-right-radius: 32px;
   }
-  25% {
-    transform: translateY(-4px) scale(1.02);
-    filter: brightness(1.15);
-    letter-spacing: 0;
-  }
-  55% {
-    transform: translateY(-20px) scale(1.06);
-    filter: brightness(1.5);
-    opacity: 1;
-    letter-spacing: 0.02em;
+  85% {
+    border-top-left-radius: 32px;
+    border-top-right-radius: 32px;
   }
   100% {
-    transform: translateY(-160px) scale(1.2);
-    filter: brightness(2.5);
+    transform: translateY(0);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+}
+
+/* Landing screen exits as the panel rises — scales down slightly and dims */
+@keyframes onboard-landing-exit {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  100% {
     opacity: 0;
-    letter-spacing: 0.08em;
+    transform: scale(0.96);
+    filter: brightness(0.7);
   }
 }
 

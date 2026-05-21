@@ -126,18 +126,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     }, 600);
   }
 
-  // Luxurious manual mode entry: longer, slower phases for a sumptuous feel
+  // iOS-style "page rise" transition: panel slides up from below, revealing the walkthrough
   function handleStartManual() {
     setManualMode(true);
-    setPhase("ascending");
-    // Hold the ascension longer — the title glows, lifts gracefully
+    setPhase("ascending"); // landing exits, panel rises (1.1s total)
     setTimeout(() => {
-      setPhase("whiteout");
-      // Linger in pure white before revealing
-      setTimeout(() => {
-        setPhase("revealing");
-      }, 2400);
-    }, 2800);
+      setPhase("revealing"); // panel in place, walkthrough content reveals
+    }, 1100);
   }
 
   function handleManualNext() {
@@ -205,11 +200,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           style={{
             position: "relative",
             zIndex: 2,
-            // Subtle camera-tilt-up: the whole page scales slightly as you ascend into the light
-            transformOrigin: "center 40%",
-            transition: "transform 3.5s cubic-bezier(0.22, 1, 0.36, 1), filter 3.5s cubic-bezier(0.22, 1, 0.36, 1)",
-            transform: (phase === "ascending" || phase === "whiteout") ? "scale(1.04) translateY(-8px)" : "scale(1) translateY(0)",
-            filter: (phase === "ascending" || phase === "whiteout") ? "brightness(1.08)" : "brightness(1)",
+            // Landing exits gracefully as the panel rises over it
+            ...(manualMode && (phase === "ascending" || phase === "whiteout")
+              ? { animation: "onboard-landing-exit 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards" }
+              : {}),
           }}
         >
           {/* Title — "Enter Matrix OS" with gilded shimmer */}
@@ -221,15 +215,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               fontWeight: 300,
               letterSpacing: "-0.02em",
               lineHeight: 1.1,
-              ...(phase === "ascending" || phase === "whiteout"
-                ? {
-                    animation: "onboard-ascend-lux 4s cubic-bezier(0.22, 1, 0.36, 1) forwards",
-                  }
-                : {
-                    transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                    transform: isPreReveal ? "translateY(-24px) scale(1.06)" : "translateY(0) scale(1)",
-                    opacity: phase === "black" ? 0 : 1,
-                  }),
+              transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
+              transform: isPreReveal ? "translateY(-24px) scale(1.06)" : "translateY(0) scale(1)",
+              opacity: phase === "black" ? 0 : 1,
             }}
           >
             <span
@@ -360,24 +348,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           </button>
         </div>
 
-        {/* Brightening overlay — full-screen radial gradient, no visible edges */}
-        {(phase === "ascending" || phase === "whiteout") && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 1,
-              pointerEvents: "none",
-              // Soft radial that brightens the entire page from center outward,
-              // with edges that blend into the warm cream background so no
-              // discrete circle is visible.
-              background:
-                "radial-gradient(ellipse at center, rgba(255,253,240,0.95) 0%, rgba(252,246,232,0.85) 35%, rgba(247,241,231,0.6) 60%, rgba(247,241,231,0) 100%)",
-              animation: "onboard-brighten 3s cubic-bezier(0.22, 1, 0.36, 1) forwards",
-            }}
-          />
-        )}
-
         {/* Dimming overlay — for voice mode */}
         {!manualMode && (
           <div
@@ -391,15 +361,17 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
           />
         )}
 
-        {/* White wash — for manual mode heavenly transition */}
+        {/* Manual mode panel — slides up from below, covering landing.
+            Walkthrough content lives inside the next layer. */}
         {manualMode && (
           <div
-            className="absolute inset-0 pointer-events-none"
             style={{
-              background: "linear-gradient(180deg, #FFFDF6 0%, #FFF9EC 50%, #FFFDF6 100%)",
-              opacity: phase === "whiteout" ? 1 : 0,
-              transition: `opacity ${phase === "ascending" ? "0s" : "1.4s"} cubic-bezier(0.4, 0, 0.2, 1)`,
+              position: "absolute",
+              inset: 0,
+              backgroundColor: "#FFFDF6",
+              boxShadow: "0 -24px 64px rgba(0, 0, 0, 0.18)",
               zIndex: 3,
+              animation: "onboard-panel-rise 1.1s cubic-bezier(0.22, 1, 0.36, 1) forwards",
             }}
           />
         )}
