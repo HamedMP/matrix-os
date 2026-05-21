@@ -5,6 +5,7 @@ import { formatCliError, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
 
 const SHELL_USAGE = "Usage: matrix shell ls|new|attach|rm|tab|pane|layout";
+const SHELL_SUBCOMMANDS = new Set(["ls", "new", "attach", "rm", "tab", "pane", "layout"]);
 
 async function clientFromArgs(args: Record<string, unknown>) {
   const profile = await resolveCliProfile(args);
@@ -331,7 +332,8 @@ export const shellCommand = defineCommand({
     }),
   },
   run: ({ rawArgs }) => {
-    const hasSubCommand = Array.isArray(rawArgs) && rawArgs.some((arg) => !arg.startsWith("-"));
+    const hasSubCommand =
+      Array.isArray(rawArgs) && rawArgs.some((arg) => SHELL_SUBCOMMANDS.has(arg));
     if (!hasSubCommand) {
       console.log(SHELL_USAGE);
     }

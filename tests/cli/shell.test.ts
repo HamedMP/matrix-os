@@ -57,6 +57,20 @@ describe("shell CLI command", () => {
     expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
   });
 
+  it("prints usage for the bare shell command with valued root flags", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.run?.({
+      rawArgs: ["--profile", "local", "--gateway", "https://gateway.example", "--json"],
+      args: {},
+    } as never);
+
+    expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
+  });
+
   it("does not print usage after subcommands run", async () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
