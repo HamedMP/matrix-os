@@ -8,6 +8,9 @@ import { stepsForGoals } from "../../packages/gateway/src/onboarding/readiness-s
 import { mapActivationError, safeClientMessage } from "../../packages/gateway/src/onboarding/activation-errors.js";
 import { ReadinessStatusCache } from "../../packages/gateway/src/onboarding/readiness-cache.js";
 import { createAgentActionAuditService } from "../../packages/gateway/src/onboarding/agent-action-audit.js";
+import { createAdminControlService } from "../../packages/gateway/src/onboarding/admin-control-service.js";
+import { createAgentCredentialStatusService } from "../../packages/gateway/src/onboarding/agent-credential-status.js";
+import { createIntegrationCapabilityService } from "../../packages/gateway/src/onboarding/integration-capabilities.js";
 import { createTestReadinessService, testPrincipal } from "../helpers/activation-readiness.js";
 
 describe("activation readiness contracts", () => {
@@ -166,5 +169,28 @@ describe("activation readiness contracts", () => {
     });
     expect(action.summary).toBe("Agent action completed");
     expect(JSON.stringify(action)).not.toMatch(/sk_live|\/home|token/i);
+  });
+
+  it("derives admin control surface state from agents, integrations, and readiness", async () => {
+    const agentCredentials = createAgentCredentialStatusService();
+    const integrations = createIntegrationCapabilityService({ connectedCapabilityIds: ["calendar.create_event"] });
+    await integrations.setApproval(testPrincipal.userId, "calendar.create_event", "hermes", true);
+    const { service: readiness } = createTestReadinessService(undefined, {
+      agentCredentialService: agentCredentials,
+      integrationCapabilityService: integrations,
+    });
+    const admin = createAdminControlService({ agentCredentials, integrations, readiness });
+
+    const surface = await admin.getSurface(testPrincipal.userId);
+
+    expect(surface.providers.map((provider) => provider.id)).toEqual(expect.arrayContaining(["hermes", "claude", "codex"]));
+    expect(surface.settings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "agent-routing", status: "saved" }),
+      expect.objectContaining({ id: "integration-approvals", status: "saved" }),
+    ]));
+    expect(surface.readiness.overallStatus).toBe("degraded");
+    expect(surface.activity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "readiness", summary: "Readiness needs review" }),
+    ]));
   });
 });

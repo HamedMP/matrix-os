@@ -15,6 +15,7 @@ import { CodingSetupPanel } from "./onboarding/CodingSetupPanel";
 import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
 import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
+import { AdminControlPanel, type AdminControlSurface } from "./onboarding/AdminControlPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -43,6 +44,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [continueExiting, setContinueExiting] = useState(false);
   const [entranceStage, setEntranceStage] = useState<"hidden" | "center" | "settled">("hidden");
   const [logoMediaAvailable, setLogoMediaAvailable] = useState(true);
+  const [adminSurface, setAdminSurface] = useState<AdminControlSurface | null>(null);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -105,6 +107,29 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       }
       ambientRef.current?.pause();
       audioCtxRef.current?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/admin/control-surface", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("admin control request failed");
+        return await res.json() as AdminControlSurface;
+      })
+      .then((surface) => {
+        if (!cancelled) setAdminSurface(surface);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.warn("[onboarding] admin control load failed:", err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -262,6 +287,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                   onApprove={integrationCapabilities.approveForHermes}
                 />
               )}
+
+              <AdminControlPanel surface={adminSurface} />
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button

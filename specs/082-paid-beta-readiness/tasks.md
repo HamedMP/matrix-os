@@ -170,18 +170,18 @@
 
 ### Tests First
 
-- [ ] T063 [P] [ADMIN] Write failing admin control contract tests in `tests/gateway/admin-control-routes.test.ts`
-- [ ] T064 [P] [ADMIN] Write failing admin control surface state tests in `tests/gateway/onboarding-activation.test.ts`
-- [ ] T065 [P] [ADMIN] Write failing admin control e2e visual path in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T063 [P] [ADMIN] Write failing admin control contract tests in `tests/gateway/admin-control-routes.test.ts`
+- [X] T064 [P] [ADMIN] Write failing admin control surface state tests in `tests/gateway/onboarding-activation.test.ts`
+- [X] T065 [P] [ADMIN] Write failing admin control e2e visual path in `tests/e2e/onboarding-activation.spec.ts`
 
 ### Implementation
 
-- [ ] T066 [ADMIN] Implement admin control surface summaries in `packages/gateway/src/onboarding/admin-control-service.ts`
-- [ ] T067 [ADMIN] Add admin control routes for provider cards, setup sessions, settings, automations, activity, and readiness in `packages/gateway/src/onboarding/admin-control-routes.ts`
-- [ ] T068 [ADMIN] Wire admin control routes in `packages/gateway/src/server.ts`
-- [ ] T069 [P] [ADMIN] Create Finna-inspired provider/model cards in `shell/src/components/onboarding/AdminControlPanel.tsx`
-- [ ] T070 [P] [ADMIN] Create setup wizard resume/reconnect states in `shell/src/components/onboarding/AdminSetupWizard.tsx`
-- [ ] T071 [ADMIN] Wire admin control panel into onboarding and settings entry points in `shell/src/components/OnboardingScreen.tsx`
+- [X] T066 [ADMIN] Implement admin control surface summaries in `packages/gateway/src/onboarding/admin-control-service.ts`
+- [X] T067 [ADMIN] Add admin control routes for provider cards, setup sessions, settings, automations, activity, and readiness in `packages/gateway/src/onboarding/admin-control-routes.ts`
+- [X] T068 [ADMIN] Wire admin control routes in `packages/gateway/src/server.ts`
+- [X] T069 [P] [ADMIN] Create Finna-inspired provider/model cards in `shell/src/components/onboarding/AdminControlPanel.tsx`
+- [X] T070 [P] [ADMIN] Create setup wizard resume/reconnect states in `shell/src/components/onboarding/AdminSetupWizard.tsx`
+- [X] T071 [ADMIN] Wire admin control panel into onboarding and settings entry points in `shell/src/components/OnboardingScreen.tsx`
 
 **Checkpoint**: Admin/control setup is inspectable, resumable, and visually aligned with Matrix branding.
 

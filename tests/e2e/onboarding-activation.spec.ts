@@ -248,4 +248,62 @@ test.describe("onboarding activation", () => {
     await expect(page.getByText("Email summaries")).toBeVisible();
     await expect(page.getByRole("button", { name: /Approve Hermes/i })).toBeVisible();
   });
+
+  test("shows the Matrix admin control surface during onboarding", async ({ page }) => {
+    await page.route("**/api/onboarding/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          overallStatus: "degraded",
+          goals: [],
+          gates: [],
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/agents/credentials/status", async (route) => {
+      await route.fulfill({
+        json: {
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          routingExplanation: "Hermes remains the Matrix system agent.",
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/integrations/capabilities", async (route) => {
+      await route.fulfill({ json: { capabilities: [] } });
+    });
+    await page.route("**/api/admin/control-surface", async (route) => {
+      await route.fulfill({
+        json: {
+          sections: ["models", "agents", "integrations", "settings", "automations", "activity", "readiness"],
+          providers: [
+            { id: "hermes", label: "Hermes", status: "available", mode: "matrix_system_agent", nextAction: null },
+            { id: "claude", label: "Claude", status: "missing", mode: "bring_your_own", nextAction: "Connect Claude" },
+            { id: "codex", label: "Codex", status: "missing", mode: "bring_your_own", nextAction: "Connect Codex" },
+          ],
+          settings: [
+            { id: "agent-routing", label: "Agent routing", status: "saved", updatedAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          automationSummary: { active: 2, needsApproval: 1, lastActivityAt: "2026-05-23T00:00:00.000Z" },
+          integrationSummary: { connected: 1, approved: 1, needsConnection: 2 },
+          readiness: { overallStatus: "degraded", blocked: 0, failed: 1, ready: 3 },
+          activity: [
+            { id: "activity.readiness", kind: "readiness", summary: "Readiness needs review", createdAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          setupSession: { id: "setup.agent.claude", target: "agent:claude", status: "resumable", title: "Connect Claude", updatedAt: "2026-05-23T00:00:00.000Z" },
+        },
+      });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByText("Matrix control")).toBeVisible();
+    await expect(page.getByText("Hermes")).toBeVisible();
+    await expect(page.getByText("Automations")).toBeVisible();
+    await expect(page.getByText("Resume setup")).toBeVisible();
+    await expect(page.getByText("Readiness needs review")).toBeVisible();
+  });
 });
