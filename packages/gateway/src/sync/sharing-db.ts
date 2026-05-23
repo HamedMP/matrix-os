@@ -180,10 +180,6 @@ export async function ensureSyncUser(
       return;
     }
 
-    if (!rowById && rowByHandle?.id === input.id) {
-      return;
-    }
-
     if (rowById) {
       await trx
         .updateTable("users")

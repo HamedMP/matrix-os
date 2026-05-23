@@ -118,19 +118,6 @@ export async function saveProfiles(
   await writeUtf8FileAtomic(join(configDir, "profiles.json"), JSON.stringify(parsed, null, 2), 0o600);
 }
 
-export async function setActiveProfile(
-  name: string,
-  configDir = defaultConfigDir(),
-): Promise<ProfilesFile> {
-  const profiles = await loadProfiles({ configDir });
-  if (!profiles.profiles[name]) {
-    throw new Error("profile_not_found");
-  }
-  const next = { ...profiles, active: name };
-  await saveProfiles(next, configDir);
-  return next;
-}
-
 async function migrateLegacyProfileFiles(configDir: string): Promise<void> {
   await moveIfPresent(join(configDir, "auth.json"), profileAuthPath("cloud", configDir));
   await moveIfPresent(join(configDir, "config.json"), profileConfigPath("cloud", configDir));

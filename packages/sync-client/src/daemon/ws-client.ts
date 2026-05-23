@@ -28,6 +28,9 @@ const SyncChangeFileSchema = z.object({
   action: z.enum(["add", "create", "update", "delete"]),
 });
 
+// Batched and legacy sync:change messages share the same `type`, so
+// discriminatedUnion cannot distinguish them while we still normalize old
+// single-file gateway events.
 const SyncEventMessageSchema = z.union([
   z.object({
     type: z.literal("sync:change"),
