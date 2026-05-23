@@ -219,17 +219,17 @@
 
 ### Tests First
 
-- [ ] T080 [P] [US6] Write failing draft action approval tests in `tests/gateway/support-growth-readiness.test.ts`
-- [ ] T081 [P] [US6] Write failing support/growth e2e path in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T080 [P] [US6] Write failing draft action approval tests in `tests/gateway/support-growth-readiness.test.ts`
+- [X] T081 [P] [US6] Write failing support/growth e2e path in `tests/e2e/onboarding-activation.spec.ts`
 
 ### Implementation
 
-- [ ] T082 [US6] Implement draft action readiness and approval service in `packages/gateway/src/onboarding/draft-action-readiness.ts`
-- [ ] T083 [US6] Add draft action routes in `packages/gateway/src/onboarding/draft-action-routes.ts`
-- [ ] T084 [US6] Wire draft action routes in `packages/gateway/src/server.ts`
-- [ ] T085 [P] [US6] Create support/growth onboarding panel in `shell/src/components/onboarding/SupportGrowthPanel.tsx`
-- [ ] T086 [US6] Wire support/growth panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
-- [ ] T087 [US6] Add uncertainty and sensitive-claim display states in `shell/src/components/onboarding/SupportGrowthPanel.tsx`
+- [X] T082 [US6] Implement draft action readiness and approval service in `packages/gateway/src/onboarding/draft-action-readiness.ts`
+- [X] T083 [US6] Add draft action routes in `packages/gateway/src/onboarding/draft-action-routes.ts`
+- [X] T084 [US6] Wire draft action routes in `packages/gateway/src/server.ts`
+- [X] T085 [P] [US6] Create support/growth onboarding panel in `shell/src/components/onboarding/SupportGrowthPanel.tsx`
+- [X] T086 [US6] Wire support/growth panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
+- [X] T087 [US6] Add uncertainty and sensitive-claim display states in `shell/src/components/onboarding/SupportGrowthPanel.tsx`
 
 **Checkpoint**: US6 drafts remain review-first and safe.
 

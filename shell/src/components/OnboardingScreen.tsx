@@ -17,6 +17,7 @@ import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
 import { AdminControlPanel, type AdminControlSurface } from "./onboarding/AdminControlPanel";
 import { CompanyBrainPanel, type CompanyBrainReadiness } from "./onboarding/CompanyBrainPanel";
+import { SupportGrowthPanel, type DraftActionReadiness } from "./onboarding/SupportGrowthPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -47,6 +48,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [logoMediaAvailable, setLogoMediaAvailable] = useState(true);
   const [adminSurface, setAdminSurface] = useState<AdminControlSurface | null>(null);
   const [companyBrain, setCompanyBrain] = useState<CompanyBrainReadiness | null>(null);
+  const [supportGrowth, setSupportGrowth] = useState<DraftActionReadiness | null>(null);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -163,6 +165,57 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         if (adminActionControllerRef.current === controller) adminActionControllerRef.current = null;
       });
   }, [refreshAdminSurface]);
+
+  const refreshSupportGrowth = useCallback((signal?: AbortSignal) => {
+    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+    void fetch("/api/support-growth/readiness", {
+      headers: { Accept: "application/json" },
+      signal: requestSignal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("support growth request failed");
+        return await res.json() as DraftActionReadiness;
+      })
+      .then(setSupportGrowth)
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[onboarding] support growth load failed:", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    refreshSupportGrowth(controller.signal);
+    return () => controller.abort();
+  }, [refreshSupportGrowth]);
+
+  const approveDraft = useCallback((draftId: string) => {
+    supportActionControllerRef.current?.abort();
+    const controller = new AbortController();
+    supportActionControllerRef.current = controller;
+    const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+    void fetch(`/api/support-growth/drafts/${encodeURIComponent(draftId)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ approved: true }),
+      signal: requestSignal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          refreshSupportGrowth(controller.signal);
+          throw new Error("draft approval failed");
+        }
+        return await res.json();
+      })
+      .then(() => refreshSupportGrowth(controller.signal))
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[onboarding] draft approval failed:", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (supportActionControllerRef.current === controller) supportActionControllerRef.current = null;
+      });
+  }, [refreshSupportGrowth]);
 
   useEffect(() => {
     let cancelled = false;
@@ -346,6 +399,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               <AdminControlPanel surface={adminSurface} onResumeSetup={resumeAdminSetup} />
 
               {companyBrainSelected && <CompanyBrainPanel readiness={companyBrain} />}
+
+              {supportGrowth && supportGrowth.drafts.length > 0 && (
+                <SupportGrowthPanel readiness={supportGrowth} onApprove={approveDraft} />
+              )}
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button

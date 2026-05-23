@@ -91,6 +91,8 @@ import { createAdminControlService } from "./onboarding/admin-control-service.js
 import { createAdminControlRoutes } from "./onboarding/admin-control-routes.js";
 import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
+import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
+import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -539,6 +541,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const agentActionAuditService = createAgentActionAuditService();
   const companyBrainService = createCompanyBrainReadinessService();
+  const draftActionService = createDraftActionReadinessService();
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
@@ -1456,6 +1459,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
+  app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,

@@ -12,7 +12,7 @@ export function BrandFrame({ children, mediaAvailable = true }: BrandFrameProps)
   return (
     <section
       data-onboarding-brand={MATRIX_ONBOARDING_BRAND_VERSION}
-      className="relative min-h-full overflow-hidden bg-[#f4f0e8] text-[#111612]"
+      className="relative min-h-full overflow-x-hidden overflow-y-auto bg-[#f4f0e8] text-[#111612]"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(154,168,137,0.22),transparent_28%),linear-gradient(145deg,rgba(231,224,212,0.96),rgba(244,240,232,0.9)_48%,rgba(23,40,31,0.12))]" />
       <div className="absolute inset-x-0 top-0 h-px bg-[#17281f]/10" />
@@ -26,15 +26,15 @@ export function BrandFrame({ children, mediaAvailable = true }: BrandFrameProps)
           </div>
         </header>
 
-        <div className="grid flex-1 items-center gap-8 py-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(440px,1.05fr)]">
+        <div className="grid flex-1 items-start gap-5 py-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(440px,1.05fr)] lg:items-center lg:gap-8 lg:py-8">
           <div className="max-w-2xl">
             <p className="mb-4 text-xs font-medium uppercase tracking-[0.22em] text-[#d6653b]">
               Guided activation
             </p>
-            <h1 className="text-balance text-4xl font-medium leading-[1.05] text-[#111612] sm:text-5xl lg:text-6xl">
+            <h1 className="text-balance text-3xl font-medium leading-[1.05] text-[#111612] sm:text-5xl lg:text-6xl">
               Set up Matrix around the work you want done first.
             </h1>
-            <p className="mt-5 max-w-xl text-base leading-7 text-[#17281f]/70">
+            <p className="mt-4 max-w-xl text-sm leading-6 text-[#17281f]/70 sm:mt-5 sm:text-base sm:leading-7">
               Connect only the services that matter, learn what Matrix can do, and reach a clear ready-to-work state.
             </p>
             {!mediaAvailable && (
@@ -44,7 +44,7 @@ export function BrandFrame({ children, mediaAvailable = true }: BrandFrameProps)
             )}
           </div>
 
-          <div className="relative rounded-lg border border-[#17281f]/12 bg-white/58 p-4 shadow-[0_24px_80px_rgba(17,22,18,0.12)] backdrop-blur-xl sm:p-5">
+          <div className="relative overflow-hidden rounded-lg border border-[#17281f]/12 bg-white/58 p-4 shadow-[0_24px_80px_rgba(17,22,18,0.12)] backdrop-blur-xl sm:p-5">
             {children}
           </div>
         </div>
@@ -52,4 +52,3 @@ export function BrandFrame({ children, mediaAvailable = true }: BrandFrameProps)
     </section>
   );
 }
-
