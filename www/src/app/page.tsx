@@ -41,6 +41,24 @@ const c = {
   subtle: "#7A7768",
 } as const;
 
+const navLinks = [
+  { label: "about", href: "#about" },
+  { label: "features", href: "#features" },
+  { label: "preview", href: "#preview" },
+  { label: "docs", href: "/docs" },
+  { label: "technical", href: "/technical" },
+  { label: "github", href: "https://github.com/HamedMP/matrix-os" },
+] as const;
+
+const communityLinks = [
+  { label: "Docs", href: "/docs" },
+  { label: "Whitepaper", href: "/whitepaper" },
+  { label: "Join Discord", href: "https://discord.gg/cSBBQWtPwV" },
+  { label: "LinkedIn", href: "https://www.linkedin.com/company/matrix-os" },
+  { label: "X", href: "https://x.com/joinmatrixos" },
+  { label: "GitHub", href: "https://github.com/HamedMP/matrix-os" },
+] as const;
+
 function Logo({ className = "", style = {} }: { className?: string; style?: React.CSSProperties }) {
   return (
     <svg viewBox="0 0 503 660" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} style={style}>
@@ -110,14 +128,16 @@ export default function LandingPage() {
 
       <div className="nav-island">
         <div className="nav-island-inner">
-          <a href="/" className="flex items-center gap-[0.3em] shrink-0" style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>
-            <Logo className="h-[1.1rem] w-auto" style={{ color: c.forest }} />
-            <span className="text-[13px] font-bold tracking-tight" style={{ color: c.forest }}>Matrix OS</span>
+          <a href="/" className="flex items-center gap-2 shrink-0" style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>
+            <Logo className="h-[1.35rem] w-auto" style={{ color: c.forest }} />
+            <span className="text-[13px] font-bold tracking-tight" style={{ color: c.forest }}>matrix os</span>
           </a>
-          <nav className="hidden md:flex items-center gap-6">
-            <a href="#about" className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>about</a>
-            <a href="#features" className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>features</a>
-            <a href="#preview" className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>preview</a>
+          <nav className="hidden lg:flex items-center gap-5">
+            {navLinks.map((link) => (
+              <a key={link.href} href={link.href} className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>
+                {link.label}
+              </a>
+            ))}
           </nav>
           <SignedOut>
             <a href="https://app.matrix-os.com" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
@@ -134,10 +154,10 @@ export default function LandingPage() {
         </div>
       </div>
 
-      <section className="relative h-screen overflow-hidden" style={{ backgroundColor: c.pageBg }}>
-        <div className="relative h-full mx-auto max-w-[1200px] px-8 flex items-center">
+      <section className="relative min-h-[92svh] overflow-hidden pt-32 pb-20 md:pt-24 md:pb-24" style={{ backgroundColor: c.pageBg }}>
+        <div className="relative min-h-[calc(92svh-13rem)] mx-auto max-w-[1200px] px-6 md:px-8 grid items-center gap-10 md:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)] md:gap-14">
           <div className="relative z-10 max-w-md">
-            <h1 className="text-[clamp(2.5rem,5vw,3.5rem)] leading-[1.1] mb-6" style={{ color: c.forest }}>
+            <h1 className="text-[2.65rem] md:text-[3.25rem] leading-[1.1] mb-6" style={{ color: c.forest }}>
               Your computer, in the cloud.
             </h1>
             <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
@@ -155,9 +175,32 @@ export default function LandingPage() {
                 Open Matrix OS <ArrowRightIcon className="size-3.5" />
               </a>
             </SignedIn>
+            <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
+              {communityLinks.slice(0, 5).map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  target={link.href.startsWith("http") ? "_blank" : undefined}
+                  rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                  className="nav-link text-[11px] tracking-[0.16em] uppercase"
+                  style={{ color: c.subtle }}
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
           </div>
-          <div className="absolute right-0 top-0 h-full flex items-center justify-end pointer-events-none" style={{ width: "55%" }}>
-            <video autoPlay loop muted playsInline preload="auto" controls={false} src="/hero-loop.mp4" className="max-w-none" style={{ height: "60%", width: "auto" }} />
+          <div className="relative z-0 w-full overflow-hidden rounded-[24px] border md:rounded-[28px]" style={{ borderColor: c.border, backgroundColor: "rgba(67,78,63,0.05)", boxShadow: "0 24px 80px rgba(50,53,46,0.12)" }}>
+            <video
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              controls={false}
+              src="/hero-loop.mp4"
+              className="block w-full aspect-[16/11] md:aspect-[16/10] object-cover object-center"
+            />
           </div>
         </div>
       </section>
@@ -368,6 +411,20 @@ export default function LandingPage() {
       </section>
 
       <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
+        <div className="mx-auto max-w-[900px] px-8">
+          <p className="text-[11px] tracking-[0.3em] uppercase mb-6 text-center" style={{ color: c.subtle }}>FAQ</p>
+          <div className="grid gap-4 md:grid-cols-2">
+            {faqItems.map((item) => (
+              <div key={item.q} className="rounded-[16px] p-6" style={{ backgroundColor: "rgba(67,78,63,0.05)", border: `1px solid ${c.border}` }}>
+                <h3 className="text-[14px] font-semibold mb-3" style={{ color: c.forest }}>{item.q}</h3>
+                <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.a}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8 text-center">
           <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6" style={{ color: c.forest }}>
             Ready to begin?
@@ -398,10 +455,20 @@ export default function LandingPage() {
               <span className="text-[11px] font-semibold tracking-[0.25em] uppercase"
                 style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>Matrix OS</span>
             </div>
-            <div className="flex items-center gap-8">
-              <a href="#about" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>About</a>
-              <a href="#features" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>Features</a>
-              <a href="https://app.matrix-os.com" className="text-[11px] tracking-[0.15em] uppercase" style={{ color: c.mutedFg }}>Sign In</a>
+            <div className="flex flex-wrap items-center gap-x-7 gap-y-4">
+              {communityLinks.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  target={link.href.startsWith("http") ? "_blank" : undefined}
+                  rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                  className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70"
+                  style={{ color: c.mutedFg }}
+                >
+                  {link.label}
+                </a>
+              ))}
+              <a href="https://app.matrix-os.com" className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70" style={{ color: c.mutedFg }}>Sign In</a>
             </div>
           </div>
         </div>
