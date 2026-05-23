@@ -15,6 +15,7 @@ import {
 import { ReadinessStatusCache } from "./readiness-cache.js";
 import { ActivationRouteError } from "./activation-errors.js";
 import type { CodingSetupProvider, CodingSetupStatus } from "./coding-setup.js";
+import type { AgentCredentialStatusService } from "./agent-credential-status.js";
 
 const GOALS: Record<OnboardingGoalId, Omit<OnboardingGoalSummary, "selected">> = {
   coding: {
@@ -86,6 +87,7 @@ const BASE_GATES: ReadinessGateSummary[] = [
   { id: "terminal.ready", category: "coding", criticality: "goal_required", status: "unknown", message: "Terminal readiness has not been checked", remediation: "Open terminal for the selected project", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "skills.ready", category: "agent", criticality: "release_critical", status: "unknown", message: "Skill readiness has not been checked", remediation: "Verify Matrix skills are available", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "hermes.available", category: "agent", criticality: "release_critical", status: "pass", message: "Hermes is available as the Matrix system agent", remediation: null, owner: "matrix", lastCheckedAt: null, evidence: [] },
+  { id: "hermes.continuity", category: "agent", criticality: "release_critical", status: "pass", message: "Hermes remains available as the Matrix system agent", remediation: null, owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "visual.qa", category: "ux", criticality: "release_critical", status: "unknown", message: "Onboarding visual QA has not been checked", remediation: "Run desktop and mobile visual QA", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "github.connected", category: "integration", criticality: "goal_required", status: "unknown", message: "GitHub is not connected yet", remediation: "Connect GitHub to unlock coding workflows", owner: "user", lastCheckedAt: null, evidence: [] },
   { id: "project.selected", category: "coding", criticality: "goal_required", status: "unknown", message: "No coding project is selected", remediation: "Choose a repository or project", owner: "user", lastCheckedAt: null, evidence: [] },
@@ -138,6 +140,7 @@ export function createReadinessService(options: {
   repository: ReadinessRepository;
   cache?: ReadinessStatusCache<ReadinessResponse>;
   codingSetup?: CodingSetupProvider;
+  agentCredentials?: AgentCredentialStatusService;
   now?: () => Date;
 }): ReadinessService {
   const now = options.now ?? (() => new Date());
@@ -221,6 +224,7 @@ export function createReadinessService(options: {
     const codingSetup = record.selectedGoalIds.includes("coding") && options.codingSetup
       ? await options.codingSetup.getCodingSetup(ownerId)
       : null;
+    const credentialStatus = options.agentCredentials ? await options.agentCredentials.getStatus(ownerId) : null;
     const gates = deriveGates(record, codingSetup);
     const goals = Object.values(GOALS).map((goal) => ({
       ...goal,
@@ -231,8 +235,10 @@ export function createReadinessService(options: {
       goals,
       gates,
       systemAgent: "hermes",
-      activeAgents: codingSetup?.activeAgents ?? ["hermes"],
-      agents: DEFAULT_AGENTS.map((agent) => ({ ...agent })),
+      activeAgents: credentialStatus
+        ? Array.from(new Set([...(codingSetup?.activeAgents ?? []), ...credentialStatus.activeAgents]))
+        : codingSetup?.activeAgents ?? ["hermes"],
+      agents: credentialStatus?.agents ?? DEFAULT_AGENTS.map((agent) => ({ ...agent })),
     };
     cache.set(ownerId, response);
     return response;

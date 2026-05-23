@@ -80,6 +80,8 @@ import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.j
 import { createReadinessService } from "./onboarding/readiness-service.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
 import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
+import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
+import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -442,6 +444,7 @@ export async function createGateway(config: GatewayConfig) {
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
+  const agentCredentialService = createAgentCredentialStatusService();
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
@@ -454,6 +457,7 @@ export async function createGateway(config: GatewayConfig) {
   };
   const readinessService = createReadinessService({
     repository: readinessRepository,
+    agentCredentials: agentCredentialService,
     codingSetup: {
       getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
     },
@@ -1348,6 +1352,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
+  app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,

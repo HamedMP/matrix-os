@@ -144,4 +144,53 @@ test.describe("onboarding activation", () => {
     await expect(page.getByText("Choose task source")).toBeVisible();
     await expect(page.getByRole("button", { name: /Open terminal context/i })).toBeVisible();
   });
+
+  test("explains no-Claude onboarding with Hermes still active", async ({ page }) => {
+    await page.route("**/api/onboarding/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          overallStatus: "degraded",
+          goals: [
+            { id: "app_building", selected: true, label: "Build apps", description: "Build Matrix apps" },
+          ],
+          gates: [
+            {
+              id: "hermes.continuity",
+              category: "agent",
+              criticality: "release_critical",
+              status: "pass",
+              message: "Hermes remains available as the Matrix system agent",
+              remediation: null,
+              owner: "matrix",
+              lastCheckedAt: "2026-05-23T00:00:00.000Z",
+            },
+          ],
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/agents/credentials/status", async (route) => {
+      await route.fulfill({
+        json: {
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          routingExplanation: "Hermes remains the Matrix system agent even when Claude and Codex are not connected.",
+          agents: [
+            { agent: "claude", status: "missing", coordinationRole: "core_agent", workflows: ["core_agent"], degradedWorkflows: ["core_agent"], verifiedAt: null, nextAction: "Connect Claude to enable the core agent path" },
+            { agent: "codex", status: "missing", coordinationRole: "coding_specialist", workflows: ["coding"], degradedWorkflows: ["coding"], verifiedAt: null, nextAction: "Connect Codex for optional coding support" },
+            { agent: "hermes", status: "available", coordinationRole: "system_agent", workflows: ["app_building", "assistant", "integrations"], degradedWorkflows: [], verifiedAt: null, nextAction: null },
+          ],
+        },
+      });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByText("Agent setup")).toBeVisible();
+    await expect(page.getByText("Hermes is the Matrix system agent")).toBeVisible();
+    await expect(page.getByText("Claude is not connected")).toBeVisible();
+    await expect(page.getByText("Hermes remains the Matrix system agent even when Claude and Codex are not connected.")).toBeVisible();
+  });
 });

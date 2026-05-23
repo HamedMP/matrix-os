@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
+import { useAgentCredentialStatus } from "@/hooks/useAgentCredentialStatus";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
@@ -11,6 +12,7 @@ import { GoalSelector } from "./onboarding/GoalSelector";
 import { ReadinessChecklist } from "./onboarding/ReadinessChecklist";
 import { CodingSetupPanel } from "./onboarding/CodingSetupPanel";
 import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
+import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -27,6 +29,7 @@ interface OnboardingScreenProps {
 
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
+  const agentCredentials = useAgentCredentialStatus();
   const mic = useMicPermission();
   const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
@@ -242,6 +245,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                   <CodingHandoffSummary activeAgents={ob.readiness?.activeAgents ?? ["hermes"]} />
                 </div>
               )}
+
+              <AgentCredentialPanel status={agentCredentials.status} error={agentCredentials.error} onVerify={agentCredentials.verify} />
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
