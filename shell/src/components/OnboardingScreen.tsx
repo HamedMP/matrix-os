@@ -5,6 +5,10 @@ import { useOnboarding } from "@/hooks/useOnboarding";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
+import { BrandFrame } from "./onboarding/BrandFrame";
+import { CapabilityIntro } from "./onboarding/CapabilityIntro";
+import { GoalSelector } from "./onboarding/GoalSelector";
+import { ReadinessChecklist } from "./onboarding/ReadinessChecklist";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { MicIcon, KeyboardIcon } from "lucide-react";
 
@@ -138,44 +142,70 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        <div className="flex-1 flex items-center justify-center">
-          <button
-            onClick={handleTalkToMe}
-            disabled={phase !== "idle"}
-            className="text-4xl font-light tracking-tight text-foreground hover:scale-110 transition-transform duration-700 ease-out"
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-          >
-            <span
-              className="bg-clip-text text-transparent"
-              style={{
-                backgroundImage:
-                  phase === "dimming"
-                    ? "linear-gradient(90deg, var(--primary) 0%, var(--primary) 100%)"
-                    : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 35%, var(--primary) 50%, var(--foreground) 65%, var(--foreground) 100%)",
-                backgroundSize: "200% 100%",
-                animation: phase === "idle" ? "shimmer 6s ease-in-out infinite" : "none",
-                transition: "all 1.2s ease-in-out",
-              }}
-            >
-              Enter Matrix OS
-            </span>
-          </button>
-        </div>
+        <BrandFrame>
+          <div className="space-y-5">
+            <CapabilityIntro />
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-[#111612]">Choose your first goal</h2>
+                  <span className="text-xs text-[#17281f]/55">You can change this later</span>
+                </div>
+                <GoalSelector selectedGoalIds={ob.selectedGoalIds} onSelect={ob.selectGoal} />
+              </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-[#111612]">Readiness</h2>
+                  <span className="text-xs capitalize text-[#17281f]/55">{ob.readiness?.overallStatus ?? "checking"}</span>
+                </div>
+                <ReadinessChecklist gates={ob.readiness?.gates ?? []} />
+              </div>
+            </div>
 
-        <div
-          className="flex justify-center mb-8 transition-opacity duration-500"
-          style={{ opacity: phase !== "idle" ? 0 : 1 }}
-        >
-          <button
-            onClick={() => {
-              onOpenTerminal();
-              onComplete();
-            }}
-            className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-          >
-            Skip first-time setup
-          </button>
-        </div>
+            {ob.onboardingSteps.length > 0 && (
+              <div className="rounded-md border border-[#17281f]/10 bg-[#17281f]/5 p-3">
+                <h2 className="text-sm font-semibold text-[#111612]">Setup path</h2>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {ob.onboardingSteps.map((step) => (
+                    <span key={step.id} className="rounded-full border border-[#17281f]/10 bg-white/55 px-3 py-1 text-xs text-[#17281f]/70">
+                      {step.required ? "Required" : "Optional"} · {step.title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                onClick={handleTalkToMe}
+                disabled={phase !== "idle" || started}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md bg-[#17281f] px-4 text-sm font-medium text-[#f4f0e8] transition hover:bg-[#23382c] disabled:opacity-55"
+              >
+                <MicIcon className="h-4 w-4" aria-hidden="true" />
+                Start with voice
+              </button>
+              <button
+                onClick={() => handleStart(false)}
+                disabled={phase !== "idle" || started}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md border border-[#17281f]/15 bg-white/55 px-4 text-sm font-medium text-[#17281f] transition hover:border-[#17281f]/30 disabled:opacity-55"
+              >
+                <KeyboardIcon className="h-4 w-4" aria-hidden="true" />
+                Start with text
+              </button>
+            </div>
+
+            </div>
+            <button
+              onClick={() => {
+                onOpenTerminal();
+                onComplete();
+              }}
+              className="block w-full text-center text-xs text-[#17281f]/50 transition hover:text-[#17281f]"
+            >
+              Skip first-time setup
+            </button>
+          </div>
+        </BrandFrame>
 
         {/* Dimming overlay */}
         <div

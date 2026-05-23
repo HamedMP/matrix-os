@@ -13,6 +13,40 @@ export type OnboardingStage =
   | "done";
 
 export type VoiceState = "idle" | "listening" | "speaking" | "thinking";
+export type OnboardingGoalId = "coding" | "app_building" | "company_brain" | "assistant";
+
+export interface ReadinessGateSummary {
+  id: string;
+  category: string;
+  criticality: "release_critical" | "goal_required" | "recommended" | "optional";
+  status: "unknown" | "checking" | "pass" | "fail" | "blocked" | "skipped";
+  message: string;
+  remediation: string | null;
+  owner: "user" | "operator" | "matrix";
+  lastCheckedAt: string | null;
+}
+
+export interface OnboardingGoalSummary {
+  id: OnboardingGoalId;
+  selected: boolean;
+  label: string;
+  description: string;
+}
+
+export interface OnboardingStepSummary {
+  id: string;
+  required: boolean;
+  title: string;
+  unlocks: string[];
+}
+
+export interface OnboardingReadiness {
+  overallStatus: "ready" | "degraded" | "blocked" | "checking";
+  goals: OnboardingGoalSummary[];
+  gates: ReadinessGateSummary[];
+  systemAgent: "hermes";
+  activeAgents: Array<"claude" | "codex" | "hermes">;
+}
 
 interface Transcript {
   speaker: "ai" | "user";
@@ -41,10 +75,15 @@ export interface OnboardingHook {
   apiKeyResult: { valid: boolean; error?: string } | null;
   currentSubtitle: string;
   contextualContent: ContentDisplay;
+  readiness: OnboardingReadiness | null;
+  selectedGoalIds: OnboardingGoalId[];
+  onboardingSteps: OnboardingStepSummary[];
   start: (useVoice: boolean) => void;
   sendText: (text: string) => void;
   sendApiKey: (key: string) => void;
   confirmApps: (apps: string[]) => void;
+  selectGoal: (goalId: OnboardingGoalId) => void;
+  refreshReadiness: () => void;
   chooseClaudeCode: () => void;
   finishInterview: () => void;
 }
@@ -60,6 +99,9 @@ export function useOnboarding(): OnboardingHook {
   const [apiKeyResult, setApiKeyResult] = useState<{ valid: boolean; error?: string } | null>(null);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [contextualContent, setContextualContent] = useState<ContentDisplay>(null);
+  const [readiness, setReadiness] = useState<OnboardingReadiness | null>(null);
+  const [selectedGoalIds, setSelectedGoalIds] = useState<OnboardingGoalId[]>([]);
+  const [onboardingSteps, setOnboardingSteps] = useState<OnboardingStepSummary[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const micCtxRef = useRef<AudioContext | null>(null);
@@ -180,6 +222,27 @@ export function useOnboarding(): OnboardingHook {
       revealIntervalRef.current = null;
     }
     setCurrentSubtitle("");
+  }, []);
+
+  const refreshReadiness = useCallback(() => {
+    const requestSeq = readinessRefreshSeqRef.current + 1;
+    readinessRefreshSeqRef.current = requestSeq;
+    void fetch("/api/onboarding/readiness", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("readiness request failed");
+        return await res.json() as OnboardingReadiness;
+      })
+      .then((next) => {
+        if (!mountedRef.current || requestSeq !== readinessRefreshSeqRef.current) return;
+        setReadiness(next);
+        setSelectedGoalIds(next.goals.filter((goal) => goal.selected).map((goal) => goal.id));
+      })
+      .catch((err: unknown) => {
+        console.warn("[onboarding] readiness refresh failed:", err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   // Send JSON message to gateway
@@ -321,6 +384,29 @@ export function useOnboarding(): OnboardingHook {
         }
         break;
       }
+      case "readiness_update":
+        setReadiness((prev) => ({
+          overallStatus: msg.overallStatus as OnboardingReadiness["overallStatus"],
+          goals: prev?.goals ?? [],
+          gates: coerceReadinessGates(msg.checklist),
+          systemAgent: prev?.systemAgent ?? "hermes",
+          activeAgents: prev?.activeAgents ?? ["hermes"],
+        }));
+        break;
+      case "goal_selected":
+        setSelectedGoalIds((prev) => {
+          const goalId = msg.goalId as OnboardingGoalId;
+          return prev.includes(goalId) ? prev : [...prev, goalId];
+        });
+        setOnboardingSteps(msg.steps as OnboardingStepSummary[]);
+        break;
+      case "agent_status":
+        setReadiness((prev) => prev ? {
+          ...prev,
+          systemAgent: "hermes",
+          activeAgents: msg.activeAgents as OnboardingReadiness["activeAgents"],
+        } : prev);
+        break;
       case "mode_change":
         setIsVoiceMode(msg.mode === "voice");
         if (msg.mode === "text") setVoiceState("idle");
@@ -357,6 +443,7 @@ export function useOnboarding(): OnboardingHook {
   // Cleanup on unmount
   useEffect(() => {
     mountedRef.current = true;
+    refreshReadiness();
     return () => {
       mountedRef.current = false;
       wsRef.current?.close();
@@ -365,7 +452,7 @@ export function useOnboarding(): OnboardingHook {
       playCtxRef.current?.close();
       if (revealIntervalRef.current) clearInterval(revealIntervalRef.current);
     };
-  }, []);
+  }, [refreshReadiness]);
 
   // Public API
   const start = useCallback((useVoice: boolean) => {
@@ -419,6 +506,36 @@ export function useOnboarding(): OnboardingHook {
     send({ type: "confirm_apps", apps });
   }, [send]);
 
+  const selectGoal = useCallback((goalId: OnboardingGoalId) => {
+    const requestSeq = goalSelectionSeqRef.current + 1;
+    goalSelectionSeqRef.current = requestSeq;
+    const nextGoalIds = selectedGoalIds.includes(goalId)
+      ? selectedGoalIds.filter((id) => id !== goalId)
+      : [...selectedGoalIds, goalId];
+    const normalizedGoalIds = nextGoalIds.length > 0 ? nextGoalIds : [goalId];
+    setSelectedGoalIds(normalizedGoalIds);
+    void fetch("/api/onboarding/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ goalIds: normalizedGoalIds }),
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("goal selection failed");
+        return await res.json() as { goalIds: OnboardingGoalId[]; steps: OnboardingStepSummary[] };
+      })
+      .then((body) => {
+        if (!mountedRef.current || requestSeq !== goalSelectionSeqRef.current) return;
+        setSelectedGoalIds(body.goalIds);
+        setOnboardingSteps(body.steps);
+        refreshReadiness();
+      })
+      .catch((err: unknown) => {
+        console.warn("[onboarding] goal selection failed:", err instanceof Error ? err.message : String(err));
+        if (mountedRef.current) setError("Could not update setup goal");
+      });
+  }, [refreshReadiness, selectedGoalIds]);
+
   const chooseClaudeCode = useCallback(() => {
     send({ type: "choose_activation", path: "claude_code" });
   }, [send]);
@@ -438,10 +555,15 @@ export function useOnboarding(): OnboardingHook {
     apiKeyResult,
     currentSubtitle,
     contextualContent,
+    readiness,
+    selectedGoalIds,
+    onboardingSteps,
     start,
     sendText,
     sendApiKey,
     confirmApps,
+    selectGoal,
+    refreshReadiness,
     chooseClaudeCode,
     finishInterview,
   };

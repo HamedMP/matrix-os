@@ -332,8 +332,18 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         // Text mode: could use Gemini REST for chat (future)
         break;
 
+      case "select_goal":
+        send({ type: "goal_selected", goalId: msg.goalId, steps: stepsForGoals([msg.goalId]) });
+        break;
+
+      case "complete_step":
+      case "skip_step":
+      case "retry_gate":
+      case "approve_capability":
+        break;
+
       case "choose_activation":
-        if (msg.path === "claude_code") {
+        if (msg.path === "claude_code" || msg.path === "hermes" || msg.path === "codex") {
           sm.transition("done");
           await writeComplete();
           await saveState();

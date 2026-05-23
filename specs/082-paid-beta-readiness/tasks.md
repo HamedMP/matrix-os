@@ -59,23 +59,23 @@
 
 ### Tests First
 
-- [ ] T016 [P] [US1] Write failing shell tests for goal-based onboarding state in `tests/gateway/onboarding-activation.test.ts`
-- [ ] T017 [P] [US1] Write failing Playwright golden-path onboarding test in `tests/e2e/onboarding-activation.spec.ts`
-- [ ] T018 [P] [US1] Write failing visual QA test for desktop, mobile, reduced-motion, and missing media in `tests/e2e/onboarding-visual.spec.ts`
+- [X] T016 [P] [US1] Write failing shell tests for goal-based onboarding state in `tests/gateway/onboarding-activation.test.ts`
+- [X] T017 [P] [US1] Write failing Playwright golden-path onboarding test in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T018 [P] [US1] Write failing visual QA test for desktop, mobile, reduced-motion, and missing media in `tests/e2e/onboarding-visual.spec.ts`
 
 ### Implementation
 
-- [ ] T019 [US1] Extend onboarding WebSocket message schemas for goal selection and readiness updates in `packages/gateway/src/onboarding/types.ts`
-- [ ] T020 [US1] Persist selected onboarding goals and step progress in `packages/gateway/src/onboarding/readiness-service.ts`
-- [ ] T021 [US1] Extend `useOnboarding` to handle goal/readiness/visual-system messages in `shell/src/hooks/useOnboarding.ts`
-- [ ] T022 [P] [US1] Create branded onboarding shell frame in `shell/src/components/onboarding/BrandFrame.tsx`
-- [ ] T023 [P] [US1] Create Matrix capability education panel in `shell/src/components/onboarding/CapabilityIntro.tsx`
-- [ ] T024 [P] [US1] Create goal selector component in `shell/src/components/onboarding/GoalSelector.tsx`
-- [ ] T025 [P] [US1] Create readiness checklist component in `shell/src/components/onboarding/ReadinessChecklist.tsx`
-- [ ] T026 [US1] Refactor `OnboardingScreen` to use the branded frame, capability intro, goal selector, and checklist in `shell/src/components/OnboardingScreen.tsx`
-- [ ] T027 [US1] Add responsive and reduced-motion styles for activation onboarding in `shell/src/app/globals.css`
-- [ ] T028 [US1] Add polished fallback for missing onboarding media in `shell/src/components/onboarding/BrandFrame.tsx`
-- [ ] T029 [US1] Update onboarding completion semantics to allow ready/degraded completion in `packages/gateway/src/onboarding/ws-handler.ts`
+- [X] T019 [US1] Extend onboarding WebSocket message schemas for goal selection and readiness updates in `packages/gateway/src/onboarding/types.ts`
+- [X] T020 [US1] Persist selected onboarding goals and step progress in `packages/gateway/src/onboarding/readiness-service.ts`
+- [X] T021 [US1] Extend `useOnboarding` to handle goal/readiness/visual-system messages in `shell/src/hooks/useOnboarding.ts`
+- [X] T022 [P] [US1] Create branded onboarding shell frame in `shell/src/components/onboarding/BrandFrame.tsx`
+- [X] T023 [P] [US1] Create Matrix capability education panel in `shell/src/components/onboarding/CapabilityIntro.tsx`
+- [X] T024 [P] [US1] Create goal selector component in `shell/src/components/onboarding/GoalSelector.tsx`
+- [X] T025 [P] [US1] Create readiness checklist component in `shell/src/components/onboarding/ReadinessChecklist.tsx`
+- [X] T026 [US1] Refactor `OnboardingScreen` to use the branded frame, capability intro, goal selector, and checklist in `shell/src/components/OnboardingScreen.tsx`
+- [X] T027 [US1] Add responsive and reduced-motion styles for activation onboarding in `shell/src/app/globals.css`
+- [X] T028 [US1] Add polished fallback for missing onboarding media in `shell/src/components/onboarding/BrandFrame.tsx`
+- [X] T029 [US1] Update onboarding completion semantics to allow ready/degraded completion in `packages/gateway/src/onboarding/ws-handler.ts`
 
 **Checkpoint**: US1 is independently demoable and visually reviewable.
 
