@@ -6,6 +6,29 @@ import { createShellClient } from "../shell-client.js";
 
 const SHELL_USAGE = "Usage: matrix shell ls|new|attach|rm|tab|pane|layout";
 const SHELL_SUBCOMMANDS = new Set(["ls", "new", "attach", "rm", "tab", "pane", "layout"]);
+const SHELL_VALUE_OPTIONS = new Set(["--gateway", "--profile", "--token"]);
+
+function hasShellSubCommand(rawArgs: string[] | undefined): boolean {
+  if (!Array.isArray(rawArgs)) {
+    return false;
+  }
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg === "--") {
+      const next = rawArgs[i + 1];
+      return typeof next === "string" && SHELL_SUBCOMMANDS.has(next);
+    }
+    if (arg.startsWith("--")) {
+      const [option] = arg.split("=", 1);
+      if (SHELL_VALUE_OPTIONS.has(option) && !arg.includes("=")) {
+        i += 1;
+      }
+      continue;
+    }
+    return SHELL_SUBCOMMANDS.has(arg);
+  }
+  return false;
+}
 
 async function clientFromArgs(args: Record<string, unknown>) {
   const profile = await resolveCliProfile(args);
@@ -332,9 +355,7 @@ export const shellCommand = defineCommand({
     }),
   },
   run: ({ rawArgs }) => {
-    const hasSubCommand =
-      Array.isArray(rawArgs) && rawArgs.some((arg) => SHELL_SUBCOMMANDS.has(arg));
-    if (!hasSubCommand) {
+    if (!hasShellSubCommand(rawArgs)) {
       console.log(SHELL_USAGE);
     }
   },

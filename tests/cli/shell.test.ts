@@ -71,6 +71,20 @@ describe("shell CLI command", () => {
     expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
   });
 
+  it("prints usage when a root flag value matches a shell subcommand", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.run?.({
+      rawArgs: ["--profile", "ls", "--gateway=tab", "--json"],
+      args: {},
+    } as never);
+
+    expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
+  });
+
   it("does not print usage after subcommands run", async () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
@@ -78,6 +92,20 @@ describe("shell CLI command", () => {
     });
 
     await shellCommand.run?.({ rawArgs: ["ls", "--dev", "--json"], args: {} } as never);
+
+    expect(logs).toEqual([]);
+  });
+
+  it("does not print usage when root flags precede a subcommand", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.run?.({
+      rawArgs: ["--profile", "local", "--json", "ls"],
+      args: {},
+    } as never);
 
     expect(logs).toEqual([]);
   });
