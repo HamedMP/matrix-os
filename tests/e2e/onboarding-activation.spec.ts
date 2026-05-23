@@ -306,4 +306,52 @@ test.describe("onboarding activation", () => {
     await expect(page.getByText("Resume setup")).toBeVisible();
     await expect(page.getByText("Readiness needs review")).toBeVisible();
   });
+
+  test("shows company brain context sources and review flags", async ({ page }) => {
+    await page.route("**/api/onboarding/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          overallStatus: "degraded",
+          goals: [
+            { id: "company_brain", selected: true, label: "Run my company brain", description: "Use company context" },
+          ],
+          gates: [
+            { id: "company_brain.ready", category: "company_brain", criticality: "recommended", status: "pass", message: "Company context is ready", remediation: null, owner: "user", lastCheckedAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/agents/credentials/status", async (route) => {
+      await route.fulfill({ json: { systemAgent: "hermes", activeAgents: ["hermes"], routingExplanation: "Hermes remains the Matrix system agent.", agents: [] } });
+    });
+    await page.route("**/api/integrations/capabilities", async (route) => {
+      await route.fulfill({ json: { capabilities: [] } });
+    });
+    await page.route("**/api/admin/control-surface", async (route) => {
+      await route.fulfill({ json: null, status: 204 });
+    });
+    await page.route("**/api/company-brain/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          status: "needs_review",
+          guidance: "Review stale or contradictory context before agents rely on it.",
+          items: [
+            { id: "ctx_launch", type: "product_decision", title: "Launch ICP", summary: "Technical founders and developers.", source: "specs/launch-readiness", visibility: "owner_only", updatedAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          sourceLinks: ["specs/launch-readiness"],
+          reviewFlags: [{ itemId: "ctx_launch", kind: "stale", message: "Check whether this context is still current." }],
+        },
+      });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByText("Company brain")).toBeVisible();
+    await expect(page.getByText("Launch ICP")).toBeVisible();
+    await expect(page.getByText("specs/launch-readiness")).toBeVisible();
+    await expect(page.getByText("Review stale or contradictory context before agents rely on it.")).toBeVisible();
+  });
 });

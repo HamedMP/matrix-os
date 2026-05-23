@@ -195,17 +195,17 @@
 
 ### Tests First
 
-- [ ] T072 [P] [US5] Write failing company context access tests in `tests/gateway/company-brain-readiness.test.ts`
-- [ ] T073 [P] [US5] Write failing company-brain onboarding e2e path in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T072 [P] [US5] Write failing company context access tests in `tests/gateway/company-brain-readiness.test.ts`
+- [X] T073 [P] [US5] Write failing company-brain onboarding e2e path in `tests/e2e/onboarding-activation.spec.ts`
 
 ### Implementation
 
-- [ ] T074 [US5] Implement company context readiness service in `packages/gateway/src/onboarding/company-brain-readiness.ts`
-- [ ] T075 [US5] Add company-brain setup routes in `packages/gateway/src/onboarding/company-brain-routes.ts`
-- [ ] T076 [US5] Wire company-brain routes in `packages/gateway/src/server.ts`
-- [ ] T077 [P] [US5] Create company-brain onboarding panel in `shell/src/components/onboarding/CompanyBrainPanel.tsx`
-- [ ] T078 [US5] Wire company-brain panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
-- [ ] T079 [US5] Add source-link display and stale/contradictory context copy in `shell/src/components/onboarding/CompanyBrainPanel.tsx`
+- [X] T074 [US5] Implement company context readiness service in `packages/gateway/src/onboarding/company-brain-readiness.ts`
+- [X] T075 [US5] Add company-brain setup routes in `packages/gateway/src/onboarding/company-brain-routes.ts`
+- [X] T076 [US5] Wire company-brain routes in `packages/gateway/src/server.ts`
+- [X] T077 [P] [US5] Create company-brain onboarding panel in `shell/src/components/onboarding/CompanyBrainPanel.tsx`
+- [X] T078 [US5] Wire company-brain panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
+- [X] T079 [US5] Add source-link display and stale/contradictory context copy in `shell/src/components/onboarding/CompanyBrainPanel.tsx`
 
 **Checkpoint**: US5 can run after foundation without support/growth publishing.
 

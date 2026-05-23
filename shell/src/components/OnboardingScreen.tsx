@@ -16,6 +16,7 @@ import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
 import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
 import { AdminControlPanel, type AdminControlSurface } from "./onboarding/AdminControlPanel";
+import { CompanyBrainPanel, type CompanyBrainReadiness } from "./onboarding/CompanyBrainPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -45,6 +46,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [entranceStage, setEntranceStage] = useState<"hidden" | "center" | "settled">("hidden");
   const [logoMediaAvailable, setLogoMediaAvailable] = useState(true);
   const [adminSurface, setAdminSurface] = useState<AdminControlSurface | null>(null);
+  const [companyBrain, setCompanyBrain] = useState<CompanyBrainReadiness | null>(null);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -162,6 +164,29 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       });
   }, [refreshAdminSurface]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/company-brain/readiness", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("company brain request failed");
+        return await res.json() as CompanyBrainReadiness;
+      })
+      .then((readiness) => {
+        if (!cancelled) setCompanyBrain(readiness);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.warn("[onboarding] company brain load failed:", err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function startAmbientAudio() {
     const audio = new Audio("/onboarding-ambient.wav");
     audio.loop = true;
@@ -243,6 +268,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
   const codingSelected = ob.selectedGoalIds.includes("coding");
   const assistantSelected = ob.selectedGoalIds.includes("assistant");
+  const companyBrainSelected = ob.selectedGoalIds.includes("company_brain");
 
   // Render nothing for the one frame between "alreadyComplete" becoming
   // true and the parent unmounting us via the effect above. Placing this
@@ -318,6 +344,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               )}
 
               <AdminControlPanel surface={adminSurface} onResumeSetup={resumeAdminSetup} />
+
+              {companyBrainSelected && <CompanyBrainPanel readiness={companyBrain} />}
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
