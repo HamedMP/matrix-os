@@ -7,6 +7,7 @@ import {
 import { stepsForGoals } from "../../packages/gateway/src/onboarding/readiness-service.js";
 import { mapActivationError, safeClientMessage } from "../../packages/gateway/src/onboarding/activation-errors.js";
 import { ReadinessStatusCache } from "../../packages/gateway/src/onboarding/readiness-cache.js";
+import { createAgentActionAuditService } from "../../packages/gateway/src/onboarding/agent-action-audit.js";
 import { createTestReadinessService, testPrincipal } from "../helpers/activation-readiness.js";
 
 describe("activation readiness contracts", () => {
@@ -124,5 +125,30 @@ describe("activation readiness contracts", () => {
     expect(cache.get("a")).toEqual({ value: "A" });
     now = 1100;
     expect(cache.get("a")).toBeNull();
+  });
+
+  it("records safe agent action summaries without raw provider details", async () => {
+    const audit = createAgentActionAuditService({
+      now: () => new Date("2026-05-23T00:00:00.000Z"),
+    });
+
+    const action = await audit.recordAction(testPrincipal.userId, {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "Created launch rehearsal event; raw provider token sk_live at /home/matrix/secret failed before retry",
+      target: "Primary calendar",
+    });
+
+    expect(action).toMatchObject({
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      target: "Primary calendar",
+      createdAt: "2026-05-23T00:00:00.000Z",
+      completedAt: "2026-05-23T00:00:00.000Z",
+    });
+    expect(action.summary).toBe("Agent action completed");
+    expect(JSON.stringify(action)).not.toMatch(/sk_live|\/home|token/i);
   });
 });

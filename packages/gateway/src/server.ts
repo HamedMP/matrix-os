@@ -84,6 +84,8 @@ import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
 import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -464,6 +466,14 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
+  const integrationCapabilityService = createIntegrationCapabilityService({
+    getConnectedCapabilityIds: async (ownerId) => {
+      if (!platformDb) return [];
+      const services = await platformDb.listConnectedServices(ownerId);
+      return capabilityIdsForConnectedServices(services.map((service) => service.service));
+    },
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+  });
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
@@ -478,6 +488,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: readinessRepository,
     cache: readinessCache,
     agentCredentials: agentCredentialService,
+    integrationCapabilities: integrationCapabilityService,
     codingSetup: {
       getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
     },
@@ -1372,6 +1383,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/integrations", createIntegrationCapabilityRoutes({ service: integrationCapabilityService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,

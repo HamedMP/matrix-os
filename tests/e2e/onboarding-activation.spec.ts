@@ -193,4 +193,59 @@ test.describe("onboarding activation", () => {
     await expect(page.getByText("Claude is not connected")).toBeVisible();
     await expect(page.getByText("Hermes remains the Matrix system agent even when Claude and Codex are not connected.")).toBeVisible();
   });
+
+  test("shows assistant integration approvals for calendar and email", async ({ page }) => {
+    await page.route("**/api/onboarding/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          overallStatus: "degraded",
+          goals: [
+            { id: "assistant", selected: true, label: "Use Matrix as an assistant", description: "Operate tasks" },
+          ],
+          gates: [
+            {
+              id: "integrations.capabilities",
+              category: "integration",
+              criticality: "goal_required",
+              status: "fail",
+              message: "Approve one assistant capability for Hermes",
+              remediation: "Approve calendar, email, or summary capabilities",
+              owner: "user",
+              lastCheckedAt: "2026-05-23T00:00:00.000Z",
+            },
+          ],
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/agents/credentials/status", async (route) => {
+      await route.fulfill({
+        json: {
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          routingExplanation: "Hermes remains the Matrix system agent.",
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/integrations/capabilities", async (route) => {
+      await route.fulfill({
+        json: {
+          capabilities: [
+            { id: "calendar.create_event", provider: "calendar", capability: "create_calendar_event", status: "connected", approvedAgents: [], requiresApprovalPerAction: true },
+            { id: "email.read_email", provider: "email", capability: "read_email", status: "connect_required", approvedAgents: [], requiresApprovalPerAction: true },
+          ],
+        },
+      });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByText("Assistant integrations")).toBeVisible();
+    await expect(page.getByText("Calendar event")).toBeVisible();
+    await expect(page.getByText("Email summaries")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Approve Hermes/i })).toBeVisible();
+  });
 });

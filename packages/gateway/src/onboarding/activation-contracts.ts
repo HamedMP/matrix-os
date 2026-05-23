@@ -148,6 +148,79 @@ export const VerifyAgentCredentialResponseSchema = z.object({
 });
 export type VerifyAgentCredentialResponse = z.infer<typeof VerifyAgentCredentialResponseSchema>;
 
+export const IntegrationCapabilityStatusSchema = z.enum([
+  "connect_required",
+  "connected",
+  "approved",
+  "revoked",
+  "failed",
+  "unavailable",
+]);
+export type IntegrationCapabilityStatus = z.infer<typeof IntegrationCapabilityStatusSchema>;
+
+export const IntegrationProviderSchema = z.enum([
+  "github",
+  "calendar",
+  "email",
+  "messaging",
+  "publishing",
+]);
+export type IntegrationProvider = z.infer<typeof IntegrationProviderSchema>;
+
+export const IntegrationCapabilitySummarySchema = z.object({
+  id: ReadinessGateIdSchema,
+  provider: IntegrationProviderSchema,
+  capability: z.string().trim().min(1).max(80),
+  status: IntegrationCapabilityStatusSchema,
+  approvedAgents: z.array(AgentIdSchema).max(3),
+  requiresApprovalPerAction: z.boolean(),
+});
+export type IntegrationCapabilitySummary = z.infer<typeof IntegrationCapabilitySummarySchema>;
+
+export const IntegrationCapabilitiesResponseSchema = z.object({
+  capabilities: z.array(IntegrationCapabilitySummarySchema),
+});
+export type IntegrationCapabilitiesResponse = z.infer<typeof IntegrationCapabilitiesResponseSchema>;
+
+export const ApproveCapabilityRequestSchema = z.object({
+  agent: AgentIdSchema,
+  approved: z.boolean(),
+});
+export type ApproveCapabilityRequest = z.infer<typeof ApproveCapabilityRequestSchema>;
+
+export const CapabilityParamsSchema = z.object({
+  capabilityId: ReadinessGateIdSchema,
+});
+export type CapabilityParams = z.infer<typeof CapabilityParamsSchema>;
+
+export const ApproveCapabilityResponseSchema = z.object({
+  capabilityId: ReadinessGateIdSchema,
+  agent: AgentIdSchema,
+  status: IntegrationCapabilityStatusSchema,
+});
+export type ApproveCapabilityResponse = z.infer<typeof ApproveCapabilityResponseSchema>;
+
+export const AgentActionStatusSchema = z.enum([
+  "requested",
+  "approved",
+  "completed",
+  "failed",
+  "denied",
+]);
+export type AgentActionStatus = z.infer<typeof AgentActionStatusSchema>;
+
+export const AgentActionSummarySchema = z.object({
+  id: ReadinessGateIdSchema,
+  agent: AgentIdSchema,
+  capability: ReadinessGateIdSchema,
+  status: AgentActionStatusSchema,
+  summary: SafeDisplayTextSchema,
+  target: SafeDisplayTextSchema,
+  createdAt: ActivationDateSchema,
+  completedAt: ActivationDateSchema.nullable(),
+});
+export type AgentActionSummary = z.infer<typeof AgentActionSummarySchema>;
+
 export const ReadinessOverallStatusSchema = z.enum([
   "ready",
   "degraded",
