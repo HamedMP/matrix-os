@@ -409,19 +409,11 @@ export async function resolveDaemonAuth(
 ): Promise<DaemonAuthResolution> {
   let profileName = config.profile;
   if (!profileName) {
-    try {
-      const profiles = await loadProfiles({
-        configDir: authConfigDir,
-        migrateLegacyFiles: false,
-      });
-      profileName = profiles.active;
-    } catch (err) {
-      const legacyAuth = await loadAuth(join(authConfigDir, "auth.json"));
-      if (legacyAuth) {
-        return { auth: legacyAuth, profileName: legacyAuth.handle, source: "legacy" };
-      }
-      throw err;
-    }
+    const profiles = await loadProfiles({
+      configDir: authConfigDir,
+      migrateLegacyFiles: false,
+    });
+    profileName = profiles.active;
   }
   const profileAuth = await loadProfileAuth(profileName, authConfigDir);
   if (profileAuth) {

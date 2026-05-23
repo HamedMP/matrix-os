@@ -153,14 +153,15 @@ function approvalPage(
     }
 
     async function submitApproval(event) {
+      if (!window.Clerk) return;
       event.preventDefault();
       setStatus('');
       setBusy(true);
 
       try {
-        if (!window.Clerk || !window.Clerk.session) {
+        if (!window.Clerk.session) {
           setStatus('Sign in before authorizing this device.');
-          if (window.Clerk) showSignIn();
+          showSignIn();
           return;
         }
 

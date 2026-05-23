@@ -139,7 +139,7 @@ describe("daemon runtime guards", () => {
     });
   });
 
-  it("falls back to legacy global auth when an unpinned profile registry is unreadable", async () => {
+  it("surfaces a malformed unpinned profile registry even when legacy auth exists", async () => {
     const legacyAuthPath = join(tempDir, "auth.json");
     await writeFile(join(tempDir, "profiles.json"), "{not valid json");
     await saveAuth({
@@ -149,9 +149,48 @@ describe("daemon runtime guards", () => {
       handle: "legacy",
     }, legacyAuthPath);
 
+    await expect(resolveDaemonAuth({}, tempDir)).rejects.toThrow(SyntaxError);
+  });
+
+  it("surfaces profile name conflicts even when legacy auth exists", async () => {
+    const legacyAuthPath = join(tempDir, "auth.json");
+    await writeFile(join(tempDir, "profiles.json"), JSON.stringify({
+      active: "cloud",
+      profiles: {
+        cloud: {
+          platformUrl: "https://app.matrix-os.com",
+          gatewayUrl: "https://app.matrix-os.com",
+        },
+        Cloud: {
+          platformUrl: "https://app.matrix-os.com",
+          gatewayUrl: "https://app.matrix-os.com",
+        },
+      },
+    }));
+    await saveAuth({
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_legacy",
+      handle: "legacy",
+    }, legacyAuthPath);
+
+    await expect(resolveDaemonAuth({}, tempDir)).rejects.toMatchObject({
+      code: "profile_name_conflict",
+    });
+  });
+
+  it("falls back to legacy global auth when the default active profile has no auth", async () => {
+    const legacyAuthPath = join(tempDir, "auth.json");
+    await saveAuth({
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user_legacy",
+      handle: "legacy",
+    }, legacyAuthPath);
+
     await expect(resolveDaemonAuth({}, tempDir)).resolves.toMatchObject({
       auth: { accessToken: "legacy-token" },
-      profileName: "legacy",
+      profileName: "cloud",
       source: "legacy",
     });
   });
