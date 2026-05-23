@@ -14,6 +14,7 @@ import {
 } from "./readiness-repository.js";
 import { ReadinessStatusCache } from "./readiness-cache.js";
 import { ActivationRouteError } from "./activation-errors.js";
+import type { CodingSetupProvider, CodingSetupStatus } from "./coding-setup.js";
 
 const GOALS: Record<OnboardingGoalId, Omit<OnboardingGoalSummary, "selected">> = {
   coding: {
@@ -42,6 +43,7 @@ const GOAL_STEPS: Record<OnboardingGoalId, OnboardingStepSummary[]> = {
   coding: [
     { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding"] },
     { id: "project.selected", required: true, title: "Choose a project", unlocks: ["coding"] },
+    { id: "issue_source.selected", required: true, title: "Choose task source", unlocks: ["coding"] },
     { id: "symphony.ready", required: true, title: "Prepare Symphony", unlocks: ["coding"] },
     { id: "terminal.ready", required: false, title: "Verify terminal access", unlocks: ["coding"] },
   ],
@@ -87,6 +89,7 @@ const BASE_GATES: ReadinessGateSummary[] = [
   { id: "visual.qa", category: "ux", criticality: "release_critical", status: "unknown", message: "Onboarding visual QA has not been checked", remediation: "Run desktop and mobile visual QA", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "github.connected", category: "integration", criticality: "goal_required", status: "unknown", message: "GitHub is not connected yet", remediation: "Connect GitHub to unlock coding workflows", owner: "user", lastCheckedAt: null, evidence: [] },
   { id: "project.selected", category: "coding", criticality: "goal_required", status: "unknown", message: "No coding project is selected", remediation: "Choose a repository or project", owner: "user", lastCheckedAt: null, evidence: [] },
+  { id: "issue_source.selected", category: "coding", criticality: "goal_required", status: "unknown", message: "No coding task source is selected", remediation: "Connect Linear or choose a Matrix task list", owner: "user", lastCheckedAt: null, evidence: [] },
   { id: "symphony.ready", category: "coding", criticality: "goal_required", status: "unknown", message: "Symphony readiness has not been checked", remediation: "Verify Symphony configuration", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "integrations.capabilities", category: "integration", criticality: "goal_required", status: "unknown", message: "Assistant capabilities have not been approved", remediation: "Approve the needed integration capabilities", owner: "user", lastCheckedAt: null, evidence: [] },
   { id: "admin_control.ready", category: "admin_control", criticality: "release_critical", status: "unknown", message: "Admin control surface has not been checked", remediation: "Open model, settings, automation, activity, and readiness views", owner: "matrix", lastCheckedAt: null, evidence: [] },
@@ -134,6 +137,7 @@ export interface ReadinessService {
 export function createReadinessService(options: {
   repository: ReadinessRepository;
   cache?: ReadinessStatusCache<ReadinessResponse>;
+  codingSetup?: CodingSetupProvider;
   now?: () => Date;
 }): ReadinessService {
   const now = options.now ?? (() => new Date());
@@ -154,19 +158,50 @@ export function createReadinessService(options: {
     };
   }
 
-  function deriveGates(record: OnboardingReadinessRecord): ReadinessGateSummary[] {
+  function codingGatePatch(gate: ReadinessGateSummary, codingSetup: CodingSetupStatus | null, checkedAt: string): Partial<ReadinessGateSummary> | null {
+    if (!codingSetup) return null;
+    switch (gate.id) {
+      case "github.connected":
+        return codingSetup.githubConnected
+          ? { status: "pass", message: "GitHub is connected for coding workflows", remediation: null, lastCheckedAt: checkedAt }
+          : { status: "fail", message: "GitHub is needed before Matrix can start coding work", remediation: "Connect GitHub to unlock coding workflows", lastCheckedAt: checkedAt };
+      case "project.selected":
+        return codingSetup.selectedProject
+          ? { status: "pass", message: `${codingSetup.selectedProject.name} is selected for coding work`, remediation: null, lastCheckedAt: checkedAt, evidence: [codingSetup.selectedProject.slug] }
+          : { status: "fail", message: "Choose a project before starting coding work", remediation: "Choose a repository or project", lastCheckedAt: checkedAt };
+      case "issue_source.selected":
+        return codingSetup.issueSourceConfigured
+          ? { status: "pass", message: "A task source is connected for coding work", remediation: null, lastCheckedAt: checkedAt }
+          : { status: "fail", message: "Choose a task source before starting coding work", remediation: "Connect Linear or choose a Matrix task list", lastCheckedAt: checkedAt };
+      case "symphony.ready":
+        return codingSetup.symphonyReady
+          ? { status: "pass", message: "Symphony is ready to dispatch coding work", remediation: null, lastCheckedAt: checkedAt }
+          : { status: "fail", message: "Symphony needs setup before coding work can start", remediation: "Finish Symphony setup for the selected project", lastCheckedAt: checkedAt };
+      case "terminal.ready":
+        return codingSetup.terminalReady
+          ? { status: "pass", message: codingSetup.selectedProject ? `Terminal context is ready to open for ${codingSetup.selectedProject.name}` : "Terminal context is ready", remediation: null, lastCheckedAt: checkedAt }
+          : { status: "fail", message: "Terminal context has not been opened for this project", remediation: "Open the Matrix terminal for the selected project", lastCheckedAt: checkedAt };
+      default:
+        return null;
+    }
+  }
+
+  function deriveGates(record: OnboardingReadinessRecord, codingSetup: CodingSetupStatus | null): ReadinessGateSummary[] {
+    const checkedAt = now().toISOString();
     return BASE_GATES.map((gate) => {
+      const codingPatch = codingGatePatch(gate, codingSetup, checkedAt);
       const override = record.gateOverrides[gate.id];
-      if (!override) return { ...gate };
+      const base = { ...gate, ...codingPatch };
+      if (!override) return base;
       return {
-        ...gate,
+        ...base,
         status: override.status,
-        message: override.message ?? gate.message,
+        message: override.message ?? base.message,
         remediation: Object.prototype.hasOwnProperty.call(override, "remediation")
           ? override.remediation ?? null
-          : gate.remediation,
-        lastCheckedAt: override.lastCheckedAt ?? gate.lastCheckedAt,
-        evidence: override.evidence ?? gate.evidence,
+          : base.remediation,
+        lastCheckedAt: override.lastCheckedAt ?? base.lastCheckedAt,
+        evidence: override.evidence ?? base.evidence,
       };
     });
   }
@@ -183,7 +218,10 @@ export function createReadinessService(options: {
     const cached = cache.get(ownerId);
     if (cached) return cached;
     const record = await ensureRecord(ownerId);
-    const gates = deriveGates(record);
+    const codingSetup = record.selectedGoalIds.includes("coding") && options.codingSetup
+      ? await options.codingSetup.getCodingSetup(ownerId)
+      : null;
+    const gates = deriveGates(record, codingSetup);
     const goals = Object.values(GOALS).map((goal) => ({
       ...goal,
       selected: record.selectedGoalIds.includes(goal.id),
@@ -193,7 +231,7 @@ export function createReadinessService(options: {
       goals,
       gates,
       systemAgent: "hermes",
-      activeAgents: ["hermes"],
+      activeAgents: codingSetup?.activeAgents ?? ["hermes"],
       agents: DEFAULT_AGENTS.map((agent) => ({ ...agent })),
     };
     cache.set(ownerId, response);

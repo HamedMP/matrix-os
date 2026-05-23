@@ -55,3 +55,8 @@ export function canonicalAppLaunchPath(app: GatewayAppEntryLike): string | null 
   if (!app.path) return null;
   return app.path.replace(/^\/files\//, "");
 }
+
+export function terminalContextLaunchPath(projectSlug: string | null | undefined): string {
+  if (!projectSlug || !SAFE_ICON_SLUG.test(projectSlug)) return "__terminal__";
+  return `__terminal__?project=${encodeURIComponent(projectSlug)}`;
+}

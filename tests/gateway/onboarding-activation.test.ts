@@ -36,7 +36,7 @@ describe("activation readiness contracts", () => {
   it("validates goal request boundaries", () => {
     expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["coding"] })).not.toThrow();
     expect(() => SelectGoalsRequestSchema.parse({ goalIds: [] })).toThrow();
-    expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["paid-beta-readiness"] })).toThrow();
+    expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["unknown-launch-slug"] })).toThrow();
   });
 
   it("merges shared setup step unlocks across selected goals", () => {

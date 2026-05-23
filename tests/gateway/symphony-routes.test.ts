@@ -176,6 +176,42 @@ describe("Matrix Symphony routes", () => {
     expect(JSON.stringify(body)).not.toContain("lin_api");
   });
 
+  it("returns active agent and current handoff summaries without worktree paths", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [
+      ...snapshot.runs,
+      {
+        id: "run_done",
+        installationId: "sym_user_123",
+        ticketExternalId: "issue_2",
+        ticketIdentifier: "MAT-2",
+        ticketTitle: "Ship setup",
+        status: "completed",
+        attempt: 1,
+        agent: "claude",
+        projectSlug: "matrix-os",
+        claimKey: "linear:issue_2",
+        worktreePath: "/home/matrix/home/projects/matrix-os/.worktrees/wt_done",
+        lastEvent: "Pull request ready",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+        finishedAt: "2026-05-13T00:05:00.000Z",
+      },
+    ];
+    const { app } = deps(snapshot);
+
+    const res = await app.request("/status");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.activeAgents).toEqual(expect.arrayContaining(["codex", "claude"]));
+    expect(body.handoff).toMatchObject({
+      status: "running",
+      runningCount: 1,
+      nextAction: "Monitor the active Symphony run",
+    });
+    expect(JSON.stringify(body)).not.toContain("/home/matrix");
+  });
+
   it("saves config and never returns the Linear secret", async () => {
     const { app, repository, statusHub } = deps(structuredClone(baseSnapshot));
 

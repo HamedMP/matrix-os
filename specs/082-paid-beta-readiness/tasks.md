@@ -89,20 +89,20 @@
 
 ### Tests First
 
-- [ ] T030 [P] [US2] Write failing tests for GitHub/project setup gates in `tests/gateway/activation-readiness-routes.test.ts`
-- [ ] T031 [P] [US2] Write failing duplicate-run prevention test in `tests/gateway/symphony-workflow.test.ts`
-- [ ] T032 [P] [US2] Write failing e2e coding setup path test in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T030 [P] [US2] Write failing tests for GitHub/project setup gates in `tests/gateway/activation-readiness-routes.test.ts`
+- [X] T031 [P] [US2] Write failing duplicate-run prevention test in `tests/gateway/symphony-workflow.test.ts`
+- [X] T032 [P] [US2] Write failing e2e coding setup path test in `tests/e2e/onboarding-activation.spec.ts`
 
 ### Implementation
 
-- [ ] T033 [US2] Add coding setup gate derivation for GitHub, project, issue source, Symphony, and terminal in `packages/gateway/src/onboarding/readiness-service.ts`
-- [ ] T034 [US2] Add coding setup option aggregation from Symphony and project manager in `packages/gateway/src/onboarding/coding-setup.ts`
-- [ ] T035 [US2] Add duplicate coding task guard using Symphony run state in `packages/gateway/src/symphony/orchestrator.ts`
-- [ ] T036 [US2] Extend Symphony route responses with safe active-agents and handoff status in `packages/gateway/src/symphony/routes.ts`
-- [ ] T037 [P] [US2] Create coding setup connector component in `shell/src/components/onboarding/CodingSetupPanel.tsx`
-- [ ] T038 [P] [US2] Create coding handoff summary component in `shell/src/components/onboarding/CodingHandoffSummary.tsx`
-- [ ] T039 [US2] Wire coding setup panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
-- [ ] T040 [US2] Add terminal context launch action for coding setup in `shell/src/lib/app-launch.ts`
+- [X] T033 [US2] Add coding setup gate derivation for GitHub, project, issue source, Symphony, and terminal in `packages/gateway/src/onboarding/readiness-service.ts`
+- [X] T034 [US2] Add coding setup option aggregation from Symphony and project manager in `packages/gateway/src/onboarding/coding-setup.ts`
+- [X] T035 [US2] Add duplicate coding task guard using Symphony run state in `packages/gateway/src/symphony/orchestrator.ts`
+- [X] T036 [US2] Extend Symphony route responses with safe active-agents and handoff status in `packages/gateway/src/symphony/routes.ts`
+- [X] T037 [P] [US2] Create coding setup connector component in `shell/src/components/onboarding/CodingSetupPanel.tsx`
+- [X] T038 [P] [US2] Create coding handoff summary component in `shell/src/components/onboarding/CodingHandoffSummary.tsx`
+- [X] T039 [US2] Wire coding setup panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
+- [X] T040 [US2] Add terminal context launch action for coding setup in `shell/src/lib/app-launch.ts`
 
 **Checkpoint**: US2 can pass without assistant/company-brain/support workflows.
 

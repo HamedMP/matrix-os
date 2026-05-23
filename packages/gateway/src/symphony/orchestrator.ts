@@ -252,7 +252,31 @@ export function createMatrixSymphonyOrchestrator(options: {
       lastEvent: "Queued for Matrix agent dispatch",
       updatedAt: timestamp,
     };
-    if (!active) await options.repository.upsertRun(ownerId, run);
+    if (!active) {
+      try {
+        await options.repository.upsertRun(ownerId, run);
+      } catch (err: unknown) {
+        console.warn("[symphony] run upsert failed; checking for an existing active claim:", err instanceof Error ? err.message : String(err));
+        let duplicate;
+        try {
+          duplicate = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+        } catch (lookupErr: unknown) {
+          console.warn("[symphony] active-claim lookup failed after run upsert failure:", lookupErr instanceof Error ? lookupErr.message : String(lookupErr));
+          throw err;
+        }
+        if (duplicate) {
+          await append(ownerId, {
+            installationId: duplicate.installationId,
+            runId: duplicate.id,
+            type: "symphony.run.reused",
+            message: "Existing active coding run reused",
+            severity: "info",
+          });
+          return duplicate;
+        }
+        throw err;
+      }
+    }
     try {
       if (readinessFailure) {
         const updated = await options.repository.updateRun(ownerId, run.id, {

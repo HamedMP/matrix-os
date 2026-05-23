@@ -79,6 +79,7 @@ import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -441,7 +442,22 @@ export async function createGateway(config: GatewayConfig) {
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
-  const readinessService = createReadinessService({ repository: readinessRepository });
+  let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
+  const unavailableCodingSetup: CodingSetupStatus = {
+    githubConnected: false,
+    selectedProject: null,
+    issueSourceConfigured: false,
+    symphonyReady: false,
+    terminalReady: false,
+    activeAgents: ["hermes"],
+    handoffStatus: "idle",
+  };
+  const readinessService = createReadinessService({
+    repository: readinessRepository,
+    codingSetup: {
+      getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
+    },
+  });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -2402,6 +2418,15 @@ export async function createGateway(config: GatewayConfig) {
       ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
+    const listMatrixProjectOptions = async () => {
+      const result = await projectManager.listManagedProjects();
+      return result.projects.map((project) => ({
+        slug: project.slug,
+        name: project.name,
+        repositoryUrl: project.github?.htmlUrl ?? project.remote,
+        updatedAt: project.updatedAt,
+      }));
+    };
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const agentSessionManager = createAgentSessionManager({
@@ -2421,6 +2446,42 @@ export async function createGateway(config: GatewayConfig) {
       agentStatusProvider: agentLauncher,
       statusHub: matrixSymphonyStatusHub,
     });
+    codingSetupProvider = createCodingSetupProvider({
+      hasGitHubConnection: async (_ownerId) => {
+        const projects = await listMatrixProjectOptions();
+        return projects.some((project) => isGitHubRepositoryUrl(project.repositoryUrl));
+      },
+      listMatrixProjects: async () => listMatrixProjectOptions(),
+      getSelectedProjectSlug: async (ownerId) => {
+        const snapshot = await repository.getSnapshot(ownerId);
+        return snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      },
+      hasIssueSource: async (ownerId) => {
+        if (platformDb && await hasConnectedLinearIntegration(platformDb, ownerId)) return true;
+        const snapshot = await repository.getSnapshot(ownerId);
+        return Boolean(snapshot.rule);
+      },
+      getSymphonyStatus: async (ownerId) => {
+        const snapshot = await repository.getSnapshot(ownerId);
+        const activeStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff", "completed"]);
+        const handoffActiveStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff"]);
+        const activeHandoffRuns = snapshot.runs.filter((run) => handoffActiveStatuses.has(run.status));
+        const handoffRuns = activeHandoffRuns.length > 0 ? activeHandoffRuns : snapshot.runs.slice(0, 1);
+        const activeAgents = Array.from(new Set(snapshot.runs
+          .filter((run) => activeStatuses.has(run.status))
+          .map((run) => run.agent)
+          .filter((agent) => agent === "claude" || agent === "codex")));
+        return {
+          ready: Boolean(snapshot.installation?.enabled && snapshot.installation.credentialConfigured && snapshot.rule),
+          runStatuses: handoffRuns.map((run) => run.status),
+          activeAgents,
+        };
+      },
+      hasTerminalContext: async (_ownerId, projectSlug) => {
+        if (!projectSlug) return false;
+        return sessionRegistry.list().some((session) => hasProjectPathSegment(session.cwd, projectSlug));
+      },
+    });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();
     app.route("/api/symphony", createSymphonyRoutes({
       repository,
@@ -2428,15 +2489,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       orchestrator: matrixSymphonyOrchestrator,
       statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: async () => {
-        const result = await projectManager.listManagedProjects();
-        return result.projects.map((project) => ({
-          slug: project.slug,
-          name: project.name,
-          repositoryUrl: project.github?.htmlUrl ?? project.remote,
-          updatedAt: project.updatedAt,
-        }));
-      },
+      listMatrixProjects: listMatrixProjectOptions,
     }));
   } else {
     console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");

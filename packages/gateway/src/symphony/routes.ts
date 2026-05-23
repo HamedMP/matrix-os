@@ -53,6 +53,77 @@ function counts(runs: SymphonyRun[]) {
   };
 }
 
+function activeAgents(runs: SymphonyRun[]) {
+  const activeStatuses = new Set<SymphonyRun["status"]>(["queued", "running", "retrying", "blocked", "handoff", "completed"]);
+  const onboardingAgents = new Set<SymphonyRun["agent"]>(["codex", "claude"]);
+  return Array.from(new Set(runs
+    .filter((run) => activeStatuses.has(run.status))
+    .filter((run) => onboardingAgents.has(run.agent))
+    .map((run) => run.agent)));
+}
+
+function handoffRelevantRuns(runs: SymphonyRun[]) {
+  const activeStatuses = new Set<SymphonyRun["status"]>(["queued", "running", "retrying", "blocked", "handoff"]);
+  const activeRuns = runs.filter((run) => activeStatuses.has(run.status));
+  return activeRuns.length > 0 ? activeRuns : runs.slice(0, 1);
+}
+
+function handoffSummary(runs: SymphonyRun[]) {
+  const relevantRuns = handoffRelevantRuns(runs);
+  const readyCount = relevantRuns.filter((run) => run.status === "handoff" || run.status === "completed").length;
+  const needsInputCount = relevantRuns.filter((run) => run.status === "blocked").length;
+  const failedCount = relevantRuns.filter((run) => run.status === "failed" || run.status === "stopped").length;
+  const runningCount = relevantRuns.filter((run) => run.status === "queued" || run.status === "running" || run.status === "retrying").length;
+  if (needsInputCount > 0) {
+    return {
+      status: "needs_input" as const,
+      readyCount,
+      needsInputCount,
+      failedCount,
+      runningCount,
+      nextAction: "Open the blocked run and provide input",
+    };
+  }
+  if (readyCount > 0) {
+    return {
+      status: "ready" as const,
+      readyCount,
+      needsInputCount,
+      failedCount,
+      runningCount,
+      nextAction: "Review the latest Symphony handoff",
+    };
+  }
+  if (runningCount > 0) {
+    return {
+      status: "running" as const,
+      readyCount,
+      needsInputCount,
+      failedCount,
+      runningCount,
+      nextAction: "Monitor the active Symphony run",
+    };
+  }
+  if (failedCount > 0) {
+    return {
+      status: "failed" as const,
+      readyCount,
+      needsInputCount,
+      failedCount,
+      runningCount,
+      nextAction: "Review the failure summary and retry when ready",
+    };
+  }
+  return {
+    status: "idle" as const,
+    readyCount,
+    needsInputCount,
+    failedCount,
+    runningCount,
+    nextAction: "Start a coding task",
+  };
+}
+
 function publicRun(run: SymphonyRun): Omit<SymphonyRun, "worktreePath"> {
   const { worktreePath: _worktreePath, ...safeRun } = run;
   return safeRun;
@@ -150,6 +221,8 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
       pollIntervalMs: snapshot.installation?.pollIntervalMs ?? null,
       maxConcurrentAgents: snapshot.installation?.maxConcurrentAgents ?? null,
       counts: counts(snapshot.runs),
+      activeAgents: activeAgents(snapshot.runs),
+      handoff: handoffSummary(snapshot.runs),
       lastPollAt: snapshot.lastPollAt,
     });
   }));
