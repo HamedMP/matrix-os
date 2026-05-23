@@ -161,7 +161,7 @@ export async function ensureSyncUser(
   assertSafeSyncUserId(input.id);
   assertSafeSyncUserHandle(input.handle);
 
-  await db.transaction().execute(async (trx) => {
+  await db.transaction().setIsolationLevel("serializable").execute(async (trx) => {
     const rowById = await trx
       .selectFrom("users")
       .select(["id", "handle"])
@@ -174,6 +174,13 @@ export async function ensureSyncUser(
       .executeTakeFirst();
 
     if (rowById && rowByHandle && rowByHandle.id !== input.id) {
+      console.warn(
+        `[sync] Skipped sync user seed for id "${input.id}" and handle "${input.handle}" because they already belong to different users.`,
+      );
+      return;
+    }
+
+    if (!rowById && rowByHandle?.id === input.id) {
       return;
     }
 

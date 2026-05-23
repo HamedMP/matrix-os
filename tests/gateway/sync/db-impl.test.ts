@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Kysely, SqliteDialect } from "kysely";
 import { createManifestDb } from "../../../packages/gateway/src/sync/db-impl.js";
 import {
@@ -182,6 +182,7 @@ describe("createManifestDb", () => {
   });
 
   it("does not crash when seed id and handle already belong to different rows", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     sqlite.prepare("INSERT INTO users (id, handle) VALUES (?, ?)").run(
       "dev-user",
       "old-dev",
@@ -191,14 +192,21 @@ describe("createManifestDb", () => {
       "developer",
     );
 
-    await expect(ensureSyncUser(db, { id: "dev-user", handle: "developer" }))
-      .resolves.toBeUndefined();
+    try {
+      await expect(ensureSyncUser(db, { id: "dev-user", handle: "developer" }))
+        .resolves.toBeUndefined();
 
-    const rows = sqlite.prepare("SELECT id, handle FROM users ORDER BY id").all();
-    expect(rows).toEqual([
-      { id: "dev-user", handle: "old-dev" },
-      { id: "legacy-user", handle: "developer" },
-    ]);
+      const rows = sqlite.prepare("SELECT id, handle FROM users ORDER BY id").all();
+      expect(rows).toEqual([
+        { id: "dev-user", handle: "old-dev" },
+        { id: "legacy-user", handle: "developer" },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Skipped sync user seed"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("rejects unsafe sync user seed values before writing rows", async () => {
