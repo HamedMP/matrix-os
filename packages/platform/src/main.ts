@@ -1037,18 +1037,15 @@ export function createApp(deps: {
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
-  let cachedVpsRuntimeMetrics: {
+  type CachedVpsRuntimeMetrics = {
     machineKey: string;
     expiresAt: number;
     values: VpsRuntimeMetricInput[];
-  } | null = null;
+  };
+  let cachedVpsRuntimeMetrics: CachedVpsRuntimeMetrics | null = null;
   let pendingVpsRuntimeMetrics: {
     machineKey: string;
-    promise: Promise<{
-      machineKey: string;
-      expiresAt: number;
-      values: VpsRuntimeMetricInput[];
-    }>;
+    promise: Promise<CachedVpsRuntimeMetrics>;
   } | null = null;
 
   function getVpsRuntimeMetricsCacheKey(machines: UserMachineRecord[]): string {
@@ -1096,6 +1093,12 @@ export function createApp(deps: {
         values,
       };
       return cachedVpsRuntimeMetrics;
+    }).catch((err: unknown): CachedVpsRuntimeMetrics => {
+      logPlatformRouteError('/metrics vps runtime cache', err);
+      if (cachedVpsRuntimeMetrics?.machineKey === machineKey) {
+        return cachedVpsRuntimeMetrics;
+      }
+      return { machineKey, expiresAt: 0, values: [] };
     }).finally(() => {
       if (pendingVpsRuntimeMetrics?.machineKey === machineKey) {
         pendingVpsRuntimeMetrics = null;
@@ -1131,14 +1134,19 @@ export function createApp(deps: {
 
   app.use('*', async (c, next) => {
     const started = performance.now();
-    await next();
-    if (c.req.path !== '/metrics') {
-      recordPlatformHttpRequest({
-        method: c.req.method,
-        path: c.req.path,
-        status: c.res.status,
-        durationSeconds: (performance.now() - started) / 1000,
-      });
+    let status = 500;
+    try {
+      await next();
+      status = c.res.status;
+    } finally {
+      if (c.req.path !== '/metrics') {
+        recordPlatformHttpRequest({
+          method: c.req.method,
+          path: c.req.path,
+          status,
+          durationSeconds: (performance.now() - started) / 1000,
+        });
+      }
     }
   });
 

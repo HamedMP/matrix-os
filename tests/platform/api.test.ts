@@ -75,6 +75,27 @@ describe('platform/api', () => {
     expect(await res.json()).toEqual({ status: 'ok' });
   });
 
+  it('records HTTP metrics when a downstream handler throws', async () => {
+    metricsRegistry.resetMetrics();
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const errorApp = createApp({ db, orchestrator, platformSecret });
+    errorApp.get('/boom', () => {
+      throw new Error('boom');
+    });
+
+    const res = await errorApp.request('/boom', { headers: adminHeaders }).catch((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      return null;
+    });
+    if (res) {
+      expect(res.status).toBe(500);
+    }
+
+    const output = await metricsRegistry.metrics();
+    expect(output).toContain('platform_http_requests_total{method="GET",path="/boom",status="500"} 1');
+  });
+
   it('POST /containers/provision creates a container', async () => {
     const res = await app.request('/containers/provision', {
       method: 'POST',

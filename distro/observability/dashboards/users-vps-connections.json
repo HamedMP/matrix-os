@@ -67,7 +67,7 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true, "Value": true, "__name__": true, "instance": true, "job": true },
-            "indexByName": { "handle": 0, "clerk_user_id": 1, "machine_id": 2, "status": 3, "version": 4 }
+            "indexByName": { "handle": 0, "status": 1, "version": 2 }
           }
         }
       ],

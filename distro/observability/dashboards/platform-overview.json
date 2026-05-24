@@ -175,8 +175,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(platform_http_request_duration_seconds_bucket[5m])) by (le, path))",
-          "legendFormat": "{{path}}",
+          "expr": "histogram_quantile(0.95, sum(rate(platform_http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
           "refId": "A"
         }
       ],

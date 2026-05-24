@@ -165,7 +165,7 @@ export const platformUsersTotal = new Gauge({
 export const userVpsLink = new Gauge({
   name: 'matrix_user_vps_link',
   help: 'User to VPS mapping (value is always 1, labels carry metadata)',
-  labelNames: ['handle', 'clerk_user_id', 'machine_id', 'status', 'version'] as const,
+  labelNames: ['handle', 'status', 'version'] as const,
   registers: [metricsRegistry],
 });
 
@@ -243,8 +243,6 @@ export function refreshPlatformUserMetrics(input: {
       userVpsLink.set(
         {
           handle: machine.handle,
-          clerk_user_id: machine.clerkUserId,
-          machine_id: machine.machineId,
           status: machine.status,
           version: machine.imageVersion ?? 'unknown',
         },

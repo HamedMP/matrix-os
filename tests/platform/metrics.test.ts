@@ -162,7 +162,8 @@ describe('platform/metrics', () => {
     expect(output).toContain('matrix_platform_users_total{kind="vps"} 1');
     expect(output).toContain('matrix_platform_users_total{kind="vps_running"} 1');
     expect(output).toContain('matrix_platform_users_total{kind="legacy_container"} 1');
-    expect(output).toContain('matrix_user_vps_link{handle="alice",clerk_user_id="user_alice",machine_id="machine-1",status="running",version="v2026.05.24-1"} 1');
+    expect(output).toContain('matrix_user_vps_link{handle="alice",status="running",version="v2026.05.24-1"} 1');
+    expect(output).not.toContain('clerk_user_id=');
   });
 
   it('refreshes release channel metrics', async () => {
