@@ -2785,9 +2785,14 @@ export async function createGateway(config: GatewayConfig) {
       ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
       : undefined;
 
-    await dispatcher.dispatch(body.text, body.sessionId, (event) => {
-      events.push(event);
-    }, context);
+    try {
+      await dispatcher.dispatch(body.text, body.sessionId, (event) => {
+        events.push(event);
+      }, context);
+    } catch (err: unknown) {
+      console.error("[gateway] Message dispatch failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Message dispatch failed" }, 500);
+    }
 
     return c.json({ events });
   });
