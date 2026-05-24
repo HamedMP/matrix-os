@@ -60,6 +60,7 @@ import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
+import type { VpsRuntimeMetricInput } from './metrics.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -72,6 +73,7 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
+const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
@@ -1035,6 +1037,71 @@ export function createApp(deps: {
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
+  let cachedVpsRuntimeMetrics: {
+    machineKey: string;
+    expiresAt: number;
+    values: VpsRuntimeMetricInput[];
+  } | null = null;
+  let pendingVpsRuntimeMetrics: {
+    machineKey: string;
+    promise: Promise<{
+      machineKey: string;
+      expiresAt: number;
+      values: VpsRuntimeMetricInput[];
+    }>;
+  } | null = null;
+
+  function getVpsRuntimeMetricsCacheKey(machines: UserMachineRecord[]): string {
+    return machines
+      .map((machine) => [
+        machine.machineId,
+        machine.handle,
+        machine.status,
+        machine.publicIPv4 ?? '',
+        machine.imageVersion ?? '',
+      ].join(':'))
+      .sort()
+      .join('|');
+  }
+
+  async function getCachedVpsRuntimeMetrics(
+    machines: UserMachineRecord[],
+  ): Promise<VpsRuntimeMetricInput[]> {
+    const now = Date.now();
+    const machineKey = getVpsRuntimeMetricsCacheKey(machines);
+    if (
+      cachedVpsRuntimeMetrics
+      && cachedVpsRuntimeMetrics.machineKey === machineKey
+      && cachedVpsRuntimeMetrics.expiresAt > now
+    ) {
+      return cachedVpsRuntimeMetrics.values;
+    }
+    if (pendingVpsRuntimeMetrics?.machineKey === machineKey) {
+      return (await pendingVpsRuntimeMetrics.promise).values;
+    }
+    const promise = Promise.allSettled(
+      machines.map(async (machine): Promise<VpsRuntimeMetricInput> => ({
+        handle: machine.handle,
+        ...(machine.status === 'running'
+          ? await probeCustomerVpsRuntime(machine, platformSecret)
+          : { healthy: false }),
+      })),
+    ).then((probed) => {
+      const values = probed
+        .filter((result): result is PromiseFulfilledResult<VpsRuntimeMetricInput> => result.status === 'fulfilled')
+        .map((result) => result.value);
+      cachedVpsRuntimeMetrics = {
+        machineKey,
+        expiresAt: Date.now() + VPS_RUNTIME_METRICS_TTL_MS,
+        values,
+      };
+      return cachedVpsRuntimeMetrics;
+    }).finally(() => {
+      pendingVpsRuntimeMetrics = null;
+    });
+    pendingVpsRuntimeMetrics = { machineKey, promise };
+    return (await promise).values;
+  }
   const app = new Hono<{
     Variables: {
       platformUserId: string;
@@ -1111,19 +1178,7 @@ export function createApp(deps: {
         releaseChannels.filter((release): release is NonNullable<typeof release> => release !== null),
       );
       if (deps.customerVpsService) {
-        const probed = await Promise.allSettled(
-          machines.map(async (machine) => ({
-            handle: machine.handle,
-            ...(machine.status === 'running'
-              ? await probeCustomerVpsRuntime(machine, platformSecret)
-              : { healthy: false }),
-          })),
-        );
-        refreshVpsRuntimeMetrics(
-          probed
-            .filter((result): result is PromiseFulfilledResult<{ handle: string; healthy: boolean }> => result.status === 'fulfilled')
-            .map((result) => result.value),
-        );
+        refreshVpsRuntimeMetrics(await getCachedVpsRuntimeMetrics(machines));
       }
     } catch (err: unknown) {
       logPlatformRouteError('/metrics vps refresh', err);

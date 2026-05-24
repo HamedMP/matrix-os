@@ -47,7 +47,7 @@ export const platformHttpRequestsTotal = new Counter({
 export const platformHttpRequestDuration = new Histogram({
   name: 'platform_http_request_duration_seconds',
   help: 'Platform HTTP request duration',
-  labelNames: ['method', 'path'] as const,
+  labelNames: ['method'] as const,
   buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
   registers: [metricsRegistry],
 });
@@ -65,7 +65,7 @@ export function recordPlatformHttpRequest(input: {
   };
   platformHttpRequestsTotal.inc(labels);
   platformHttpRequestDuration.observe(
-    { method: labels.method, path: labels.path },
+    { method: labels.method },
     input.durationSeconds,
   );
 }
@@ -80,7 +80,14 @@ export function normalizePlatformMetricPath(path: string): string {
   if (/^\/vps\/[0-9a-f-]+$/.test(path)) return '/vps/:machineId';
   if (/^\/containers\/[^/]+\/self-upgrade$/.test(path)) return '/containers/:handle/self-upgrade';
   if (/^\/containers\/[^/]+\/upgrade$/.test(path)) return '/containers/:handle/upgrade';
+  if (/^\/containers\/[^/]+\/start$/.test(path)) return '/containers/:handle/start';
+  if (/^\/containers\/[^/]+\/stop$/.test(path)) return '/containers/:handle/stop';
+  if (/^\/containers\/check-handle\/[^/]+$/.test(path)) return '/containers/check-handle/:handle';
+  if (/^\/containers\/[^/]+$/.test(path)) return '/containers/:handle';
   if (path.startsWith('/internal/containers/')) return '/internal/containers/:handle/:path';
+  if (/^\/social\/profiles\/[^/]+\/ai$/.test(path)) return '/social/profiles/:handle/ai';
+  if (/^\/social\/profiles\/[^/]+$/.test(path)) return '/social/profiles/:handle';
+  if (/^\/social\/send\/[^/]+$/.test(path)) return '/social/send/:handle';
   if (path.startsWith('/api/')) return '/api/:path';
   return path;
 }
@@ -292,19 +299,19 @@ export function refreshReleaseChannelMetrics(
   }
 }
 
-export function refreshVpsRuntimeMetrics(
-  machines: Array<{
-    handle: string;
-    healthy?: boolean;
-    probeLatencyMs?: number | null;
-    load1?: number | null;
-    cpuCount?: number | null;
-    memoryTotalBytes?: number | null;
-    memoryFreeBytes?: number | null;
-    diskTotalBytes?: number | null;
-    diskFreeBytes?: number | null;
-  }>,
-): void {
+export interface VpsRuntimeMetricInput {
+  handle: string;
+  healthy?: boolean;
+  probeLatencyMs?: number | null;
+  load1?: number | null;
+  cpuCount?: number | null;
+  memoryTotalBytes?: number | null;
+  memoryFreeBytes?: number | null;
+  diskTotalBytes?: number | null;
+  diskFreeBytes?: number | null;
+}
+
+export function refreshVpsRuntimeMetrics(machines: VpsRuntimeMetricInput[]): void {
   vpsHealthy.reset();
   vpsProbeLatencySeconds.reset();
   vpsLoad1.reset();

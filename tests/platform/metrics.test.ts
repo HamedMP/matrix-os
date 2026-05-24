@@ -6,6 +6,7 @@ import {
   containerMemoryUsage,
   containerMemoryLimit,
   provisionDuration,
+  normalizePlatformMetricPath,
   recordPlatformHttpRequest,
   refreshPlatformUserMetrics,
   refreshReleaseChannelMetrics,
@@ -73,7 +74,20 @@ describe('platform/metrics', () => {
 
     const output = await metricsRegistry.metrics();
     expect(output).toContain('platform_http_requests_total{method="GET",path="/system-bundles/releases/:version",status="200"} 1');
-    expect(output).toContain('platform_http_request_duration_seconds_bucket{le="0.25",method="GET",path="/system-bundles/releases/:version"} 1');
+    expect(output).toContain('platform_http_request_duration_seconds_bucket{le="0.25",method="GET"} 1');
+    expect(output).not.toContain('platform_http_request_duration_seconds_bucket{le="0.25",method="GET",path=');
+  });
+
+  it.each([
+    ['/containers/alice/start', '/containers/:handle/start'],
+    ['/containers/alice/stop', '/containers/:handle/stop'],
+    ['/containers/alice', '/containers/:handle'],
+    ['/containers/check-handle/alice', '/containers/check-handle/:handle'],
+    ['/social/profiles/alice', '/social/profiles/:handle'],
+    ['/social/profiles/alice/ai', '/social/profiles/:handle/ai'],
+    ['/social/send/alice', '/social/send/:handle'],
+  ])('normalizes handle-bearing platform metric path %s', (path, expected) => {
+    expect(normalizePlatformMetricPath(path)).toBe(expected);
   });
 
   it('refreshes VPS version labels for Grafana scraping', async () => {

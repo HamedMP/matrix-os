@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createHmac } from 'node:crypto';
-import { type PlatformDB, insertContainer } from '../../packages/platform/src/db.js';
+import { type PlatformDB, insertContainer, insertUserMachine } from '../../packages/platform/src/db.js';
 import { createOrchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
+import { metricsRegistry } from '../../packages/platform/src/metrics.js';
 
 function createMockDocker() {
   const mockContainer = {
@@ -95,6 +96,57 @@ describe('platform/api', () => {
     });
     expect(customerVpsService.provision).toHaveBeenCalledWith({ handle: 'alice', clerkUserId: 'clerk_1' });
     expect(provisionSpy).not.toHaveBeenCalled();
+  });
+
+  it('GET /metrics reuses cached VPS runtime probes between scrapes', async () => {
+    metricsRegistry.resetMetrics();
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'clerk_1',
+      handle: 'alice',
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      imageVersion: 'v2026.05.24-1',
+      provisionedAt: '2026-05-24T10:00:00.000Z',
+      lastSeenAt: '2026-05-24T10:00:00.000Z',
+    });
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const customerVpsService = {};
+    const metricsApp = createApp({
+      db,
+      orchestrator,
+      platformSecret,
+      customerVpsService: customerVpsService as any,
+    });
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          resources: {
+            cpuCount: 2,
+            loadAverage: [0.25],
+            memoryTotalBytes: 4 * 1024 * 1024 * 1024,
+            memoryFreeBytes: 1024 * 1024 * 1024,
+            diskTotalBytes: 40 * 1024 * 1024 * 1024,
+            diskFreeBytes: 30 * 1024 * 1024 * 1024,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+    try {
+      const first = await metricsApp.request('/metrics');
+      const second = await metricsApp.request('/metrics');
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(await second.text()).toContain('matrix_vps_healthy{handle="alice"} 1');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('POST /containers/provision rejects missing fields', async () => {
