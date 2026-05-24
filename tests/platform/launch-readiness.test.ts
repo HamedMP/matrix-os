@@ -4,8 +4,14 @@ import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import {
   createLaunchReadinessService,
+  createPlatformLaunchEvidenceLoader,
   type LaunchReadinessGate,
 } from '../../packages/platform/src/launch-readiness.js';
+import {
+  insertUserMachine,
+  promoteHostBundleChannel,
+  upsertHostBundleRelease,
+} from '../../packages/platform/src/db.js';
 import { createLaunchReadinessRoutes } from '../../packages/platform/src/launch-readiness-routes.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
@@ -128,6 +134,52 @@ describe('platform/launch-readiness', () => {
       launchReady: true,
       overallStatus: 'ready',
     });
+  });
+
+  it('keeps fresh and existing workspace rehearsals fail-closed without explicit evidence flags', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      await upsertHostBundleRelease(db, {
+        version: 'v2026.05.23-test',
+        gitCommit: 'abcdef123456',
+        gitRef: 'main',
+        buildTime: nowIso,
+        bundleKey: 'system-bundles/v2026.05.23-test/matrix-host-bundle.tar.gz',
+        checksumKey: 'system-bundles/v2026.05.23-test/matrix-host-bundle.tar.gz.sha256',
+        sha256: 'a'.repeat(64),
+        size: 123,
+      });
+      await promoteHostBundleChannel(db, 'beta', 'v2026.05.23-test', nowIso);
+      await insertUserMachine(db, {
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        status: 'running',
+        publicIPv4: '192.0.2.1',
+        provisionedAt: nowIso,
+        lastSeenAt: nowIso,
+      });
+      await insertUserMachine(db, {
+        machineId: '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+        clerkUserId: 'user_456',
+        handle: 'bob',
+        status: 'running',
+        publicIPv4: '192.0.2.2',
+        provisionedAt: nowIso,
+        lastSeenAt: nowIso,
+      });
+
+      const loadEvidence = createPlatformLaunchEvidenceLoader({ db, env: {} });
+
+      await expect(loadEvidence()).resolves.toMatchObject({
+        promotedRelease: true,
+        freshWorkspace: false,
+        existingWorkspace: false,
+        shellRouting: true,
+      });
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
   });
 
   it('does not pass entitlement evidence for blocking enforcement statuses', async () => {

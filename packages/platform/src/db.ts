@@ -22,6 +22,7 @@ interface UserMachinesTable {
   machine_id: string;
   clerk_user_id: string;
   handle: string;
+  runtime_slot: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
   public_ipv6: string | null;
@@ -221,6 +222,7 @@ export interface UserMachineRecord {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   hetznerServerId: number | null;
   publicIPv4: string | null;
   publicIPv6: string | null;
@@ -297,6 +299,7 @@ export interface NewUserMachine {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot?: string;
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
   publicIPv6?: string | null;
@@ -365,6 +368,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       machine_id TEXT PRIMARY KEY,
       clerk_user_id TEXT NOT NULL,
       handle TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL DEFAULT 'primary',
       hetzner_server_id INTEGER,
       public_ipv4 TEXT,
       public_ipv6 TEXT,
@@ -379,14 +383,17 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       failure_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_clerk_active`.execute(db);
   await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active
-    ON user_machines(clerk_user_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_active
+    ON user_machines(clerk_user_id, runtime_slot)
     WHERE deleted_at IS NULL
   `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
 
   await sql`
@@ -671,6 +678,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     machineId: row.machine_id,
     clerkUserId: row.clerk_user_id,
     handle: row.handle,
+    runtimeSlot: row.runtime_slot,
     hetznerServerId: row.hetzner_server_id,
     publicIPv4: row.public_ipv4,
     publicIPv6: row.public_ipv6,
@@ -691,6 +699,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     machine_id: record.machineId,
     clerk_user_id: record.clerkUserId,
     handle: record.handle,
+    runtime_slot: record.runtimeSlot ?? 'primary',
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
     public_ipv6: record.publicIPv6 ?? null,
@@ -711,6 +720,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.machineId !== undefined) update.machine_id = values.machineId;
   if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
   if (values.handle !== undefined) update.handle = values.handle;
+  if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
   if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
@@ -877,15 +887,25 @@ export async function getUserMachine(db: PlatformDB, machineId: string): Promise
 export async function getActiveUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
+}
+
+export async function getActiveUserMachineByClerkIdAndSlot(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot: string,
+): Promise<UserMachineRecord | undefined> {
+  return getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
 }
 
 export async function getActiveUserMachineByHandle(
@@ -897,6 +917,7 @@ export async function getActiveUserMachineByHandle(
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
+    .where('runtime_slot', '=', 'primary')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -911,6 +932,7 @@ export async function getRunningUserMachineByHandle(
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
+    .where('runtime_slot', '=', 'primary')
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
@@ -920,12 +942,14 @@ export async function getRunningUserMachineByHandle(
 export async function getRunningUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
@@ -987,6 +1011,7 @@ export async function completeUserMachineRegistration(
 export async function claimUserMachineRecovery(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
@@ -1000,6 +1025,7 @@ export async function claimUserMachineRecovery(
       failure_at: null,
     })
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('deleted_at', 'is', null)
     .where('status', '!=', 'recovering')
     .returningAll()

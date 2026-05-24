@@ -29,7 +29,6 @@ export interface LaunchReadinessGate {
   message: string;
   remediation: string | null;
   lastCheckedAt: string;
-  evidence?: string[];
 }
 
 export interface LaunchReadinessEvidence {
@@ -242,8 +241,8 @@ export function createPlatformLaunchEvidenceLoader(options: {
     const hasReachableMachine = runningMachines.some((machine) => Boolean(machine.lastSeenAt));
     return {
       promotedRelease: Boolean(betaRelease),
-      freshWorkspace: readEvidenceFlag(env, 'MATRIX_LAUNCH_FRESH_WORKSPACE') || runningMachines.length >= 1,
-      existingWorkspace: readEvidenceFlag(env, 'MATRIX_LAUNCH_EXISTING_WORKSPACE') || runningMachines.length >= 2,
+      freshWorkspace: readEvidenceFlag(env, 'MATRIX_LAUNCH_FRESH_WORKSPACE'),
+      existingWorkspace: readEvidenceFlag(env, 'MATRIX_LAUNCH_EXISTING_WORKSPACE'),
       shellRouting: readEvidenceFlag(env, 'MATRIX_LAUNCH_SHELL_ROUTING') || hasReachableMachine,
       onboardingEducation: readEvidenceFlag(env, 'MATRIX_LAUNCH_ONBOARDING_EDUCATION'),
       visualQa: readEvidenceFlag(env, 'MATRIX_LAUNCH_VISUAL_QA'),

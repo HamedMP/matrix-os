@@ -109,6 +109,34 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
+  it('can provision an isolated staging runtime for the same Clerk user', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    });
+
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    const stagingAgain = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+
+    expect(primary.machineId).toBe(ids[0]);
+    expect(staging.machineId).toBe(ids[1]);
+    expect(stagingAgain).toEqual(staging);
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
+      handle: 'alice',
+      runtimeSlot: 'primary',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'staging')).resolves.toMatchObject({
+      handle: 'alice-staging',
+      runtimeSlot: 'staging',
+    });
+  });
+
   it('templates the platform verification token into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 

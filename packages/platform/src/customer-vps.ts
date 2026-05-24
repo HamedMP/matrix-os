@@ -73,6 +73,7 @@ export interface StatusResponse {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   status: CustomerVpsStatus;
   imageVersion: string | null;
   publicIPv4: string | null;
@@ -127,6 +128,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_MACHINE_ID={{machineId}}',
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
+  '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
@@ -175,6 +177,7 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
     machineId: row.machineId,
     clerkUserId: row.clerkUserId,
     handle: row.handle,
+    runtimeSlot: row.runtimeSlot,
     status: row.status as CustomerVpsStatus,
     imageVersion: row.imageVersion,
     publicIPv4: row.publicIPv4,
@@ -203,6 +206,7 @@ function buildHostConfig(
     machineId,
     clerkUserId: input.clerkUserId,
     handle: input.handle,
+    runtimeSlot: input.runtimeSlot,
     imageVersion: bundleRef.imageVersion,
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
@@ -398,7 +402,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
 
       const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
-        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId);
+        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId, input.runtimeSlot);
         if (existing) {
           return { existing };
         }
@@ -406,6 +410,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           machineId,
           clerkUserId: input.clerkUserId,
           handle: input.handle,
+          runtimeSlot: input.runtimeSlot,
           status: 'provisioning',
           imageVersion: bundleRef.imageVersion,
           registrationTokenHash: registration.hash,
@@ -431,6 +436,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           labels: {
             app: 'matrix-os',
             clerk_user_id: input.clerkUserId,
+            runtime_slot: input.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -558,7 +564,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
-        { clerkUserId: active.clerkUserId, handle: active.handle },
+        { clerkUserId: active.clerkUserId, handle: active.handle, runtimeSlot: active.runtimeSlot },
         machineId,
         registration.token,
         postgresPassword,

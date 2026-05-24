@@ -31,8 +31,7 @@ bun run test -- tests/platform/launch-entitlement.test.ts
 ## Visual And E2E Checks
 
 ```bash
-bun run test:e2e -- tests/e2e/onboarding-activation.spec.ts
-bun run test:e2e -- tests/e2e/onboarding-visual.spec.ts
+pnpm --dir shell exec playwright test ../tests/e2e/onboarding-activation.spec.ts ../tests/e2e/onboarding-visual.spec.ts --config ../tests/e2e/playwright.config.ts
 ```
 
 Required evidence:
@@ -46,6 +45,39 @@ Required evidence:
 - Admin/control surface shows model/provider setup, settings, automations, activity, and readiness remediation in the Matrix visual language.
 - Coding-focused user connects GitHub, selects a project, and sees next coding action.
 - Assistant-focused user connects or skips calendar/email and sees available/degraded workflows.
+
+## Staging VPS For Breaking Feature Tests
+
+Use a separate runtime slot when a branch or host bundle may break the primary
+workspace. The same Clerk login can route to either runtime.
+
+1. Publish the branch host bundle as an immutable version.
+2. Provision a staging runtime for the same Clerk user with a distinct handle.
+
+   ```bash
+   curl --fail --silent --show-error \
+     -X POST "$PLATFORM_PUBLIC_URL/vps/provision" \
+     -H "Authorization: Bearer $PLATFORM_SECRET" \
+     -H "Content-Type: application/json" \
+     -d '{"clerkUserId":"user_xxx","handle":"hamedmp-staging","runtimeSlot":"staging"}'
+   ```
+
+3. Deploy the branch version only to that staging VPS.
+4. Open the same login at:
+
+   ```text
+   https://app.matrix-os.com/?runtime=staging
+   ```
+
+5. Return to the primary VPS with:
+
+   ```text
+   https://app.matrix-os.com/?runtime=primary
+   ```
+
+The platform stores primary and staging as separate `user_machines.runtime_slot`
+rows, so a failed staging upgrade must not overwrite or route traffic away from
+the primary runtime.
 
 ## Golden Path: Fresh Workspace
 
@@ -110,3 +142,49 @@ Required evidence:
 - Full pre-PR checklist passes.
 - Visual QA evidence is attached to the implementation PR.
 - Public docs under `www/content/docs/` explain onboarding launch readiness and deferred payment work.
+
+## Latest Implementation Validation
+
+These results are the current local evidence for this implementation branch.
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| `bun run test -- tests/platform/launch-readiness.test.ts tests/platform/launch-entitlement.test.ts tests/platform/profile-routing-vps.test.ts tests/platform/profile-routing.test.ts` | PASS | 4 files, 29 tests. Covers operator launch gates, entitlement preservation, app route mount, and existing profile/VPS routing compatibility. |
+| `bun run typecheck` | PASS | Observability/kernel build plus package typechecks completed. |
+| `bun run check:patterns` | PASS with existing warnings | 0 violations. Existing baseline warnings remain for body consumption, Map/Set review, path operations, and external headers. |
+| `bun run test -- --reporter=dot` | PASS | 459 files passed, 3 skipped; 4,752 tests passed, 20 skipped. |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_bWF0cml4b3MudGVzdCQ= pnpm --dir shell build` | PASS | Uses a local test Clerk publishable key, not the example production placeholder. |
+| `pnpm --dir shell exec playwright test ../tests/e2e/onboarding-activation.spec.ts ../tests/e2e/onboarding-visual.spec.ts --config ../tests/e2e/playwright.config.ts` | PASS | 8 onboarding activation and visual QA specs passed. Shell logs expected gateway proxy refusals because the tests mock onboarding APIs without running the gateway. |
+
+PR/CI, Greptile review, and real-environment operator evidence flags must still be added before this feature is called launch-ready.
+
+## Backend Route Review And PR Invariants
+
+### Source Of Truth
+
+- Gateway onboarding readiness remains owner-scoped readiness state and safe browser summaries.
+- Platform launch readiness is the operator source of truth for paid-beta enablement. It combines platform DB facts, such as beta release and machine rehearsal state, with explicit QA evidence flags for launch gates that require human or e2e confirmation.
+- Entitlement policy in `profile-routing.ts` is data-preserving policy only; billing remains deferred.
+
+### Lock And Transaction Scope
+
+- Launch readiness reads platform DB state and does not perform writes.
+- The operator readiness route has no external network calls and no multi-write transaction scope.
+- Entitlement decisions are pure functions and do not mutate machine records or owner data.
+
+### Acceptable Orphan States
+
+- Missing QA evidence leaves the operator report blocked.
+- Missing beta release promotion leaves paid beta blocked.
+- Missing or expired entitlement blocks paid-only access while preserving owner data and exportability.
+
+### Auth Source Of Truth
+
+- `GET /api/operator/launch-readiness` is protected by the platform bearer token using constant-time token comparison.
+- Owner onboarding and admin-control routes remain owner-authenticated through their existing gateway request-principal paths.
+
+### Deferred Scope
+
+- Clerk billing enforcement and payment collection are not enabled here.
+- Durable owner-scoped onboarding persistence beyond the current readiness services remains a follow-up if the launch rehearsal requires it.
+- Visual QA screenshots and CI/Greptile artifacts are required before launch-ready signoff.

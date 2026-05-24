@@ -434,11 +434,27 @@ curl https://api.matrix-os.com/health
 6. code.matrix-os.com -> same Clerk session -> proxy to the user's VPS code gateway
 ```
 
-`/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `clerk_user_id`, so repeated onboarding calls reuse the same active VPS for that user.
+`/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `(clerk_user_id, runtime_slot)`, so repeated onboarding calls reuse the same active VPS for that user and slot.
 
 **Routing modes:**
-- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's active VPS by `clerkUserId`. No handle in URL. Redirects to `/login` if no session.
+- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's active VPS by `clerkUserId` and runtime slot. No handle in URL. Redirects to `/login` if no session.
 - `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway. No handle, SSH, or server IP is exposed.
+
+For breaking-feature rehearsals, provision a separate runtime slot for the same
+Clerk user and use the same login to switch:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST "$PLATFORM_PUBLIC_URL/vps/provision" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"clerkUserId":"user_xxx","handle":"alice-staging","runtimeSlot":"staging"}'
+```
+
+Open `https://app.matrix-os.com/?runtime=staging` to route that session to the
+staging VPS. Open `https://app.matrix-os.com/?runtime=primary` to return to the
+primary VPS. Deploy branch host bundles to the staging VPS by exact version; do
+not use `/vps/deploy` unless you intend to fan out to every running VPS.
 
 Legacy fallback code may exist only to keep historical records reachable during migration. New and production customer runtime should not be provisioned as containers.
 
