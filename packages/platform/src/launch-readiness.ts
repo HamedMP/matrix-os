@@ -1,8 +1,5 @@
 import type { PlatformDB } from './db.js';
-import {
-  getHostBundleReleaseByChannel,
-  listUserMachines,
-} from './db.js';
+import { getHostBundleReleaseByChannel } from './db.js';
 
 export type LaunchReadinessStatus = 'pass' | 'fail' | 'blocked';
 export type LaunchReadinessOverallStatus = 'ready' | 'blocked';
@@ -231,19 +228,12 @@ export function createPlatformLaunchEvidenceLoader(options: {
 }): () => Promise<LaunchReadinessEvidence> {
   const env = options.env ?? process.env;
   return async () => {
-    const [betaRelease, machines] = await Promise.all([
-      getHostBundleReleaseByChannel(options.db, 'beta'),
-      listUserMachines(options.db),
-    ]);
-    const runningMachines = machines.filter((machine) =>
-      machine.status === 'running' && machine.publicIPv4,
-    );
-    const hasReachableMachine = runningMachines.some((machine) => Boolean(machine.lastSeenAt));
+    const betaRelease = await getHostBundleReleaseByChannel(options.db, 'beta');
     return {
       promotedRelease: Boolean(betaRelease),
       freshWorkspace: readEvidenceFlag(env, 'MATRIX_LAUNCH_FRESH_WORKSPACE'),
       existingWorkspace: readEvidenceFlag(env, 'MATRIX_LAUNCH_EXISTING_WORKSPACE'),
-      shellRouting: readEvidenceFlag(env, 'MATRIX_LAUNCH_SHELL_ROUTING') || hasReachableMachine,
+      shellRouting: readEvidenceFlag(env, 'MATRIX_LAUNCH_SHELL_ROUTING'),
       onboardingEducation: readEvidenceFlag(env, 'MATRIX_LAUNCH_ONBOARDING_EDUCATION'),
       visualQa: readEvidenceFlag(env, 'MATRIX_LAUNCH_VISUAL_QA'),
       integrations: readEvidenceFlag(env, 'MATRIX_LAUNCH_INTEGRATIONS'),

@@ -132,6 +132,14 @@ describe('platform/customer-vps-routes', () => {
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ error: 'Invalid request' });
 
+    const invalidSlot = await app.request('/vps/recover', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123', runtimeSlot: 'staging-' }),
+    });
+    expect(invalidSlot.status).toBe(400);
+    expect(await invalidSlot.json()).toEqual({ error: 'Invalid request' });
+
     const recover = await app.request('/vps/recover', {
       method: 'POST',
       headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },

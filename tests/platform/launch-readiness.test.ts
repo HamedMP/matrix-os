@@ -136,7 +136,7 @@ describe('platform/launch-readiness', () => {
     });
   });
 
-  it('keeps fresh and existing workspace rehearsals fail-closed without explicit evidence flags', async () => {
+  it('keeps operator-owned rehearsal gates fail-closed without explicit evidence flags', async () => {
     const { db } = await createTestPlatformDb();
     try {
       await upsertHostBundleRelease(db, {
@@ -175,7 +175,7 @@ describe('platform/launch-readiness', () => {
         promotedRelease: true,
         freshWorkspace: false,
         existingWorkspace: false,
-        shellRouting: true,
+        shellRouting: false,
       });
     } finally {
       await destroyTestPlatformDb(db);

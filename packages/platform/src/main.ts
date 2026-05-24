@@ -86,7 +86,6 @@ const CODE_SESSION_COOKIE = 'matrix_code_session';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
 const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
 const RUNTIME_SLOT_COOKIE = 'matrix_runtime_slot';
-const RUNTIME_SLOT_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -397,12 +396,12 @@ function buildShellRouteCookie(handle: string): string {
 function readRuntimeSlot(cookieHeader: string | undefined, rawUrl: string): string {
   try {
     const querySlot = new URL(rawUrl, 'https://app.matrix-os.com').searchParams.get('runtime');
-    if (querySlot && RUNTIME_SLOT_PATTERN.test(querySlot)) return querySlot;
+    if (querySlot && RuntimeSlotSchema.safeParse(querySlot).success) return querySlot;
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse runtime slot URL:', err instanceof Error ? err.message : String(err));
   }
   const cookieSlot = readCookie(cookieHeader, RUNTIME_SLOT_COOKIE);
-  return cookieSlot && RUNTIME_SLOT_PATTERN.test(cookieSlot) ? cookieSlot : 'primary';
+  return cookieSlot && RuntimeSlotSchema.safeParse(cookieSlot).success ? cookieSlot : 'primary';
 }
 
 function buildRuntimeSlotCookie(runtimeSlot: string): string {

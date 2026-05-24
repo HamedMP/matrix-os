@@ -22,7 +22,7 @@ export const PublicIPv4Schema = z.ipv4().refine((ip) => {
   if (a >= 224) return false;
   return true;
 }, 'publicIPv4 must be a public IPv4 address');
-export const RuntimeSlotSchema = z.string().min(1).max(32).regex(/^[a-z0-9][a-z0-9-]*$/);
+export const RuntimeSlotSchema = z.string().min(1).max(32).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
 
 export const ProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
