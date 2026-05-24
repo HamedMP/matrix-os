@@ -34,6 +34,12 @@ export function AdminControlPanel({
   onResumeSetup: (target: string) => void;
 }) {
   if (!surface) return null;
+  const setupSession = surface.setupSession;
+  const settingsLabel = surface.settings.some((setting) => setting.status === "failed")
+    ? "attention needed"
+    : surface.settings.some((setting) => setting.status === "needs_review")
+      ? "review before launch"
+      : "saved and reloadable";
 
   return (
     <section className="rounded-md border border-[#17281f]/10 bg-[#f8f5ee]/80 p-4 shadow-[0_16px_45px_rgba(23,40,31,0.08)]">
@@ -60,7 +66,7 @@ export function AdminControlPanel({
                 <BotIcon className="h-4 w-4" aria-hidden="true" />
                 <p className="text-xs font-semibold">{provider.label}</p>
               </div>
-              {(provider.status === "available" || provider.status === "approved") && <CheckCircle2Icon className="h-4 w-4" aria-hidden="true" />}
+              {(provider.status === "available" || provider.status === "approved" || provider.status === "connected") && <CheckCircle2Icon className="h-4 w-4" aria-hidden="true" />}
             </div>
             <p className="mt-1 text-xs capitalize opacity-75">{provider.mode.replaceAll("_", " ")}</p>
             <p className="mt-1 text-xs capitalize opacity-75">{provider.status.replaceAll("_", " ")}</p>
@@ -70,8 +76,8 @@ export function AdminControlPanel({
 
       <div className="mt-3 grid gap-2 lg:grid-cols-[0.9fr_1.1fr]">
         <AdminSetupWizard
-          session={surface.setupSession}
-          onResume={surface.setupSession ? () => onResumeSetup(surface.setupSession.target) : undefined}
+          session={setupSession}
+          onResume={setupSession ? () => onResumeSetup(setupSession.target) : undefined}
         />
         <div className="grid gap-2 sm:grid-cols-3">
           <div className="rounded-md border border-[#17281f]/10 bg-white/55 p-3">
@@ -88,7 +94,7 @@ export function AdminControlPanel({
               Settings
             </p>
             <p className="mt-2 text-xl font-semibold text-[#17281f]">{surface.settings.length}</p>
-            <p className="text-xs text-[#17281f]/55">saved and reloadable</p>
+            <p className="text-xs text-[#17281f]/55">{settingsLabel}</p>
           </div>
           <div className="rounded-md border border-[#17281f]/10 bg-white/55 p-3">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-[#111612]">

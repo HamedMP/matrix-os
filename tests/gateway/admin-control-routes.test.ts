@@ -72,6 +72,62 @@ describe("admin control routes", () => {
     expect(body.providers).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "messaging.post_message", label: "GitHub" }),
     ]));
+    expect(body.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "messaging.post_message", nextAction: "Approve Messaging" }),
+    ]));
+  });
+
+  it("keeps pending connection requirements visible after another capability is approved", async () => {
+    const agentCredentials = createAgentCredentialStatusService();
+    const integrations = {
+      listCapabilities: async () => ({
+        capabilities: [
+          {
+            id: "calendar.create_event",
+            provider: "calendar" as const,
+            capability: "create_calendar_event",
+            status: "approved" as const,
+            approvedAgents: ["hermes" as const],
+            requiresApprovalPerAction: true,
+          },
+          {
+            id: "email.read_email",
+            provider: "email" as const,
+            capability: "read_email",
+            status: "connect_required" as const,
+            approvedAgents: [],
+            requiresApprovalPerAction: true,
+          },
+          {
+            id: "github.read_repository",
+            provider: "github" as const,
+            capability: "read_repository",
+            status: "unavailable" as const,
+            approvedAgents: [],
+            requiresApprovalPerAction: true,
+          },
+        ],
+      }),
+      getCapabilityApproval: async () => null,
+      setApproval: async () => ({
+        capabilityId: "calendar.create_event",
+        agent: "hermes" as const,
+        status: "approved" as const,
+      }),
+    };
+    const { service: readiness } = createTestReadinessService(undefined, { agentCredentialService: agentCredentials });
+    const service = createAdminControlService({ agentCredentials, integrations, readiness });
+    const app = createAdminControlRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const body = await (await app.request("/control-surface")).json();
+
+    expect(body.settings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "integration-approvals", status: "needs_review" }),
+    ]));
+    expect(body.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "email.read_email", nextAction: "Connect Email" }),
+      expect.objectContaining({ id: "github.read_repository", nextAction: null }),
+    ]));
   });
 
   it("does not require integration approval review when no integrations are available", async () => {
@@ -114,7 +170,7 @@ describe("admin control routes", () => {
     ]));
   });
 
-  it("creates and resumes setup wizard sessions without duplicate destructive work", async () => {
+  it("creates fresh setup wizard sessions for connect and resumes only on resume intent", async () => {
     const agentCredentials = createAgentCredentialStatusService({ now: () => new Date("2026-05-23T00:00:00.000Z") });
     const integrations = createIntegrationCapabilityService();
     const { service: readiness } = createTestReadinessService(undefined, { agentCredentialService: agentCredentials, integrationCapabilityService: integrations });
@@ -127,7 +183,7 @@ describe("admin control routes", () => {
     }));
     const resumed = await app.request(post("/control-surface/setup-session", {
       target: "agent:claude",
-      intent: "connect",
+      intent: "resume",
     }));
 
     expect(created.status).toBe(200);
@@ -136,6 +192,22 @@ describe("admin control routes", () => {
     const second = await resumed.json();
     expect(second.session.id).toBe(first.session.id);
     expect(second.session.status).toBe("resumable");
+  });
+
+  it("does not resume stale setup state when the operator asks to connect", async () => {
+    const agentCredentials = createAgentCredentialStatusService({ now: () => new Date("2026-05-23T00:00:00.000Z") });
+    const integrations = createIntegrationCapabilityService();
+    const { service: readiness } = createTestReadinessService(undefined, { agentCredentialService: agentCredentials, integrationCapabilityService: integrations });
+    const service = createAdminControlService({ agentCredentials, integrations, readiness, now: () => new Date("2026-05-23T00:00:00.000Z") });
+    const app = createAdminControlRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(post("/control-surface/setup-session", { target: "agent:claude", intent: "connect" }));
+    const restarted = await app.request(post("/control-surface/setup-session", { target: "agent:claude", intent: "connect" }));
+
+    expect(restarted.status).toBe(200);
+    await expect(restarted.json()).resolves.toMatchObject({
+      session: expect.objectContaining({ status: "new" }),
+    });
   });
 
   it("starts a fresh setup session when the operator asks to configure", async () => {

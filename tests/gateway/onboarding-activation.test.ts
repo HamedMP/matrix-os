@@ -186,7 +186,7 @@ describe("activation readiness contracts", () => {
     expect(surface.providers.map((provider) => provider.id)).toEqual(expect.arrayContaining(["hermes", "claude", "codex"]));
     expect(surface.settings).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "agent-routing", status: "saved" }),
-      expect.objectContaining({ id: "integration-approvals", status: "saved" }),
+      expect.objectContaining({ id: "integration-approvals", status: "needs_review" }),
     ]));
     expect(surface.readiness.overallStatus).toBe("degraded");
     expect(surface.activity).toEqual(expect.arrayContaining([

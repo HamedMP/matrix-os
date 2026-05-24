@@ -126,18 +126,20 @@ export function createAdminControlService(options: {
         label: labelForIntegrationProvider(capability.provider),
         status: capability.status === "connect_required" ? "missing" as const : capability.status,
         mode: "integration" as const,
-        nextAction: capability.status === "approved"
+        nextAction: capability.status === "approved" || capability.status === "unavailable"
           ? null
           : capability.status === "connect_required"
-            ? `Connect ${capability.provider}`
-            : `Approve ${capability.provider}`,
+            ? `Connect ${labelForIntegrationProvider(capability.provider)}`
+            : `Approve ${labelForIntegrationProvider(capability.provider)}`,
       })),
     ];
     const approved = integrationStatus.capabilities.filter((capability) => capability.status === "approved").length;
     const connected = integrationStatus.capabilities.filter((capability) => capability.status === "connected" || capability.status === "approved").length;
     const needsConnection = integrationStatus.capabilities.filter((capability) => capability.status === "connect_required").length;
     let integrationApprovalStatus: "saved" | "needs_review" = "needs_review";
-    if (connected === 0 && needsConnection === 0) {
+    if (needsConnection > 0) {
+      integrationApprovalStatus = "needs_review";
+    } else if (connected === 0) {
       integrationApprovalStatus = "saved";
     } else if (connected > approved) {
       integrationApprovalStatus = "needs_review";
@@ -161,8 +163,9 @@ export function createAdminControlService(options: {
         createdAt: timestamp,
       },
     ];
-    const latestSession = Array.from(setupSessions.values())
-      .filter((session) => session.id.startsWith(`setup.${ownerId}.`))
+    const latestSession = Array.from(setupSessions.entries())
+      .filter(([key]) => sessionBelongsToOwner(key, ownerId))
+      .map(([, session]) => session)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0] ?? null;
 
     return {
@@ -190,14 +193,15 @@ export function createAdminControlService(options: {
     sweepSetupSessions(currentTime.getTime());
     const key = sessionKey(ownerId, input.target);
     const existing = setupSessions.get(key);
-    if (existing) {
+    if (existing && input.intent === "resume") {
       const resumed = { ...existing, status: "resumable" as const, updatedAt: currentTime.toISOString() };
       setupSessions.delete(key);
       setupSessions.set(key, resumed);
       return { session: resumed };
     }
+    if (existing) setupSessions.delete(key);
     const ownerSessions = Array.from(setupSessions.entries())
-      .filter(([, session]) => session.id.startsWith(`setup.${ownerId}.`))
+      .filter(([entryKey]) => sessionBelongsToOwner(entryKey, ownerId))
       .sort((left, right) => Date.parse(left[1].updatedAt) - Date.parse(right[1].updatedAt));
     if (ownerSessions.length >= MAX_SETUP_SESSIONS_PER_OWNER) {
       setupSessions.delete(ownerSessions[0][0]);

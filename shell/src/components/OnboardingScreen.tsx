@@ -50,6 +50,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const audioCtxRef = useRef<AudioContext | null>(null);
   const continueTimerRef = useRef<number | null>(null);
   const continueFrameRef = useRef<number | null>(null);
+  const adminActionControllerRef = useRef<AbortController | null>(null);
 
   // Live subtitle — accumulated AI transcript fragments, synced with voice
   const subtitle = ob.currentSubtitle;
@@ -105,6 +106,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       if (continueFrameRef.current !== null) {
         window.cancelAnimationFrame(continueFrameRef.current);
       }
+      adminActionControllerRef.current?.abort();
       ambientRef.current?.pause();
       audioCtxRef.current?.close();
     };
