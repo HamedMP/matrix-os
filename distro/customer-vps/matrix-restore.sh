@@ -14,10 +14,10 @@ case "$runtime_slot" in
   ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-restore: invalid runtime slot" >&2; exit 1 ;;
 esac
 if [ "$runtime_slot" = "primary" ]; then
-  latest_key="system/db/latest"
+  latest_pointer_key="system/db/latest"
   snapshot_key_pattern="system/db/snapshots/*.dump"
 else
-  latest_key="system/runtime-slots/${runtime_slot}/db/latest"
+  latest_pointer_key="system/runtime-slots/${runtime_slot}/db/latest"
   snapshot_key_pattern="system/runtime-slots/${runtime_slot}/db/snapshots/*.dump"
 fi
 
@@ -29,12 +29,12 @@ if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then
   exit 0
 fi
 
-if ! /opt/matrix/bin/matrixctl r2 exists "$latest_key"; then
+if ! /opt/matrix/bin/matrixctl r2 exists "$latest_pointer_key"; then
   touch "$restore_flag"
   exit 0
 fi
 
-if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$latest_file"; then
+if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then
   echo "matrix-restore: failed to fetch latest pointer" >&2
   exit 1
 fi

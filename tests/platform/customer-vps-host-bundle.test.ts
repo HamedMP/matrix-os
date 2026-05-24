@@ -181,7 +181,7 @@ describe('customer VPS host bundle', () => {
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
 
     expect(restore).toContain('/opt/matrix/bin/matrixctl r2 exists system/vps-meta.json');
-    expect(restore).toContain('latest_key="system/db/latest"');
-    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_key" "$latest_file"');
+    expect(restore).toContain('latest_pointer_key="system/db/latest"');
+    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"');
   });
 });
