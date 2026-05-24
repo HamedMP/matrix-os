@@ -137,11 +137,12 @@ describe('platform/api', () => {
       runtime: 'customer_vps',
       handle: 'alice',
       clerkUserId: 'clerk_1',
+      runtimeSlot: 'primary',
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       status: 'provisioning',
       etaSeconds: 90,
     });
-    expect(customerVpsService.provision).toHaveBeenCalledWith({ handle: 'alice', clerkUserId: 'clerk_1' });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({ handle: 'alice', clerkUserId: 'clerk_1', runtimeSlot: 'primary' });
     expect(provisionSpy).not.toHaveBeenCalled();
   });
 
