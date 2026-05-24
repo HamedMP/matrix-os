@@ -2790,7 +2790,7 @@ export async function createGateway(config: GatewayConfig) {
         events.push(event);
       }, context);
     } catch (err: unknown) {
-      console.error("[gateway] Message dispatch failed:", err instanceof Error ? err.message : String(err));
+      console.error("[gateway] Message dispatch failed:", err);
       return c.json({ error: "Message dispatch failed" }, 500);
     }
 
