@@ -6,6 +6,15 @@ import { Badge } from "@/components/ui/badge";
 
 type RunStatus = "queued" | "running" | "retrying" | "blocked" | "stopped" | "failed" | "handoff" | "completed";
 type Agent = "codex" | "claude" | "opencode" | "pi";
+type AgentAuthState = "unknown" | "ok" | "required" | "error";
+
+interface AgentStatus {
+  id: Agent;
+  displayName?: string;
+  installed: boolean;
+  authState: AgentAuthState;
+  errorCode: string | null;
+}
 
 interface SymphonyStatus {
   running: boolean;
@@ -69,6 +78,7 @@ interface Run {
   projectSlug: string;
   worktreeId?: string;
   sessionId?: string;
+  lastErrorCode?: string;
   lastEvent: string;
   updatedAt: string;
 }
@@ -146,6 +156,10 @@ function statusTone(status: RunStatus): string {
   return "bg-zinc-100 text-zinc-700";
 }
 
+function eventTone(run: Run): string {
+  return run.lastErrorCode === "agent_auth_required" ? "text-amber-900" : "text-muted-foreground";
+}
+
 function openWorkspaceInShell() {
   if (window.MatrixOS?.openApp) {
     window.MatrixOS.openApp("Workspace", "__workspace__");
@@ -163,6 +177,7 @@ export default function App() {
   const [status, setStatus] = useState<SymphonyStatus | null>(null);
   const [config, setConfig] = useState<SymphonyConfigResponse | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [setupOptions, setSetupOptions] = useState<SetupOptions | null>(null);
   const [setupLoading, setSetupLoading] = useState(false);
@@ -178,14 +193,19 @@ export default function App() {
 
   const load = useCallback(async (options: LoadOptions = {}) => {
     setError(null);
-    const [nextStatus, nextConfig, runList] = await Promise.all([
+    const [nextStatus, nextConfig, runList, agentList] = await Promise.all([
       fetchJson<SymphonyStatus>("/api/symphony/status"),
       fetchJson<SymphonyConfigResponse>("/api/symphony/config"),
       fetchJson<{ runs: Run[] }>("/api/symphony/runs"),
+      fetchJson<{ agents: AgentStatus[] }>("/api/agents").catch((err: unknown) => {
+        console.warn("[symphony] agent status load failed:", err instanceof Error ? err.message : String(err));
+        return { agents: [] };
+      }),
     ]);
     setStatus(nextStatus);
     setConfig(nextConfig);
     setRuns(runList.runs);
+    setAgents(Array.isArray(agentList.agents) ? agentList.agents : []);
     if ((options.hydrateForm ?? true) && !settingsOpenRef.current && (nextConfig.installation || nextConfig.rule)) {
       setForm({
         projectSlug: nextConfig.installation?.projectSlug ?? DEFAULT_FORM.projectSlug,
@@ -244,6 +264,15 @@ export default function App() {
   }, [load]);
 
   const grouped = useMemo(() => groupRuns(runs), [runs]);
+  const selectedAgent = config?.installation?.defaultAgent ?? form.defaultAgent;
+  const selectedAgentStatus = agents.find((agent) => agent.id === selectedAgent);
+  const agentAuthIssue = selectedAgentStatus && (
+    !selectedAgentStatus.installed ||
+    selectedAgentStatus.authState === "required" ||
+    selectedAgentStatus.authState === "error"
+  )
+    ? selectedAgentStatus
+    : null;
   const filteredLinearProjects = useMemo(() => {
     const projects = setupOptions?.linear.projects ?? [];
     if (!form.teamId) return projects;
@@ -447,6 +476,18 @@ export default function App() {
         </div>
       )}
 
+      {agentAuthIssue && (
+        <div className="mx-6 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="flex min-w-0 items-center gap-2">
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>{agentAuthIssue.displayName ?? agentAuthIssue.id} needs authentication in this Matrix runtime.</span>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={Boolean(busy)}>
+            <RefreshCw className="size-4" /> Refresh
+          </Button>
+        </div>
+      )}
+
       <section className="grid gap-4 p-6 md:grid-cols-4">
         <Metric label="Queue" value={status?.counts.queued ?? 0} />
         <Metric label="Running" value={status?.counts.running ?? 0} />
@@ -619,7 +660,7 @@ function RunRow({ run, busy, onAction }: { run: Run; busy: string | null; onActi
           <span className="text-sm text-muted-foreground">{run.agent}</span>
         </div>
         <div className="mt-1 text-sm">{run.ticketTitle}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{run.lastEvent}</div>
+        <div className={`mt-1 text-xs ${eventTone(run)}`}>{run.lastEvent}</div>
       </div>
       <div className="flex items-center gap-2">
         {run.ticketUrl && (

@@ -16,6 +16,16 @@ import type { SymphonyStatusHub } from "./status-hub.js";
 
 type WorktreeManager = Pick<ReturnType<typeof createWorktreeManager>, "createWorktree">;
 type AgentSessionManager = Pick<ReturnType<typeof createAgentSessionManager>, "startSession" | "killSession">;
+type AgentStatusProvider = {
+  detectAgents(): Promise<{
+    agents: Array<{
+      id: SymphonyInstallation["defaultAgent"];
+      installed: boolean;
+      authState: "unknown" | "ok" | "required" | "error";
+      errorCode: string | null;
+    }>;
+  }>;
+};
 
 const RETRYABLE_RUN_STATUSES: SymphonyRun["status"][] = ["queued", "running", "retrying", "blocked", "failed", "stopped"];
 const RETRYABLE_RUN_STATUSES_WITHOUT_RUNNING: SymphonyRun["status"][] = RETRYABLE_RUN_STATUSES.filter((status) => status !== "running");
@@ -125,6 +135,7 @@ export function createMatrixSymphonyOrchestrator(options: {
   linearSource: LinearSource;
   worktreeManager: WorktreeManager;
   agentSessionManager: AgentSessionManager;
+  agentStatusProvider?: AgentStatusProvider;
   statusHub?: SymphonyStatusHub;
 }) {
   const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -162,6 +173,21 @@ export function createMatrixSymphonyOrchestrator(options: {
       actorId,
     });
     return updated;
+  }
+
+  async function agentReadinessFailure(agent: SymphonyInstallation["defaultAgent"]): Promise<{ code: string; message: string } | null> {
+    if (!options.agentStatusProvider) return null;
+    try {
+      const status = (await options.agentStatusProvider.detectAgents()).agents.find((candidate) => candidate.id === agent);
+      if (!status) return { code: "agent_missing", message: "Agent is not installed" };
+      if (!status.installed) return { code: status.errorCode ?? "agent_missing", message: "Agent is not installed" };
+      if (status.authState === "required") return { code: status.errorCode ?? "agent_auth_required", message: "Agent authentication required" };
+      if (status.authState === "error") return { code: status.errorCode ?? "agent_auth_error", message: "Agent authentication could not be checked" };
+      return null;
+    } catch (err: unknown) {
+      console.warn("[symphony] Agent readiness check failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
   }
 
   async function reconcileIneligibleRunningRuns(
@@ -227,6 +253,23 @@ export function createMatrixSymphonyOrchestrator(options: {
     };
     if (!active) await options.repository.upsertRun(ownerId, run);
     try {
+      const readinessFailure = await agentReadinessFailure(installation.defaultAgent);
+      if (readinessFailure) {
+        const updated = await options.repository.updateRun(ownerId, run.id, {
+          status: "blocked",
+          lastErrorCode: readinessFailure.code,
+          lastEvent: readinessFailure.message,
+          nextRetryAt: undefined,
+        }, { allowedStatuses: ["queued", "retrying"] }) ?? run;
+        await append(ownerId, {
+          installationId: installation.id,
+          runId: run.id,
+          type: "symphony.run.updated",
+          message: readinessFailure.message,
+          severity: "warning",
+        });
+        return updated;
+      }
       const workflow = await loadWorkflowContract({ homePath: options.homePath, projectSlug: installation.projectSlug });
       const worktreeResult = await options.worktreeManager.createWorktree({
         projectSlug: installation.projectSlug,

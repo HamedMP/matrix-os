@@ -140,6 +140,46 @@ describe("Matrix Symphony orchestrator", () => {
     expect(agentSessionManager.startSession).toHaveBeenCalledTimes(1);
   });
 
+  it("blocks dispatch before creating a worktree when the selected agent needs auth", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: "wt_abc123def456", path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const agentSessionManager = {
+      startSession: vi.fn(async () => ({ ok: true as const, status: 201 as const, session: { id: "sess_run_abc", runtime: { status: "running" } } })),
+      killSession: vi.fn(),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager,
+      agentStatusProvider: {
+        detectAgents: vi.fn(async () => ({
+          agents: [{ id: "codex", installed: true, authState: "required", errorCode: "agent_auth_required" }],
+        })),
+      },
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+    expect(agentSessionManager.startSession).not.toHaveBeenCalled();
+    const runId = `run_${createHash("sha256").update("user_123:issue_1").digest("hex").slice(0, 16)}`;
+    await expect(repository.getRun("user_123", runId)).resolves.toMatchObject({
+      status: "blocked",
+      lastErrorCode: "agent_auth_required",
+      lastEvent: "Agent authentication required",
+    });
+  });
+
   it("scopes generated run IDs by Matrix owner for shared Linear tickets", async () => {
     const snapshots = new Map<string, SymphonySnapshot>([
       ["owner_1", { ...structuredClone(baseSnapshot), installation: { ...baseSnapshot.installation!, ownerId: "owner_1", id: "sym_owner_1" } }],
