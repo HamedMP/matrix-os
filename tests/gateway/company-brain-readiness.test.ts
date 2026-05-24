@@ -53,6 +53,25 @@ describe("company brain readiness", () => {
     expect(readiness.sourceLinks).toEqual(["specs/launch-readiness"]);
   });
 
+  it("preserves safe summaries up to the route schema limit", async () => {
+    const service = createCompanyBrainReadinessService({
+      now: () => new Date("2026-05-23T00:00:00.000Z"),
+    });
+    const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });
+    const summary = "a".repeat(780);
+
+    const res = await app.request(post("/context", {
+      type: "product_decision",
+      title: "Launch ICP",
+      summary,
+      source: "specs/launch-readiness",
+      visibility: "owner_only",
+    }));
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ summary });
+  });
+
   it("marks stale and contradictory context for review", async () => {
     const service = createCompanyBrainReadinessService();
     const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });

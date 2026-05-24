@@ -40,8 +40,8 @@ export interface CompanyBrainReadinessService {
   addContext(ownerId: string, input: Omit<CompanyContextItem, "id" | "updatedAt">): Promise<CompanyContextItem>;
 }
 
-function safeDisplay(value: string, fallback: string): string {
-  const trimmed = value.trim().slice(0, 220);
+function safeDisplay(value: string, fallback: string, max = 220): string {
+  const trimmed = value.trim().slice(0, max);
   if (!trimmed || UNSAFE_DISPLAY.test(trimmed)) return fallback;
   return trimmed;
 }
@@ -103,7 +103,7 @@ export function createCompanyBrainReadinessService(options: {
       ...input,
       id: `ctx.${randomUUID()}`,
       title: safeDisplay(input.title, "Company context"),
-      summary: safeDisplay(input.summary, "Company context captured"),
+      summary: safeDisplay(input.summary, "Company context captured", 800),
       source: safeDisplay(input.source, "Manual note"),
       updatedAt: now().toISOString(),
     };

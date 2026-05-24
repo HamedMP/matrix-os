@@ -45,7 +45,7 @@ export interface DraftActionReadinessService {
   approveDraft(ownerId: string, draftId: string, approved: boolean): Promise<DraftAction>;
 }
 
-function safeDisplay(value: string, fallback: string, max = 1200): string {
+function safeDisplay(value: string, fallback: string, max = 5000): string {
   const trimmed = value.trim().slice(0, max);
   if (!trimmed || UNSAFE_DISPLAY.test(trimmed)) return fallback;
   return trimmed;
@@ -127,6 +127,9 @@ export function createDraftActionReadinessService(options: {
     const draft = draftsFor(ownerId).find((candidate) => candidate.id === draftId);
     if (!draft) {
       throw new ActivationRouteError("draft_not_found", "Draft was not found", { status: 404 });
+    }
+    if (draft.status === "approved" || draft.status === "sent" || draft.status === "rejected") {
+      throw new ActivationRouteError("draft_already_decided", "Draft has already been decided", { status: 409 });
     }
     draft.status = approved ? "approved" : "rejected";
     draft.approvalSummary = approved ? "Draft approved for external action" : "Draft rejected";

@@ -55,6 +55,26 @@ describe("support and growth draft readiness", () => {
     });
   });
 
+  it("rejects approval changes after a draft is already decided", async () => {
+    const service = createDraftActionReadinessService();
+    const app = createDraftActionRoutes({ service, getPrincipal: () => testPrincipal });
+    const draft = await (await app.request(post("/drafts", {
+      type: "social_post",
+      content: "Matrix helps founders ship code and operate support.",
+      destination: "LinkedIn",
+      createdByAgent: "hermes",
+    }))).json();
+
+    await app.request(post(`/drafts/${draft.id}/approval`, { approved: true }));
+    const repeat = await app.request(post(`/drafts/${draft.id}/approval`, { approved: false }));
+
+    expect(repeat.status).toBe(409);
+    await expect(repeat.json()).resolves.toMatchObject({
+      error: "draft_already_decided",
+      message: "Draft has already been decided",
+    });
+  });
+
   it("returns safe readiness summaries for pending drafts", async () => {
     const service = createDraftActionReadinessService();
     const app = createDraftActionRoutes({ service, getPrincipal: () => testPrincipal });
