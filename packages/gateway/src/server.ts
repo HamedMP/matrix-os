@@ -211,6 +211,15 @@ const BridgeCallBodySchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const ApiMessageBodySchema = z.object({
+  text: z.string().refine((value) => value.trim().length > 0),
+  sessionId: z.string().optional(),
+  from: z.object({
+    handle: z.string(),
+    displayName: z.string().optional(),
+  }).optional(),
+});
+
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
@@ -2774,11 +2783,18 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
-    const body = await c.req.json<{
-      text: string;
-      sessionId?: string;
-      from?: { handle: string; displayName?: string };
-    }>();
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      console.warn("[gateway] Invalid /api/message JSON:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsedBody = ApiMessageBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid message body" }, 400);
+    }
+    const body = parsedBody.data;
     const events: KernelEvent[] = [];
 
     const context: DispatchContext | undefined = body.from
