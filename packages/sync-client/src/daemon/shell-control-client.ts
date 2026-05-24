@@ -2,6 +2,20 @@ import type { AuthData } from "../auth/token-store.js";
 import type { SyncConfig } from "../lib/config.js";
 import { createShellClient } from "../cli/shell-client.js";
 
+function invalidRequestError(): Error {
+  return Object.assign(new Error("Request failed"), { code: "invalid_request" });
+}
+
+function parsePaneDirection(value: unknown): "right" | "down" {
+  if (value === undefined) {
+    return "right";
+  }
+  if (value !== "right" && value !== "down") {
+    throw invalidRequestError();
+  }
+  return value;
+}
+
 export interface DaemonShellControlClientOptions {
   config: SyncConfig;
   loadAuth: () => Promise<AuthData | null>;
@@ -50,7 +64,7 @@ export function createDaemonShellControlClient(options: DaemonShellControlClient
     },
     async splitPane(session: string, input: Record<string, unknown>) {
       return (await client()).splitPane(session, {
-        direction: input.direction === "down" ? "down" : "right",
+        direction: parsePaneDirection(input.direction),
         cwd: typeof input.cwd === "string" ? input.cwd : undefined,
         cmd: typeof input.cmd === "string" ? input.cmd : undefined,
       });

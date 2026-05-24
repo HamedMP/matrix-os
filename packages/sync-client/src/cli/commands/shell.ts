@@ -1,14 +1,71 @@
 import { defineCommand } from "citty";
-import { loadProfileAuth } from "../../auth/token-store.js";
+import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
 
+const SHELL_USAGE = "Usage: matrix shell ls|new|attach|rm|tab|pane|layout";
+const SHELL_SUBCOMMANDS = new Set(["ls", "new", "attach", "rm", "tab", "pane", "layout"]);
+const SHELL_VALUE_OPTIONS = new Set(["--gateway", "--profile", "--token"]);
+
+function hasShellSubCommand(rawArgs: string[] | undefined): boolean {
+  if (!Array.isArray(rawArgs)) {
+    return false;
+  }
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg === "--") {
+      const next = rawArgs[i + 1];
+      return typeof next === "string" && SHELL_SUBCOMMANDS.has(next);
+    }
+    if (arg.startsWith("--")) {
+      const [option] = arg.split("=", 1);
+      if (SHELL_VALUE_OPTIONS.has(option) && !arg.includes("=")) {
+        i += 1;
+      }
+      continue;
+    }
+    return SHELL_SUBCOMMANDS.has(arg);
+  }
+  return false;
+}
+
 async function clientFromArgs(args: Record<string, unknown>) {
   const profile = await resolveCliProfile(args);
   const auth = profile.token ? null : await loadProfileAuth(profile.name);
-  const token = profile.token ?? auth?.accessToken;
+  const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
+  if (!token) {
+    throw Object.assign(
+      new Error(`Not logged in for profile "${profile.name}". Run \`matrix login\` first.`),
+      { code: "not_authenticated" },
+    );
+  }
   return createShellClient({ gatewayUrl: profile.gatewayUrl, token });
+}
+
+function invalidRequestError(): Error {
+  return Object.assign(new Error("Request failed"), { code: "invalid_request" });
+}
+
+function parseTabIndex(value: unknown): number {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/.test(value)) {
+    throw invalidRequestError();
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw invalidRequestError();
+  }
+  return parsed;
+}
+
+function parsePaneDirection(value: unknown): "right" | "down" {
+  if (value === undefined) {
+    return "right";
+  }
+  if (value !== "right" && value !== "down") {
+    throw invalidRequestError();
+  }
+  return value;
 }
 
 function writeError(err: unknown, json: boolean): void {
@@ -16,7 +73,11 @@ function writeError(err: unknown, json: boolean): void {
     err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : "request_failed";
-  const output = json ? formatCliError(code) : `Error: Request failed (${code})`;
+  const safeMessage =
+    code === "not_authenticated" && err instanceof Error ? err.message : undefined;
+  const output = json
+    ? formatCliError(code, safeMessage)
+    : safeMessage ?? `Error: Request failed (${code})`;
   console.error(output);
 }
 
@@ -204,14 +265,14 @@ export const shellCommand = defineCommand({
           meta: { name: "go", description: "Switch tab" },
           args: { session: { type: "string", required: true }, tab: { type: "string", required: true }, ...commonArgs },
           run: async ({ args }) => runShellJsonCommand(args, async () => (
-            await (await clientFromArgs(args)).switchTab(String(args.session), Number(args.tab))
+            await (await clientFromArgs(args)).switchTab(String(args.session), parseTabIndex(args.tab))
           ), () => "Switched tab"),
         }),
         close: defineCommand({
           meta: { name: "close", description: "Close tab" },
           args: { session: { type: "string", required: true }, tab: { type: "string", required: true }, ...commonArgs },
           run: async ({ args }) => runShellJsonCommand(args, async () => (
-            await (await clientFromArgs(args)).closeTab(String(args.session), Number(args.tab))
+            await (await clientFromArgs(args)).closeTab(String(args.session), parseTabIndex(args.tab))
           ), () => "Closed tab"),
         }),
       },
@@ -230,7 +291,7 @@ export const shellCommand = defineCommand({
           },
           run: async ({ args }) => runShellJsonCommand(args, async () => (
             await (await clientFromArgs(args)).splitPane(String(args.session), {
-              direction: args.direction === "down" ? "down" : "right",
+              direction: parsePaneDirection(args.direction),
               cwd: typeof args.cwd === "string" ? args.cwd : undefined,
               cmd: typeof args.cmd === "string" ? args.cmd : undefined,
             })
@@ -293,7 +354,9 @@ export const shellCommand = defineCommand({
       },
     }),
   },
-  run: () => {
-    console.log("Usage: matrix shell ls|new|attach|rm");
+  run: ({ rawArgs }) => {
+    if (!hasShellSubCommand(rawArgs)) {
+      console.log(SHELL_USAGE);
+    }
   },
 });

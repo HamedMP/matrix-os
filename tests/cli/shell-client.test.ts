@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createShellClient } from "../../packages/sync-client/src/cli/shell-client.js";
+import {
+  createShellClient,
+  SHELL_ATTACH_MAX_QUEUED_BYTES,
+} from "../../packages/sync-client/src/cli/shell-client.js";
 
 describe("shell REST client", () => {
   it("lists sessions with bearer auth, JSON parsing, and fetch timeout", async () => {
@@ -189,5 +192,59 @@ describe("shell REST client", () => {
     ]);
     ControlledWebSocket.last?.emit("close");
     await expect(attached).resolves.toEqual({ detached: true });
+  });
+
+  it("rejects when pre-open stdin exceeds the queued frame cap", async () => {
+    class ControlledWebSocket {
+      static last: ControlledWebSocket | null = null;
+      closed = false;
+      listeners = new Map<string, (...args: unknown[]) => void>();
+      sent: string[] = [];
+
+      constructor() {
+        ControlledWebSocket.last = this;
+      }
+
+      send(data: string) {
+        this.sent.push(data);
+      }
+
+      close() {
+        this.closed = true;
+        this.listeners.get("close")?.();
+      }
+
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        this.listeners.set(event, listener);
+        return this;
+      }
+
+      off(event: "open" | "message" | "close" | "error") {
+        this.listeners.delete(event);
+        return this;
+      }
+
+      emit(event: "open" | "message" | "close" | "error", value?: unknown) {
+        this.listeners.get(event)?.(value);
+      }
+    }
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    input.emit("data", "x".repeat(SHELL_ATTACH_MAX_QUEUED_BYTES));
+
+    await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+    expect(errorOutput.write).toHaveBeenCalledWith("Shell attach failed\n");
+    expect(ControlledWebSocket.last?.closed).toBe(true);
+    ControlledWebSocket.last?.emit("open");
+    expect(ControlledWebSocket.last?.sent).toEqual([]);
   });
 });
