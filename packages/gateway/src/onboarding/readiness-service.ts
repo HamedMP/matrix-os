@@ -239,6 +239,7 @@ export function createReadinessService(options: {
         ? Array.from(new Set([...(codingSetup?.activeAgents ?? []), ...credentialStatus.activeAgents]))
         : codingSetup?.activeAgents ?? ["hermes"],
       agents: credentialStatus?.agents ?? DEFAULT_AGENTS.map((agent) => ({ ...agent })),
+      codingHandoffStatus: codingSetup?.handoffStatus ?? null,
     };
     cache.set(ownerId, response);
     return response;

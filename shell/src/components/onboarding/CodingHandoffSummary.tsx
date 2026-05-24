@@ -4,10 +4,17 @@ import { BotIcon, CheckCircle2Icon } from "lucide-react";
 
 export function CodingHandoffSummary({
   activeAgents,
+  status,
 }: {
   activeAgents: Array<"claude" | "codex" | "hermes">;
+  status: "idle" | "running" | "needs_input" | "ready" | "failed" | null;
 }) {
   const agents = activeAgents.length > 0 ? activeAgents : ["hermes" as const];
+  const statusLabel = status === "needs_input"
+    ? "Needs input"
+    : status
+      ? status.replaceAll("_", " ")
+      : "Idle";
   return (
     <section className="rounded-md border border-[#17281f]/10 bg-[#17281f]/5 p-4">
       <div className="flex items-center justify-between gap-3">
@@ -21,6 +28,9 @@ export function CodingHandoffSummary({
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#17281f]/10 bg-white/60 px-2.5 py-1 text-xs font-medium capitalize text-[#17281f]/75">
+            {statusLabel}
+          </span>
           {agents.map((agent) => (
             <span key={agent} className="inline-flex items-center gap-1 rounded-full border border-[#17281f]/10 bg-white/60 px-2.5 py-1 text-xs font-medium capitalize text-[#17281f]/75">
               <CheckCircle2Icon className="h-3.5 w-3.5 text-[#4f7f5c]" aria-hidden="true" />

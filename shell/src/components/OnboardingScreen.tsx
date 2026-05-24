@@ -242,7 +242,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               {codingSelected && (
                 <div className="grid gap-3">
                   <CodingSetupPanel gates={ob.readiness?.gates ?? []} onOpenTerminal={onOpenTerminal} />
-                  <CodingHandoffSummary activeAgents={ob.readiness?.activeAgents ?? ["hermes"]} />
+                  <CodingHandoffSummary
+                    activeAgents={ob.readiness?.activeAgents ?? ["hermes"]}
+                    status={ob.readiness?.codingHandoffStatus ?? null}
+                  />
                 </div>
               )}
 

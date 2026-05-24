@@ -2433,7 +2433,9 @@ export async function createGateway(config: GatewayConfig) {
       const snapshot = await repository.getSnapshot(ownerId);
       const result = await projectManager.listManagedProjects();
       const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
-      const projects = result.projects.map((project) => ({
+      const projects = result.projects
+        .filter((project) => project.ownerScope.type === "user" && project.ownerScope.id === ownerId)
+        .map((project) => ({
         slug: project.slug,
         name: project.name,
         repositoryUrl: project.github?.htmlUrl ?? project.remote,
@@ -2451,10 +2453,9 @@ export async function createGateway(config: GatewayConfig) {
         return /^git@github\.com:/i.test(repositoryUrl);
       }
     };
-    const hasProjectPathSegment = (cwd: string, projectSlug: string): boolean => {
-      const normalizedPath = normalize(relative(homePath, cwd)).replaceAll("\\", "/");
-      const segments = normalizedPath.split("/").filter(Boolean);
-      return segments.some((segment, index) => segment === "projects" && segments[index + 1] === projectSlug);
+    const isWithinPath = (parent: string, child: string): boolean => {
+      const relativePath = normalize(relative(resolve(parent), resolve(child)));
+      return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
     };
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
@@ -2506,9 +2507,15 @@ export async function createGateway(config: GatewayConfig) {
           activeAgents,
         };
       },
-      hasTerminalContext: async (_ownerId, projectSlug) => {
+      hasTerminalContext: async (ownerId, projectSlug) => {
         if (!projectSlug) return false;
-        return sessionRegistry.list().some((session) => hasProjectPathSegment(session.cwd, projectSlug));
+        const projects = await listMatrixProjectOptions(ownerId);
+        if (!projects.some((project) => project.slug === projectSlug)) return false;
+        const projectRoot = join(homePath, "projects", projectSlug);
+        const repoRoot = join(projectRoot, "repo");
+        return sessionRegistry.list().some((session) =>
+          isWithinPath(projectRoot, session.cwd) || isWithinPath(repoRoot, session.cwd)
+        );
       },
     });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();

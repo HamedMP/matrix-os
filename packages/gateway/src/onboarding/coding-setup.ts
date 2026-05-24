@@ -1,7 +1,5 @@
-import type { AgentId } from "./activation-contracts.js";
+import type { AgentId, CodingHandoffStatus } from "./activation-contracts.js";
 import type { MatrixProjectOption, SymphonyRunStatus } from "../symphony/contracts.js";
-
-export type CodingHandoffStatus = "idle" | "running" | "needs_input" | "ready" | "failed";
 
 export interface CodingSetupStatus {
   githubConnected: boolean;

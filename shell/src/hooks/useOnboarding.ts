@@ -47,6 +47,7 @@ export interface OnboardingReadiness {
   gates: ReadinessGateSummary[];
   systemAgent: "hermes";
   activeAgents: Array<"claude" | "codex" | "hermes">;
+  codingHandoffStatus: "idle" | "running" | "needs_input" | "ready" | "failed" | null;
 }
 
 const READINESS_STATUSES = new Set<ReadinessGateSummary["status"]>(["unknown", "checking", "pass", "fail", "blocked", "skipped"]);
@@ -55,6 +56,7 @@ const READINESS_OWNERS = new Set<ReadinessGateSummary["owner"]>(["user", "operat
 const READINESS_OVERALL_STATUSES = new Set<OnboardingReadiness["overallStatus"]>(["ready", "degraded", "blocked", "checking"]);
 const ONBOARDING_GOAL_IDS = new Set<OnboardingGoalId>(["coding", "app_building", "company_brain", "assistant"]);
 const AGENT_IDS = new Set<OnboardingReadiness["activeAgents"][number]>(["claude", "codex", "hermes"]);
+const CODING_HANDOFF_STATUSES = new Set<NonNullable<OnboardingReadiness["codingHandoffStatus"]>>(["idle", "running", "needs_input", "ready", "failed"]);
 
 function isOnboardingGoalId(value: unknown): value is OnboardingGoalId {
   return typeof value === "string" && ONBOARDING_GOAL_IDS.has(value as OnboardingGoalId);
@@ -78,6 +80,13 @@ export function coerceReadinessOverallStatus(value: unknown): OnboardingReadines
   return typeof value === "string" && READINESS_OVERALL_STATUSES.has(value as OnboardingReadiness["overallStatus"])
     ? value as OnboardingReadiness["overallStatus"]
     : "degraded";
+}
+
+function coerceCodingHandoffStatus(value: unknown): OnboardingReadiness["codingHandoffStatus"] {
+  if (typeof value !== "string") return null;
+  return CODING_HANDOFF_STATUSES.has(value as NonNullable<OnboardingReadiness["codingHandoffStatus"]>)
+    ? value as NonNullable<OnboardingReadiness["codingHandoffStatus"]>
+    : null;
 }
 
 export function coerceReadinessGates(value: unknown): ReadinessGateSummary[] {
@@ -133,6 +142,7 @@ export function coerceReadinessResponse(value: unknown): OnboardingReadiness {
     gates: coerceReadinessGates(candidate.gates),
     systemAgent: "hermes",
     activeAgents: coerceActiveAgents(candidate.activeAgents),
+    codingHandoffStatus: coerceCodingHandoffStatus(candidate.codingHandoffStatus),
   };
 }
 
@@ -495,6 +505,7 @@ export function useOnboarding(): OnboardingHook {
             gates: coerceReadinessGates(msg.checklist),
             systemAgent: current.systemAgent,
             activeAgents: current.activeAgents,
+            codingHandoffStatus: current.codingHandoffStatus,
           };
         });
         break;

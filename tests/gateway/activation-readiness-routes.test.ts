@@ -85,6 +85,7 @@ describe("activation readiness routes", () => {
       remediation: "Open the Matrix terminal for the selected project",
     });
     expect(body.activeAgents).toEqual(["codex", "hermes"]);
+    expect(body.codingHandoffStatus).toBe("running");
   });
 
   it("leaves assistant capability approval indeterminate until an integration is connected", async () => {
