@@ -262,13 +262,13 @@
 
 **Purpose**: Documentation, visual evidence, review hygiene, and release validation.
 
-- [ ] T095 [P] Update public onboarding launch docs in `www/content/docs/onboarding-launch-readiness.mdx`
-- [ ] T096 [P] Update developer review notes for launch gates in `docs/dev/review-pipeline.md`
-- [ ] T097 Run and record `bun run typecheck` result in `specs/082-paid-beta-readiness/quickstart.md`
-- [ ] T098 Run and record `bun run check:patterns` result in `specs/082-paid-beta-readiness/quickstart.md`
-- [ ] T099 Run and record `bun run test` result in `specs/082-paid-beta-readiness/quickstart.md`
-- [ ] T100 Run and record onboarding e2e/visual QA results in `specs/082-paid-beta-readiness/quickstart.md`
-- [ ] T101 Review changed backend routes against `docs/dev/review-pipeline.md` and add PR invariants in `specs/082-paid-beta-readiness/quickstart.md`
+- [X] T095 [P] Update public onboarding launch docs in `www/content/docs/onboarding-launch-readiness.mdx`
+- [X] T096 [P] Update developer review notes for launch gates in `docs/dev/review-pipeline.md`
+- [X] T097 Run and record `bun run typecheck` result in `specs/082-paid-beta-readiness/quickstart.md`
+- [X] T098 Run and record `bun run check:patterns` result in `specs/082-paid-beta-readiness/quickstart.md`
+- [X] T099 Run and record `bun run test` result in `specs/082-paid-beta-readiness/quickstart.md`
+- [X] T100 Run and record onboarding e2e/visual QA results in `specs/082-paid-beta-readiness/quickstart.md`
+- [X] T101 Review changed backend routes against `docs/dev/review-pipeline.md` and add PR invariants in `specs/082-paid-beta-readiness/quickstart.md`
 
 ---
 
