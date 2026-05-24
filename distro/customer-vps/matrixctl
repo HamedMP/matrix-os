@@ -154,7 +154,7 @@ recover() {
     esac
   done
   case "$runtime_slot" in
-    ""|[!a-z0-9]*|*[^a-z0-9-]*) fail "invalid runtime slot" ;;
+    ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid runtime slot" ;;
   esac
   [ -n "$MATRIX_PLATFORM_URL" ] || fail "platform recovery not configured"
   [ -n "$MATRIX_PLATFORM_TOKEN" ] || fail "platform recovery not configured"

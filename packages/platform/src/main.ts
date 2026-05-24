@@ -557,6 +557,7 @@ export function checkUnsafeDefaultSecrets(
 interface AppDomainIdentity {
   handle: string;
   userId: string;
+  runtimeSlot?: string;
   source?: 'auth' | 'mobile-session' | 'static-route';
 }
 
@@ -693,13 +694,14 @@ async function resolveAppDomainIdentity(opts: {
           userId: record.clerkUserId,
         };
       }
-      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, 'primary');
+      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle);
       if (machine?.clerkUserId !== claims.sub) {
         return null;
       }
       return {
         handle: machine.handle,
         userId: machine.clerkUserId,
+        runtimeSlot: machine.runtimeSlot,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -738,6 +740,7 @@ async function resolveAppDomainIdentity(opts: {
   return {
     handle: machine.handle,
     userId: result.userId,
+    runtimeSlot: machine.runtimeSlot,
   };
 }
 
@@ -1754,7 +1757,7 @@ export function createApp(deps: {
     const runtimeSlot =
       identity.source === 'mobile-session' || identity.source === 'static-route'
         ? 'primary'
-        : requestRuntimeSlot;
+        : identity.runtimeSlot ?? requestRuntimeSlot;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : undefined;
@@ -1857,6 +1860,7 @@ export function createApp(deps: {
         ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
         : await getActiveUserMachineByHandle(db, identity.handle, 'primary');
       if (activeMachine) {
+        c.header('set-cookie', buildRuntimeSlotCookie(runtimeSlot));
         if (isCodeDomain || isGatewayPath) {
           applyNoStoreHeaders(c);
           return c.json({
@@ -2915,7 +2919,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const runtimeSlot =
       identity.source === 'mobile-session' || identity.source === 'static-route'
         ? 'primary'
-        : requestRuntimeSlot;
+        : identity.runtimeSlot ?? requestRuntimeSlot;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : undefined;

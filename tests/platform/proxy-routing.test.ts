@@ -347,7 +347,7 @@ describe("platform proxy routing", () => {
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response("editor", { status: 200 }),
     );
     const docker = stubDocker();
@@ -397,7 +397,7 @@ describe("platform proxy routing", () => {
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response("editor", { status: 200 }),
     );
     const app = createApp({
@@ -474,7 +474,7 @@ describe("platform proxy routing", () => {
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response("editor", { status: 200 }),
     );
     const docker = stubDocker();
@@ -506,7 +506,67 @@ describe("platform proxy routing", () => {
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("authorization")).not.toBe("Bearer clerk-session");
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
-    expect(res.headers.get("set-cookie")).toContain("matrix_code_session=");
+    const sessionCookie = res.headers.get("set-cookie");
+    expect(sessionCookie).toContain("matrix_code_session=");
+
+    const codeSession = /matrix_code_session=([^;,]+)/.exec(sessionCookie ?? "")?.[1];
+    expect(codeSession).toBeTruthy();
+
+    const followUp = await app.request("/stable/static/out/vs/code/browser/workbench/workbench.js", {
+      headers: {
+        host: "code.matrix-os.com",
+        cookie: `matrix_code_session=${codeSession}`,
+      },
+    });
+
+    expect(followUp.status).toBe(200);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://203.0.113.22:443/stable/static/out/vs/code/browser/workbench/workbench.js",
+    );
+  });
+
+  it("persists the selected runtime slot while a staging VPS is booting", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff125",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "provisioning",
+      hetznerServerId: 123469,
+      publicIPv4: null,
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?runtime=staging", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
+
+    const followUp = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "matrix_runtime_slot=staging",
+      },
+    });
+
+    expect(followUp.status).toBe(503);
+    expect(followUp.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
   });
 
   it("falls back to the legacy container code-server when no running VPS exists", async () => {
