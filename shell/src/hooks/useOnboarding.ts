@@ -24,6 +24,7 @@ export interface ReadinessGateSummary {
   remediation: string | null;
   owner: "user" | "operator" | "matrix";
   lastCheckedAt: string | null;
+  evidence?: string[];
 }
 
 export interface OnboardingGoalSummary {
@@ -46,6 +47,29 @@ export interface OnboardingReadiness {
   gates: ReadinessGateSummary[];
   systemAgent: "hermes";
   activeAgents: Array<"claude" | "codex" | "hermes">;
+}
+
+const READINESS_STATUSES = new Set<ReadinessGateSummary["status"]>(["unknown", "checking", "pass", "fail", "blocked", "skipped"]);
+const READINESS_CRITICALITIES = new Set<ReadinessGateSummary["criticality"]>(["release_critical", "goal_required", "recommended", "optional"]);
+const READINESS_OWNERS = new Set<ReadinessGateSummary["owner"]>(["user", "operator", "matrix"]);
+
+export function coerceReadinessGates(value: unknown): ReadinessGateSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((gate): gate is ReadinessGateSummary => {
+    if (!gate || typeof gate !== "object") return false;
+    const candidate = gate as Partial<ReadinessGateSummary>;
+    return typeof candidate.id === "string" &&
+      typeof candidate.category === "string" &&
+      typeof candidate.message === "string" &&
+      (candidate.remediation === null || typeof candidate.remediation === "string") &&
+      (candidate.lastCheckedAt === null || typeof candidate.lastCheckedAt === "string") &&
+      typeof candidate.status === "string" &&
+      READINESS_STATUSES.has(candidate.status as ReadinessGateSummary["status"]) &&
+      typeof candidate.criticality === "string" &&
+      READINESS_CRITICALITIES.has(candidate.criticality as ReadinessGateSummary["criticality"]) &&
+      typeof candidate.owner === "string" &&
+      READINESS_OWNERS.has(candidate.owner as ReadinessGateSummary["owner"]);
+  });
 }
 
 interface Transcript {
@@ -111,6 +135,7 @@ export function useOnboarding(): OnboardingHook {
   const isPlayingRef = useRef(false);
   const nextStartTimeRef = useRef(0);
   const playGainRef = useRef<GainNode | null>(null);
+  const goalSelectionSeqRef = useRef(0);
   // Tracks whether the hook is still mounted so async mic setup can bail
   // out cleanly if the user dismisses onboarding while the mic permission
   // prompt or audioWorklet module load is in flight. Without this, the
@@ -509,6 +534,7 @@ export function useOnboarding(): OnboardingHook {
   const selectGoal = useCallback((goalId: OnboardingGoalId) => {
     const requestSeq = goalSelectionSeqRef.current + 1;
     goalSelectionSeqRef.current = requestSeq;
+    const previousGoalIds = selectedGoalIds;
     const nextGoalIds = selectedGoalIds.includes(goalId)
       ? selectedGoalIds.filter((id) => id !== goalId)
       : [...selectedGoalIds, goalId];
@@ -532,7 +558,10 @@ export function useOnboarding(): OnboardingHook {
       })
       .catch((err: unknown) => {
         console.warn("[onboarding] goal selection failed:", err instanceof Error ? err.message : String(err));
-        if (mountedRef.current) setError("Could not update setup goal");
+        if (mountedRef.current && requestSeq === goalSelectionSeqRef.current) {
+          setSelectedGoalIds(previousGoalIds);
+          setError("Could not update setup goal");
+        }
       });
   }, [refreshReadiness, selectedGoalIds]);
 

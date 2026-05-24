@@ -19,6 +19,7 @@ import {
   type OnboardingStage,
   type OnboardingState,
 } from "./types.js";
+import { stepsForGoals } from "./readiness-service.js";
 import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {

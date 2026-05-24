@@ -94,6 +94,22 @@ describe("onboarding websocket handler", () => {
     expect(existsSync(join(homePath, "system/onboarding-complete.json"))).toBe(true);
   });
 
+  it("returns goal steps for websocket goal selection", async () => {
+    const h = handler();
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" }));
+
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "goal_selected",
+      goalId: "coding",
+      steps: expect.arrayContaining([
+        expect.objectContaining({ id: "github.connected" }),
+        expect.objectContaining({ id: "project.selected" }),
+      ]),
+    }));
+  });
+
   it("closes an existing Gemini client before handling a duplicate start", async () => {
     const h = handler("test-gemini-key");
     await h.onOpen((msg) => sent.push(msg));
