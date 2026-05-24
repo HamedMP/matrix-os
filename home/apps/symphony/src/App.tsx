@@ -266,7 +266,7 @@ export default function App() {
   const grouped = useMemo(() => groupRuns(runs), [runs]);
   const selectedAgent = config?.installation?.defaultAgent ?? form.defaultAgent;
   const selectedAgentStatus = agents.find((agent) => agent.id === selectedAgent);
-  const agentAuthIssue = selectedAgentStatus && (
+  const agentAuthIssue = config?.installation && selectedAgentStatus && (
     !selectedAgentStatus.installed ||
     selectedAgentStatus.authState === "required" ||
     selectedAgentStatus.authState === "error"

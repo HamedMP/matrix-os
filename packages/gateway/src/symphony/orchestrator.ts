@@ -228,6 +228,7 @@ export function createMatrixSymphonyOrchestrator(options: {
     rule: TicketSourceRule,
     ticket: TrackedTicket,
     existing?: SymphonyRun | null,
+    readinessFailure?: { code: string; message: string } | null,
   ): Promise<SymphonyRun> {
     const id = runIdFor(ownerId, ticket);
     const active = existing ?? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
@@ -253,7 +254,6 @@ export function createMatrixSymphonyOrchestrator(options: {
     };
     if (!active) await options.repository.upsertRun(ownerId, run);
     try {
-      const readinessFailure = await agentReadinessFailure(installation.defaultAgent);
       if (readinessFailure) {
         const updated = await options.repository.updateRun(ownerId, run.id, {
           status: "blocked",
@@ -393,13 +393,16 @@ export function createMatrixSymphonyOrchestrator(options: {
       ? activeRuns.length
       : activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
     const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - countedRunning - blockedLiveRuns.length);
+    const readinessFailure = capacity > 0 && eligibleTickets.length > 0
+      ? await agentReadinessFailure(installation.defaultAgent)
+      : null;
     let dispatched = 0;
     for (const ticket of eligibleTickets) {
       if (dispatched >= capacity) break;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
       if (existing && isRetryBackoffActive(existing)) continue;
       if (existing && existing.status !== "queued" && existing.status !== "retrying") continue;
-      const run = await dispatchTicket(ownerId, installation, rule, ticket, existing);
+      const run = await dispatchTicket(ownerId, installation, rule, ticket, existing, readinessFailure);
       if (run.status === "running" || run.status === "queued" || run.status === "retrying") dispatched += 1;
     }
     const at = nowIso();
