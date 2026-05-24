@@ -92,6 +92,24 @@ describe("activation readiness routes", () => {
     });
   });
 
+  it("rejects malformed goal JSON as a non-retryable client error", async () => {
+    const { service } = createTestReadinessService();
+    const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const res = await app.request("http://localhost/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{not-json",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: "invalid_request",
+      message: "Request is invalid",
+      retryable: false,
+    });
+  });
+
   it("marks retryable gates as checking", async () => {
     const { service } = createTestReadinessService();
     const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });
@@ -102,4 +120,3 @@ describe("activation readiness routes", () => {
     await expect(res.json()).resolves.toEqual({ gateId: "terminal.ready", status: "checking" });
   });
 });
-

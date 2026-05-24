@@ -60,7 +60,7 @@ export function mapActivationError(err: unknown): SafeActivationError {
     };
   }
 
-  if (err instanceof ZodError) {
+  if (err instanceof ZodError || err instanceof SyntaxError) {
     return {
       status: 400,
       body: {
