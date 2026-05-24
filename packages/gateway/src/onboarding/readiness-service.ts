@@ -131,16 +131,18 @@ export function createReadinessService(options: {
   const cache = options.cache ?? new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
 
   async function ensureRecord(ownerId: string): Promise<OnboardingReadinessRecord> {
-    const existing = await options.repository.get(ownerId);
-    if (existing) return existing;
-    return options.repository.save({
+    return options.repository.update(ownerId, (record) => record ?? createEmptyRecord(ownerId));
+  }
+
+  function createEmptyRecord(ownerId: string): OnboardingReadinessRecord {
+    return {
       ownerId,
       selectedGoalIds: [],
       completedStepIds: [],
       skippedStepIds: [],
       gateOverrides: {},
       updatedAt: now().toISOString(),
-    });
+    };
   }
 
   function deriveGates(record: OnboardingReadinessRecord): ReadinessGateSummary[] {
@@ -191,12 +193,11 @@ export function createReadinessService(options: {
 
   async function selectGoals(ownerId: string, goalIds: OnboardingGoalId[]): Promise<SelectGoalsResponse> {
     const uniqueGoalIds = Array.from(new Set(goalIds));
-    const record = await ensureRecord(ownerId);
-    await options.repository.save({
-      ...record,
+    await options.repository.update(ownerId, (record) => ({
+      ...(record ?? createEmptyRecord(ownerId)),
       selectedGoalIds: uniqueGoalIds,
       updatedAt: now().toISOString(),
-    });
+    }));
     cache.delete(ownerId);
     return { goalIds: uniqueGoalIds, steps: stepsForGoals(uniqueGoalIds) };
   }
@@ -205,20 +206,22 @@ export function createReadinessService(options: {
     if (!BASE_GATES.some((gate) => gate.id === gateId)) {
       throw new ActivationRouteError("gate_not_found", "Readiness gate was not found", { status: 404 });
     }
-    const record = await ensureRecord(ownerId);
     // TODO(082): replace this placeholder with the live per-gate health worker before the launch gate can pass.
-    await options.repository.save({
-      ...record,
-      gateOverrides: {
-        ...record.gateOverrides,
-        [gateId]: {
-          status: "checking",
-          message: "Readiness check is running",
-          remediation: null,
-          lastCheckedAt: now().toISOString(),
+    await options.repository.update(ownerId, (record) => {
+      const current = record ?? createEmptyRecord(ownerId);
+      return {
+        ...current,
+        gateOverrides: {
+          ...current.gateOverrides,
+          [gateId]: {
+            status: "checking",
+            message: "Readiness check is running",
+            remediation: null,
+            lastCheckedAt: now().toISOString(),
+          },
         },
-      },
-      updatedAt: now().toISOString(),
+        updatedAt: now().toISOString(),
+      };
     });
     cache.delete(ownerId);
     return { gateId, status: "checking" as const };

@@ -1,4 +1,4 @@
-export const MATRIX_ONBOARDING_BRAND_VERSION = "matrix-pr-162";
+export const MATRIX_ONBOARDING_BRAND_VERSION = "matrix-onboarding-v1";
 
 export const matrixOnboardingPalette = {
   stone: "#e7e0d4",
@@ -23,4 +23,3 @@ export const matrixOnboardingTypography = {
   body: "var(--font-sans)",
   technical: "var(--font-mono)",
 } as const;
-

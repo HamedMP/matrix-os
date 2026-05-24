@@ -24,6 +24,10 @@ export interface OnboardingReadinessRecord {
 export interface ReadinessRepository {
   get(ownerId: string): Promise<OnboardingReadinessRecord | null>;
   save(record: OnboardingReadinessRecord): Promise<OnboardingReadinessRecord>;
+  update(
+    ownerId: string,
+    updater: (record: OnboardingReadinessRecord | null) => OnboardingReadinessRecord,
+  ): Promise<OnboardingReadinessRecord>;
 }
 
 const MAX_READINESS_RECORDS = 512;
@@ -49,5 +53,17 @@ export class InMemoryReadinessRepository implements ReadinessRepository {
     this.records.delete(record.ownerId);
     this.records.set(record.ownerId, cloned);
     return structuredClone(cloned);
+  }
+
+  async update(
+    ownerId: string,
+    updater: (record: OnboardingReadinessRecord | null) => OnboardingReadinessRecord,
+  ): Promise<OnboardingReadinessRecord> {
+    const current = this.records.get(ownerId) ?? null;
+    const next = updater(current ? structuredClone(current) : null);
+    if (next.ownerId !== ownerId) {
+      throw new Error("Readiness repository update cannot change ownerId");
+    }
+    return this.save(next);
   }
 }
