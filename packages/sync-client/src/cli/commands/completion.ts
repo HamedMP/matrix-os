@@ -5,8 +5,6 @@ const COMMANDS = [
   "logout",
   "sync",
   "peers",
-  "keys",
-  "ssh",
   "shell",
   "sh",
   "profile",

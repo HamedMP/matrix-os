@@ -15,9 +15,7 @@ matrix
 |--- shell pane split|close
 |--- shell layout ls|show|save|apply|rm
 |--- sync start|stop|status|pause|resume|ls|push|pull
-|--- ssh [handle]
 |--- peers
-|--- keys add|ls|rm
 |--- instance info|restart|logs
 `--- completion bash|zsh|fish
 ```

@@ -3,8 +3,6 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "logout",
   "sync",
   "peers",
-  "keys",
-  "ssh",
   "shell",
   "sh",
   "profile",

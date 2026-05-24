@@ -5,7 +5,7 @@
 
 ## Summary
 
-Bidirectional file sync for Matrix OS — Google Drive/Dropbox-style sync where every device is an equal peer. R2 is storage and transport; the gateway coordinates metadata, auth, and notifications but never touches file content. Clients upload/download directly to R2 via presigned URLs. Conflict resolution via 3-way merge (text) or conflict copies (binary). The system spans five subsystems: sync engine core (gateway + R2), CLI + local daemon, sharing/collaboration, remote access (SSH), and a Mac menu bar app.
+Bidirectional file sync for Matrix OS — Google Drive/Dropbox-style sync where every device is an equal peer. R2 is storage and transport; the gateway coordinates metadata, auth, and notifications but never touches file content. Clients upload/download directly to R2 via presigned URLs. Conflict resolution via 3-way merge (text) or conflict copies (binary). The system spans five subsystems: sync engine core (gateway + R2), CLI + local daemon, sharing/collaboration, shell access, and a Mac menu bar app.
 
 **Key architectural decision**: R2 does not support `If-Match` on PutObject, so the spec's ETag-based optimistic concurrency on manifest writes must be implemented at the gateway level, not R2. The gateway becomes the sole writer of manifests, using Postgres-backed versioning to prevent concurrent updates.
 
@@ -84,8 +84,6 @@ packages/sync-client/            # NEW: CLI + daemon package
 │   │   │   ├── sync.ts          # Start/stop/status sync
 │   │   │   ├── share.ts         # Share/unshare folders
 │   │   │   ├── peers.ts         # List peers
-│   │   │   ├── ssh.ts           # SSH into instance
-│   │   │   └── keys.ts          # Manage SSH keys
 │   │   └── daemon-client.ts     # IPC client (Unix socket)
 │   ├── daemon/
 │   │   ├── index.ts             # Daemon entry point
@@ -163,7 +161,7 @@ No constitution violations to justify.
 | **1** | `packages/gateway` | Sync engine core: R2 presigned URL generation, manifest management (Postgres-backed versioning), sync routes (`/api/sync/*`), WebSocket events (`sync:*`), conflict detection | DONE | — |
 | **2** | `packages/sync-client` | CLI + daemon: `matrixos` CLI (citty), background daemon (chokidar + WS client + R2 presigned upload/download), launchd/systemd service management, Unix socket IPC | DONE (login broken pending Phase 6) | Phase 1 |
 | **3** | `packages/gateway` + `packages/sync-client` | Sharing: Postgres permissions table, scoped R2 tokens, invite notifications | GATEWAY DONE; CLI commands + daemon event handling pending (T052-T054) | Phase 1, 2 |
-| **4** | `packages/gateway` + `packages/sync-client` | Remote access: OpenSSH in container, SSH key management, `matrixos ssh`, tmux sharing | DONE | Phase 2 (auth) |
+| **4** | `packages/gateway` + `packages/sync-client` | Shell access: zellij-backed `matrixos shell` over the gateway terminal WebSocket | DONE | Phase 2 (auth) |
 | **5** | `packages/sync-client/macos` | Mac menu bar app: Swift/SwiftUI, daemon communication via Unix socket | DONE (notifications pending T063) | Phase 2 |
 | **6 (NEW)** | `packages/platform` + gateway + sync-client | OAuth 2.0 Device Flow on platform service: device code endpoints, JWT issuance, gateway JWT validation, replace stub auth with real Clerk-backed login | NOT STARTED -- see Phase 9 in tasks.md (T071-T092) | Phase 2 |
 

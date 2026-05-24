@@ -7,16 +7,52 @@ import {
 } from "../../src/daemon/ws-client.js";
 
 describe("parseSyncEventMessage", () => {
-  it("returns sync events", () => {
+  it("returns batched sync change events", () => {
+    expect(
+      parseSyncEventMessage(JSON.stringify({
+        type: "sync:change",
+        files: [
+          {
+            path: "notes/today.md",
+            action: "update",
+            hash: `sha256:${"a".repeat(64)}`,
+            size: 12,
+          },
+          {
+            path: "notes/done.md",
+            action: "delete",
+            hash: `sha256:${"b".repeat(64)}`,
+            size: 0,
+          },
+        ],
+        peerId: "laptop-1",
+        manifestVersion: 7,
+      })),
+    ).toMatchObject({
+      type: "sync:change",
+      peerId: "laptop-1",
+      manifestVersion: 7,
+      files: [
+        { path: "notes/today.md", action: "update" },
+        { path: "notes/done.md", action: "delete" },
+      ],
+    });
+  });
+
+  it("normalizes legacy single-file sync change events", () => {
     expect(
       parseSyncEventMessage(JSON.stringify({
         type: "sync:change",
         path: "notes/today.md",
-        action: "update",
+        action: "create",
         hash: `sha256:${"a".repeat(64)}`,
         peerId: "laptop-1",
       })),
-    ).toMatchObject({ type: "sync:change", path: "notes/today.md" });
+    ).toMatchObject({
+      type: "sync:change",
+      peerId: "laptop-1",
+      files: [{ path: "notes/today.md", action: "create", size: 0 }],
+    });
   });
 
   it("ignores non-sync messages", () => {

@@ -1,6 +1,6 @@
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
@@ -8,7 +8,14 @@ import {
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
-import { clearProfileAuth, isExpired, loadAuth, loadProfileAuth } from "../auth/token-store.js";
+import {
+  clearAuth,
+  clearProfileAuth,
+  isExpired,
+  loadAuth,
+  loadProfileAuth,
+  type AuthData,
+} from "../auth/token-store.js";
 import { loadProfiles } from "../lib/profiles.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
@@ -31,6 +38,7 @@ import {
 import {
   RemoteManifestEnvelopeSchema,
   type RemoteManifestEnvelope,
+  type SyncChangeEvent,
   type SyncState,
 } from "./types.js";
 
@@ -312,6 +320,23 @@ export async function adoptRemoteManifestVersion(
   return true;
 }
 
+export async function adoptSyncChangeManifestVersion(
+  syncState: SyncState,
+  event: Pick<SyncChangeEvent, "manifestVersion">,
+  shouldAdvance: boolean,
+  persist: () => Promise<void>,
+): Promise<boolean> {
+  if (event.manifestVersion === undefined || !shouldAdvance) {
+    return false;
+  }
+  syncState.manifestVersion = Math.max(
+    syncState.manifestVersion,
+    event.manifestVersion,
+  );
+  await persist();
+  return true;
+}
+
 export function capSyncStateFiles(syncState: SyncState): boolean {
   const entries = Object.entries(syncState.files);
   if (entries.length <= SYNC_STATE_FILE_CAP) {
@@ -349,7 +374,62 @@ export function parseRemoteManifestEnvelope(body: unknown): RemoteManifestEnvelo
   return parsed.data;
 }
 
+export interface DaemonAuthResolution {
+  auth: AuthData | null;
+  profileName: string;
+  source: "profile" | "legacy" | "none";
+}
+
+export interface DaemonAuthFileAccessors {
+  loadAuth: () => Promise<AuthData | null>;
+  clearAuth: () => Promise<void>;
+}
+
+export function createDaemonAuthFileAccessors(
+  resolution: Pick<DaemonAuthResolution, "profileName" | "source">,
+  authConfigDir = configDir,
+): DaemonAuthFileAccessors {
+  if (resolution.source === "legacy") {
+    const legacyAuthPath = join(authConfigDir, "auth.json");
+    return {
+      loadAuth: () => loadAuth(legacyAuthPath),
+      clearAuth: () => clearAuth(legacyAuthPath),
+    };
+  }
+
+  return {
+    loadAuth: () => loadProfileAuth(resolution.profileName, authConfigDir),
+    clearAuth: () => clearProfileAuth(resolution.profileName, authConfigDir),
+  };
+}
+
+export async function resolveDaemonAuth(
+  config: Pick<SyncConfig, "profile">,
+  authConfigDir = configDir,
+): Promise<DaemonAuthResolution> {
+  let profileName = config.profile;
+  if (!profileName) {
+    const profiles = await loadProfiles({
+      configDir: authConfigDir,
+      migrateLegacyFiles: false,
+    });
+    profileName = profiles.active;
+  }
+  const profileAuth = await loadProfileAuth(profileName, authConfigDir);
+  if (profileAuth) {
+    return { auth: profileAuth, profileName, source: "profile" };
+  }
+
+  const legacyAuth = await loadAuth(join(authConfigDir, "auth.json"));
+  if (legacyAuth) {
+    return { auth: legacyAuth, profileName, source: "legacy" };
+  }
+
+  return { auth: null, profileName, source: "none" };
+}
+
 export async function startDaemon(): Promise<void> {
+  await mkdir(join(configDir, "logs"), { recursive: true, mode: 0o700 });
   const logger = pino({
     transport: {
       target: "pino/file",
@@ -363,9 +443,9 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
-  const auth = await loadAuth();
+  const { auth, profileName, source } = await resolveDaemonAuth(config);
   if (!auth) {
-    logger.error("Not logged in. Run 'matrixos login' first.");
+    logger.error(`Not logged in for profile "${profileName}". Run 'matrixos login' first.`);
     process.exit(1);
   }
   if (isExpired(auth)) {
@@ -522,89 +602,95 @@ export async function startDaemon(): Promise<void> {
     peerId: config.peerId,
     onEvent: async (event) => enqueue(async () => {
       if (config.pauseSync) return;
+      if (event.type !== "sync:change") return;
 
-      // Only react to events for files inside our prefix. A daemon syncing
-      // `~/audit` (prefix "audit") ignores changes another peer made to
-      // `notes/foo.md`.
-      const localRel = "path" in event ? toLocal(event.path) : null;
-      if (!localRel) return;
+      let shouldAdvanceManifestVersion = true;
 
-      if (event.type === "sync:change" && event.action !== "delete") {
-        try {
-          const urls = await requestPresignedUrls(gatewayClient, [
-            { path: event.path, action: "get" },
-          ]);
-          if (urls[0]) {
+      for (const file of event.files) {
+        // Only react to events for files inside our prefix. A daemon syncing
+        // `~/audit` (prefix "audit") ignores changes another peer made to
+        // `notes/foo.md`.
+        const localRel = toLocal(file.path);
+        if (!localRel) continue;
+
+        if (file.action !== "delete") {
+          try {
+            const urls = await requestPresignedUrls(gatewayClient, [
+              { path: file.path, action: "get" },
+            ]);
+            if (!urls[0]) {
+              shouldAdvanceManifestVersion = false;
+              continue;
+            }
             const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
             await downloadFile(
               urls[0].url,
               localPath,
-              event.hash,
+              file.hash,
             );
             const downloadedStat = await stat(localPath);
-            syncState.files[event.path] = {
-              hash: event.hash,
+            syncState.files[file.path] = {
+              hash: file.hash,
               mtime: downloadedStat.mtimeMs,
               size: downloadedStat.size,
-              lastSyncedHash: event.hash,
+              lastSyncedHash: file.hash,
             };
             capSyncStateFiles(syncState);
             await saveSyncState(stateFile, syncState);
+          } catch (err) {
+            shouldAdvanceManifestVersion = false;
+            if (exitOnAuthFailure(err, logger)) return;
+            logger.error({ err, path: file.path }, "Download failed");
           }
-        } catch (err) {
-          if (exitOnAuthFailure(err, logger)) return;
-          logger.error({ err, path: event.path }, "Download failed");
-        }
-      } else if (
-        event.type === "sync:change" &&
-        event.action === "delete"
-      ) {
-        try {
-          const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
-          const { unlink: unlinkFile } = await import("node:fs/promises");
+        } else {
           try {
-            await unlinkFile(localPath);
-          } catch (err: unknown) {
-            if (
-              !(err instanceof Error) ||
-              !("code" in err) ||
-              (err as NodeJS.ErrnoException).code !== "ENOENT"
-            ) {
-              throw err;
+            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
+            const { unlink: unlinkFile } = await import("node:fs/promises");
+            try {
+              await unlinkFile(localPath);
+            } catch (err: unknown) {
+              if (
+                !(err instanceof Error) ||
+                !("code" in err) ||
+                (err as NodeJS.ErrnoException).code !== "ENOENT"
+              ) {
+                throw err;
+              }
             }
+            delete syncState.files[file.path];
+            await saveSyncState(stateFile, syncState);
+          } catch (err) {
+            shouldAdvanceManifestVersion = false;
+            logger.error(
+              { err, path: file.path },
+              "Local delete failed",
+            );
           }
-          delete syncState.files[event.path];
-          await saveSyncState(stateFile, syncState);
-        } catch (err) {
-          logger.error(
-            { err, path: event.path },
-            "Local delete failed",
-          );
         }
       }
+
+      await adoptSyncChangeManifestVersion(
+        syncState,
+        event,
+        shouldAdvanceManifestVersion,
+        () => saveSyncState(stateFile, syncState),
+      );
     }),
     onConnect: () => logger.info("Connected to gateway"),
     onDisconnect: () => logger.info("Disconnected from gateway"),
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
-  const loadActiveProfileAuth = async () => {
-    const profiles = await loadProfiles();
-    return loadProfileAuth(profiles.active);
-  };
-  const clearActiveProfileAuth = async () => {
-    const profiles = await loadProfiles();
-    await clearProfileAuth(profiles.active);
-  };
+  const authFileAccessors = createDaemonAuthFileAccessors({ profileName, source }, configDir);
   const ipcHandler = createIpcHandler({
     config,
     syncState,
     logger: { info: (msg) => logger.info(msg) },
     saveConfig: (next) => saveConfig(next),
     persistPauseState,
-    clearAuth: clearActiveProfileAuth,
-    loadAuth: loadActiveProfileAuth,
-    shell: createDaemonShellControlClient({ config, loadAuth: loadActiveProfileAuth }),
+    clearAuth: authFileAccessors.clearAuth,
+    loadAuth: authFileAccessors.loadAuth,
+    shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });
   const ipcServer = new IpcServer({ socketPath, handler: ipcHandler });
