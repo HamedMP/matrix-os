@@ -59,6 +59,7 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
+import { recordPlatformHttpRequest } from './metrics.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -750,6 +751,65 @@ async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecre
   }
 }
 
+async function probeCustomerVpsRuntime(
+  machine: { handle: string; publicIPv4: string | null },
+  platformSecret: string,
+): Promise<{
+  healthy: boolean;
+  probeLatencyMs?: number;
+  load1?: number | null;
+  cpuCount?: number | null;
+  memoryTotalBytes?: number | null;
+  memoryFreeBytes?: number | null;
+  diskTotalBytes?: number | null;
+  diskFreeBytes?: number | null;
+}> {
+  if (!machine.publicIPv4) return { healthy: false };
+  if (!platformSecret) return { healthy: false };
+  const token = buildPlatformVerificationToken(machine.handle, platformSecret);
+  const started = performance.now();
+  try {
+    const res = await fetch(`https://${machine.publicIPv4}:443/api/system/info`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: `${machine.handle}.matrix-os.com`,
+        'x-forwarded-host': 'app.matrix-os.com',
+        'x-forwarded-proto': 'https',
+      },
+      dispatcher: customerVpsProxyDispatcher,
+      signal: AbortSignal.timeout(8_000),
+    } as RequestInit & { dispatcher: Agent });
+    const probeLatencyMs = performance.now() - started;
+    if (!res.ok) return { healthy: false, probeLatencyMs };
+
+    const info = await res.json() as {
+      resources?: {
+        cpuCount?: number;
+        loadAverage?: unknown;
+        memoryTotalBytes?: number;
+        memoryFreeBytes?: number;
+        diskTotalBytes?: number | null;
+        diskFreeBytes?: number | null;
+      };
+    };
+    const loadAverage = Array.isArray(info.resources?.loadAverage) ? info.resources.loadAverage : [];
+    const load1 = typeof loadAverage[0] === 'number' ? loadAverage[0] : null;
+    return {
+      healthy: true,
+      probeLatencyMs,
+      load1,
+      cpuCount: typeof info.resources?.cpuCount === 'number' ? info.resources.cpuCount : null,
+      memoryTotalBytes: typeof info.resources?.memoryTotalBytes === 'number' ? info.resources.memoryTotalBytes : null,
+      memoryFreeBytes: typeof info.resources?.memoryFreeBytes === 'number' ? info.resources.memoryFreeBytes : null,
+      diskTotalBytes: typeof info.resources?.diskTotalBytes === 'number' ? info.resources.diskTotalBytes : null,
+      diskFreeBytes: typeof info.resources?.diskFreeBytes === 'number' ? info.resources.diskFreeBytes : null,
+    };
+  } catch (err: unknown) {
+    console.warn(`[fleet-probe] system info failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));
+    return { healthy: false, probeLatencyMs: performance.now() - started };
+  }
+}
+
 function getGatewayUrlForHandle(handle: string): string {
   const safeHandle = requireValidHandle(handle);
   const tmpl = process.env.GATEWAY_URL_TEMPLATE;
@@ -1000,6 +1060,19 @@ export function createApp(deps: {
     });
   }
 
+  app.use('*', async (c, next) => {
+    const started = performance.now();
+    await next();
+    if (c.req.path !== '/metrics') {
+      recordPlatformHttpRequest({
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        durationSeconds: (performance.now() - started) / 1000,
+      });
+    }
+  });
+
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
@@ -1016,9 +1089,42 @@ export function createApp(deps: {
 
   // Prometheus metrics (unauthenticated for scraping)
   app.get('/metrics', async (c) => {
-    const { metricsRegistry, refreshVpsMetrics } = await import('./metrics.js');
+    const {
+      metricsRegistry,
+      refreshPlatformUserMetrics,
+      refreshReleaseChannelMetrics,
+      refreshVpsMetrics,
+      refreshVpsRuntimeMetrics,
+    } = await import('./metrics.js');
     try {
-      refreshVpsMetrics(await listAllUserMachines(db, 500));
+      const machines = await listAllUserMachines(db, 500);
+      const containers = await listContainers(db);
+      refreshVpsMetrics(machines);
+      refreshPlatformUserMetrics({ machines, containers });
+      const releaseChannels = await Promise.all(
+        ['dev', 'beta', 'canary', 'stable'].map(async (channel) => {
+          const release = await getHostBundleReleaseByChannel(db, channel);
+          return release ? { ...release, channel } : null;
+        }),
+      );
+      refreshReleaseChannelMetrics(
+        releaseChannels.filter((release): release is NonNullable<typeof release> => release !== null),
+      );
+      if (deps.customerVpsService) {
+        const probed = await Promise.allSettled(
+          machines.map(async (machine) => ({
+            handle: machine.handle,
+            ...(machine.status === 'running'
+              ? await probeCustomerVpsRuntime(machine, platformSecret)
+              : { healthy: false }),
+          })),
+        );
+        refreshVpsRuntimeMetrics(
+          probed
+            .filter((result): result is PromiseFulfilledResult<{ handle: string; healthy: boolean }> => result.status === 'fulfilled')
+            .map((result) => result.value),
+        );
+      }
     } catch (err: unknown) {
       logPlatformRouteError('/metrics vps refresh', err);
     }
@@ -1807,6 +1913,10 @@ export function createApp(deps: {
     });
   });
   if (deps.customerVpsService) {
+    async function probeMachineRuntime(machine: { machineId: string; handle: string; publicIPv4: string | null }) {
+      return probeCustomerVpsRuntime(machine, platformSecret);
+    }
+
     async function probeMachineHealth(machine: { machineId: string; handle: string; publicIPv4: string | null }): Promise<boolean> {
       if (!machine.publicIPv4) return false;
       const token = buildPlatformVerificationToken(machine.handle, platformSecret);
@@ -1827,6 +1937,7 @@ export function createApp(deps: {
       service: deps.customerVpsService,
       platformSecret,
       probeMachineHealth,
+      probeMachineRuntime,
     }));
   }
 

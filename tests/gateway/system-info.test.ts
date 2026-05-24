@@ -84,6 +84,14 @@ describe("T135: System info", () => {
     const info = getSystemInfo(homePath);
     expect(info.version).toBeDefined();
     expect(info.uptime).toBeGreaterThanOrEqual(0);
+    expect(info.resources.cpuCount).toBeGreaterThan(0);
+    expect(info.resources.loadAverage).toHaveLength(3);
+    expect(info.resources.memoryTotalBytes).toBeGreaterThan(0);
+    expect(info.resources.memoryFreeBytes).toBeGreaterThanOrEqual(0);
+    expect(info.resources.diskTotalBytes).toBeGreaterThan(0);
+    expect(info.resources.diskFreeBytes).toBeGreaterThanOrEqual(0);
+    expect(info.resources.homeDiskTotalBytes).toBeGreaterThan(0);
+    expect(info.resources.homeDiskFreeBytes).toBeGreaterThanOrEqual(0);
     rmSync(homePath, { recursive: true, force: true });
   });
 

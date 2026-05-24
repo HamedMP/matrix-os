@@ -11,7 +11,7 @@ import {
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
-import { refreshVpsMetrics, vpsHealthy } from './metrics.js';
+import { refreshVpsMetrics, refreshVpsRuntimeMetrics } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
 
@@ -38,6 +38,16 @@ export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;
   probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
+  probeMachineRuntime?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<{
+    healthy: boolean;
+    probeLatencyMs?: number;
+    load1?: number | null;
+    cpuCount?: number | null;
+    memoryTotalBytes?: number | null;
+    memoryFreeBytes?: number | null;
+    diskTotalBytes?: number | null;
+    diskFreeBytes?: number | null;
+  }>;
 }
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
@@ -166,10 +176,17 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       const statuses = await deps.service.listAllMachines();
       const probed = await Promise.allSettled(
         statuses.map(async (s): Promise<FleetMachineView> => {
-          if (s.status !== 'running' || !s.publicIPv4 || !deps.probeMachineHealth) {
+          if (s.status !== 'running' || !s.publicIPv4 || (!deps.probeMachineHealth && !deps.probeMachineRuntime)) {
             return { ...s, healthy: false };
           }
-          const healthy = await deps.probeMachineHealth(s).catch((err: unknown) => {
+          if (deps.probeMachineRuntime) {
+            const runtime = await deps.probeMachineRuntime(s).catch((err: unknown) => {
+              logCustomerVpsError(`fleet runtime probe failed for ${s.handle}`, err);
+              return { healthy: false };
+            });
+            return { ...s, ...runtime, healthy: runtime.healthy };
+          }
+          const healthy = await deps.probeMachineHealth!(s).catch((err: unknown) => {
             logCustomerVpsError(`fleet probe failed for ${s.handle}`, err);
             return false;
           });
@@ -181,10 +198,7 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
         .map(r => r.value);
 
       refreshVpsMetrics(machines);
-      vpsHealthy.reset();
-      for (const m of machines) {
-        vpsHealthy.set({ handle: m.handle }, m.healthy ? 1 : 0);
-      }
+      refreshVpsRuntimeMetrics(machines);
 
       const FLEET_LIMIT = 500;
       return c.json({ fleet: buildFleetSummary(machines), machines, truncated: machines.length >= FLEET_LIMIT });
