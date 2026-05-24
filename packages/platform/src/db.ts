@@ -903,31 +903,37 @@ export async function getActiveUserMachineByClerkId(
 export async function getActiveUserMachineByHandle(
   db: PlatformDB,
   handle: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
-    .where('runtime_slot', '=', 'primary')
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getRunningUserMachineByHandle(
   db: PlatformDB,
   handle: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
-    .where('runtime_slot', '=', 'primary')
     .where('status', '=', 'running')
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 

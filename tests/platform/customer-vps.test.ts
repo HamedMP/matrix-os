@@ -5,6 +5,8 @@ import {
   claimUserMachineDelete,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
+  getRunningUserMachineByHandle,
   getUserMachine,
   listPendingProviderDeletions,
   promoteHostBundleChannel,
@@ -135,6 +137,41 @@ describe('platform/customer-vps', () => {
       handle: 'alice-staging',
       runtimeSlot: 'staging',
     });
+  });
+
+  it('resolves staging machines by distinct handle for auth and sync fallback paths', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service } = createService({
+      machineIdFactory: () => ids[nextId++] ?? '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    });
+
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    await updateUserMachine(db, primary.machineId, {
+      status: 'running',
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    await updateUserMachine(db, staging.machineId, {
+      status: 'running',
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(getActiveUserMachineByHandle(db, 'alice-staging')).resolves.toMatchObject({
+      machineId: staging.machineId,
+      runtimeSlot: 'staging',
+    });
+    await expect(getRunningUserMachineByHandle(db, 'alice-staging')).resolves.toMatchObject({
+      machineId: staging.machineId,
+      runtimeSlot: 'staging',
+      status: 'running',
+    });
+    await expect(getRunningUserMachineByHandle(db, 'alice-staging', 'primary')).resolves.toBeUndefined();
   });
 
   it('templates the platform verification token into provisioned customer hosts', async () => {

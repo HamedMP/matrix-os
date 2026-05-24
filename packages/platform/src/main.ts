@@ -692,7 +692,7 @@ async function resolveAppDomainIdentity(opts: {
           userId: record.clerkUserId,
         };
       }
-      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle);
+      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, 'primary');
       if (machine?.clerkUserId !== claims.sub) {
         return null;
       }
@@ -1611,7 +1611,7 @@ export function createApp(deps: {
         return c.json({ error: 'Invalid handle' }, 400);
       }
 
-      const runningMachine = await getRunningUserMachineByHandle(db, handle);
+      const runningMachine = await getRunningUserMachineByHandle(db, handle, 'primary');
       if (!runningMachine) {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
@@ -1756,7 +1756,7 @@ export function createApp(deps: {
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : undefined;
     if (!runningMachine && runtimeSlot === 'primary') {
-      runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+      runningMachine = await getRunningUserMachineByHandle(db, identity.handle, 'primary');
     }
     if (runningMachine) {
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
@@ -1852,7 +1852,7 @@ export function createApp(deps: {
     if (!record) {
       const activeMachine = identity.userId
         ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
-        : await getActiveUserMachineByHandle(db, identity.handle);
+        : await getActiveUserMachineByHandle(db, identity.handle, 'primary');
       if (activeMachine) {
         if (isCodeDomain || isGatewayPath) {
           applyNoStoreHeaders(c);
@@ -2439,7 +2439,7 @@ export function createApp(deps: {
     }
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const runningMachine = await getRunningUserMachineByHandle(db, handle);
+    const runningMachine = await getRunningUserMachineByHandle(db, handle, 'primary');
     if (runningMachine) {
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {
@@ -2649,7 +2649,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       if (!handle) return null;
 
       const owner =
-        (await getRunningUserMachineByHandle(db, handle)) ??
+        (await getRunningUserMachineByHandle(db, handle, 'primary')) ??
         (await getContainer(db, handle));
       if (!owner || owner.clerkUserId !== clerkUserId) {
         return null;
@@ -2915,7 +2915,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : undefined;
     if (!runningMachine && runtimeSlot === 'primary') {
-      runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+      runningMachine = await getRunningUserMachineByHandle(db, identity.handle, 'primary');
     }
     const record = await getContainer(db, identity.handle);
     if (!runningMachine && !record) { socket.destroy(); return; }
