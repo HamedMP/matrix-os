@@ -26,7 +26,13 @@ function providerTone(status: string) {
   return "text-[#17281f]/65 bg-white/55 border-[#17281f]/10";
 }
 
-export function AdminControlPanel({ surface }: { surface: AdminControlSurface | null }) {
+export function AdminControlPanel({
+  surface,
+  onResumeSetup,
+}: {
+  surface: AdminControlSurface | null;
+  onResumeSetup: (target: string) => void;
+}) {
   if (!surface) return null;
 
   return (
@@ -63,7 +69,10 @@ export function AdminControlPanel({ surface }: { surface: AdminControlSurface | 
       </div>
 
       <div className="mt-3 grid gap-2 lg:grid-cols-[0.9fr_1.1fr]">
-        <AdminSetupWizard session={surface.setupSession} />
+        <AdminSetupWizard
+          session={surface.setupSession}
+          onResume={surface.setupSession ? () => onResumeSetup(surface.setupSession.target) : undefined}
+        />
         <div className="grid gap-2 sm:grid-cols-3">
           <div className="rounded-md border border-[#17281f]/10 bg-white/55 p-3">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-[#111612]">

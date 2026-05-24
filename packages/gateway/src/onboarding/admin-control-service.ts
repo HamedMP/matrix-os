@@ -4,6 +4,7 @@ import type { ReadinessService } from "./readiness-service.js";
 
 const MAX_SETUP_SESSIONS = 512;
 const MAX_SETUP_SESSIONS_PER_OWNER = 16;
+const SETUP_SESSION_TTL_MS = 1000 * 60 * 60 * 24;
 
 export interface AdminProviderCard {
   id: "hermes" | "claude" | "codex" | string;
@@ -94,8 +95,19 @@ export function createAdminControlService(options: {
     return key.startsWith(`${encodeURIComponent(ownerId)}:`);
   }
 
+  function sweepSetupSessions(timestampMs = now().getTime()): void {
+    for (const [key, session] of setupSessions) {
+      const updatedAt = Date.parse(session.updatedAt);
+      if (!Number.isFinite(updatedAt) || timestampMs - updatedAt > SETUP_SESSION_TTL_MS) {
+        setupSessions.delete(key);
+      }
+    }
+  }
+
   async function getSurface(ownerId: string): Promise<AdminControlSurface> {
-    const timestamp = now().toISOString();
+    const currentTime = now();
+    const timestamp = currentTime.toISOString();
+    sweepSetupSessions(currentTime.getTime());
     const [agentStatus, integrationStatus, readiness] = await Promise.all([
       options.agentCredentials.getStatus(ownerId),
       options.integrations.listCapabilities(ownerId),
@@ -149,7 +161,9 @@ export function createAdminControlService(options: {
         createdAt: timestamp,
       },
     ];
-    const latestSession = Array.from(setupSessions.values()).find((session) => session.id.startsWith(`setup.${ownerId}.`)) ?? null;
+    const latestSession = Array.from(setupSessions.values())
+      .filter((session) => session.id.startsWith(`setup.${ownerId}.`))
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0] ?? null;
 
     return {
       sections: ["models", "agents", "integrations", "settings", "automations", "activity", "readiness"],
@@ -160,7 +174,7 @@ export function createAdminControlService(options: {
         { id: "readiness-gates", label: "Readiness gates", status: failed || blocked ? "needs_review" : "saved", updatedAt: timestamp },
       ],
       automationSummary: {
-        active: connected,
+        active: 0,
         needsApproval: 0,
         lastActivityAt: null,
       },
@@ -172,10 +186,12 @@ export function createAdminControlService(options: {
   }
 
   async function createOrResumeSetupSession(ownerId: string, input: { target: string; intent: "connect" | "configure" | "resume" }) {
+    const currentTime = now();
+    sweepSetupSessions(currentTime.getTime());
     const key = sessionKey(ownerId, input.target);
     const existing = setupSessions.get(key);
     if (existing) {
-      const resumed = { ...existing, status: "resumable" as const, updatedAt: now().toISOString() };
+      const resumed = { ...existing, status: "resumable" as const, updatedAt: currentTime.toISOString() };
       setupSessions.delete(key);
       setupSessions.set(key, resumed);
       return { session: resumed };
@@ -194,7 +210,7 @@ export function createAdminControlService(options: {
       target: input.target,
       status: "new",
       title: labelForTarget(input.target),
-      updatedAt: now().toISOString(),
+      updatedAt: currentTime.toISOString(),
     };
     setupSessions.set(key, session);
     return { session };

@@ -33,7 +33,7 @@ describe("admin control routes", () => {
       expect.objectContaining({ id: "codex", label: "Codex", mode: "bring_your_own" }),
     ]));
     expect(body.integrationSummary).toMatchObject({ approved: 1 });
-    expect(body.automationSummary).toEqual(expect.objectContaining({ active: expect.any(Number), needsApproval: expect.any(Number) }));
+    expect(body.automationSummary).toEqual(expect.objectContaining({ active: 0, needsApproval: 0, lastActivityAt: null }));
     expect(JSON.stringify(body)).not.toMatch(/secret|token|postgres|\/home\//i);
   });
 
@@ -198,6 +198,28 @@ describe("admin control routes", () => {
       session: expect.objectContaining({ target: "integration:default" }),
       currentStepId: "integration:default",
     });
+  });
+
+  it("returns the most recently resumed setup session on the control surface", async () => {
+    let current = Date.parse("2026-05-23T00:00:00.000Z");
+    const agentCredentials = createAgentCredentialStatusService();
+    const integrations = createIntegrationCapabilityService();
+    const { service: readiness } = createTestReadinessService(undefined, { agentCredentialService: agentCredentials, integrationCapabilityService: integrations });
+    const service = createAdminControlService({
+      agentCredentials,
+      integrations,
+      readiness,
+      now: () => new Date(current),
+    });
+    const app = createAdminControlRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(post("/control-surface/setup-session", { target: "agent:claude", intent: "connect" }));
+    current += 1000;
+    await app.request(post("/control-surface/setup-session", { target: "agent:codex", intent: "connect" }));
+
+    const body = await (await app.request("/control-surface")).json();
+
+    expect(body.setupSession).toMatchObject({ target: "agent:codex" });
   });
 
   it("does not leak setup sessions between owner id prefixes", async () => {

@@ -10,7 +10,13 @@ export interface AdminSetupSessionSummary {
   updatedAt: string;
 }
 
-export function AdminSetupWizard({ session }: { session: AdminSetupSessionSummary | null }) {
+export function AdminSetupWizard({
+  session,
+  onResume,
+}: {
+  session: AdminSetupSessionSummary | null;
+  onResume?: () => void;
+}) {
   return (
     <div className="rounded-md border border-[#17281f]/10 bg-white/55 p-3">
       <div className="flex items-center justify-between gap-3">
@@ -20,13 +26,16 @@ export function AdminSetupWizard({ session }: { session: AdminSetupSessionSummar
             {session ? session.title : "Start or resume model, integration, settings, or automation setup from one place."}
           </p>
         </div>
-        <button
-          type="button"
-          className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-[#17281f]/12 bg-[#f8f5ee]/85 px-2.5 text-xs font-medium text-[#17281f]"
-        >
-          <RotateCcwIcon className="h-3.5 w-3.5" aria-hidden="true" />
-          Resume setup
-        </button>
+        {session && onResume ? (
+          <button
+            type="button"
+            onClick={onResume}
+            className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-[#17281f]/12 bg-[#f8f5ee]/85 px-2.5 text-xs font-medium text-[#17281f]"
+          >
+            <RotateCcwIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            Resume setup
+          </button>
+        ) : null}
       </div>
     </div>
   );
