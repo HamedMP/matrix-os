@@ -43,10 +43,6 @@ const c = {
 const navLinks = [
   { label: "about", href: "#about" },
   { label: "features", href: "#features" },
-  { label: "preview", href: "#preview" },
-  { label: "docs", href: "/docs" },
-  { label: "technical", href: "/technical" },
-  { label: "github", href: "https://github.com/HamedMP/matrix-os" },
 ] as const;
 
 const communityLinks = [
@@ -131,7 +127,7 @@ export default function LandingPage() {
             <Logo className="h-[1.35rem] w-auto" style={{ color: c.forest }} />
             <span className="text-[13px] font-bold tracking-tight" style={{ color: c.forest }}>matrix os</span>
           </a>
-          <nav className="hidden lg:flex items-center gap-5">
+          <nav className="hidden md:flex items-center gap-5">
             {navLinks.map((link) => (
               <a
                 key={link.href}
@@ -182,21 +178,18 @@ export default function LandingPage() {
               </a>
             </SignedIn>
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
-              {communityLinks.slice(0, 5).map((link) => (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  target={link.href.startsWith("http") ? "_blank" : undefined}
-                  rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
-                  className="nav-link text-[11px] tracking-[0.16em] uppercase"
-                  style={{ color: c.subtle }}
-                >
-                  {link.label}
-                </a>
-              ))}
+              <a
+                href="https://discord.gg/cSBBQWtPwV"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nav-link text-[11px] tracking-[0.16em] uppercase"
+                style={{ color: c.subtle }}
+              >
+                Join Discord
+              </a>
             </div>
           </div>
-          <div className="relative z-0 w-full overflow-hidden rounded-[24px] border md:rounded-[28px]" style={{ borderColor: c.border, backgroundColor: "rgba(67,78,63,0.05)", boxShadow: "0 24px 80px rgba(50,53,46,0.12)" }}>
+          <div className="relative z-0 w-full overflow-hidden" style={{ backgroundColor: c.pageBg }}>
             <video
               autoPlay
               loop
@@ -206,7 +199,8 @@ export default function LandingPage() {
               preload="metadata"
               controls={false}
               src="/hero-loop.mp4"
-              className="block w-full aspect-[16/11] md:aspect-[16/10] object-cover object-center"
+              className="block w-full aspect-[16/11] md:aspect-[16/10] object-contain object-center"
+              style={{ backgroundColor: c.pageBg }}
             />
           </div>
         </div>
