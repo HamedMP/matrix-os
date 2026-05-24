@@ -449,6 +449,7 @@ export type RemoteReconcileStatus =
   | "downloaded"
   | "already-synced"
   | "conflict-created"
+  | "conflict-existing"
   | "delete-skipped-conflict"
   | "deleted-local";
 
@@ -521,6 +522,21 @@ export async function reconcileRemoteFileChange(
     await input.downloadRemote(localPath);
     await updateDownloadedState(localPath, input.remotePath);
     return { status: "downloaded" };
+  }
+
+  if (cached?.hash === localHash && cached.lastSyncedHash === input.remoteHash) {
+    syncState.files[input.remotePath] = {
+      ...cached,
+      hash: localHash,
+      mtime: localMtime,
+      size: localSize,
+      lastSyncedHash: input.remoteHash,
+    };
+    capSyncStateFiles(syncState);
+    return {
+      status: "conflict-existing",
+      conflictPath: syncState.conflicts?.[input.remotePath]?.conflictPath,
+    };
   }
 
   const preferredConflictPath = generateConflictPath(

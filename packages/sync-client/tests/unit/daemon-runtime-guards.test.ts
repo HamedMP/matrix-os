@@ -545,6 +545,75 @@ describe("daemon runtime guards", () => {
     ).toBe(secondRemoteContent);
   });
 
+  it("does not create duplicate conflict copies for replayed remote revisions", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const localRel = "note.md";
+    const remotePath = "note.md";
+    const localPath = join(syncRoot, localRel);
+    const conflictRel = "note (conflict - peer-2 - 2026-05-20).md";
+    const conflictPath = join(syncRoot, conflictRel);
+    const localContent = "local edit\n";
+    const remoteContent = "remote edit\n";
+    await writeFile(localPath, localContent);
+    await writeFile(conflictPath, remoteContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        [remotePath]: {
+          hash: sha256(localContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(localContent),
+          lastSyncedHash: sha256(remoteContent),
+        },
+        [conflictRel]: {
+          hash: sha256(remoteContent),
+          mtime: (await stat(conflictPath)).mtimeMs,
+          size: Buffer.byteLength(remoteContent),
+        },
+      },
+      conflicts: {
+        [remotePath]: {
+          path: remotePath,
+          conflictPath: conflictRel,
+          localHash: sha256(localContent),
+          remoteHash: sha256(remoteContent),
+          remotePeerId: "peer-2",
+          detectedAt: new Date("2026-05-20T12:00:00Z").getTime(),
+          resolved: false,
+        },
+      },
+    };
+    const downloadRemote = vi.fn(async (targetPath: string) => {
+      await writeFile(targetPath, remoteContent);
+    });
+
+    const result = await reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel,
+      remotePath,
+      remoteHash: sha256(remoteContent),
+      remoteSize: Buffer.byteLength(remoteContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+      downloadRemote,
+    });
+
+    expect(result.status).toBe("conflict-existing");
+    expect(result.conflictPath).toBe(conflictRel);
+    expect(downloadRemote).not.toHaveBeenCalled();
+    await expect(
+      readFile(join(syncRoot, "note (conflict - peer-2 - 2026-05-20) 2.md"), "utf-8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(syncState.conflicts?.[remotePath]).toMatchObject({
+      conflictPath: conflictRel,
+      remoteHash: sha256(remoteContent),
+      resolved: false,
+    });
+  });
+
   it("replaces local content when local still matches lastSyncedHash", async () => {
     const syncRoot = join(tempDir, "sync");
     await mkdir(syncRoot, { recursive: true });
