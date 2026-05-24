@@ -34,7 +34,7 @@ function assertNoCaseCollidingProfileNames(profiles: ProfilesFile): void {
   for (const name of Object.keys(profiles.profiles)) {
     const normalized = name.toLowerCase();
     const existing = seen.get(normalized);
-    if (existing && existing !== name) {
+    if (existing) {
       throw profileNameConflictError();
     }
     seen.set(normalized, name);

@@ -24,15 +24,15 @@ function baseState(): SyncState {
     manifestVersion: 4,
     lastSyncAt: 1234,
     files: {
-      "a.md": { hash: "sha256:aa", mtime: 1, size: 1 },
-      "b.md": { hash: "sha256:bb", mtime: 2, size: 2 },
+      "a.md": { hash: `sha256:${"a".repeat(64)}`, mtime: 1, size: 1 },
+      "b.md": { hash: `sha256:${"b".repeat(64)}`, mtime: 2, size: 2 },
     },
     conflicts: {
       "a.md": {
         path: "a.md",
         conflictPath: "a (conflict - peer-2 - 2026-05-20).md",
-        localHash: "sha256:aa",
-        remoteHash: "sha256:bb",
+        localHash: `sha256:${"a".repeat(64)}`,
+        remoteHash: `sha256:${"b".repeat(64)}`,
         remotePeerId: "peer-2",
         detectedAt: 1234,
         resolved: false,
