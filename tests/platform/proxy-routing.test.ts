@@ -227,9 +227,13 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("alice.matrix-os.com - provisioning");
+    expect(html).toContain("Instance status:");
+    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).not.toContain("alice.matrix-os.com");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
