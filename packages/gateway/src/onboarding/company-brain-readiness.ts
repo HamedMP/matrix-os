@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 
 const MAX_OWNERS = 512;
 const MAX_ITEMS_PER_OWNER = 200;
-const UNSAFE_DISPLAY = /(secret|token|postgres|\/home\/|database)/i;
+const UNSAFE_DISPLAY = /(sk_[a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
+const SENSITIVE_TERMS = /\b(secret|token|postgres|database)\b/gi;
 
 export type CompanyContextType =
   | "product_decision"
@@ -42,8 +43,12 @@ export interface CompanyBrainReadinessService {
 
 function safeDisplay(value: string, fallback: string, max = 220): string {
   const trimmed = value.trim().slice(0, max);
-  if (!trimmed || UNSAFE_DISPLAY.test(trimmed)) return fallback;
-  return trimmed;
+  if (!trimmed) return fallback;
+  const redacted = trimmed
+    .replace(UNSAFE_DISPLAY, "[redacted]")
+    .replace(SENSITIVE_TERMS, "[redacted]")
+    .trim();
+  return redacted || fallback;
 }
 
 function flagsFor(item: CompanyContextItem): CompanyBrainReadiness["reviewFlags"] {

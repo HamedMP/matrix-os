@@ -72,6 +72,27 @@ describe("company brain readiness", () => {
     await expect(res.json()).resolves.toMatchObject({ summary });
   });
 
+  it("redacts unsafe fragments without replacing company context", async () => {
+    const service = createCompanyBrainReadinessService();
+    const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const res = await app.request(post("/context", {
+      type: "customer_note",
+      title: "Customer database migration",
+      summary: "Customer asked about database status; token=sk_test_secret must not be shown.",
+      source: "/home/matrix/notes/customer.md",
+      visibility: "owner_only",
+    }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.title).toContain("Customer");
+    expect(body.summary).toContain("Customer asked");
+    expect(body.summary).toContain("[redacted]");
+    expect(body.source).toBe("[redacted]");
+    expect(JSON.stringify(body)).not.toMatch(/database|token|secret|sk_test|\/home\//i);
+  });
+
   it("marks stale and contradictory context for review", async () => {
     const service = createCompanyBrainReadinessService();
     const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });
