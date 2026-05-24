@@ -1852,11 +1852,13 @@ export function createApp(deps: {
         : await getActiveUserMachineByHandle(db, identity.handle);
       if (activeMachine) {
         if (isCodeDomain || isGatewayPath) {
+          applyNoStoreHeaders(c);
           return c.json({
             error: 'VPS provisioning',
             status: activeMachine.status,
           }, 503);
         }
+        applyNoStoreHeaders(c);
         return c.html(getVpsBootPage({
           handle: activeMachine.handle,
           status: activeMachine.status,
