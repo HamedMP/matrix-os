@@ -408,14 +408,16 @@ describe('platform/customer-vps', () => {
 
   it('validates R2 latest pointers without accepting paths or URLs', () => {
     expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
+    expect(validateDbLatestPointer('system/runtime-slots/staging/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
     expect(validateDbLatestPointer('../system/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);
     expect(validateDbLatestPointer('https://example.com/snapshot.dump')).toBe(false);
     expect(validateDbLatestPointer('system/db/snapshots/not-a-date.dump')).toBe(false);
+    expect(validateDbLatestPointer('system/runtime-slots/staging-/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);
   });
 
   it('writes VPS metadata to the scoped user R2 key', async () => {
     const writes: Array<{ key: string; body: string; signal?: AbortSignal }> = [];
-    const reads: AbortSignal[] = [];
+    const reads: Array<{ key: string; signal?: AbortSignal }> = [];
     const store = createCustomerVpsSystemStore({
       r2PrefixRoot: 'matrixos-sync',
       r2: {
@@ -423,8 +425,8 @@ describe('platform/customer-vps', () => {
           writes.push({ key, body: String(body), signal: options?.signal });
           return {};
         },
-        async getObject(_key, options) {
-          if (options?.signal) reads.push(options.signal);
+        async getObject(key, options) {
+          reads.push({ key, signal: options?.signal });
           throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
         },
       },
@@ -448,7 +450,10 @@ describe('platform/customer-vps', () => {
       status: 'running',
     });
     await expect(store.hasDbLatest('user_123')).resolves.toBe(false);
-    expect(reads[0]).toBeInstanceOf(AbortSignal);
+    await expect(store.hasDbLatest('user_123', 'staging')).resolves.toBe(false);
+    expect(reads[0]?.signal).toBeInstanceOf(AbortSignal);
+    expect(reads[0]?.key).toBe('matrixos-sync/user_123/system/db/latest');
+    expect(reads[1]?.key).toBe('matrixos-sync/user_123/system/runtime-slots/staging/db/latest');
     expect(buildCustomerVpsR2Key('matrixos-sync/', 'user_123', 'system/db/latest')).toBe(
       'matrixos-sync/user_123/system/db/latest',
     );

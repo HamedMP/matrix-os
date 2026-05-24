@@ -553,7 +553,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       // claimUserMachineRecovery WHERE clause below remains the authoritative
       // concurrency guard; keeping the backup check before the claim avoids
       // leaving a machine in recovering state when no snapshot exists.
-      if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
+      if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId, input.runtimeSlot))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
       const currentTime = now();

@@ -887,16 +887,22 @@ export async function getUserMachine(db: PlatformDB, machineId: string): Promise
 export async function getActiveUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
-  runtimeSlot = 'primary',
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
-    .where('runtime_slot', '=', runtimeSlot)
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 

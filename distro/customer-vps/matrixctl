@@ -107,15 +107,26 @@ r2_exists() {
 r2_put_latest() {
   local snapshot_key="$1"
   safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
+  local latest_key
   case "$snapshot_key" in
-    system/db/snapshots/*.dump) ;;
+    system/db/snapshots/*.dump)
+      latest_key="system/db/latest"
+      ;;
+    system/runtime-slots/*/db/snapshots/*.dump)
+      local runtime_slot="${snapshot_key#system/runtime-slots/}"
+      runtime_slot="${runtime_slot%%/*}"
+      case "$runtime_slot" in
+        ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid latest pointer" ;;
+      esac
+      latest_key="system/runtime-slots/${runtime_slot}/db/latest"
+      ;;
     *) fail "invalid latest pointer" ;;
   esac
   local tmp
   tmp="$(mktemp)"
   trap 'rm -f "${tmp:-}"' EXIT
   printf '%s\n' "$snapshot_key" > "$tmp"
-  r2_put "$tmp" "system/db/latest"
+  r2_put "$tmp" "$latest_key"
 }
 
 r2_prune() {

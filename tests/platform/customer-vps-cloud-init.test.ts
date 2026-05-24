@@ -303,6 +303,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(backup).toContain('--format=custom');
     expect(backup).toContain('.dump');
     expect(backup).toContain('timeout');
+    expect(backup).toContain('system/runtime-slots/${runtime_slot}/db/snapshots/${snapshot_name}');
   });
 
   it('keeps restore as a boot gate and refuses failed restores', () => {
@@ -317,6 +318,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(restore).not.toContain('docker compose');
     expect(restore).toContain('pg_restore');
     expect(restore).toContain('exit 1');
+    expect(restore).toContain('system/runtime-slots/${runtime_slot}/db/latest');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
   });
 
@@ -354,6 +356,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
     expect(matrixctl).toContain('local runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
     expect(matrixctl).toContain('""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid runtime slot"');
+    expect(matrixctl).toContain('system/runtime-slots/${runtime_slot}/db/latest');
     expect(matrixctl).toContain('payload="$(printf \'{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}\'');
     expect(matrixctl).toContain('${MATRIX_PLATFORM_URL%/}/vps/recover');
     expect(matrixctl).toContain('curl --fail --silent --show-error --max-time 10');

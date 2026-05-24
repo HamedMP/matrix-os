@@ -410,6 +410,23 @@ function readRuntimeSlot(cookieHeader: string | undefined, rawUrl: string): stri
   return cookieSlot && RuntimeSlotSchema.safeParse(cookieSlot).success ? cookieSlot : 'primary';
 }
 
+function buildForwardedQueryString(rawUrl: string): string {
+  const queryStart = rawUrl.indexOf('?');
+  if (queryStart === -1) return '';
+  const hashStart = rawUrl.indexOf('#', queryStart);
+  const rawQuery = rawUrl.slice(queryStart + 1, hashStart === -1 ? undefined : hashStart);
+  const forwarded = rawQuery
+    .split('&')
+    .filter((part) => {
+      if (!part) return false;
+      const rawKey = part.split('=', 1)[0] ?? '';
+      const parsedKey = new URLSearchParams(`${rawKey}=`).keys().next().value ?? rawKey;
+      return parsedKey !== 'runtime';
+    })
+    .join('&');
+  return forwarded ? `?${forwarded}` : '';
+}
+
 function buildRuntimeSlotCookie(runtimeSlot: string): string {
   return [
     `${RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
@@ -751,7 +768,10 @@ async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
     };
   }
-  const machine = await getActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot);
+  let machine = await getActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot);
+  if (!machine && opts.runtimeSlot !== 'primary') {
+    machine = await getActiveUserMachineByClerkId(opts.db, result.userId, 'primary');
+  }
   if (!machine) {
     return null;
   }
@@ -936,7 +956,7 @@ function getAuthPage(
 
 async function proxyToShell(c: import('hono').Context, host: string, port: number) {
   const path = c.req.path;
-  const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+  const qs = buildForwardedQueryString(c.req.url);
   const targetUrl = `http://${host}:${port}${path}${qs}`;
   const originalHost = c.req.header('host') ?? 'app.matrix-os.com';
 
@@ -1639,7 +1659,7 @@ export function createApp(deps: {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
 
-      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      const qs = buildForwardedQueryString(c.req.url);
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs, { entitlement });
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
@@ -1773,18 +1793,18 @@ export function createApp(deps: {
       });
     }
 
-    const runtimeSlot =
-      identity.source === 'mobile-session' || identity.source === 'static-route'
-        ? 'primary'
-        : identity.runtimeSlot ?? requestRuntimeSlot;
+    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
-      : undefined;
-    if (!runningMachine && runtimeSlot === 'primary') {
-      runningMachine = await getRunningUserMachineByHandle(db, identity.handle, 'primary');
+      : await getRunningUserMachineByHandle(db, identity.handle);
+    if (!runningMachine && identity.userId) {
+      runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
     }
     if (runningMachine) {
-      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      runtimeSlot = runningMachine.runtimeSlot;
+    }
+    if (runningMachine) {
+      const qs = buildForwardedQueryString(c.req.url);
       if (!entitlement.runtimeProxyAllowed) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
@@ -1881,7 +1901,7 @@ export function createApp(deps: {
     if (!record) {
       const activeMachine = identity.userId
         ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
-        : await getActiveUserMachineByHandle(db, identity.handle, 'primary');
+        : await getActiveUserMachineByHandle(db, identity.handle);
       if (activeMachine) {
         c.header('set-cookie', buildRuntimeSlotCookie(runtimeSlot));
         if (isCodeDomain || isGatewayPath) {
@@ -1908,7 +1928,7 @@ export function createApp(deps: {
 
     await updateLastActive(db, record.handle);
 
-    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const qs = buildForwardedQueryString(c.req.url);
     const targetPort = isCodeDomain ? CODE_SERVER_PORT : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
@@ -2166,6 +2186,11 @@ export function createApp(deps: {
     }
     try {
       if (deps.customerVpsService) {
+        const entitlement = getRuntimeEntitlementDecision();
+        if (!entitlement.provisioningAllowed) {
+          applyNoStoreHeaders(c);
+          return c.json({ error: 'Paid beta access required' }, 402);
+        }
         const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
@@ -2468,7 +2493,7 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid handle' }, 400);
     }
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
-    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const qs = buildForwardedQueryString(c.req.url);
     const runningMachine = await getRunningUserMachineByHandle(db, handle, 'primary');
     if (runningMachine) {
       const entitlement = getRuntimeEntitlementDecision();
@@ -2944,15 +2969,15 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    const runtimeSlot =
-      identity.source === 'mobile-session' || identity.source === 'static-route'
-        ? 'primary'
-        : identity.runtimeSlot ?? requestRuntimeSlot;
+    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
-      : undefined;
-    if (!runningMachine && runtimeSlot === 'primary') {
-      runningMachine = await getRunningUserMachineByHandle(db, identity.handle, 'primary');
+      : await getRunningUserMachineByHandle(db, identity.handle);
+    if (!runningMachine && identity.userId) {
+      runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+    }
+    if (runningMachine) {
+      runtimeSlot = runningMachine.runtimeSlot;
     }
     const record = await getContainer(db, identity.handle);
     if (!runningMachine && !record) { socket.destroy(); return; }

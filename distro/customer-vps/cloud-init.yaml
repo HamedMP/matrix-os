@@ -395,15 +395,26 @@ write_files:
       r2_put_latest() {
         local snapshot_key="$1"
         safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
+        local latest_key
         case "$snapshot_key" in
-          system/db/snapshots/*.dump) ;;
+          system/db/snapshots/*.dump)
+            latest_key="system/db/latest"
+            ;;
+          system/runtime-slots/*/db/snapshots/*.dump)
+            local runtime_slot="${snapshot_key#system/runtime-slots/}"
+            runtime_slot="${runtime_slot%%/*}"
+            case "$runtime_slot" in
+              ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid latest pointer" ;;
+            esac
+            latest_key="system/runtime-slots/${runtime_slot}/db/latest"
+            ;;
           *) fail "invalid latest pointer" ;;
         esac
       local tmp
       tmp="$(mktemp)"
       trap 'rm -f "${tmp:-}"' EXIT
         printf '%s\n' "$snapshot_key" > "$tmp"
-        r2_put "$tmp" "system/db/latest"
+        r2_put "$tmp" "$latest_key"
       }
 
       r2_prune() {
@@ -510,10 +521,19 @@ write_files:
       snapshot_dir="/var/lib/matrix/db/snapshots"
       mkdir -p "$snapshot_dir"
 
+      runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
+      case "$runtime_slot" in
+        ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-db-backup: invalid runtime slot" >&2; exit 1 ;;
+      esac
+
       ts="$(date -u +%Y-%m-%dT%H%MZ)"
       snapshot_name="${ts}.dump"
       snapshot_path="${snapshot_dir}/${snapshot_name}"
-      snapshot_key="system/db/snapshots/${snapshot_name}"
+      if [ "$runtime_slot" = "primary" ]; then
+        snapshot_key="system/db/snapshots/${snapshot_name}"
+      else
+        snapshot_key="system/runtime-slots/${runtime_slot}/db/snapshots/${snapshot_name}"
+      fi
 
       export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
 
@@ -550,6 +570,17 @@ write_files:
       restore_flag="/opt/matrix/restore-complete"
       latest_file="/var/lib/matrix/db/latest"
       snapshot_path="/var/lib/matrix/db/latest.dump"
+      runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
+      case "$runtime_slot" in
+        ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-restore: invalid runtime slot" >&2; exit 1 ;;
+      esac
+      if [ "$runtime_slot" = "primary" ]; then
+        latest_pointer_key="system/db/latest"
+        snapshot_key_pattern="system/db/snapshots/*.dump"
+      else
+        latest_pointer_key="system/runtime-slots/${runtime_slot}/db/latest"
+        snapshot_key_pattern="system/runtime-slots/${runtime_slot}/db/snapshots/*.dump"
+      fi
 
       mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
       rm -f "$restore_flag"
@@ -559,19 +590,19 @@ write_files:
         exit 0
       fi
 
-      if ! /opt/matrix/bin/matrixctl r2 exists system/db/latest; then
+      if ! /opt/matrix/bin/matrixctl r2 exists "$latest_pointer_key"; then
         touch "$restore_flag"
         exit 0
       fi
 
-      if ! /opt/matrix/bin/matrixctl r2 get system/db/latest "$latest_file"; then
+      if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then
         echo "matrix-restore: failed to fetch latest pointer" >&2
         exit 1
       fi
 
       latest_key="$(tr -d '\r\n' < "$latest_file")"
       case "$latest_key" in
-        system/db/snapshots/*.dump) ;;
+        $snapshot_key_pattern) ;;
         *)
           echo "matrix-restore: invalid latest pointer" >&2
           exit 1

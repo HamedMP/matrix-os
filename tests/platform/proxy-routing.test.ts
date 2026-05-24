@@ -489,7 +489,7 @@ describe("platform proxy routing", () => {
       platformSecret: "platform-secret-123",
     });
 
-    const res = await app.request("/?runtime=staging", {
+    const res = await app.request("/?runtime=staging&folder=/home/matrixos/home", {
       headers: {
         host: "code.matrix-os.com",
         authorization: "Bearer clerk-session",
@@ -500,7 +500,7 @@ describe("platform proxy routing", () => {
     expect(await res.text()).toBe("editor");
     expect(docker.getContainer).not.toHaveBeenCalled();
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe("https://203.0.113.22:443/?runtime=staging");
+    expect(url).toBe("https://203.0.113.22:443/?folder=/home/matrixos/home");
     expect(init?.dispatcher).toBeDefined();
     const headers = init?.headers as Headers;
     expect(headers.get("host")).toBe("code.matrix-os.com");
@@ -568,6 +568,43 @@ describe("platform proxy routing", () => {
 
     expect(followUp.status).toBe(503);
     expect(followUp.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
+  });
+
+  it("falls back to primary when a stale staging runtime cookie has no machine", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff127",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123471,
+      publicIPv4: "203.0.113.24",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?runtime=staging&view=home", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "matrix_runtime_slot=staging",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.24:443/?view=home");
+    expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=primary");
   });
 
   it("blocks runtime proxying when paid-beta entitlement denies access", async () => {

@@ -9,6 +9,17 @@ fi
 restore_flag="/opt/matrix/restore-complete"
 latest_file="/var/lib/matrix/db/latest"
 snapshot_path="/var/lib/matrix/db/latest.dump"
+runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
+case "$runtime_slot" in
+  ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-restore: invalid runtime slot" >&2; exit 1 ;;
+esac
+if [ "$runtime_slot" = "primary" ]; then
+  latest_key="system/db/latest"
+  snapshot_key_pattern="system/db/snapshots/*.dump"
+else
+  latest_key="system/runtime-slots/${runtime_slot}/db/latest"
+  snapshot_key_pattern="system/runtime-slots/${runtime_slot}/db/snapshots/*.dump"
+fi
 
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
 rm -f "$restore_flag"
@@ -18,19 +29,19 @@ if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then
   exit 0
 fi
 
-if ! /opt/matrix/bin/matrixctl r2 exists system/db/latest; then
+if ! /opt/matrix/bin/matrixctl r2 exists "$latest_key"; then
   touch "$restore_flag"
   exit 0
 fi
 
-if ! /opt/matrix/bin/matrixctl r2 get system/db/latest "$latest_file"; then
+if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$latest_file"; then
   echo "matrix-restore: failed to fetch latest pointer" >&2
   exit 1
 fi
 
 latest_key="$(tr -d '\r\n' < "$latest_file")"
 case "$latest_key" in
-  system/db/snapshots/*.dump) ;;
+  $snapshot_key_pattern) ;;
   *)
     echo "matrix-restore: invalid latest pointer" >&2
     exit 1
