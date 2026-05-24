@@ -854,6 +854,57 @@ describe("daemon runtime guards", () => {
     expect(syncState.conflicts?.["note.md"]?.conflictPath).toBeUndefined();
   });
 
+  it("does not re-detect the same remote delete conflict on replay", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const baseContent = "base\n";
+    const localContent = "local edit\n";
+    const deletedRemoteContent = "remote edit before delete\n";
+    const localPath = join(syncRoot, "note.md");
+    await writeFile(localPath, localContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        "note.md": {
+          hash: sha256(localContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(localContent),
+          lastSyncedHash: sha256(baseContent),
+        },
+      },
+    };
+
+    const first = await reconcileRemoteDelete(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(deletedRemoteContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+    });
+
+    const firstConflict = syncState.conflicts?.["note.md"];
+    const second = await reconcileRemoteDelete(syncState, {
+      syncRoot,
+      localRel: "note.md",
+      remotePath: "note.md",
+      remoteHash: sha256(deletedRemoteContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T13:00:00Z"),
+    });
+
+    expect(first.status).toBe("delete-skipped-conflict");
+    expect(second.status).toBe("conflict-existing");
+    expect(await readFile(localPath, "utf-8")).toBe(localContent);
+    expect(syncState.files["note.md"]).toMatchObject({
+      hash: sha256(localContent),
+      lastSyncedHash: sha256(deletedRemoteContent),
+    });
+    expect(syncState.conflicts?.["note.md"]).toEqual(firstConflict);
+  });
+
   it("keeps local content on remote delete when there is no cached base hash", async () => {
     const syncRoot = join(tempDir, "sync");
     await mkdir(syncRoot, { recursive: true });
@@ -876,7 +927,7 @@ describe("daemon runtime guards", () => {
     expect(await readFile(localPath, "utf-8")).toBe(localContent);
     expect(syncState.files["note.md"]).toMatchObject({
       hash: sha256(localContent),
-      lastSyncedHash: undefined,
+      lastSyncedHash: sha256(remoteContent),
     });
   });
 

@@ -645,11 +645,33 @@ export async function reconcileRemoteDelete(
     return { status: "deleted-local" };
   }
 
+  const existingConflict = syncState.conflicts?.[input.remotePath];
+  if (
+    cached?.hash === localHash &&
+    cached.lastSyncedHash === input.remoteHash &&
+    existingConflict?.localHash === localHash &&
+    existingConflict.remoteHash === input.remoteHash &&
+    !existingConflict.resolved
+  ) {
+    syncState.files[input.remotePath] = {
+      ...cached,
+      hash: localHash,
+      mtime: localMtime,
+      size: localSize,
+      lastSyncedHash: input.remoteHash,
+    };
+    capSyncStateFiles(syncState);
+    return {
+      status: "conflict-existing",
+      conflictPath: syncState.conflicts?.[input.remotePath]?.conflictPath,
+    };
+  }
+
   syncState.files[input.remotePath] = {
     hash: localHash,
     mtime: localMtime,
     size: localSize,
-    lastSyncedHash: cached?.lastSyncedHash,
+    lastSyncedHash: input.remoteHash,
   };
   capSyncStateFiles(syncState);
   recordSyncConflict(syncState, {
