@@ -1,7 +1,7 @@
 import type { PlatformDB } from './db.js';
 import { getHostBundleReleaseByChannel } from './db.js';
 
-export type LaunchReadinessStatus = 'pass' | 'fail' | 'blocked';
+export type LaunchReadinessStatus = 'pass' | 'fail';
 export type LaunchReadinessOverallStatus = 'ready' | 'blocked';
 export type LaunchReadinessOwner = 'operator' | 'matrix';
 export type LaunchReadinessCategory =
