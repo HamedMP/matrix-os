@@ -4,7 +4,8 @@ import { ActivationRouteError } from "./activation-errors.js";
 
 const MAX_OWNERS = 512;
 const MAX_DRAFTS_PER_OWNER = 200;
-const UNSAFE_DISPLAY = /(secret|token|postgres|\/home\/|database|sk_[a-z0-9])/i;
+const UNSAFE_DISPLAY = /(sk_[a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
+const SENSITIVE_TERMS = /\b(secret|token|postgres|database)\b/gi;
 
 export type DraftActionType = "support_reply" | "social_post" | "acquisition_message" | "customer_follow_up";
 export type DraftActionStatus = "draft" | "needs_review" | "approved" | "sent" | "rejected";
@@ -47,8 +48,12 @@ export interface DraftActionReadinessService {
 
 function safeDisplay(value: string, fallback: string, max = 5000): string {
   const trimmed = value.trim().slice(0, max);
-  if (!trimmed || UNSAFE_DISPLAY.test(trimmed)) return fallback;
-  return trimmed;
+  if (!trimmed) return fallback;
+  const redacted = trimmed
+    .replace(UNSAFE_DISPLAY, "[redacted]")
+    .replace(SENSITIVE_TERMS, "[redacted]")
+    .trim();
+  return redacted || fallback;
 }
 
 function uncertaintyFlags(content: string): DraftUncertainty[] {
@@ -114,7 +119,7 @@ export function createDraftActionReadinessService(options: {
       status: "needs_review",
       content: safeContent,
       destination: safeDisplay(input.destination, "External destination", 220),
-      uncertainties: uncertaintyFlags(safeContent),
+      uncertainties: uncertaintyFlags(input.content),
       createdByAgent: input.createdByAgent,
       createdAt: now().toISOString(),
     };

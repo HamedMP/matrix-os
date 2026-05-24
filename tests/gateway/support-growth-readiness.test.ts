@@ -92,6 +92,23 @@ describe("support and growth draft readiness", () => {
     expect(body.guidance).toContain("Review drafts");
   });
 
+  it("redacts unsafe fragments without replacing the reviewable draft", async () => {
+    const service = createDraftActionReadinessService();
+    const app = createDraftActionRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const created = await app.request(post("/drafts", {
+      type: "support_reply",
+      content: "Tell the customer the database migration is done; token=sk_test_secret is not needed.",
+      destination: "Customer ticket #42",
+      createdByAgent: "hermes",
+    }));
+
+    const draft = await created.json();
+    expect(draft.content).toContain("Tell the customer");
+    expect(draft.content).toContain("[redacted]");
+    expect(draft.content).not.toMatch(/database|token|secret|sk_test/i);
+  });
+
   it("does not flag polite May support openers as uncertain language", async () => {
     const service = createDraftActionReadinessService();
     const app = createDraftActionRoutes({ service, getPrincipal: () => testPrincipal });
