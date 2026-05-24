@@ -36,6 +36,12 @@ describe('platform launch entitlement gates', () => {
     });
   });
 
+  it('fails loudly when a future entitlement status is not mapped', () => {
+    expect(() =>
+      deriveEntitlementAccess({ status: 'suspended' } as never),
+    ).toThrow('Unhandled entitlement status: suspended');
+  });
+
   it('still builds the proxy URL for active entitlement without mutating machine data', () => {
     const machine = { status: 'running', publicIPv4: '203.0.113.10' };
     const url = buildCustomerVpsProxyUrl(

@@ -72,6 +72,10 @@ export function deriveEntitlementAccess(state: EntitlementState): EntitlementAcc
         ownerDataExportable: true,
         remediation: 'Renew paid beta access or ask an operator to grant access.',
       };
+    default: {
+      const exhaustive: never = state.status;
+      throw new Error(`Unhandled entitlement status: ${String(exhaustive)}`);
+    }
   }
 }
 
