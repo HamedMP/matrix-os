@@ -206,6 +206,7 @@ export function createReadinessService(options: {
       throw new ActivationRouteError("gate_not_found", "Readiness gate was not found", { status: 404 });
     }
     const record = await ensureRecord(ownerId);
+    // TODO(082): replace this placeholder with the live per-gate health worker before the launch gate can pass.
     await options.repository.save({
       ...record,
       gateOverrides: {
@@ -225,4 +226,3 @@ export function createReadinessService(options: {
 
   return { getReadiness, selectGoals, retryGate };
 }
-
