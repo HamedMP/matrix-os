@@ -56,7 +56,12 @@ import {
 import type { CustomerVpsService } from './customer-vps.js';
 import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
-import { buildCustomerVpsProxyUrl } from './profile-routing.js';
+import {
+  buildCustomerVpsProxyUrl,
+  deriveEntitlementAccess,
+  type EntitlementAccessDecision,
+  type EntitlementStatus,
+} from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
@@ -89,6 +94,7 @@ const RUNTIME_SLOT_COOKIE = 'matrix_runtime_slot';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const EntitlementStatusSchema = z.enum(['active', 'missing', 'expired', 'disabled', 'changed']);
 const HOST_BUNDLE_FILES = new Set([
   'matrix-host-bundle.tar.gz',
   'matrix-host-bundle.tar.gz.sha256',
@@ -413,6 +419,19 @@ function buildRuntimeSlotCookie(runtimeSlot: string): string {
     'SameSite=Lax',
     'Max-Age=86400',
   ].join('; ');
+}
+
+function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): EntitlementAccessDecision {
+  const rawStatus = env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS?.trim();
+  if (!rawStatus) {
+    return deriveEntitlementAccess({ status: 'active' });
+  }
+  const parsed = EntitlementStatusSchema.safeParse(rawStatus);
+  if (!parsed.success) {
+    console.warn('[platform] Invalid MATRIX_PAID_BETA_ENTITLEMENT_STATUS; denying paid runtime access.');
+    return deriveEntitlementAccess({ status: 'changed' });
+  }
+  return deriveEntitlementAccess({ status: parsed.data as EntitlementStatus });
 }
 
 function buildCodeSessionCookie(token: string): string {
@@ -1621,7 +1640,7 @@ export function createApp(deps: {
       }
 
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs, { entitlement });
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
@@ -1766,7 +1785,11 @@ export function createApp(deps: {
     }
     if (runningMachine) {
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
+      if (!entitlement.runtimeProxyAllowed) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Paid beta access required' }, 402);
+      }
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs, { entitlement });
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
@@ -2448,7 +2471,12 @@ export function createApp(deps: {
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
     const runningMachine = await getRunningUserMachineByHandle(db, handle, 'primary');
     if (runningMachine) {
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
+      const entitlement = getRuntimeEntitlementDecision();
+      if (!entitlement.runtimeProxyAllowed) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Paid beta access required' }, 402);
+      }
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs, { entitlement });
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
@@ -2987,6 +3015,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     };
 
     if (runningMachine?.publicIPv4) {
+      const entitlement = getRuntimeEntitlementDecision();
+      if (!entitlement.runtimeProxyAllowed) {
+        console.warn(
+          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} path=${path}`,
+        );
+        socket.destroy();
+        return;
+      }
       const upstreamHostHeader = isCodeDomain ? host : `${runningMachine.handle}.matrix-os.com`;
       const headers = buildUpgradeHeaders(runningMachine.handle, true);
       const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;

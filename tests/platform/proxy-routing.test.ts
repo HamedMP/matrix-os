@@ -74,6 +74,7 @@ describe("platform proxy routing", () => {
     await destroyTestPlatformDb(db);
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
+    delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
   });
 
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {
@@ -567,6 +568,46 @@ describe("platform proxy routing", () => {
 
     expect(followUp.status).toBe(503);
     expect(followUp.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
+  });
+
+  it("blocks runtime proxying when paid-beta entitlement denies access", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff126",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123470,
+      publicIPv4: "203.0.113.23",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "missing" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await getContainer(db, "alice")).toMatchObject({
+      handle: "alice",
+      clerkUserId: "user_alice",
+    });
   });
 
   it("falls back to the legacy container code-server when no running VPS exists", async () => {
