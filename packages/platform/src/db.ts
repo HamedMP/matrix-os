@@ -900,14 +900,6 @@ export async function getActiveUserMachineByClerkId(
   return row ? mapUserMachine(row) : undefined;
 }
 
-export async function getActiveUserMachineByClerkIdAndSlot(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot: string,
-): Promise<UserMachineRecord | undefined> {
-  return getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
-}
-
 export async function getActiveUserMachineByHandle(
   db: PlatformDB,
   handle: string,

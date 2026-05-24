@@ -66,6 +66,7 @@ import {
   createPlatformLaunchEvidenceLoader,
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
+import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -168,7 +169,7 @@ const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
-  runtimeSlot: z.string().min(1).max(32).regex(/^[a-z0-9][a-z0-9-]*$/).optional().default('primary'),
+  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
 });
 
 const SocialSendBodySchema = z.object({
@@ -970,7 +971,7 @@ function getNoContainerPage() {
 </html>`;
 }
 
-function getVpsBootPage(input: { handle: string; status: string }) {
+function getVpsBootPage(input: { status: string }) {
   const title = input.status === 'recovering' ? 'Restoring Matrix OS' : 'Booting Matrix OS';
   const detail = input.status === 'recovering'
     ? 'Your Matrix instance is restoring its workspace. This page will refresh automatically.'
@@ -990,7 +991,6 @@ function getVpsBootPage(input: { handle: string; status: string }) {
     .spinner { width: 22px; height: 22px; border: 3px solid rgba(148, 163, 184, 0.45); border-top-color: #38bdf8; border-radius: 999px; animation: spin 1s linear infinite; }
     h1 { font-size: 24px; line-height: 1.2; margin: 0; }
     p { color: #cbd5e1; line-height: 1.55; margin: 16px 0 0; }
-    code { display: inline-block; margin-top: 18px; color: #93c5fd; background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 8px; padding: 7px 10px; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -1863,10 +1863,7 @@ export function createApp(deps: {
           }, 503);
         }
         applyNoStoreHeaders(c);
-        return c.html(getVpsBootPage({
-          handle: activeMachine.handle,
-          status: activeMachine.status,
-        }), 503);
+        return c.html(getVpsBootPage({ status: activeMachine.status }), 503);
       }
       return c.html(getNoContainerPage());
     }
