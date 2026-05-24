@@ -258,6 +258,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               {assistantSelected && (
                 <AssistantSetupPanel
                   capabilities={integrationCapabilities.capabilities}
+                  error={integrationCapabilities.error}
                   onApprove={integrationCapabilities.approveForHermes}
                 />
               )}

@@ -6,7 +6,7 @@ import {
   CapabilityParamsSchema,
   RecordAgentActionRequestSchema,
 } from "./activation-contracts.js";
-import { mapActivationError } from "./activation-errors.js";
+import { ActivationRouteError, mapActivationError } from "./activation-errors.js";
 import type { AgentActionAuditService } from "./agent-action-audit.js";
 import type { IntegrationCapabilityService } from "./integration-capabilities.js";
 import {
@@ -57,6 +57,12 @@ export function createIntegrationCapabilityRoutes(deps: IntegrationCapabilityRou
         return c.json({ error: "audit_unavailable", message: "Request failed", retryable: true }, 503);
       }
       const body = RecordAgentActionRequestSchema.parse(await c.req.json());
+      const capabilityApproval = await deps.service.getCapabilityApproval(principal.userId, body.capability);
+      if (!capabilityApproval) {
+        throw new ActivationRouteError("capability_not_found", "Integration capability was not found", {
+          status: 422,
+        });
+      }
       if (!capabilityApproval.approvedAgents.includes(body.agent)) {
         throw new ActivationRouteError("capability_not_approved", "Approve the capability before recording agent actions", {
           status: 403,

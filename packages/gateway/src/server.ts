@@ -457,10 +457,20 @@ export async function createGateway(config: GatewayConfig) {
   const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
   let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
   let internalIntegrationBaseUrl: string | null = null;
+  const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
     if (platformDb) {
-      const services = await platformDb.listConnectedServices(ownerId);
-      return capabilityIdsForConnectedServices(services.map((service) => service.service));
+      try {
+        const dbForLookup = platformDb;
+        const user = await platformDb.getUserByClerkId(ownerId);
+        const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
+        if (!platformUserId) return [];
+        const services = await platformDb.listConnectedServices(platformUserId);
+        return capabilityIdsForConnectedServices(services.map((service) => service.service));
+      } catch (err: unknown) {
+        console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));
+        return [];
+      }
     }
     if (!internalIntegrationBaseUrl) return [];
     try {
@@ -505,6 +515,7 @@ export async function createGateway(config: GatewayConfig) {
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
     onChange: (ownerId) => readinessCache.delete(ownerId),
+    storagePath: join(homePath, "system", "integration-capabilities.json"),
   });
   const agentActionAuditService = createAgentActionAuditService();
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;

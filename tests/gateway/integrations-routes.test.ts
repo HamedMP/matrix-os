@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createAgentActionAuditService } from "../../packages/gateway/src/onboarding/agent-action-audit.js";
 import { createIntegrationCapabilityRoutes } from "../../packages/gateway/src/onboarding/integration-capability-routes.js";
 import {
@@ -137,6 +140,44 @@ describe("integration capability routes", () => {
     });
   });
 
+  it("does not evict approvals when revoke checks see unknown owners", async () => {
+    const service = createIntegrationCapabilityService({
+      connectedCapabilityIds: ["calendar.create_event"],
+    });
+
+    await service.setApproval("owner_0", "calendar.create_event", "hermes", true);
+    for (let index = 1; index <= 512; index += 1) {
+      await service.setApproval(`owner_${index}`, "calendar.create_event", "hermes", false);
+    }
+
+    const ownerZero = await service.listCapabilities("owner_0");
+    expect(ownerZero.capabilities.find((capability) => capability.id === "calendar.create_event")).toMatchObject({
+      status: "approved",
+      approvedAgents: ["hermes"],
+    });
+  });
+
+  it("persists capability approvals across service restarts", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-capabilities-"));
+    const storagePath = join(home, "system", "integration-capabilities.json");
+    const first = createIntegrationCapabilityService({
+      connectedCapabilityIds: ["calendar.create_event"],
+      storagePath,
+    });
+
+    await first.setApproval(testPrincipal.userId, "calendar.create_event", "hermes", true);
+
+    const restarted = createIntegrationCapabilityService({
+      connectedCapabilityIds: ["calendar.create_event"],
+      storagePath,
+    });
+    const body = await restarted.listCapabilities(testPrincipal.userId);
+    expect(body.capabilities.find((capability) => capability.id === "calendar.create_event")).toMatchObject({
+      status: "approved",
+      approvedAgents: ["hermes"],
+    });
+  });
+
   it("does not overwrite stored approvals when the persisted file is unreadable", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-capabilities-"));
     const storagePath = join(home, "system", "integration-capabilities.json");
@@ -237,6 +278,27 @@ describe("integration capability routes", () => {
       retryable: false,
     });
     expect(await audit.listActions(testPrincipal.userId)).toEqual([]);
+  });
+
+  it("rejects audit records for unknown capabilities", async () => {
+    const service = createIntegrationCapabilityService();
+    const audit = createAgentActionAuditService();
+    const app = createIntegrationCapabilityRoutes({ service, audit, getPrincipal: () => testPrincipal });
+
+    const res = await app.request(post("/actions", {
+      agent: "hermes",
+      capability: "calendar.delete_event",
+      status: "completed",
+      summary: "Completed task",
+      target: "Primary calendar",
+    }));
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error: "capability_not_found",
+      message: "Integration capability was not found",
+      retryable: false,
+    });
   });
 
   it("keeps normal task identifiers in audit summaries", async () => {

@@ -18,12 +18,14 @@ function iconForCapability(capability: IntegrationCapabilitySummary) {
 
 export function AssistantSetupPanel({
   capabilities,
+  error,
   onApprove,
 }: {
   capabilities: IntegrationCapabilitySummary[];
+  error?: string | null;
   onApprove: (capabilityId: string) => void;
 }) {
-  if (capabilities.length === 0) return null;
+  if (capabilities.length === 0 && !error) return null;
 
   return (
     <section className="rounded-md border border-[#17281f]/10 bg-[#f8f5ee]/80 p-4 shadow-[0_16px_45px_rgba(23,40,31,0.08)]">
@@ -37,33 +39,44 @@ export function AssistantSetupPanel({
         </p>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        {capabilities.map((capability) => {
-          const Icon = iconForCapability(capability);
-          const approved = capability.approvedAgents.includes("hermes");
-          return (
-            <div key={capability.id} className="rounded-md border border-[#17281f]/10 bg-white/60 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Icon className="h-4 w-4 text-[#17281f]/70" aria-hidden="true" />
-                  <p className="text-xs font-semibold text-[#111612]">{labelForCapability(capability)}</p>
+      {error && (
+        <p
+          role="status"
+          className="mt-3 rounded-md border border-[#a6542f]/25 bg-[#fff8f2] px-3 py-2 text-xs font-medium text-[#7a351f]"
+        >
+          {error}
+        </p>
+      )}
+
+      {capabilities.length > 0 && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {capabilities.map((capability) => {
+            const Icon = iconForCapability(capability);
+            const approved = capability.approvedAgents.includes("hermes");
+            return (
+              <div key={capability.id} className="rounded-md border border-[#17281f]/10 bg-white/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-[#17281f]/70" aria-hidden="true" />
+                    <p className="text-xs font-semibold text-[#111612]">{labelForCapability(capability)}</p>
+                  </div>
+                  {approved && <CheckCircle2Icon className="h-4 w-4 text-[#4f7f5c]" aria-hidden="true" />}
                 </div>
-                {approved && <CheckCircle2Icon className="h-4 w-4 text-[#4f7f5c]" aria-hidden="true" />}
+                <p className="mt-2 text-xs capitalize text-[#17281f]/60">{capability.status.replaceAll("_", " ")}</p>
+                {!approved && capability.status !== "connect_required" && (
+                  <button
+                    type="button"
+                    onClick={() => onApprove(capability.id)}
+                    className="mt-3 inline-flex min-h-8 items-center rounded-md border border-[#17281f]/12 bg-white/75 px-2.5 text-xs font-medium text-[#17281f] transition hover:border-[#17281f]/28"
+                  >
+                    Approve Hermes
+                  </button>
+                )}
               </div>
-              <p className="mt-2 text-xs capitalize text-[#17281f]/60">{capability.status.replaceAll("_", " ")}</p>
-              {!approved && capability.status !== "connect_required" && (
-                <button
-                  type="button"
-                  onClick={() => onApprove(capability.id)}
-                  className="mt-3 inline-flex min-h-8 items-center rounded-md border border-[#17281f]/12 bg-white/75 px-2.5 text-xs font-medium text-[#17281f] transition hover:border-[#17281f]/28"
-                >
-                  Approve Hermes
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
