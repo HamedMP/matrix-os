@@ -39,6 +39,7 @@ import {
 } from "./r2-client.js";
 import {
   RemoteManifestEnvelopeSchema,
+  type LocalFileState,
   type RemoteManifestEnvelope,
   type SyncChangeEvent,
   type SyncState,
@@ -463,6 +464,18 @@ interface RemoteFileReconcileInput {
   downloadRemote: (targetPath: string) => Promise<void>;
   toRemotePath?: (localRel: string) => string;
   date?: Date;
+  onConflictCleanupError?: (err: unknown, conflictPath: string) => void;
+}
+
+export function shouldSkipWatcherUpload(
+  existing: LocalFileState | undefined,
+  eventHash: string,
+): boolean {
+  return existing?.localOnly === true || existing?.lastSyncedHash === eventHash;
+}
+
+export function shouldCommitWatcherDelete(entry: LocalFileState | undefined): boolean {
+  return Boolean(entry?.lastSyncedHash && entry.localOnly !== true);
 }
 
 export async function reconcileRemoteFileChange(
@@ -489,14 +502,15 @@ export async function reconcileRemoteFileChange(
   const updateDownloadedState = async (
     targetPath: string,
     remotePath: string,
-    options: { markRemoteSynced?: boolean } = { markRemoteSynced: true },
+    options: { localOnly?: boolean } = {},
   ) => {
     const downloadedStat = await stat(targetPath);
     syncState.files[remotePath] = {
       hash: input.remoteHash,
       mtime: downloadedStat.mtimeMs,
       size: downloadedStat.size,
-      ...(options.markRemoteSynced === false ? {} : { lastSyncedHash: input.remoteHash }),
+      lastSyncedHash: input.remoteHash,
+      ...(options.localOnly ? { localOnly: true } : {}),
     };
     capSyncStateFiles(syncState);
   };
@@ -556,13 +570,13 @@ export async function reconcileRemoteFileChange(
       await unlink(conflictAbsPath);
     } catch (cleanupErr: unknown) {
       if (!isENOENT(cleanupErr)) {
-        throw cleanupErr;
+        input.onConflictCleanupError?.(cleanupErr, conflictRemotePath);
       }
     }
     throw err;
   }
   await updateDownloadedState(conflictAbsPath, conflictRemotePath, {
-    markRemoteSynced: false,
+    localOnly: true,
   });
   syncState.files[input.remotePath] = {
     hash: localHash,
@@ -815,12 +829,16 @@ export async function startDaemon(): Promise<void> {
 
       if (event.type === "change") {
         const existing = syncState.files[remotePath];
-        // Skip if the on-disk hash already matches what we previously
-        // synced AND it's already in the remote manifest. Makes
-        // ignoreInitial=false safe on restart -- existing files don't get
-        // re-uploaded.
-        if (existing?.lastSyncedHash === event.hash) {
-          if (existing.mtime !== event.mtime || existing.size !== event.size) {
+        // Skip remote-synced files on watcher replay and local-only conflict
+        // copies that should never be uploaded to the remote manifest.
+        if (shouldSkipWatcherUpload(existing, event.hash)) {
+          if (
+            existing &&
+            (existing.hash !== event.hash ||
+              existing.mtime !== event.mtime ||
+              existing.size !== event.size)
+          ) {
+            existing.hash = event.hash;
             existing.mtime = event.mtime;
             existing.size = event.size;
             await saveSyncState(stateFile, syncState);
@@ -867,7 +885,7 @@ export async function startDaemon(): Promise<void> {
         }
       } else if (event.type === "unlink") {
         const entry = syncState.files[remotePath];
-        if (entry?.lastSyncedHash) {
+        if (shouldCommitWatcherDelete(entry)) {
           try {
             const deleteResult = await commitFiles(gatewayClient, [
               {
@@ -887,6 +905,9 @@ export async function startDaemon(): Promise<void> {
             });
             logger.error({ err, path: remotePath }, "Delete commit failed");
           }
+        } else if (entry?.localOnly) {
+          delete syncState.files[remotePath];
+          await saveSyncState(stateFile, syncState);
         }
       }
     }),
@@ -926,6 +947,12 @@ export async function startDaemon(): Promise<void> {
               remoteSize: file.size,
               remotePeerId: event.peerId,
               toRemotePath: toRemote,
+              onConflictCleanupError: (cleanupErr, conflictPath) => {
+                logger.warn(
+                  { err: cleanupErr, path: conflictPath },
+                  "Failed to clean up reserved conflict path after download error",
+                );
+              },
               downloadRemote: (targetPath) => downloadFile(
                 urls[0]!.url,
                 targetPath,
@@ -1089,6 +1116,12 @@ export async function startDaemon(): Promise<void> {
           remoteSize: entry.size,
           remotePeerId: entry.peerId,
           toRemotePath: toRemote,
+          onConflictCleanupError: (cleanupErr, conflictPath) => {
+            logger.warn(
+              { err: cleanupErr, path: conflictPath },
+              "Failed to clean up reserved conflict path after download error",
+            );
+          },
           downloadRemote: (targetPath) => downloadFile(
             urls[0]!.url,
             targetPath,

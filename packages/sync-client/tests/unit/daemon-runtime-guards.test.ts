@@ -18,6 +18,8 @@ import {
   reconcileRemoteFileChange,
   resolveDaemonAuth,
   resolveWithinSyncRoot,
+  shouldCommitWatcherDelete,
+  shouldSkipWatcherUpload,
   writePidFileExclusive,
 } from "../../src/daemon/index.js";
 import { loadAuth, loadProfileAuth, saveAuth, saveProfileAuth } from "../../src/auth/token-store.js";
@@ -476,11 +478,16 @@ describe("daemon runtime guards", () => {
     });
     expect(syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"]).toMatchObject({
       hash: sha256(remoteContent),
+      lastSyncedHash: sha256(remoteContent),
+      localOnly: true,
     });
-    expect(
-      syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"]
-        ?.lastSyncedHash,
-    ).toBeUndefined();
+    expect(shouldSkipWatcherUpload(
+      syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"],
+      sha256(remoteContent),
+    )).toBe(true);
+    expect(shouldCommitWatcherDelete(
+      syncState.files["note (conflict - peer_with_slashes - 2026-05-20).md"],
+    )).toBe(false);
     expect(syncState.conflicts?.[remotePath]).toMatchObject({
       path: remotePath,
       conflictPath: "note (conflict - peer_with_slashes - 2026-05-20).md",
@@ -572,6 +579,8 @@ describe("daemon runtime guards", () => {
           hash: sha256(remoteContent),
           mtime: (await stat(conflictPath)).mtimeMs,
           size: Buffer.byteLength(remoteContent),
+          lastSyncedHash: sha256(remoteContent),
+          localOnly: true,
         },
       },
       conflicts: {
@@ -611,6 +620,62 @@ describe("daemon runtime guards", () => {
       conflictPath: conflictRel,
       remoteHash: sha256(remoteContent),
       resolved: false,
+    });
+  });
+
+  it("keeps the original download error when conflict cleanup fails", async () => {
+    const syncRoot = join(tempDir, "sync");
+    await mkdir(syncRoot, { recursive: true });
+    const localRel = "note.md";
+    const remotePath = "note.md";
+    const localPath = join(syncRoot, localRel);
+    const baseContent = "base\n";
+    const localContent = "local edit\n";
+    const remoteContent = "remote edit\n";
+    await writeFile(localPath, localContent);
+    const localStat = await stat(localPath);
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        [remotePath]: {
+          hash: sha256(localContent),
+          mtime: localStat.mtimeMs,
+          size: Buffer.byteLength(localContent),
+          lastSyncedHash: sha256(baseContent),
+        },
+      },
+    };
+    const downloadError = new Error("download failed");
+    const onCleanupError = vi.fn();
+
+    await expect(reconcileRemoteFileChange(syncState, {
+      syncRoot,
+      localRel,
+      remotePath,
+      remoteHash: sha256(remoteContent),
+      remoteSize: Buffer.byteLength(remoteContent),
+      remotePeerId: "peer-2",
+      date: new Date("2026-05-20T12:00:00Z"),
+      onConflictCleanupError: onCleanupError,
+      downloadRemote: async (targetPath) => {
+        await rm(targetPath);
+        await mkdir(targetPath);
+        throw downloadError;
+      },
+    })).rejects.toBe(downloadError);
+
+    expect(onCleanupError).toHaveBeenCalledTimes(1);
+    expect(onCleanupError.mock.calls[0]?.[0]).toMatchObject({
+      code: expect.any(String),
+    });
+    expect(onCleanupError.mock.calls[0]?.[1]).toBe(
+      "note (conflict - peer-2 - 2026-05-20).md",
+    );
+    expect(syncState.conflicts).toBeUndefined();
+    expect(syncState.files[remotePath]).toMatchObject({
+      hash: sha256(localContent),
+      lastSyncedHash: sha256(baseContent),
     });
   });
 

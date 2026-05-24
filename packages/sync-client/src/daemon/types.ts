@@ -30,6 +30,7 @@ export const LocalFileStateSchema = z.object({
   mtime: z.int().nonnegative(),
   size: z.int().nonnegative(),
   lastSyncedHash: Sha256HashSchema.optional(),
+  localOnly: z.boolean().optional(),
 });
 export type LocalFileState = z.infer<typeof LocalFileStateSchema>;
 
