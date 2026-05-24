@@ -954,39 +954,6 @@ function getAuthPage(
 </html>`;
 }
 
-async function proxyToShell(c: import('hono').Context, host: string, port: number) {
-  const path = c.req.path;
-  const qs = buildForwardedQueryString(c.req.url);
-  const targetUrl = `http://${host}:${port}${path}${qs}`;
-  const originalHost = c.req.header('host') ?? 'app.matrix-os.com';
-
-  try {
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== 'host' && value) headers.set(key, String(value));
-    }
-    headers.set('host', originalHost);
-    headers.set('x-forwarded-host', originalHost);
-    headers.set('x-forwarded-proto', 'https');
-
-    const upstream = await fetch(targetUrl, {
-      method: c.req.method,
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(30_000),
-      body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-    });
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: sanitizeProxyResponseHeaders(upstream.headers),
-    });
-  } catch (err: unknown) {
-    logPlatformRouteError('proxyToShell', err);
-    return new Response('Auth service unavailable', { status: 502 });
-  }
-}
-
 function getNoContainerPage() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1654,7 +1621,7 @@ export function createApp(deps: {
         return c.json({ error: 'Invalid handle' }, 400);
       }
 
-      const runningMachine = await getRunningUserMachineByHandle(db, handle, 'primary');
+      const runningMachine = await getRunningUserMachineByHandle(db, handle);
       if (!runningMachine) {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
@@ -2494,7 +2461,7 @@ export function createApp(deps: {
     }
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const qs = buildForwardedQueryString(c.req.url);
-    const runningMachine = await getRunningUserMachineByHandle(db, handle, 'primary');
+    const runningMachine = await getRunningUserMachineByHandle(db, handle);
     if (runningMachine) {
       const entitlement = getRuntimeEntitlementDecision();
       if (!entitlement.runtimeProxyAllowed) {
@@ -2709,7 +2676,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       if (!handle) return null;
 
       const owner =
-        (await getRunningUserMachineByHandle(db, handle, 'primary')) ??
+        (await getRunningUserMachineByHandle(db, handle)) ??
         (await getContainer(db, handle));
       if (!owner || owner.clerkUserId !== clerkUserId) {
         return null;

@@ -39,8 +39,8 @@ if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then
   exit 1
 fi
 
-latest_key="$(tr -d '\r\n' < "$latest_file")"
-case "$latest_key" in
+snapshot_key="$(tr -d '\r\n' < "$latest_file")"
+case "$snapshot_key" in
   $snapshot_key_pattern) ;;
   *)
     echo "matrix-restore: invalid latest pointer" >&2
@@ -48,7 +48,7 @@ case "$latest_key" in
     ;;
 esac
 
-if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$snapshot_path"; then
+if ! /opt/matrix/bin/matrixctl r2 get "$snapshot_key" "$snapshot_path"; then
   echo "matrix-restore: failed to fetch snapshot" >&2
   exit 1
 fi

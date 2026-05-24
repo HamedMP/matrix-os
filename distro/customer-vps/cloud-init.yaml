@@ -600,8 +600,8 @@ write_files:
         exit 1
       fi
 
-      latest_key="$(tr -d '\r\n' < "$latest_file")"
-      case "$latest_key" in
+      snapshot_key="$(tr -d '\r\n' < "$latest_file")"
+      case "$snapshot_key" in
         $snapshot_key_pattern) ;;
         *)
           echo "matrix-restore: invalid latest pointer" >&2
@@ -609,7 +609,11 @@ write_files:
           ;;
       esac
 
+<<<<<<< HEAD
       if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$snapshot_path"; then
+=======
+      if ! matrixctl r2 get "$snapshot_key" "$snapshot_path"; then
+>>>>>>> 1e60cfc9 (fix(platform): route staging admin proxy handles)
         echo "matrix-restore: failed to fetch snapshot" >&2
         exit 1
       fi
