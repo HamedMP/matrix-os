@@ -261,7 +261,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     });
   }
 
-  function handleStart(useVoice: boolean) {
+  const handleStart = useCallback((useVoice: boolean) => {
     // Phase 1: dim into light (text glows and screen fades to white/black)
     setPhase("dimming");
     setTimeout(() => {
@@ -275,7 +275,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         setPhase("revealing");
       }, 400);
     }, 1200);
-  }
+  }, [ob.start]);
 
   const handleTalkToMe = useCallback(async () => {
     if (mic.state === "granted") {
@@ -290,7 +290,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     const granted = await mic.requestAccess();
     if (granted) handleStart(true);
     else setShowMicDialog(true);
-  }, [mic.state, mic.requestAccess]);
+  }, [handleStart, mic.state, mic.requestAccess]);
 
   const handleMicAllow = useCallback(async () => {
     const granted = await mic.requestAccess();
@@ -298,7 +298,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     if (granted) {
       handleStart(true);
     }
-  }, [mic.requestAccess]);
+  }, [handleStart, mic.requestAccess]);
 
   const handleContinue = useCallback(() => {
     setContinueExiting(true);
