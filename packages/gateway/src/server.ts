@@ -78,6 +78,8 @@ import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrinci
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
+import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
 import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
@@ -444,7 +446,11 @@ export async function createGateway(config: GatewayConfig) {
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
-  const agentCredentialService = createAgentCredentialStatusService();
+  const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
+  let platformDb: PlatformDb | null = null;
+  const agentCredentialService = createAgentCredentialStatusService({
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+  });
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
@@ -457,6 +463,7 @@ export async function createGateway(config: GatewayConfig) {
   };
   const readinessService = createReadinessService({
     repository: readinessRepository,
+    cache: readinessCache,
     agentCredentials: agentCredentialService,
     codingSetup: {
       getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
@@ -807,7 +814,6 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   // Platform DB + Integrations (Pipedream Connect)
-  let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
@@ -2423,14 +2429,32 @@ export async function createGateway(config: GatewayConfig) {
       ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
-    const listMatrixProjectOptions = async () => {
+    const listMatrixProjectOptions = async (ownerId: string) => {
+      const snapshot = await repository.getSnapshot(ownerId);
       const result = await projectManager.listManagedProjects();
-      return result.projects.map((project) => ({
+      const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      const projects = result.projects.map((project) => ({
         slug: project.slug,
         name: project.name,
         repositoryUrl: project.github?.htmlUrl ?? project.remote,
         updatedAt: project.updatedAt,
       }));
+      const selectedProject = selectedSlug ? projects.find((project) => project.slug === selectedSlug) : null;
+      return selectedProject ? [selectedProject] : projects;
+    };
+    const isGitHubRepositoryUrl = (repositoryUrl: string | null | undefined): boolean => {
+      if (!repositoryUrl) return false;
+      try {
+        const parsed = new URL(repositoryUrl);
+        return parsed.hostname === "github.com" || parsed.hostname.endsWith(".github.com");
+      } catch (_err) {
+        return /^git@github\.com:/i.test(repositoryUrl);
+      }
+    };
+    const hasProjectPathSegment = (cwd: string, projectSlug: string): boolean => {
+      const normalizedPath = normalize(relative(homePath, cwd)).replaceAll("\\", "/");
+      const segments = normalizedPath.split("/").filter(Boolean);
+      return segments.some((segment, index) => segment === "projects" && segments[index + 1] === projectSlug);
     };
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
@@ -2452,11 +2476,11 @@ export async function createGateway(config: GatewayConfig) {
       statusHub: matrixSymphonyStatusHub,
     });
     codingSetupProvider = createCodingSetupProvider({
-      hasGitHubConnection: async (_ownerId) => {
-        const projects = await listMatrixProjectOptions();
+      hasGitHubConnection: async (ownerId) => {
+        const projects = await listMatrixProjectOptions(ownerId);
         return projects.some((project) => isGitHubRepositoryUrl(project.repositoryUrl));
       },
-      listMatrixProjects: async () => listMatrixProjectOptions(),
+      listMatrixProjects: async (ownerId) => listMatrixProjectOptions(ownerId),
       getSelectedProjectSlug: async (ownerId) => {
         const snapshot = await repository.getSnapshot(ownerId);
         return snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
@@ -2494,7 +2518,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       orchestrator: matrixSymphonyOrchestrator,
       statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: listMatrixProjectOptions,
+      listMatrixProjects: (ownerId) => listMatrixProjectOptions(ownerId),
     }));
   } else {
     console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");

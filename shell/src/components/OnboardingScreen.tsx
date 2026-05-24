@@ -24,7 +24,7 @@ const SHIMMER_ANIMATION =
 
 interface OnboardingScreenProps {
   onComplete: () => void;
-  onOpenTerminal: () => void;
+  onOpenTerminal: (path?: string) => void;
 }
 
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {

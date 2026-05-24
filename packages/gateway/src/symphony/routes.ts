@@ -36,7 +36,7 @@ export interface MatrixSymphonyRouteDeps {
   linearSource: LinearSource;
   orchestrator: MatrixSymphonyOrchestrator;
   statusHub?: SymphonyStatusHub;
-  listMatrixProjects?: () => Promise<MatrixProjectOption[]>;
+  listMatrixProjects?: (ownerId: string) => Promise<MatrixProjectOption[]>;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -238,7 +238,7 @@ export function createMatrixSymphonyRoutes(deps: MatrixSymphonyRouteDeps) {
     if (!auth.ok) return auth.response;
     let matrixProjects: MatrixProjectOption[] = [];
     try {
-      matrixProjects = deps.listMatrixProjects ? await deps.listMatrixProjects() : [];
+      matrixProjects = deps.listMatrixProjects ? await deps.listMatrixProjects(auth.ownerId) : [];
     } catch (err: unknown) {
       console.warn("[symphony] Matrix project setup discovery failed:", err instanceof Error ? err.message : String(err));
     }

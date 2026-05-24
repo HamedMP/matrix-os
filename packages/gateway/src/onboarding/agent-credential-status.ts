@@ -63,8 +63,10 @@ function activeAgents(state: StoredCredentialState): AgentId[] {
 
 export function createAgentCredentialStatusService(options: {
   now?: () => Date;
+  onChange?: (ownerId: string) => void;
 } = {}): AgentCredentialStatusService {
   const now = options.now ?? (() => new Date());
+  // TODO(082): replace this launch scaffold with owner-scoped credential probes backed by durable agent settings.
   const states = new Map<string, StoredCredentialState>();
 
   function getState(ownerId: string): StoredCredentialState {
@@ -102,6 +104,7 @@ export function createAgentCredentialStatusService(options: {
     const state = getState(ownerId);
     if (agent === "claude") state.claudeVerifiedAt = verifiedAt;
     if (agent === "codex") state.codexVerifiedAt = verifiedAt;
+    options.onChange?.(ownerId);
     return { agent, status: "available", verifiedAt };
   }
 
