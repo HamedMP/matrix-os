@@ -109,6 +109,7 @@ describe('platform/customer-vps-routes', () => {
       recover: vi.fn().mockResolvedValue({
         oldMachineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
         machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+        runtimeSlot: 'staging',
         status: 'recovering',
         etaSeconds: 120,
       }),
@@ -134,17 +135,18 @@ describe('platform/customer-vps-routes', () => {
     const recover = await app.request('/vps/recover', {
       method: 'POST',
       headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ clerkUserId: 'user_123', allowEmpty: true }),
+      body: JSON.stringify({ clerkUserId: 'user_123', runtimeSlot: 'staging', allowEmpty: true }),
     });
 
     expect(recover.status).toBe(202);
     expect(await recover.json()).toEqual({
       oldMachineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      runtimeSlot: 'staging',
       status: 'recovering',
       etaSeconds: 120,
     });
-    expect(service.recover).toHaveBeenCalledWith({ clerkUserId: 'user_123', allowEmpty: true });
+    expect(service.recover).toHaveBeenCalledWith({ clerkUserId: 'user_123', runtimeSlot: 'staging', allowEmpty: true });
   });
 
   it('rejects invalid request bodies with generic validation errors', async () => {

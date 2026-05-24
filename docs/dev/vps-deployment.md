@@ -456,6 +456,13 @@ staging VPS. Open `https://app.matrix-os.com/?runtime=primary` to return to the
 primary VPS. Deploy branch host bundles to the staging VPS by exact version; do
 not use `/vps/deploy` unless you intend to fan out to every running VPS.
 
+If the staging VPS needs to be replaced, recover the same slot explicitly so the
+primary runtime remains untouched:
+
+```bash
+matrixctl recover user_xxx --slot staging --allow-empty
+```
+
 Legacy fallback code may exist only to keep historical records reachable during migration. New and production customer runtime should not be provisioned as containers.
 
 ## Archived Legacy Container Management

@@ -65,6 +65,7 @@ export interface DeleteResponse {
 export interface RecoverResponse {
   oldMachineId: string | null;
   machineId: string;
+  runtimeSlot: string;
   status: 'recovering';
   etaSeconds: number;
 }
@@ -541,7 +542,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async recover(input) {
-      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!active) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
@@ -570,9 +571,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         postgresPassword,
         bundleRef,
       );
-      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId);
+      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!existing) {
-        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
         if (latest?.status === 'recovering') {
           throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
         }
@@ -593,6 +594,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           labels: {
             app: 'matrix-os',
             clerk_user_id: existing.clerkUserId,
+            runtime_slot: existing.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -660,6 +662,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return {
         oldMachineId,
         machineId,
+        runtimeSlot: existing.runtimeSlot,
         status: 'recovering',
         etaSeconds: deps.config.provisionEtaSeconds,
       };

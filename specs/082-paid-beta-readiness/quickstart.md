@@ -79,6 +79,13 @@ The platform stores primary and staging as separate `user_machines.runtime_slot`
 rows, so a failed staging upgrade must not overwrite or route traffic away from
 the primary runtime.
 
+Recover a staging VPS by slot so the primary runtime stays attached to the same
+login:
+
+```bash
+matrixctl recover user_xxx --slot staging --allow-empty
+```
+
 ## Golden Path: Fresh Workspace
 
 1. Create or invite a new founder/developer test user.

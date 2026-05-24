@@ -349,12 +349,16 @@ describe('platform/customer-vps-cloud-init', () => {
     const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
-    expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+    expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
+    expect(matrixctl).toContain('local runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
+    expect(matrixctl).toContain('payload="$(printf \'{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}\'');
     expect(matrixctl).toContain('${MATRIX_PLATFORM_URL%/}/vps/recover');
     expect(matrixctl).toContain('curl --fail --silent --show-error --max-time 10');
     expect(matrixctl).toContain('set +u');
     expect(matrixctl).toContain('export AWS_ACCESS_KEY_ID=');
     expect(matrixctl).toContain('rm -f "${tmp:-}"');
-    expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+    expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
+    expect(cloudInit).toContain('runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
+    expect(cloudInit).toContain('{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}');
   });
 });

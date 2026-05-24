@@ -40,6 +40,7 @@ export const RegisterRequestSchema = z.object({
 
 export const RecoverRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
+  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   allowEmpty: z.boolean().optional().default(false),
 });
 

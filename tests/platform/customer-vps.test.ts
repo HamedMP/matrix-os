@@ -477,6 +477,7 @@ describe('platform/customer-vps', () => {
     expect(recovered).toMatchObject({
       oldMachineId: provisioned.machineId,
       machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      runtimeSlot: 'primary',
       status: 'recovering',
     });
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
@@ -485,6 +486,7 @@ describe('platform/customer-vps', () => {
     ).toBeLessThan(vi.mocked(hetzner.deleteServer).mock.invocationCallOrder[0]);
     const secondCreate = vi.mocked(hetzner.createServer).mock.calls[1][0];
     expect(secondCreate.name).toBe('matrix-alice-f973bb98');
+    expect(secondCreate.labels).toMatchObject({ runtime_slot: 'primary' });
     const row = (await getUserMachine(db, recovered.machineId))!;
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
@@ -494,6 +496,57 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.11',
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
+  });
+
+  it('recovers the requested runtime slot without touching primary', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      '7fe6cb68-738b-46a4-a338-f5fb74ac9123',
+    ];
+    const hetzner = createMockHetznerClient({
+      createServer: vi
+        .fn()
+        .mockResolvedValueOnce({ id: 123456, status: 'running', publicIPv4: '203.0.113.10' })
+        .mockResolvedValueOnce({ id: 789012, status: 'running', publicIPv4: '203.0.113.11' })
+        .mockResolvedValueOnce({ id: 789013, status: 'running', publicIPv4: '203.0.113.12' }),
+    });
+    const { service } = createService({
+      hetzner,
+      systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    await service.register('registration-token', {
+      machineId: primary.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    await service.register('registration-token', {
+      machineId: staging.machineId,
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const recovered = await service.recover({ clerkUserId: 'user_123', runtimeSlot: 'staging' });
+
+    expect(recovered.oldMachineId).toBe(staging.machineId);
+    expect(recovered.runtimeSlot).toBe('staging');
+    expect(vi.mocked(hetzner.createServer).mock.calls[2][0].labels).toMatchObject({
+      runtime_slot: 'staging',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
+      machineId: primary.machineId,
+      status: 'running',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'staging')).resolves.toMatchObject({
+      machineId: '7fe6cb68-738b-46a4-a338-f5fb74ac9123',
+      runtimeSlot: 'staging',
+      status: 'recovering',
+    });
   });
 
   it('queues failed old-server cleanup after recovery and retries it during reconciliation', async () => {
