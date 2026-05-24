@@ -202,6 +202,7 @@ export default function LandingPage() {
               loop
               muted
               playsInline
+              aria-hidden="true"
               preload="metadata"
               controls={false}
               src="/hero-loop.mp4"

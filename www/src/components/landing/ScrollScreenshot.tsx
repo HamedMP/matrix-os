@@ -4,27 +4,39 @@ import { type CSSProperties, useEffect, useRef, useState, useCallback } from "re
 import Image from "next/image";
 
 export function ScrollScreenshot() {
-  const [scrollY, setScrollY] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
 
-  const onScroll = useCallback(() => {
+  const updateProgress = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => setScrollY(window.scrollY));
+    rafRef.current = requestAnimationFrame(() => {
+      const element = wrapperRef.current;
+      if (!element) return;
+
+      const rect = element.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1;
+      const rawProgress = (viewportHeight - rect.top) / (viewportHeight * 0.55);
+      setProgress(Math.max(0, Math.min(1, rawProgress)));
+    });
   }, []);
 
   useEffect(() => {
-    window.addEventListener("scroll", onScroll, { passive: true });
+    updateProgress();
+    window.addEventListener("scroll", updateProgress, { passive: true });
+    window.addEventListener("resize", updateProgress);
     return () => {
-      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", updateProgress);
+      window.removeEventListener("resize", updateProgress);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [onScroll]);
+  }, [updateProgress]);
 
-  const screenshotY = Math.max(0, 60 - scrollY * 0.04);
-  const screenshotScale = Math.min(1, 0.92 + scrollY * 0.00008);
+  const screenshotY = 60 * (1 - progress);
+  const screenshotScale = 0.92 + progress * 0.08;
 
   return (
-    <div className="screenshot-wrapper" style={{ "--ss-y": `${screenshotY}px`, "--ss-s": screenshotScale } as CSSProperties}>
+    <div ref={wrapperRef} className="screenshot-wrapper" style={{ "--ss-y": `${screenshotY}px`, "--ss-s": screenshotScale } as CSSProperties}>
       <Image src="/images/app-screenshot.jpg" alt="Matrix OS Desktop" width={1920} height={1080} className="w-full h-auto" loading="lazy" />
     </div>
   );
