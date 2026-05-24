@@ -631,6 +631,7 @@ write_files:
       MATRIX_MACHINE_ID={{machineId}}
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
+      MATRIX_RUNTIME_SLOT={{runtimeSlot}}
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}

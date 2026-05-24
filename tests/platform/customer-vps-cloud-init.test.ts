@@ -14,6 +14,7 @@ describe('platform/customer-vps-cloud-init', () => {
     machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
     clerkUserId: 'user_123',
     handle: 'alice',
+    runtimeSlot: 'staging',
     imageVersion: 'stable',
     updateChannel: 'stable',
     hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
@@ -51,6 +52,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).toContain(
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
+    expect(rendered).toContain('MATRIX_RUNTIME_SLOT=staging');
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
     expect(rendered).toContain('MATRIX_IMAGE_VERSION=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
