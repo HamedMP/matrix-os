@@ -77,6 +77,7 @@ export function capabilityIdsForConnectedServices(serviceIds: Iterable<string>):
 export function createIntegrationCapabilityService(options: {
   connectedCapabilityIds?: string[];
   getConnectedCapabilityIds?: (ownerId: string) => Promise<string[]>;
+  onChange?: (ownerId: string) => void;
 } = {}): IntegrationCapabilityService {
   const states = new Map<string, OwnerCapabilityState>();
   const ownerMutationQueues = new Map<string, Promise<unknown>>();
@@ -128,7 +129,8 @@ export function createIntegrationCapabilityService(options: {
   async function setApproval(ownerId: string, capabilityId: string, agent: AgentId, approved: boolean): Promise<ApproveCapabilityResponse> {
     const connected = await connectedCapabilitiesFor(ownerId);
     const capabilities = registryBackedCapabilities(connected);
-    if (!capabilities.some((capability) => capability.id === capabilityId)) {
+    const capability = capabilities.find((candidate) => candidate.id === capabilityId);
+    if (!capability) {
       throw new ActivationRouteError("capability_not_found", "Integration capability was not found", { status: 404 });
     }
     if (approved && capability.status === "connect_required") {
@@ -139,10 +141,12 @@ export function createIntegrationCapabilityService(options: {
     if (approved) current.add(agent);
     else current.delete(agent);
     state.approved[capabilityId] = Array.from(current);
+    const nextStatus = current.size > 0 ? "approved" : capability.status;
+    options.onChange?.(ownerId);
     return {
       capabilityId,
       agent,
-      status: approved ? "approved" : "connected",
+      status: nextStatus,
     };
   }
 

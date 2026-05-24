@@ -6,6 +6,7 @@ import type {
 } from "./activation-contracts.js";
 
 const MAX_ACTIONS = 500;
+const MAX_ACTION_OWNERS = 512;
 const UNSAFE_DISPLAY = /(secret|token|postgres|pipedream|anthropic|\bsk[-_][a-z0-9]+|\/home\/|\/tmp\/|database)/i;
 
 export interface AgentActionAuditService {
@@ -31,6 +32,22 @@ export function createAgentActionAuditService(options: {
   const now = options.now ?? (() => new Date());
   const actions = new Map<string, AgentActionSummary[]>();
 
+  function actionsFor(ownerId: string): AgentActionSummary[] {
+    const existing = actions.get(ownerId);
+    if (existing) {
+      actions.delete(ownerId);
+      actions.set(ownerId, existing);
+      return existing;
+    }
+    if (actions.size >= MAX_ACTION_OWNERS) {
+      const oldestKey = actions.keys().next().value as string | undefined;
+      if (oldestKey) actions.delete(oldestKey);
+    }
+    const next: AgentActionSummary[] = [];
+    actions.set(ownerId, next);
+    return next;
+  }
+
   async function recordAction(ownerId: string, input: {
     agent: AgentId;
     capability: string;
@@ -49,15 +66,14 @@ export function createAgentActionAuditService(options: {
       createdAt: timestamp,
       completedAt: ["completed", "failed", "denied"].includes(input.status) ? timestamp : null,
     };
-    const ownerActions = actions.get(ownerId) ?? [];
+    const ownerActions = actionsFor(ownerId);
     ownerActions.push(action);
     while (ownerActions.length > MAX_ACTIONS) ownerActions.shift();
-    actions.set(ownerId, ownerActions);
     return action;
   }
 
   async function listActions(ownerId: string): Promise<AgentActionSummary[]> {
-    return [...(actions.get(ownerId) ?? [])];
+    return [...actionsFor(ownerId)];
   }
 
   return { recordAction, listActions };
