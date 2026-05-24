@@ -252,14 +252,21 @@ export default function LandingPage() {
           @keyframes device-online-long { 0%, 60% { opacity: 1; } 65%, 100% { opacity: 0.3; } }
           @keyframes line-active { 0%, 15% { stroke-opacity: 0.3; } 20%, 100% { stroke-opacity: 0.06; } }
           @keyframes line-active-long { 0%, 60% { stroke-opacity: 0.3; } 65%, 100% { stroke-opacity: 0.06; } }
-          .net-line-flow { stroke-dasharray: 6 6; }
-          .center-hub { animation: center-pulse 5s ease-in-out infinite; transform-origin: 200px 200px; }
+          .net-line-flow {
+            stroke-dasharray: 6 6;
+            animation: net-flow 1.8s linear infinite, var(--line-state-animation);
+          }
+          .center-hub {
+            animation: center-pulse 5s ease-in-out infinite;
+            transform-box: fill-box;
+            transform-origin: center;
+          }
           .center-ring-ping { animation: center-ring 3s ease-out infinite; }
           .net-glow { animation: glow-breathe 5s ease-in-out infinite; }
           .device-blink { animation: device-online 8s ease-in-out infinite; }
           .device-steady { animation: device-online-long 10s ease-in-out infinite; }
-          .line-blink { animation: net-flow 1.8s linear infinite, line-active 8s ease-in-out infinite; }
-          .line-steady { animation: net-flow 1.8s linear infinite, line-active-long 10s ease-in-out infinite; }
+          .line-blink { --line-state-animation: line-active 8s ease-in-out infinite; }
+          .line-steady { --line-state-animation: line-active-long 10s ease-in-out infinite; }
           .feature-pill { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: transform 0.3s ease, box-shadow 0.3s ease; }
           .feature-pill:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
         `}</style>
