@@ -61,6 +61,11 @@ import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import type { VpsRuntimeMetricInput } from './metrics.js';
+import {
+  createLaunchReadinessService,
+  createPlatformLaunchEvidenceLoader,
+} from './launch-readiness.js';
+import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -2119,6 +2124,13 @@ export function createApp(deps: {
       recordRuntimeMetrics: (machines) => updateCachedVpsRuntimeMetrics(machines, machines),
     }));
   }
+
+  app.route('/api/operator', createLaunchReadinessRoutes({
+    service: createLaunchReadinessService({
+      loadEvidence: createPlatformLaunchEvidenceLoader({ db }),
+    }),
+    platformSecret,
+  }));
 
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {

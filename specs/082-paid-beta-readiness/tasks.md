@@ -243,16 +243,16 @@
 
 ### Tests First
 
-- [ ] T088 [P] [US7] Write failing operator readiness route tests in `tests/platform/launch-readiness.test.ts`
-- [ ] T089 [P] [US7] Write failing entitlement preservation tests in `tests/platform/launch-entitlement.test.ts`
+- [X] T088 [P] [US7] Write failing operator readiness route tests in `tests/platform/launch-readiness.test.ts`
+- [X] T089 [P] [US7] Write failing entitlement preservation tests in `tests/platform/launch-entitlement.test.ts`
 
 ### Implementation
 
-- [ ] T090 [US7] Implement platform launch readiness aggregator in `packages/platform/src/launch-readiness.ts`
-- [ ] T091 [US7] Add operator readiness route in `packages/platform/src/launch-readiness-routes.ts`
-- [ ] T092 [US7] Wire operator readiness route in `packages/platform/src/main.ts`
-- [ ] T093 [US7] Add entitlement gate behavior without owner-data deletion in `packages/platform/src/profile-routing.ts`
-- [ ] T094 [US7] Add operator remediation summaries for failed gates in `packages/platform/src/launch-readiness.ts`
+- [X] T090 [US7] Implement platform launch readiness aggregator in `packages/platform/src/launch-readiness.ts`
+- [X] T091 [US7] Add operator readiness route in `packages/platform/src/launch-readiness-routes.ts`
+- [X] T092 [US7] Wire operator readiness route in `packages/platform/src/main.ts`
+- [X] T093 [US7] Add entitlement gate behavior without owner-data deletion in `packages/platform/src/profile-routing.ts`
+- [X] T094 [US7] Add operator remediation summaries for failed gates in `packages/platform/src/launch-readiness.ts`
 
 **Checkpoint**: Paid beta cannot be marked launch-ready while release-critical gates fail.
 

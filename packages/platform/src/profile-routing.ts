@@ -9,6 +9,21 @@ export interface CustomerVpsProxyMachine {
   publicIPv4: string | null;
 }
 
+export type EntitlementStatus = 'active' | 'missing' | 'expired' | 'disabled' | 'changed';
+
+export interface EntitlementState {
+  status: EntitlementStatus;
+  effectiveAt?: string;
+}
+
+export interface EntitlementAccessDecision {
+  status: EntitlementStatus;
+  runtimeProxyAllowed: boolean;
+  ownerDataPreserved: true;
+  ownerDataExportable: true;
+  remediation: string | null;
+}
+
 export function resolveSubdomain(host: string): string | null {
   const match = host
     .toLowerCase()
@@ -27,6 +42,37 @@ export function buildCustomerVpsProxyUrl(
   if (machine.status !== "running" || !machine.publicIPv4) return null;
   const safePath = path.startsWith("/") ? path : `/${path}`;
   return `https://${machine.publicIPv4}:443${safePath}${queryString}`;
+}
+
+export function deriveEntitlementAccess(state: EntitlementState): EntitlementAccessDecision {
+  switch (state.status) {
+    case 'active':
+      return {
+        status: state.status,
+        runtimeProxyAllowed: true,
+        ownerDataPreserved: true,
+        ownerDataExportable: true,
+        remediation: null,
+      };
+    case 'changed':
+      return {
+        status: state.status,
+        runtimeProxyAllowed: false,
+        ownerDataPreserved: true,
+        ownerDataExportable: true,
+        remediation: 'Review entitlement change before granting paid-only access.',
+      };
+    case 'missing':
+    case 'expired':
+    case 'disabled':
+      return {
+        status: state.status,
+        runtimeProxyAllowed: false,
+        ownerDataPreserved: true,
+        ownerDataExportable: true,
+        remediation: 'Renew paid beta access or ask an operator to grant access.',
+      };
+  }
 }
 
 export function isPublicProfilePath(path: string): boolean {

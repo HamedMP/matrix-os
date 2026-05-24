@@ -1,0 +1,216 @@
+import { describe, expect, it, vi } from 'vitest';
+import { Hono } from 'hono';
+import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
+import { createApp } from '../../packages/platform/src/main.js';
+import {
+  createLaunchReadinessService,
+  type LaunchReadinessGate,
+} from '../../packages/platform/src/launch-readiness.js';
+import { createLaunchReadinessRoutes } from '../../packages/platform/src/launch-readiness-routes.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+
+const nowIso = '2026-05-23T12:00:00.000Z';
+
+function passingGate(id: string): LaunchReadinessGate {
+  return {
+    id,
+    category: 'ux',
+    criticality: 'release_critical',
+    status: 'pass',
+    owner: 'matrix',
+    message: `${id} passed`,
+    remediation: null,
+    lastCheckedAt: nowIso,
+  };
+}
+
+describe('platform/launch-readiness', () => {
+  function stubOrchestrator(): Orchestrator {
+    return {
+      provision: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      destroy: vi.fn(),
+      upgrade: vi.fn(),
+      rollingRestart: vi.fn(),
+      getInfo: vi.fn(),
+      getImage: vi.fn(),
+      listAll: vi.fn().mockReturnValue([]),
+      syncStates: vi.fn(),
+    } as unknown as Orchestrator;
+  }
+
+  it('marks paid beta unsafe when a release-critical gate fails', async () => {
+    const service = createLaunchReadinessService({
+      now: () => new Date(nowIso),
+      loadEvidence: async () => ({
+        promotedRelease: true,
+        freshWorkspace: true,
+        existingWorkspace: true,
+        shellRouting: true,
+        onboardingEducation: true,
+        visualQa: false,
+        integrations: true,
+        hermesContinuity: true,
+        agentExecution: true,
+        codingHandoff: true,
+        companyBrain: true,
+        supportGrowth: true,
+        adminControlSurface: true,
+        entitlementGate: true,
+      }),
+    });
+
+    const report = await service.getReport();
+
+    expect(report.launchReady).toBe(false);
+    expect(report.overallStatus).toBe('blocked');
+    expect(report.gates.find((gate) => gate.id === 'onboarding.visual_qa')).toMatchObject({
+      status: 'fail',
+      owner: 'matrix',
+      remediation: 'Run desktop, mobile, reduced-motion, and missing-media onboarding visual QA.',
+    });
+  });
+
+  it('requires both fresh and existing workspace rehearsals before launch-ready', async () => {
+    const service = createLaunchReadinessService({
+      now: () => new Date(nowIso),
+      loadEvidence: async () => ({
+        promotedRelease: true,
+        freshWorkspace: true,
+        existingWorkspace: false,
+        shellRouting: true,
+        onboardingEducation: true,
+        visualQa: true,
+        integrations: true,
+        hermesContinuity: true,
+        agentExecution: true,
+        codingHandoff: true,
+        companyBrain: true,
+        supportGrowth: true,
+        adminControlSurface: true,
+        entitlementGate: true,
+      }),
+    });
+
+    const report = await service.getReport();
+
+    expect(report.launchReady).toBe(false);
+    expect(report.gates.find((gate) => gate.id === 'workspace.existing_rehearsal')).toMatchObject({
+      status: 'fail',
+      owner: 'operator',
+      message: 'Existing workspace rehearsal has not passed.',
+    });
+  });
+
+  it('returns launch-ready only when every release-critical gate passes', async () => {
+    const service = createLaunchReadinessService({
+      now: () => new Date(nowIso),
+      loadEvidence: async () => ({
+        promotedRelease: true,
+        freshWorkspace: true,
+        existingWorkspace: true,
+        shellRouting: true,
+        onboardingEducation: true,
+        visualQa: true,
+        integrations: true,
+        hermesContinuity: true,
+        agentExecution: true,
+        codingHandoff: true,
+        companyBrain: true,
+        supportGrowth: true,
+        adminControlSurface: true,
+        entitlementGate: true,
+      }),
+    });
+
+    await expect(service.getReport()).resolves.toMatchObject({
+      launchReady: true,
+      overallStatus: 'ready',
+    });
+  });
+
+  it('does not pass entitlement evidence for blocking enforcement statuses', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      const loadEvidence = createPlatformLaunchEvidenceLoader({
+        db,
+        env: {
+          MATRIX_LAUNCH_ENTITLEMENT_GATE: 'true',
+          MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'expired',
+        } as NodeJS.ProcessEnv,
+      });
+
+      await expect(loadEvidence()).resolves.toMatchObject({
+        entitlementGate: false,
+      });
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+
+  it('protects the operator readiness route with the platform bearer token', async () => {
+    const app = new Hono();
+    const service = {
+      getReport: vi.fn().mockResolvedValue({
+        generatedAt: nowIso,
+        launchReady: true,
+        overallStatus: 'ready',
+        gates: [passingGate('onboarding.visual_qa')],
+      }),
+    };
+    app.route('/api/operator', createLaunchReadinessRoutes({
+      service,
+      platformSecret: 'platform-secret',
+    }));
+
+    const unauthorized = await app.request('/api/operator/launch-readiness');
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await app.request('/api/operator/launch-readiness', {
+      headers: { authorization: 'Bearer platform-secret' },
+    });
+    expect(authorized.status).toBe(200);
+    expect(await authorized.json()).toMatchObject({ launchReady: true });
+  });
+
+  it('mounts the operator readiness route on the platform app', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      const app = createApp({
+        db,
+        orchestrator: stubOrchestrator(),
+        platformSecret: 'platform-secret',
+      });
+
+      const res = await app.request('/api/operator/launch-readiness', {
+        headers: { authorization: 'Bearer platform-secret' },
+      });
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        launchReady: false,
+        overallStatus: 'blocked',
+      });
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+
+  it('returns generic route errors when readiness aggregation fails', async () => {
+    const app = new Hono();
+    app.route('/api/operator', createLaunchReadinessRoutes({
+      service: {
+        getReport: vi.fn().mockRejectedValue(new Error('database password leaked')),
+      },
+      platformSecret: 'platform-secret',
+    }));
+
+    const res = await app.request('/api/operator/launch-readiness', {
+      headers: { authorization: 'Bearer platform-secret' },
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Launch readiness unavailable' });
+  });
+});
