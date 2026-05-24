@@ -62,7 +62,16 @@ export function stepsForGoals(goalIds: OnboardingGoalId[]): OnboardingStepSummar
   const stepsById = new Map<string, OnboardingStepSummary>();
   for (const goalId of Array.from(new Set(goalIds))) {
     for (const step of GOAL_STEPS[goalId]) {
-      stepsById.set(step.id, step);
+      const existing = stepsById.get(step.id);
+      if (!existing) {
+        stepsById.set(step.id, { ...step, unlocks: [...step.unlocks] });
+        continue;
+      }
+      stepsById.set(step.id, {
+        ...existing,
+        required: existing.required || step.required,
+        unlocks: Array.from(new Set([...existing.unlocks, ...step.unlocks])),
+      });
     }
   }
   return Array.from(stepsById.values());

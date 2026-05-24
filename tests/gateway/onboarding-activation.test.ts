@@ -4,6 +4,7 @@ import {
   ReadinessResponseSchema,
   SelectGoalsRequestSchema,
 } from "../../packages/gateway/src/onboarding/activation-contracts.js";
+import { stepsForGoals } from "../../packages/gateway/src/onboarding/readiness-service.js";
 import { mapActivationError, safeClientMessage } from "../../packages/gateway/src/onboarding/activation-errors.js";
 import { ReadinessStatusCache } from "../../packages/gateway/src/onboarding/readiness-cache.js";
 import { createTestReadinessService, testPrincipal } from "../helpers/activation-readiness.js";
@@ -38,6 +39,15 @@ describe("activation readiness contracts", () => {
     expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["paid-beta-readiness"] })).toThrow();
   });
 
+  it("merges shared setup step unlocks across selected goals", () => {
+    const hermesStep = stepsForGoals(["app_building", "assistant"]).find((step) => step.id === "hermes.available");
+
+    expect(hermesStep).toMatchObject({
+      required: true,
+      unlocks: ["app_building", "assistant"],
+    });
+  });
+
   it("sanitizes unsafe error strings before sending them to clients", () => {
     expect(safeClientMessage("postgres constraint failed at /home/matrix/secret")).toBe("Request failed");
     expect(safeClientMessage("Connect GitHub to continue")).toBe("Connect GitHub to continue");
@@ -64,4 +74,3 @@ describe("activation readiness contracts", () => {
     expect(cache.get("a")).toBeNull();
   });
 });
-
