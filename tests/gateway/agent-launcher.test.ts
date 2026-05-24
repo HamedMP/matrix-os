@@ -50,7 +50,7 @@ describe("agent-launcher", () => {
 
     await launcher.detectAgents();
 
-    expect(runCommand).toHaveBeenCalledWith("codex", ["auth", "status"], expect.objectContaining({
+    expect(runCommand).toHaveBeenCalledWith("codex", ["login", "status"], expect.objectContaining({
       cwd: "/home/matrix/home",
       env: expect.objectContaining({
         HOME: "/home/matrix/home",
