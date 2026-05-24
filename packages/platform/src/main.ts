@@ -511,6 +511,10 @@ function escapeHtmlAttr(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function escapeHtml(value: string): string {
+  return escapeHtmlAttr(value);
+}
+
 function applyAuthPageHeaders(
   c: import('hono').Context,
   scriptNonce: string,
@@ -994,7 +998,7 @@ function getVpsBootPage(input: { handle: string; status: string }) {
   <main>
     <div class="row"><div class="spinner"></div><h1>${title}</h1></div>
     <p>${detail}</p>
-    <code>${input.handle}.matrix-os.com - ${input.status}</code>
+    <p>Instance status: <strong>${escapeHtml(input.status)}</strong></p>
   </main>
 </body>
 </html>`;
