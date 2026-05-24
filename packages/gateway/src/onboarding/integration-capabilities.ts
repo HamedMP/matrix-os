@@ -90,22 +90,57 @@ export function createIntegrationCapabilityService(options: {
     return connected;
   }
 
-  function getState(ownerId: string): OwnerCapabilityState {
-    const existing = states.get(ownerId);
-    if (existing) {
-      states.delete(ownerId);
-      states.set(ownerId, existing);
-      return existing;
+  function touchState(ownerId: string, state: OwnerCapabilityState): OwnerCapabilityState {
+    states.delete(ownerId);
+    if (states.size >= MAX_OWNERS) {
+      const oldestKey = states.keys().next().value as string | undefined;
+      if (oldestKey) states.delete(oldestKey);
     }
+    states.set(ownerId, state);
+    return state;
+  }
+
+  async function withOwnerMutation<T>(ownerId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = ownerMutationQueues.get(ownerId) ?? Promise.resolve();
+    const next = previous.catch((err: unknown) => {
+      console.warn("[integrations] previous capability approval mutation failed:", err instanceof Error ? err.message : String(err));
+    }).then(operation);
+    const tracked = next.catch((err: unknown) => {
+      console.warn("[integrations] capability approval mutation failed:", err instanceof Error ? err.message : String(err));
+    });
+    ownerMutationQueues.delete(ownerId);
+    if (ownerMutationQueues.size >= MAX_OWNERS) {
+      const oldestKey = ownerMutationQueues.keys().next().value as string | undefined;
+      if (oldestKey) ownerMutationQueues.delete(oldestKey);
+    }
+    ownerMutationQueues.set(ownerId, tracked);
+    try {
+      return await next;
+    } finally {
+      if (ownerMutationQueues.get(ownerId) === tracked) ownerMutationQueues.delete(ownerId);
+    }
+  }
+
+  function findState(ownerId: string): OwnerCapabilityState | null {
+    const existing = states.get(ownerId);
+    return existing ? touchState(ownerId, existing) : null;
+  }
+
+  function ensureState(ownerId: string): OwnerCapabilityState {
+    const existing = states.get(ownerId);
+    if (existing) return touchState(ownerId, existing);
     const next = { approved: {} };
     return touchState(ownerId, next);
   }
 
   async function listCapabilities(ownerId: string): Promise<IntegrationCapabilitiesResponse> {
-    const state = getState(ownerId);
+    const state = findState(ownerId);
     const connected = await connectedCapabilitiesFor(ownerId);
     const capabilities = registryBackedCapabilities(connected).map((capability) => {
-      const approvedAgents = state.approved[capability.id] ?? [];
+      const approvedAgents = capability.status === "connected" ? state?.approved[capability.id] ?? [] : [];
+      if (state && capability.status !== "connected" && state.approved[capability.id]?.length) {
+        state.approved[capability.id] = [];
+      }
       return {
         ...capability,
         status: approvedAgents.length > 0 ? "approved" as const : capability.status,
@@ -136,12 +171,12 @@ export function createIntegrationCapabilityService(options: {
     if (approved && capability.status === "connect_required") {
       throw new ActivationRouteError("capability_not_connected", "Connect the integration before approving agent access", { status: 409 });
     }
-    const state = getState(ownerId);
+    const state = ensureState(ownerId);
     const current = new Set(state.approved[capabilityId] ?? []);
     if (approved) current.add(agent);
     else current.delete(agent);
     state.approved[capabilityId] = Array.from(current);
-    const nextStatus = current.size > 0 ? "approved" : capability.status;
+    const nextStatus = current.size > 0 && capability.status === "connected" ? "approved" : capability.status;
     options.onChange?.(ownerId);
     return {
       capabilityId,

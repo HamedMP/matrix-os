@@ -32,13 +32,20 @@ export function createAgentActionAuditService(options: {
   const now = options.now ?? (() => new Date());
   const actions = new Map<string, AgentActionSummary[]>();
 
-  function actionsFor(ownerId: string): AgentActionSummary[] {
+  function touchActions(ownerId: string, ownerActions: AgentActionSummary[]): AgentActionSummary[] {
+    actions.delete(ownerId);
+    actions.set(ownerId, ownerActions);
+    return ownerActions;
+  }
+
+  function findActions(ownerId: string): AgentActionSummary[] | null {
     const existing = actions.get(ownerId);
-    if (existing) {
-      actions.delete(ownerId);
-      actions.set(ownerId, existing);
-      return existing;
-    }
+    return existing ? touchActions(ownerId, existing) : null;
+  }
+
+  function ensureActions(ownerId: string): AgentActionSummary[] {
+    const existing = actions.get(ownerId);
+    if (existing) return touchActions(ownerId, existing);
     if (actions.size >= MAX_ACTION_OWNERS) {
       const oldestKey = actions.keys().next().value as string | undefined;
       if (oldestKey) actions.delete(oldestKey);
@@ -66,14 +73,14 @@ export function createAgentActionAuditService(options: {
       createdAt: timestamp,
       completedAt: ["completed", "failed", "denied"].includes(input.status) ? timestamp : null,
     };
-    const ownerActions = actionsFor(ownerId);
+    const ownerActions = ensureActions(ownerId);
     ownerActions.push(action);
     while (ownerActions.length > MAX_ACTIONS) ownerActions.shift();
     return action;
   }
 
   async function listActions(ownerId: string): Promise<AgentActionSummary[]> {
-    return [...actionsFor(ownerId)];
+    return [...(findActions(ownerId) ?? [])];
   }
 
   return { recordAction, listActions };

@@ -87,6 +87,22 @@ describe("integration capability routes", () => {
     expect(approved.status).toBe(200);
   });
 
+  it("clears visible approval when the backing integration disconnects", async () => {
+    let connected = true;
+    const service = createIntegrationCapabilityService({
+      getConnectedCapabilityIds: async () => connected ? capabilityIdsForConnectedServices(["google_calendar"]) : [],
+    });
+
+    await service.setApproval(testPrincipal.userId, "calendar.create_event", "hermes", true);
+    connected = false;
+
+    const body = await service.listCapabilities(testPrincipal.userId);
+    expect(body.capabilities.find((capability) => capability.id === "calendar.create_event")).toMatchObject({
+      status: "connect_required",
+      approvedAgents: [],
+    });
+  });
+
   it("requires a connected integration before approving capability use", async () => {
     const service = createIntegrationCapabilityService();
     const app = createIntegrationCapabilityRoutes({ service, getPrincipal: () => testPrincipal });
@@ -101,6 +117,23 @@ describe("integration capability routes", () => {
       error: "capability_not_connected",
       message: "Connect the integration before approving agent access",
       retryable: false,
+    });
+  });
+
+  it("does not evict approvals when read-only capability checks see unknown owners", async () => {
+    const service = createIntegrationCapabilityService({
+      connectedCapabilityIds: ["calendar.create_event"],
+    });
+
+    await service.setApproval("owner_0", "calendar.create_event", "hermes", true);
+    for (let index = 1; index <= 512; index += 1) {
+      await service.listCapabilities(`owner_${index}`);
+    }
+
+    const ownerZero = await service.listCapabilities("owner_0");
+    expect(ownerZero.capabilities.find((capability) => capability.id === "calendar.create_event")).toMatchObject({
+      status: "approved",
+      approvedAgents: ["hermes"],
     });
   });
 
@@ -220,6 +253,31 @@ describe("integration capability routes", () => {
     });
 
     expect(action.summary).toBe("Completed task_123 for launch prep");
+  });
+
+  it("does not evict audit events when read-only action checks see unknown owners", async () => {
+    const audit = createAgentActionAuditService({
+      now: () => new Date("2026-05-24T00:00:00.000Z"),
+    });
+
+    await audit.recordAction("owner_0", {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "Created launch event",
+      target: "Primary calendar",
+    });
+    for (let index = 1; index <= 512; index += 1) {
+      await audit.listActions(`owner_${index}`);
+    }
+
+    const ownerZero = await audit.listActions("owner_0");
+    expect(ownerZero).toHaveLength(1);
+    expect(ownerZero[0]).toMatchObject({
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+    });
   });
 
   it("rejects unknown capabilities with a generic error", async () => {
