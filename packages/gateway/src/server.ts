@@ -145,7 +145,12 @@ import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { sanitizePeerId } from "./sync/peer-id.js";
-import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
+import {
+  deriveGatewaySyncUserSeeds,
+  ensureSyncUser,
+  migrateSyncTables,
+  type SyncDatabase,
+} from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
@@ -601,6 +606,9 @@ export async function createGateway(config: GatewayConfig) {
       }
 
       await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
+      for (const seed of deriveGatewaySyncUserSeeds()) {
+        await ensureSyncUser(kyselyInstance as Kysely<SyncDatabase>, seed);
+      }
 
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       syncPeerRegistry = createPeerRegistry();
@@ -2387,7 +2395,7 @@ export async function createGateway(config: GatewayConfig) {
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
     const worktreeManager = createWorktreeManager({ homePath });
-    const agentLauncher = createAgentLauncher({ cwd: homePath });
+    const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const agentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager,
@@ -2402,6 +2410,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       worktreeManager,
       agentSessionManager,
+      agentStatusProvider: agentLauncher,
       statusHub: matrixSymphonyStatusHub,
     });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();

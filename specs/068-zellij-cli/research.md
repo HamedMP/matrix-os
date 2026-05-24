@@ -8,7 +8,7 @@
 
 - Continue raw PTY sessions only: rejected because browser/CLI/editor would keep separate session models.
 - Use zellij plugin/RPC integration immediately: rejected because the v1 need is control-plane operations and attach; a plugin adds complexity before stable pane/session requirements prove it is needed.
-- Replace `matrix ssh` tmux at the same time: rejected because bastion SSH is a separate surface and would expand scope.
+- Reintroduce an SSH-backed terminal path: rejected because it creates a second user-facing terminal model. `matrix shell` is the canonical CLI terminal surface.
 
 ## Decision: Split daemon control plane from terminal data plane
 

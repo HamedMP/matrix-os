@@ -1,7 +1,7 @@
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHmac } from "node:crypto";
-import { insertContainer, type PlatformDB } from "../../packages/platform/src/db.js";
+import { insertContainer, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createInternalSyncRoutes } from "../../packages/platform/src/internal-sync-routes.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
@@ -25,6 +25,7 @@ describe("platform/internal-sync-routes", () => {
   };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     ({ db } = await createTestPlatformDb());
     await insertContainer(db, {
       handle: "alice",
@@ -101,6 +102,39 @@ describe("platform/internal-sync-routes", () => {
     expect(r2.getPresignedPutUrl).toHaveBeenCalledWith(
       "matrixos-sync/user_alice/files/apps/test.txt",
       123,
+      undefined,
+    );
+  });
+
+  it("authorizes VPS-native user machines when no legacy container row exists", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-bob",
+      clerkUserId: "user_bob",
+      handle: "bob",
+      hetznerServerId: 456,
+      publicIPv4: "203.0.113.12",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    r2.getPresignedGetUrl.mockResolvedValue("https://platform.example/presigned-get");
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/bob/sync/presign/get", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("bob", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_bob/manifest.json",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: "https://platform.example/presigned-get" });
+    expect(r2.getPresignedGetUrl).toHaveBeenCalledWith(
+      "matrixos-sync/user_bob/manifest.json",
       undefined,
     );
   });

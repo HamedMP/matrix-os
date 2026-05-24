@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,38 @@ function captureLogs() {
     logs.push(String(line));
   });
   return logs;
+}
+
+function captureErrors() {
+  const errors: string[] = [];
+  vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
+    errors.push(String(line));
+  });
+  return errors;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return access(path).then(() => true, () => false);
+}
+
+async function writeDaemonConfig(home: string): Promise<string> {
+  const configDir = join(home, ".matrixos");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(
+    join(configDir, "config.json"),
+    JSON.stringify({
+      gatewayUrl: "http://localhost:4000",
+      syncPath: join(home, "mirror"),
+      peerId: "peer-test",
+      pauseSync: false,
+    }),
+  );
+  return configDir;
+}
+
+async function expectDaemonConfigPreserved(configDir: string): Promise<void> {
+  await expect(readFile(join(configDir, "config.json"), "utf-8")).resolves.toContain("peer-test");
+  await expect(pathExists(join(configDir, "profiles", "cloud", "config.json"))).resolves.toBe(false);
 }
 
 beforeEach(async () => {
@@ -111,6 +143,60 @@ describe("profile CLI command", () => {
     ]);
   });
 
+  it("accepts profile names with uppercase letters and underscores", async () => {
+    const logs = captureLogs();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "Dev_Profile",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+    await profileCommand.subCommands!.use.run!({
+      args: { name: "Dev_Profile", json: true },
+    } as never);
+
+    expect(logs.map((line) => JSON.parse(line).data)).toEqual([
+      {
+        name: "Dev_Profile",
+        active: false,
+        platformUrl: "https://platform.example",
+        gatewayUrl: "https://gateway.example",
+      },
+      { active: "Dev_Profile" },
+    ]);
+  });
+
+  it("rejects profile names that collide case-insensitively", async () => {
+    const errors = captureErrors();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "Dev",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+    expect(process.exitCode).toBeUndefined();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "dev",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(errors[0]!)).toMatchObject({
+      error: { code: "profile_name_conflict" },
+    });
+  });
+
   it("switches the active profile without changing other profile data", async () => {
     const home = process.env.HOME!;
     const logs = captureLogs();
@@ -134,5 +220,54 @@ describe("profile CLI command", () => {
       ok: true,
       data: { active: "staging" },
     });
+  });
+
+  it("profile ls does not migrate daemon config into profile storage", async () => {
+    const configDir = await writeDaemonConfig(process.env.HOME!);
+    captureLogs();
+
+    await profileCommand.subCommands!.ls.run!({ args: { json: true } } as never);
+
+    await expectDaemonConfigPreserved(configDir);
+  });
+
+  it("profile show does not migrate daemon config into profile storage", async () => {
+    const configDir = await writeDaemonConfig(process.env.HOME!);
+    captureLogs();
+
+    await profileCommand.subCommands!.show.run!({ args: { name: "local", json: true } } as never);
+
+    await expectDaemonConfigPreserved(configDir);
+  });
+
+  it("profile use changes active profile without migrating daemon config", async () => {
+    const home = process.env.HOME!;
+    const configDir = await writeDaemonConfig(home);
+    captureLogs();
+
+    await profileCommand.subCommands!.use.run!({ args: { name: "local", json: true } } as never);
+
+    const stored = JSON.parse(await readFile(join(home, ".matrixos", "profiles.json"), "utf-8"));
+    expect(stored.active).toBe("local");
+    await expectDaemonConfigPreserved(configDir);
+  });
+
+  it("profile set updates profile registry without migrating daemon config", async () => {
+    const home = process.env.HOME!;
+    const configDir = await writeDaemonConfig(home);
+    captureLogs();
+
+    await profileCommand.subCommands!.set.run!({
+      args: {
+        name: "staging",
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+        json: true,
+      },
+    } as never);
+
+    const stored = JSON.parse(await readFile(join(home, ".matrixos", "profiles.json"), "utf-8"));
+    expect(stored.profiles.staging.gatewayUrl).toBe("https://gateway.example");
+    await expectDaemonConfigPreserved(configDir);
   });
 });

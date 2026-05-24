@@ -99,6 +99,13 @@ describe("Symphony app", () => {
           ],
         });
       }
+      if (url === "/api/agents") {
+        return json({
+          agents: [
+            { id: "codex", command: "codex", displayName: "Codex", installed: true, authState: "ok", errorCode: null },
+          ],
+        });
+      }
       if (url === "/api/symphony/setup-options") {
         return json({
           credentialConfigured: true,
@@ -171,6 +178,110 @@ describe("Symphony app", () => {
     expect(screen.getAllByText("Needs Attention").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Done / Handoff").length).toBeGreaterThan(0);
     expect(screen.getByText("Linear account")).toBeTruthy();
+  });
+
+  it("shows an agent auth notice when the selected runtime needs login", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url === "/api/agents") {
+        return json({
+          agents: [
+            { id: "codex", command: "codex", displayName: "Codex", installed: true, authState: "required", errorCode: "agent_auth_required" },
+          ],
+        });
+      }
+      if (url === "/api/symphony/status") {
+        return json({
+          running: true,
+          installationId: "sym_user_123",
+          credentialConfigured: true,
+          pollIntervalMs: 30000,
+          maxConcurrentAgents: 3,
+          counts: { queued: 0, running: 0, needsAttention: 1, handoff: 0 },
+          lastPollAt: null,
+        });
+      }
+      if (url === "/api/symphony/config") {
+        return json({
+          installation: {
+            projectSlug: "matrix-os",
+            enabled: true,
+            credentialConfigured: true,
+            pollIntervalMs: 30000,
+            maxConcurrentAgents: 3,
+            defaultAgent: "codex",
+            authorizedOperators: [],
+          },
+          rule: {
+            teamId: "team_1",
+            teamKey: "MAT",
+            requiredLabels: ["symphony"],
+            activeStates: ["Todo"],
+            terminalStates: ["Done"],
+            assigneeIds: [],
+          },
+        });
+      }
+      if (url === "/api/symphony/runs") {
+        return json({
+          runs: [{
+            id: "run_1",
+            status: "blocked",
+            ticketIdentifier: "MAT-1",
+            ticketTitle: "Build Symphony",
+            agent: "codex",
+            projectSlug: "matrix-os",
+            lastErrorCode: "agent_auth_required",
+            lastEvent: "Agent authentication required",
+            updatedAt: "2026-05-13T00:00:00.000Z",
+          }],
+        });
+      }
+      return json({ ok: true });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Codex needs authentication in this Matrix runtime.")).toBeTruthy());
+    expect(screen.getByText("Agent authentication required")).toBeTruthy();
+  });
+
+  it("does not show an agent auth notice before Symphony is configured", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url === "/api/agents") {
+        return json({
+          agents: [
+            { id: "codex", command: "codex", displayName: "Codex", installed: true, authState: "required", errorCode: "agent_auth_required" },
+          ],
+        });
+      }
+      if (url === "/api/symphony/status") {
+        return json({
+          running: false,
+          installationId: null,
+          credentialConfigured: false,
+          pollIntervalMs: null,
+          maxConcurrentAgents: null,
+          counts: { queued: 0, running: 0, needsAttention: 0, handoff: 0 },
+          lastPollAt: null,
+        });
+      }
+      if (url === "/api/symphony/config") {
+        return json({ installation: null, rule: null });
+      }
+      if (url === "/api/symphony/runs") {
+        return json({ runs: [] });
+      }
+      return json({ ok: true });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/agents")).toBe(true));
+    expect(screen.queryByText("Codex needs authentication in this Matrix runtime.")).toBeNull();
   });
 
   it("saves a server-side Linear secret and non-secret rule set", async () => {

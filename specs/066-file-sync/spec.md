@@ -9,12 +9,12 @@ This spec covers five subsystems with the sync engine as the primary focus:
 1. **Sync Engine** (deep-dive) — bidirectional file sync via R2
 2. **CLI + Local Daemon** — local client that runs the sync
 3. **Sharing & Collaboration** — folder-level access control
-4. **Remote Access** — SSH into cloud instances
+4. **Shell Access** — terminal access through `matrixos shell`
 5. **Mac Menu Bar App** — native macOS sync status UI
 
 ## Motivation
 
-The primary workflow: kick off Claude Code in a cloud tmux session, come back to the laptop and see all the work. Review files, continue locally, or SSH back in. Share project folders with colleagues so they can run their own agents on the same files.
+The primary workflow: kick off Claude Code in a cloud shell session, come back to the laptop and see all the work. Review files, continue locally, or reattach with `matrixos shell`. Share project folders with colleagues so they can run their own agents on the same files.
 
 Currently there's git-sync and S3 backup, but no real-time bidirectional sync, no local daemon, no sharing model, and no CLI for managing it all.
 
@@ -230,9 +230,6 @@ R2 Token: share-xyz        -> scoped to matrixos-sync/hamed/files/projects/start
 | `matrixos share <path> <handle> [--role editor\|viewer\|admin]` | Share a folder with another Matrix OS user |
 | `matrixos unshare <path> <handle>` | Revoke access |
 | `matrixos peers` | List connected peers and their sync status |
-| `matrixos keys add <pubkey>` | Add SSH public key for remote access |
-| `matrixos ssh` | SSH into your cloud instance |
-| `matrixos ssh <handle>` | SSH into a shared instance (if permitted) |
 
 ### Daemon Behavior
 
@@ -326,37 +323,9 @@ All surfaces consume the same WebSocket events.
 
 ---
 
-## 5. Remote Access (SSH)
+## 5. Shell Access
 
-### Architecture
-
-OpenSSH sshd running on port 2222 inside cloud Matrix OS containers. Authenticates against Matrix OS identity.
-
-### Authentication
-
-1. **SSH keys**: User uploads public key via shell settings or `matrixos keys add`. Stored in `~/system/authorized_keys`, synced to container's `~/.ssh/authorized_keys`.
-2. **OAuth-issued short-lived certificates** (stretch goal): `matrixos ssh` generates a short-lived SSH certificate signed by the platform CA using the OAuth token. No key management needed.
-
-### Connection Flow
-
-```
-matrixos ssh                               # connects to your cloud instance
-matrixos ssh @colleague:matrix-os.com      # connects to a shared instance (if permitted)
-```
-
-Under the hood: resolves handle to container host:port via platform API, connects via SSH.
-
-### tmux Session Sharing
-
-Both web terminal and SSH drop into the same tmux session by default:
-- Start Claude Code in the web shell
-- SSH in from your phone (Termius, Blink)
-- See the same session, send commands
-- Disconnect, reconnect: tmux keeps it alive
-
-### Exposure
-
-Platform proxy routes `ssh.matrix-os.com:2222` to the correct container based on SSH certificate user identity.
+`matrixos shell` is the supported CLI terminal path. The CLI manages zellij sessions through the gateway REST API and attaches interactively over the authenticated terminal WebSocket. SSH-backed access, SSH-key management, and tmux session sharing are not part of the supported CLI surface.
 
 ---
 
@@ -391,7 +360,6 @@ Platform proxy routes `ssh.matrix-os.com:2222` to the correct container based on
 | Interactive CLI/menu bar | Access JWT | 24h (auto-refresh) | Full user access |
 | Headless agent (cloud tmux) | API key JWT | 90 days | Configurable: full or read-only |
 | Shared folder access | Scoped JWT | Matches share expiry | Read or read-write on specific prefix |
-| SSH certificate | Signed cert | 12h | Shell access to specific container |
 
 ### Server-Side Validation
 
@@ -435,7 +403,7 @@ Moltbot (OpenClaw) at `../moltbot` has an existing Swift menu bar app as a refer
 | **Phase 1** | Sync Engine Core: R2 integration, manifest, file-level sync, conflict resolution, gateway sync API, WebSocket events | — |
 | **Phase 2** | CLI + Local Daemon: OAuth login, `matrixos sync`, background daemon, file watching, reconnect reconciliation | Phase 1 |
 | **Phase 3** | Sharing & Collaboration: permissions table, `matrixos share/unshare`, scoped R2 tokens, invite notifications, shell UI | Phase 1, 2 |
-| **Phase 4** | Remote Access: OpenSSH sshd in container, SSH key management, `matrixos ssh`, tmux sharing, proxy routing | Phase 2 (auth) |
+| **Phase 4** | Shell Access: zellij-backed `matrixos shell` sessions over the gateway terminal WebSocket | Phase 2 (auth) |
 | **Phase 5** | Mac Menu Bar App: Swift/SwiftUI tray app, daemon communication, Finder extension | Phase 2 |
 
 Phase 1 is the foundation. Phases 2-5 can be partially parallelized (e.g., Phase 4 is mostly independent once auth exists).

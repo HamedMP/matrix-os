@@ -28,6 +28,7 @@ export interface AgentLaunchInput {
   cwd: string;
   prompt?: string;
   sandbox?: AgentLaunchSandbox;
+  runtimeHome?: string;
 }
 
 export interface AgentLaunchSpec {
@@ -40,7 +41,7 @@ export interface AgentLaunchSpec {
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number },
+  options: { cwd: string; timeout: number; env?: Record<string, string> },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 const execFileAsync = promisify(execFile);
@@ -59,6 +60,7 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
     timeout: options.timeout,
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
   });
   return { stdout, stderr };
 };
@@ -71,6 +73,14 @@ function firstLine(value: string): string | undefined {
 function promptArgs(prompt?: string): string[] {
   if (!prompt || prompt.length === 0) return [];
   return ["--", prompt];
+}
+
+function agentRuntimeEnv(runtimeHome?: string): Record<string, string> {
+  if (!runtimeHome) return {};
+  return {
+    HOME: runtimeHome,
+    MATRIX_HOME: runtimeHome,
+  };
 }
 
 function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {
@@ -97,9 +107,10 @@ function authStatusArgs(agent: SupportedAgent): string[] {
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
   const command = AGENTS[parsed].command;
+  const env = agentRuntimeEnv(input.runtimeHome);
   switch (parsed) {
     case "claude":
-      return { command, args: promptArgs(input.prompt), cwd: input.cwd, env: {} };
+      return { command, args: promptArgs(input.prompt), cwd: input.cwd, env };
     case "codex":
       return {
         command,
@@ -112,21 +123,23 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
           ...promptArgs(input.prompt),
         ],
         cwd: input.cwd,
-        env: {},
+        env,
       };
     case "opencode":
-      return { command, args: ["run", ...promptArgs(input.prompt)], cwd: input.cwd, env: {} };
+      return { command, args: ["run", ...promptArgs(input.prompt)], cwd: input.cwd, env };
     case "pi":
-      return { command, args: promptArgs(input.prompt), cwd: input.cwd, env: {} };
+      return { command, args: promptArgs(input.prompt), cwd: input.cwd, env };
   }
 }
 
 export function createAgentLauncher(options: {
   runCommand?: CommandRunner;
   cwd?: string;
+  runtimeHome?: string;
 } = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
+  const detectEnv = agentRuntimeEnv(options.runtimeHome);
 
   return {
     async detectAgents(): Promise<{ agents: AgentStatus[] }> {
@@ -138,6 +151,7 @@ export function createAgentLauncher(options: {
           const result = await runCommand(config.command, ["--version"], {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
+            env: detectEnv,
           });
           version = firstLine(result.stdout) ?? firstLine(result.stderr);
         } catch (err: unknown) {
@@ -159,6 +173,7 @@ export function createAgentLauncher(options: {
           await runCommand(config.command, authStatusArgs(id), {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
+            env: detectEnv,
           });
           agents.push({
             id,
@@ -188,7 +203,7 @@ export function createAgentLauncher(options: {
     },
 
     buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-      return buildAgentLaunch(input);
+      return buildAgentLaunch({ ...input, runtimeHome: input.runtimeHome ?? options.runtimeHome });
     },
   };
 }

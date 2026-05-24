@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { getContainer, type PlatformDB } from "./db.js";
+import { getActiveUserMachineByHandle, getContainer, type PlatformDB } from "./db.js";
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -49,7 +49,11 @@ interface MultipartPartInput extends MultipartCreateInput {
 
 async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
   const record = await getContainer(db, handle);
-  return record?.clerkUserId ?? null;
+  if (record?.clerkUserId) {
+    return record.clerkUserId;
+  }
+  const machine = await getActiveUserMachineByHandle(db, handle);
+  return machine?.clerkUserId ?? null;
 }
 
 function buildManifestKey(userId: string): string {

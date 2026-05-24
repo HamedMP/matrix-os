@@ -31,10 +31,23 @@ export const LocalFileStateSchema = z.object({
 });
 export type LocalFileState = z.infer<typeof LocalFileStateSchema>;
 
+export const ConflictRecordSchema = z.object({
+  path: z.string().min(1).max(1024),
+  conflictPath: z.string().min(1),
+  localHash: z.string(),
+  remoteHash: z.string(),
+  remotePeerId: z.string(),
+  detectedAt: z.int().nonnegative(),
+  resolved: z.boolean().default(false),
+  resolvedAt: z.int().nonnegative().optional(),
+});
+export type ConflictRecord = z.infer<typeof ConflictRecordSchema>;
+
 export const SyncStateSchema = z.object({
   manifestVersion: z.int().nonnegative(),
   lastSyncAt: z.int().nonnegative(),
   files: z.record(z.string(), LocalFileStateSchema),
+  conflicts: z.record(z.string(), ConflictRecordSchema).optional(),
 });
 export type SyncState = z.infer<typeof SyncStateSchema>;
 
@@ -48,24 +61,18 @@ export const PeerInfoSchema = z.object({
 });
 export type PeerInfo = z.infer<typeof PeerInfoSchema>;
 
-export const ConflictRecordSchema = z.object({
-  path: z.string().min(1).max(1024),
-  conflictPath: z.string().min(1),
-  localHash: z.string(),
-  remoteHash: z.string(),
-  remotePeerId: z.string(),
-  detectedAt: z.int().nonnegative(),
-  resolved: z.boolean().default(false),
-  resolvedAt: z.int().nonnegative().optional(),
-});
-export type ConflictRecord = z.infer<typeof ConflictRecordSchema>;
+export type SyncChangeFile = {
+  path: string;
+  hash: string;
+  size: number;
+  action: "add" | "create" | "update" | "delete";
+};
 
 export type SyncChangeEvent = {
   type: "sync:change";
-  path: string;
-  hash: string;
+  files: SyncChangeFile[];
   peerId: string;
-  action: "create" | "update" | "delete";
+  manifestVersion?: number;
 };
 
 export type SyncConflictEvent = {

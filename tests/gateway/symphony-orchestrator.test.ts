@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -138,6 +138,86 @@ describe("Matrix Symphony orchestrator", () => {
     expect(worktreeManager.createWorktree).toHaveBeenCalledTimes(1);
     expect(worktreeManager.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ createBranch: true }));
     expect(agentSessionManager.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks dispatch before creating a worktree when the selected agent needs auth", async () => {
+    const repository = memoryRepo(structuredClone(baseSnapshot));
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: "wt_abc123def456", path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const agentSessionManager = {
+      startSession: vi.fn(async () => ({ ok: true as const, status: 201 as const, session: { id: "sess_run_abc", runtime: { status: "running" } } })),
+      killSession: vi.fn(),
+    };
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] }],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager,
+      agentStatusProvider: {
+        detectAgents: vi.fn(async () => ({
+          agents: [{ id: "codex", installed: true, authState: "required", errorCode: "agent_auth_required" }],
+        })),
+      },
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(worktreeManager.createWorktree).not.toHaveBeenCalled();
+    expect(agentSessionManager.startSession).not.toHaveBeenCalled();
+    const runId = `run_${createHash("sha256").update("user_123:issue_1").digest("hex").slice(0, 16)}`;
+    await expect(repository.getRun("user_123", runId)).resolves.toMatchObject({
+      status: "blocked",
+      lastErrorCode: "agent_auth_required",
+      lastEvent: "Agent authentication required",
+    });
+  });
+
+  it("reuses one agent readiness check across all tickets in a poll", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.installation = { ...snapshot.installation!, maxConcurrentAgents: 3 };
+    const repository = memoryRepo(snapshot);
+    const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true as const, status: 201 as const, worktree: { id: `wt_${randomUUID()}`, path: "/repo/wt", projectSlug: "matrix-os" } })),
+    };
+    const agentSessionManager = {
+      startSession: vi.fn(async () => ({ ok: true as const, status: 201 as const, session: { id: `sess_${randomUUID()}`, runtime: { status: "running" } } })),
+      killSession: vi.fn(),
+    };
+    const detectAgents = vi.fn(async () => ({
+      agents: [{ id: "codex" as const, installed: true, authState: "ok" as const, errorCode: null }],
+    }));
+    const orchestrator = createMatrixSymphonyOrchestrator({
+      homePath,
+      repository,
+      credentialStore: { readLinearCredential: vi.fn(async () => "lin_api_secret"), hasLinearCredential: vi.fn(), writeLinearCredential: vi.fn(), deleteLinearCredential: vi.fn() },
+      linearSource: {
+        previewTickets: vi.fn(async () => ({
+          truncated: false,
+          tickets: [
+            { externalId: "issue_1", identifier: "MAT-1", title: "One", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] },
+            { externalId: "issue_2", identifier: "MAT-2", title: "Two", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] },
+            { externalId: "issue_3", identifier: "MAT-3", title: "Three", stateName: "Todo", assigneeId: "assignee_1", labels: ["symphony"] },
+          ],
+        })),
+      },
+      worktreeManager,
+      agentSessionManager,
+      agentStatusProvider: { detectAgents },
+    });
+
+    await orchestrator.poll("user_123");
+
+    expect(detectAgents).toHaveBeenCalledTimes(1);
+    expect(worktreeManager.createWorktree).toHaveBeenCalledTimes(3);
+    expect(agentSessionManager.startSession).toHaveBeenCalledTimes(3);
   });
 
   it("scopes generated run IDs by Matrix owner for shared Linear tickets", async () => {
