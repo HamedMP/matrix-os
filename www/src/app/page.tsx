@@ -1,8 +1,7 @@
-import Image from "next/image";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
-import { ArrowRightIcon } from "lucide-react";
 import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
 import {
+  ArrowRightIcon,
   BrainCircuitIcon,
   GlobeIcon,
   ShieldCheckIcon,
@@ -134,7 +133,14 @@ export default function LandingPage() {
           </a>
           <nav className="hidden lg:flex items-center gap-5">
             {navLinks.map((link) => (
-              <a key={link.href} href={link.href} className="nav-link text-[10px] tracking-[0.18em] uppercase" style={{ color: c.forest }}>
+              <a
+                key={link.href}
+                href={link.href}
+                target={link.href.startsWith("http") ? "_blank" : undefined}
+                rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                className="nav-link text-[10px] tracking-[0.18em] uppercase"
+                style={{ color: c.forest }}
+              >
                 {link.label}
               </a>
             ))}
@@ -460,7 +466,7 @@ export default function LandingPage() {
             <div className="flex items-center gap-3">
               <Logo className="h-5 w-auto" style={{ color: c.subtle }} />
               <span className="text-[11px] font-semibold tracking-[0.25em] uppercase"
-                style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>Matrix OS</span>
+                style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>matrix os</span>
             </div>
             <div className="flex flex-wrap items-center gap-x-7 gap-y-4">
               {communityLinks.map((link) => (
@@ -475,7 +481,12 @@ export default function LandingPage() {
                   {link.label}
                 </a>
               ))}
-              <a href="https://app.matrix-os.com" className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70" style={{ color: c.mutedFg }}>Sign In</a>
+              <SignedOut>
+                <a href="https://app.matrix-os.com" className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70" style={{ color: c.mutedFg }}>Sign In</a>
+              </SignedOut>
+              <SignedIn>
+                <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70" style={{ color: c.mutedFg }}>Open App</a>
+              </SignedIn>
             </div>
           </div>
         </div>
