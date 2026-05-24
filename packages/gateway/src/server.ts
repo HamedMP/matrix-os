@@ -84,6 +84,7 @@ import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
 import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
@@ -474,6 +475,7 @@ export async function createGateway(config: GatewayConfig) {
     },
     onChange: (ownerId) => readinessCache.delete(ownerId),
   });
+  const agentActionAuditService = createAgentActionAuditService();
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
@@ -1383,7 +1385,10 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
-  app.route("/api/integrations", createIntegrationCapabilityRoutes({ service: integrationCapabilityService }));
+  app.route("/api/integrations", createIntegrationCapabilityRoutes({
+    service: integrationCapabilityService,
+    audit: agentActionAuditService,
+  }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,

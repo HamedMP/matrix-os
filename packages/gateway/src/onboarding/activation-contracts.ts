@@ -221,6 +221,20 @@ export const AgentActionSummarySchema = z.object({
 });
 export type AgentActionSummary = z.infer<typeof AgentActionSummarySchema>;
 
+export const RecordAgentActionRequestSchema = z.object({
+  agent: AgentIdSchema,
+  capability: ReadinessGateIdSchema,
+  status: AgentActionStatusSchema,
+  summary: z.string().trim().min(1).max(500),
+  target: z.string().trim().min(1).max(240),
+});
+export type RecordAgentActionRequest = z.infer<typeof RecordAgentActionRequestSchema>;
+
+export const AgentActionsResponseSchema = z.object({
+  actions: z.array(AgentActionSummarySchema).max(500),
+});
+export type AgentActionsResponse = z.infer<typeof AgentActionsResponseSchema>;
+
 export const ReadinessOverallStatusSchema = z.enum([
   "ready",
   "degraded",

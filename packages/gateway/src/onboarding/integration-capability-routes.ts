@@ -4,8 +4,10 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   ApproveCapabilityRequestSchema,
   CapabilityParamsSchema,
+  RecordAgentActionRequestSchema,
 } from "./activation-contracts.js";
 import { mapActivationError } from "./activation-errors.js";
+import type { AgentActionAuditService } from "./agent-action-audit.js";
 import type { IntegrationCapabilityService } from "./integration-capabilities.js";
 import {
   requireRequestPrincipal,
@@ -16,6 +18,7 @@ const INTEGRATION_CAPABILITY_BODY_LIMIT = 2048;
 
 export interface IntegrationCapabilityRouteDeps {
   service: IntegrationCapabilityService;
+  audit?: AgentActionAuditService;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -33,6 +36,34 @@ export function createIntegrationCapabilityRoutes(deps: IntegrationCapabilityRou
     try {
       const principal = principalFor(c);
       return c.json(await deps.service.listCapabilities(principal.userId));
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  app.get("/actions", async (c) => {
+    try {
+      const principal = principalFor(c);
+      return c.json({ actions: await deps.audit?.listActions(principal.userId) ?? [] });
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  app.post("/actions", limited, async (c) => {
+    try {
+      const principal = principalFor(c);
+      if (!deps.audit) {
+        return c.json({ error: "audit_unavailable", message: "Request failed", retryable: true }, 503);
+      }
+      const body = RecordAgentActionRequestSchema.parse(await c.req.json());
+      if (!capabilityApproval.approvedAgents.includes(body.agent)) {
+        throw new ActivationRouteError("capability_not_approved", "Approve the capability before recording agent actions", {
+          status: 403,
+        });
+      }
+      const action = await deps.audit.recordAction(principal.userId, body);
+      return c.json({ action }, 201);
     } catch (err) {
       return jsonError(c, err);
     }

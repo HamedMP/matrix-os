@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createAgentActionAuditService } from "../../packages/gateway/src/onboarding/agent-action-audit.js";
 import { createIntegrationCapabilityRoutes } from "../../packages/gateway/src/onboarding/integration-capability-routes.js";
 import {
   capabilityIdsForConnectedServices,
@@ -117,6 +118,44 @@ describe("integration capability routes", () => {
       service.setApproval(testPrincipal.userId, "calendar.create_event", "hermes", true),
     ).rejects.toThrow();
     await expect(readFile(storagePath, "utf8")).resolves.toBe("{not-json");
+  });
+
+  it("records and lists scrubbed agent action audit events", async () => {
+    const service = createIntegrationCapabilityService({
+      connectedCapabilityIds: ["calendar.create_event"],
+    });
+    await service.setApproval(testPrincipal.userId, "calendar.create_event", "hermes", true);
+    const audit = createAgentActionAuditService({
+      now: () => new Date("2026-05-24T00:00:00.000Z"),
+    });
+    const app = createIntegrationCapabilityRoutes({ service, audit, getPrincipal: () => testPrincipal });
+
+    const recorded = await app.request(post("/actions", {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "Created launch event but raw provider token sk-live-secret appeared in provider logs",
+      target: "Primary calendar",
+    }));
+
+    expect(recorded.status).toBe(201);
+    await expect(recorded.json()).resolves.toMatchObject({
+      action: {
+        agent: "hermes",
+        capability: "calendar.create_event",
+        status: "completed",
+        summary: "Agent action completed",
+        target: "Primary calendar",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        completedAt: "2026-05-24T00:00:00.000Z",
+      },
+    });
+
+    const listed = await app.request("/actions");
+    expect(listed.status).toBe(200);
+    const body = await listed.json();
+    expect(body.actions).toHaveLength(1);
+    expect(JSON.stringify(body)).not.toMatch(/sk-live|secret|token|\/home/i);
   });
 
   it("rejects audit actions when a previously approved capability disconnects", async () => {
