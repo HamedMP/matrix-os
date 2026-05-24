@@ -674,6 +674,7 @@ async function resolveAppDomainIdentity(opts: {
   clerkAuth?: ClerkAuth;
   db: PlatformDB;
   platformJwtSecret: string;
+  runtimeSlot: string;
   wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
   const codeSessionToken = readCookie(opts.cookieHeader, CODE_SESSION_COOKIE);
@@ -729,7 +730,7 @@ async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
     };
   }
-  const machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
+  const machine = await getActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot);
   if (!machine) {
     return null;
   }
@@ -1660,6 +1661,7 @@ export function createApp(deps: {
 
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
+    const requestRuntimeSlot = readRuntimeSlot(cookieHeader, c.req.url);
 
     const path = c.req.path;
     const isGatewayPath = isAppDomain && (
@@ -1678,6 +1680,7 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
+      runtimeSlot: requestRuntimeSlot,
     });
     if (!identity && isAppDomain) {
       const mobileSessionHandle =
@@ -1751,7 +1754,7 @@ export function createApp(deps: {
     const runtimeSlot =
       identity.source === 'mobile-session' || identity.source === 'static-route'
         ? 'primary'
-        : readRuntimeSlot(cookieHeader, c.req.url);
+        : requestRuntimeSlot;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : undefined;
@@ -2883,6 +2886,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const isCodeDomain = isCodeDomainHost(host);
 
     const path = req.url ?? '/';
+    const requestRuntimeSlot = readRuntimeSlot(req.headers.cookie, path);
     const wsToken = getWebSocketUpgradeToken(path);
     let identity: AppDomainIdentity | null;
     try {
@@ -2892,6 +2896,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         clerkAuth,
         db,
         platformJwtSecret: PLATFORM_JWT_SECRET,
+        runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
     } catch (err: unknown) {
@@ -2910,7 +2915,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const runtimeSlot =
       identity.source === 'mobile-session' || identity.source === 'static-route'
         ? 'primary'
-        : readRuntimeSlot(req.headers.cookie, path);
+        : requestRuntimeSlot;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : undefined;
