@@ -113,6 +113,23 @@ describe("company brain readiness", () => {
     ]));
   });
 
+  it("does not mark longer words containing stale as stale context", async () => {
+    const service = createCompanyBrainReadinessService();
+    const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(post("/context", {
+      type: "product_decision",
+      title: "Roadmap stalemate",
+      summary: "The team is resolving a stalemate over packaging.",
+      source: "notes/roadmap",
+      visibility: "owner_only",
+    }));
+    const body = await (await app.request("/readiness")).json();
+
+    expect(body.status).toBe("ready");
+    expect(body.reviewFlags).toEqual([]);
+  });
+
   it("does not mark non-contradictory context as a contradiction", async () => {
     const service = createCompanyBrainReadinessService();
     const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });

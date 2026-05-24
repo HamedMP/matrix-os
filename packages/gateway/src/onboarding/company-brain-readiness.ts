@@ -54,7 +54,7 @@ function safeDisplay(value: string, fallback: string, max = 220): string {
 function flagsFor(item: CompanyContextItem): CompanyBrainReadiness["reviewFlags"] {
   const text = `${item.title} ${item.summary}`.toLowerCase();
   const flags: CompanyBrainReadiness["reviewFlags"] = [];
-  if (text.includes("stale")) {
+  if (/\bstale\b/.test(text)) {
     flags.push({ itemId: item.id, kind: "stale", message: "Check whether this context is still current." });
   }
   if (/(^|[^a-z0-9-])contradict(?:ion|ions|ory|s|ed)?\b/.test(text)) {
