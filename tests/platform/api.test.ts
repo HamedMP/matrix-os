@@ -26,6 +26,32 @@ function createMockDocker() {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function createSystemInfoResponse() {
+  return new Response(
+    JSON.stringify({
+      resources: {
+        cpuCount: 2,
+        loadAverage: [0.25],
+        memoryTotalBytes: 4 * 1024 * 1024 * 1024,
+        memoryFreeBytes: 1024 * 1024 * 1024,
+        diskTotalBytes: 40 * 1024 * 1024 * 1024,
+        diskFreeBytes: 30 * 1024 * 1024 * 1024,
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
+}
+
 describe('platform/api', () => {
   let db: PlatformDB;
   let app: ReturnType<typeof createApp>;
@@ -121,19 +147,7 @@ describe('platform/api', () => {
     });
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          resources: {
-            cpuCount: 2,
-            loadAverage: [0.25],
-            memoryTotalBytes: 4 * 1024 * 1024 * 1024,
-            memoryFreeBytes: 1024 * 1024 * 1024,
-            diskTotalBytes: 40 * 1024 * 1024 * 1024,
-            diskFreeBytes: 30 * 1024 * 1024 * 1024,
-          },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
+      createSystemInfoResponse(),
     );
     globalThis.fetch = fetchMock;
     try {
@@ -144,6 +158,70 @@ describe('platform/api', () => {
       expect(second.status).toBe(200);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(await second.text()).toContain('matrix_vps_healthy{handle="alice"} 1');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('GET /metrics keeps newer pending VPS runtime probes when an older probe settles', async () => {
+    metricsRegistry.resetMetrics();
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'clerk_1',
+      handle: 'alice',
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      imageVersion: 'v2026.05.24-1',
+      provisionedAt: '2026-05-24T10:00:00.000Z',
+      lastSeenAt: '2026-05-24T10:00:00.000Z',
+    });
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const customerVpsService = {};
+    const metricsApp = createApp({
+      db,
+      orchestrator,
+      platformSecret,
+      customerVpsService: customerVpsService as any,
+    });
+    const firstProbe = createDeferred<Response>();
+    const secondKeyAliceProbe = createDeferred<Response>();
+    const secondKeyBobProbe = createDeferred<Response>();
+    const deferredProbes = [firstProbe, secondKeyAliceProbe, secondKeyBobProbe];
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(() => {
+      const deferred = deferredProbes[fetchMock.mock.calls.length - 1];
+      return deferred?.promise ?? Promise.reject(new Error('unexpected duplicate runtime probe'));
+    });
+    globalThis.fetch = fetchMock;
+    try {
+      const firstRequest = metricsApp.request('/metrics');
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      await insertUserMachine(db, {
+        machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+        clerkUserId: 'clerk_2',
+        handle: 'bob',
+        publicIPv4: '203.0.113.11',
+        status: 'running',
+        imageVersion: 'v2026.05.24-1',
+        provisionedAt: '2026-05-24T10:01:00.000Z',
+        lastSeenAt: '2026-05-24T10:01:00.000Z',
+      });
+      const secondRequest = metricsApp.request('/metrics');
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+      firstProbe.resolve(createSystemInfoResponse());
+      expect((await firstRequest).status).toBe(200);
+
+      const thirdRequest = metricsApp.request('/metrics');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+
+      secondKeyAliceProbe.resolve(createSystemInfoResponse());
+      secondKeyBobProbe.resolve(createSystemInfoResponse());
+      expect((await secondRequest).status).toBe(200);
+      expect((await thirdRequest).status).toBe(200);
     } finally {
       globalThis.fetch = originalFetch;
     }

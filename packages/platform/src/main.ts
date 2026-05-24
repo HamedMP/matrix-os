@@ -1097,7 +1097,9 @@ export function createApp(deps: {
       };
       return cachedVpsRuntimeMetrics;
     }).finally(() => {
-      pendingVpsRuntimeMetrics = null;
+      if (pendingVpsRuntimeMetrics?.machineKey === machineKey) {
+        pendingVpsRuntimeMetrics = null;
+      }
     });
     pendingVpsRuntimeMetrics = { machineKey, promise };
     return (await promise).values;
