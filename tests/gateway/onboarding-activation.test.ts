@@ -101,6 +101,22 @@ describe("activation readiness contracts", () => {
     });
   });
 
+  it("keeps assistant integration gate unknown when no capabilities are connected yet", async () => {
+    const integrations = {
+      listCapabilities: async () => ({ capabilities: [] }),
+      getCapabilityApproval: async () => null,
+      setApproval: async () => ({ capabilityId: "calendar.create_event" as const, agent: "hermes" as const, status: "unavailable" as const }),
+    };
+    const { service } = createTestReadinessService(undefined, { integrationCapabilityService: integrations });
+
+    await service.selectGoals(testPrincipal.userId, ["assistant"]);
+    const readiness = await service.getReadiness(testPrincipal.userId);
+
+    expect(readiness.gates.find((gate) => gate.id === "integrations.capabilities")).toMatchObject({
+      status: "unknown",
+    });
+  });
+
   it("sanitizes unsafe error strings before sending them to clients", () => {
     expect(safeClientMessage("postgres constraint failed at /home/matrix/secret")).toBe("Request failed");
     expect(safeClientMessage("Connect GitHub to continue")).toBe("Connect GitHub to continue");
