@@ -337,6 +337,10 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         send({ type: "goal_selected", goalId: msg.goalId, steps: stepsForGoals([msg.goalId]) });
         break;
 
+      // Deferred scope: durable step completion, retries, and capability
+      // approvals are handled by REST routes in the paid beta flow. The
+      // websocket only carries the legacy voice interview until those
+      // mutations are intentionally promoted into realtime commands.
       case "complete_step":
       case "skip_step":
       case "retry_gate":

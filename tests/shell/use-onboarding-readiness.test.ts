@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coerceReadinessGates } from "@/hooks/useOnboarding";
+import { coerceOnboardingSteps, coerceReadinessGates, coerceReadinessResponse } from "@/hooks/useOnboarding";
 
 describe("coerceReadinessGates", () => {
   it("filters malformed readiness gate records before UI rendering", () => {
@@ -23,6 +23,37 @@ describe("coerceReadinessGates", () => {
         id: "workspace.provisioned",
         message: "Workspace is ready",
       }),
+    ]);
+  });
+});
+
+describe("coerceReadinessResponse", () => {
+  it("normalizes malformed readiness responses before storing them", () => {
+    const readiness = coerceReadinessResponse({
+      overallStatus: "nonsense",
+      goals: undefined,
+      gates: "bad",
+      systemAgent: "claude",
+      activeAgents: undefined,
+    });
+
+    expect(readiness).toMatchObject({
+      overallStatus: "degraded",
+      goals: [],
+      gates: [],
+      systemAgent: "hermes",
+      activeAgents: ["hermes"],
+    });
+  });
+});
+
+describe("coerceOnboardingSteps", () => {
+  it("drops malformed setup steps before rendering", () => {
+    expect(coerceOnboardingSteps([
+      { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding"] },
+      { id: "bad", required: "yes", title: "Bad", unlocks: [] },
+    ])).toEqual([
+      expect.objectContaining({ id: "github.connected" }),
     ]);
   });
 });

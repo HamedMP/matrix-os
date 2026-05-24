@@ -52,6 +52,27 @@ export interface OnboardingReadiness {
 const READINESS_STATUSES = new Set<ReadinessGateSummary["status"]>(["unknown", "checking", "pass", "fail", "blocked", "skipped"]);
 const READINESS_CRITICALITIES = new Set<ReadinessGateSummary["criticality"]>(["release_critical", "goal_required", "recommended", "optional"]);
 const READINESS_OWNERS = new Set<ReadinessGateSummary["owner"]>(["user", "operator", "matrix"]);
+const READINESS_OVERALL_STATUSES = new Set<OnboardingReadiness["overallStatus"]>(["ready", "degraded", "blocked", "checking"]);
+const ONBOARDING_GOAL_IDS = new Set<OnboardingGoalId>(["coding", "app_building", "company_brain", "assistant"]);
+const AGENT_IDS = new Set<OnboardingReadiness["activeAgents"][number]>(["claude", "codex", "hermes"]);
+
+function isOnboardingGoalId(value: unknown): value is OnboardingGoalId {
+  return typeof value === "string" && ONBOARDING_GOAL_IDS.has(value as OnboardingGoalId);
+}
+
+function coerceGoalIds(value: unknown, fallback: OnboardingGoalId[] = []): OnboardingGoalId[] {
+  if (!Array.isArray(value)) return fallback;
+  const next = Array.from(new Set(value.filter(isOnboardingGoalId)));
+  return next.length > 0 ? next : fallback;
+}
+
+function coerceActiveAgents(value: unknown): OnboardingReadiness["activeAgents"] {
+  if (!Array.isArray(value)) return ["hermes"];
+  const agents = Array.from(new Set(value.filter((agent): agent is OnboardingReadiness["activeAgents"][number] =>
+    typeof agent === "string" && AGENT_IDS.has(agent as OnboardingReadiness["activeAgents"][number])
+  )));
+  return agents.length > 0 ? agents : ["hermes"];
+}
 
 export function coerceReadinessGates(value: unknown): ReadinessGateSummary[] {
   if (!Array.isArray(value)) return [];
@@ -70,6 +91,45 @@ export function coerceReadinessGates(value: unknown): ReadinessGateSummary[] {
       typeof candidate.owner === "string" &&
       READINESS_OWNERS.has(candidate.owner as ReadinessGateSummary["owner"]);
   });
+}
+
+export function coerceReadinessGoals(value: unknown): OnboardingGoalSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((goal): goal is OnboardingGoalSummary => {
+    if (!goal || typeof goal !== "object") return false;
+    const candidate = goal as Partial<OnboardingGoalSummary>;
+    return isOnboardingGoalId(candidate.id) &&
+      typeof candidate.selected === "boolean" &&
+      typeof candidate.label === "string" &&
+      typeof candidate.description === "string";
+  });
+}
+
+export function coerceOnboardingSteps(value: unknown): OnboardingStepSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((step): step is OnboardingStepSummary => {
+    if (!step || typeof step !== "object") return false;
+    const candidate = step as Partial<OnboardingStepSummary>;
+    return typeof candidate.id === "string" &&
+      typeof candidate.required === "boolean" &&
+      typeof candidate.title === "string" &&
+      Array.isArray(candidate.unlocks) &&
+      candidate.unlocks.every((workflow) => typeof workflow === "string");
+  });
+}
+
+export function coerceReadinessResponse(value: unknown): OnboardingReadiness {
+  const candidate = value && typeof value === "object" ? value as Partial<OnboardingReadiness> : {};
+  const goals = coerceReadinessGoals(candidate.goals);
+  return {
+    overallStatus: typeof candidate.overallStatus === "string" && READINESS_OVERALL_STATUSES.has(candidate.overallStatus as OnboardingReadiness["overallStatus"])
+      ? candidate.overallStatus as OnboardingReadiness["overallStatus"]
+      : "degraded",
+    goals,
+    gates: coerceReadinessGates(candidate.gates),
+    systemAgent: "hermes",
+    activeAgents: coerceActiveAgents(candidate.activeAgents),
+  };
 }
 
 interface Transcript {
@@ -258,7 +318,7 @@ export function useOnboarding(): OnboardingHook {
     })
       .then(async (res) => {
         if (!res.ok) throw new Error("readiness request failed");
-        return await res.json() as OnboardingReadiness;
+        return coerceReadinessResponse(await res.json());
       })
       .then((next) => {
         if (!mountedRef.current || requestSeq !== readinessRefreshSeqRef.current) return;
@@ -423,13 +483,13 @@ export function useOnboarding(): OnboardingHook {
           const goalId = msg.goalId as OnboardingGoalId;
           return prev.includes(goalId) ? prev : [...prev, goalId];
         });
-        setOnboardingSteps(msg.steps as OnboardingStepSummary[]);
+        setOnboardingSteps(coerceOnboardingSteps(msg.steps));
         break;
       case "agent_status":
         setReadiness((prev) => prev ? {
           ...prev,
           systemAgent: "hermes",
-          activeAgents: msg.activeAgents as OnboardingReadiness["activeAgents"],
+          activeAgents: coerceActiveAgents(msg.activeAgents),
         } : prev);
         break;
       case "mode_change":
@@ -548,12 +608,12 @@ export function useOnboarding(): OnboardingHook {
     })
       .then(async (res) => {
         if (!res.ok) throw new Error("goal selection failed");
-        return await res.json() as { goalIds: OnboardingGoalId[]; steps: OnboardingStepSummary[] };
+        return await res.json() as { goalIds?: unknown; steps?: unknown };
       })
       .then((body) => {
         if (!mountedRef.current || requestSeq !== goalSelectionSeqRef.current) return;
-        setSelectedGoalIds(body.goalIds);
-        setOnboardingSteps(body.steps);
+        setSelectedGoalIds(coerceGoalIds(body.goalIds, normalizedGoalIds));
+        setOnboardingSteps(coerceOnboardingSteps(body.steps));
         refreshReadiness();
       })
       .catch((err: unknown) => {
