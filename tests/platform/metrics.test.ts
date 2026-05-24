@@ -83,6 +83,7 @@ describe('platform/metrics', () => {
     ['/containers/alice/stop', '/containers/:handle/stop'],
     ['/containers/alice', '/containers/:handle'],
     ['/containers/check-handle/alice', '/containers/check-handle/:handle'],
+    ['/system-bundles/v2026.05.24-1/custom-bundle.tar.gz', '/system-bundles/:version/:file'],
     ['/social/profiles/alice', '/social/profiles/:handle'],
     ['/social/profiles/alice/ai', '/social/profiles/:handle/ai'],
     ['/social/send/alice', '/social/send/:handle'],

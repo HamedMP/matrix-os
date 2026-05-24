@@ -73,7 +73,7 @@ export function recordPlatformHttpRequest(input: {
 export function normalizePlatformMetricPath(path: string): string {
   if (path.startsWith('/system-bundles/releases/')) return '/system-bundles/releases/:version';
   if (path.startsWith('/system-bundles/channels/')) return '/system-bundles/channels/:channel';
-  if (/^\/system-bundles\/[^/]+\/matrix-host-bundle\.tar\.gz(?:\.sha256)?$/.test(path)) {
+  if (/^\/system-bundles\/[^/]+\/[^/]+$/.test(path)) {
     return '/system-bundles/:version/:file';
   }
   if (/^\/vps\/[0-9a-f-]+\/status$/.test(path)) return '/vps/:machineId/status';
