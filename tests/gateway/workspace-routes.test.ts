@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -348,6 +348,53 @@ describe("workspace API routes", () => {
       available: true,
       enforced: true,
     });
+  });
+
+  it("checks default agent auth with the Matrix home", async () => {
+    const binPath = join(homePath, "bin");
+    await mkdir(binPath, { recursive: true });
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf '%s 1.0.0\\n' "$(basename "$0")"
+  exit 0
+fi
+if [ "\${1:-}" = "login" ] && [ "\${2:-}" = "status" ]; then
+  [ "\${HOME:-}" = "\${EXPECTED_MATRIX_HOME:-}" ]
+  exit $?
+fi
+if [ "\${1:-}" = "auth" ] && [ "\${2:-}" = "status" ]; then
+  exit 0
+fi
+exit 1
+`;
+    for (const command of ["claude", "codex", "opencode", "pi"]) {
+      const commandPath = join(binPath, command);
+      await writeFile(commandPath, script);
+      await chmod(commandPath, 0o755);
+    }
+    const originalPath = process.env.PATH;
+    const originalExpectedHome = process.env.EXPECTED_MATRIX_HOME;
+    process.env.PATH = `${binPath}:${originalPath ?? ""}`;
+    process.env.EXPECTED_MATRIX_HOME = homePath;
+    try {
+      const app = createWorkspaceRoutes({ homePath });
+
+      const res = await app.request("/api/agents");
+      const body = await res.json() as { agents: Array<{ id: string; authState: string; errorCode: string | null }> };
+
+      expect(body.agents.find((agent) => agent.id === "codex")).toMatchObject({
+        authState: "ok",
+        errorCode: null,
+      });
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalExpectedHome === undefined) {
+        delete process.env.EXPECTED_MATRIX_HOME;
+      } else {
+        process.env.EXPECTED_MATRIX_HOME = originalExpectedHome;
+      }
+    }
   });
 
   it("routes review start, status, next, approve, and stop through review records", async () => {
