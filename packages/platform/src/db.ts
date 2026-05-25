@@ -28,6 +28,7 @@ interface UserMachinesTable {
   public_ipv6: string | null;
   status: string;
   image_version: string | null;
+  server_type: string | null;
   registration_token_hash: string | null;
   registration_token_expires_at: string | null;
   provisioned_at: string;
@@ -228,6 +229,7 @@ export interface UserMachineRecord {
   publicIPv6: string | null;
   status: string;
   imageVersion: string | null;
+  serverType: string | null;
   registrationTokenHash: string | null;
   registrationTokenExpiresAt: string | null;
   provisionedAt: string;
@@ -305,6 +307,7 @@ export interface NewUserMachine {
   publicIPv6?: string | null;
   status: string;
   imageVersion?: string | null;
+  serverType?: string | null;
   registrationTokenHash?: string | null;
   registrationTokenExpiresAt?: string | null;
   provisionedAt: string;
@@ -374,6 +377,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       public_ipv6 TEXT,
       status TEXT NOT NULL DEFAULT 'provisioning',
       image_version TEXT,
+      server_type TEXT,
       registration_token_hash TEXT,
       registration_token_expires_at TEXT,
       provisioned_at TEXT NOT NULL,
@@ -384,6 +388,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
@@ -694,6 +699,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     publicIPv6: row.public_ipv6,
     status: row.status,
     imageVersion: row.image_version,
+    serverType: row.server_type,
     registrationTokenHash: row.registration_token_hash,
     registrationTokenExpiresAt: row.registration_token_expires_at,
     provisionedAt: row.provisioned_at,
@@ -715,6 +721,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     public_ipv6: record.publicIPv6 ?? null,
     status: record.status,
     image_version: record.imageVersion ?? null,
+    server_type: record.serverType ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
     registration_token_expires_at: record.registrationTokenExpiresAt ?? null,
     provisioned_at: record.provisionedAt,
@@ -736,6 +743,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
   if (values.status !== undefined) update.status = values.status;
   if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
+  if (values.serverType !== undefined) update.server_type = values.serverType;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
   if (values.registrationTokenExpiresAt !== undefined) update.registration_token_expires_at = values.registrationTokenExpiresAt;
   if (values.provisionedAt !== undefined) update.provisioned_at = values.provisionedAt;
@@ -991,6 +999,22 @@ export async function listUserMachines(
     query = query.where('deleted_at', 'is', null);
   }
   const rows = await query.execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function listActiveUserMachinesByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+    .orderBy('provisioned_at', 'desc')
+    .execute();
   return rows.map(mapUserMachine);
 }
 

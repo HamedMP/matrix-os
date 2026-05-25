@@ -625,6 +625,188 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
   });
 
+  it("preserves a selected runtime slot through the Clerk sign-in handoff", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?runtime=staging", {
+      headers: {
+        host: "app.matrix-os.com",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
+    const html = await res.text();
+    expect(html).toContain('afterSignInUrl: redirectTarget');
+    expect(html).toContain('var redirectTarget = "/?runtime=staging";');
+  });
+
+  it("shows a runtime picker when a user has multiple active VPS machines and no slot selected", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff128",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123472,
+      publicIPv4: "203.0.113.25",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff129",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123473,
+      publicIPv4: "203.0.113.26",
+      imageVersion: "v082-login-shell-8935a7cd",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const html = await res.text();
+    expect(html).toContain("Choose a Matrix OS machine");
+    expect(html).toContain("href=\"/?runtime=primary\"");
+    expect(html).toContain("href=\"/?runtime=staging\"");
+    expect(html).toContain("v082-login-shell-8935a7cd");
+    expect(html).toContain("2 vCPU");
+    expect(html).toContain("4 GB RAM");
+  });
+
+  it("does not show the runtime picker for unauthenticated root visits", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff136",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123480,
+      publicIPv4: "203.0.113.31",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff137",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123481,
+      publicIPv4: "203.0.113.32",
+      imageVersion: "v082-login-shell-8935a7cd",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("afterSignInUrl: redirectTarget");
+    expect(html).not.toContain("Choose a Matrix OS machine");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the runtime picker route even when a runtime cookie already exists", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff130",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123474,
+      publicIPv4: "203.0.113.27",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff131",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123475,
+      publicIPv4: "203.0.113.28",
+      imageVersion: "v082-login-shell-8935a7cd",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/runtime", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "matrix_runtime_slot=primary",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const html = await res.text();
+    expect(html).toContain("Choose a Matrix OS machine");
+    expect(html).toContain("href=\"/?runtime=staging\"");
+  });
+
   it("persists the selected runtime slot while a staging VPS is booting", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
