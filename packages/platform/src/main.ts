@@ -85,6 +85,7 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
+const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
 const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
@@ -825,7 +826,9 @@ async function resolveAppDomainIdentity(opts: {
   };
 }
 
-async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string): Promise<{
+async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string, options: {
+  timeoutMs?: number;
+} = {}): Promise<{
   reachable: boolean;
   statusCode?: number;
   release?: unknown;
@@ -851,7 +854,7 @@ async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecre
       method: 'GET',
       headers,
       redirect: 'manual',
-      signal: AbortSignal.timeout(VPS_RELEASE_PROBE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(options.timeoutMs ?? VPS_RELEASE_PROBE_TIMEOUT_MS),
       dispatcher: customerVpsProxyDispatcher,
     } as RequestInit & { dispatcher: Agent });
     if (!response.ok) {
@@ -1224,7 +1227,9 @@ async function buildRuntimePickerMachines(
     if (machine.status !== 'running' || !platformSecret) {
       return { ...machine, displayVersion: machine.imageVersion ?? 'Version pending' };
     }
-    const probe = await probeCustomerVpsRelease(machine, platformSecret);
+    const probe = await probeCustomerVpsRelease(machine, platformSecret, {
+      timeoutMs: RUNTIME_PICKER_PROBE_TIMEOUT_MS,
+    });
     return {
       ...machine,
       displayVersion: releaseVersionFromProbe(probe) ?? machine.imageVersion ?? 'Version pending',

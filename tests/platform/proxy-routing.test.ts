@@ -694,6 +694,7 @@ describe("platform proxy routing", () => {
         : "matrix-os-host-2026.04.26-1";
       return Response.json({ release: { version }, startedAt: "2026-05-25T11:25:00.000Z" });
     });
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -716,6 +717,7 @@ describe("platform proxy routing", () => {
       "https://203.0.113.25:443/api/system/info",
       "https://203.0.113.26:443/api/system/info",
     ]);
+    expect(timeoutSpy).toHaveBeenCalledWith(2500);
     const html = await res.text();
     expect(html).toContain("Choose a Matrix OS machine");
     expect(html).toContain("href=\"/?runtime=primary\"");
