@@ -10,7 +10,6 @@ import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
-import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { WorkspaceApp } from "./workspace/WorkspaceApp";
@@ -44,7 +43,6 @@ import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon,
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
-import { OnboardingScreen } from "./OnboardingScreen";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
@@ -489,29 +487,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   // busy because the popup auto-opens then resists close.
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
-  // Default to true so the dock / chat / canvas don't flash onto screen
-  // during the ~200ms API-key status fetch. If the user HAS a key, the
-  // check resolves quickly and we drop into the normal desktop. If they
-  // don't, they stay on the onboarding screen -- no transition needed.
-  const [showSetup, setShowSetup] = useState(true);
-  const setupChecked = useRef(false);
-
-  useEffect(() => {
-    if (setupChecked.current) return;
-    setupChecked.current = true;
-    fetch(`${GATEWAY_URL}/api/settings/onboarding-status`, {
-      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => r.json())
-      .then((data: { complete: boolean }) => {
-        if (data.complete) setShowSetup(false);
-      })
-      .catch((err: unknown) => {
-        console.warn("[desktop] failed to check setup status:", err instanceof Error ? err.message : String(err));
-        // Fetch failure: stay on onboarding (safer than exposing a half-
-        // configured desktop).
-      });
-  }, []);
+  const showSetup = false;
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
@@ -1271,25 +1247,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             <CanvasToolbar />
           ) : null}
         </MenuBar>
-      )}
-      {showSetup && (
-        <OnboardingScreen
-          onComplete={() => {
-            // Whether the user finished onboarding or skipped it, land them
-            // on the moraine-lake wallpaper. Best-effort persist to the
-            // gateway; the local default already matches so the visual is
-            // correct even if the gateway is unreachable.
-            saveDesktopConfig({
-              background: { type: "wallpaper", name: "moraine-lake.jpg" },
-              dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-              pinnedApps: [...DEFAULT_PINNED_APPS],
-            }).catch((err: unknown) => {
-              console.warn("[desktop] failed to persist onboarding completion desktop config:", err instanceof Error ? err.message : String(err));
-            });
-            setShowSetup(false);
-          }}
-          onOpenTerminal={(path = "__terminal__") => openWindow("Terminal", path)}
-        />
       )}
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
         {/* Desktop dock -- hidden in ambient/conversational modes and during setup */}
