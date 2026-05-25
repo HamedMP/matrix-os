@@ -5,6 +5,7 @@ import {
   claimUserMachineRecovery,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
+  getHostBundleReleaseByChannel,
   getUserMachine,
   insertUserMachine,
   insertProviderDeletion,
@@ -127,6 +128,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
+  '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
@@ -195,13 +197,15 @@ function buildHostConfig(
   machineId: string,
   registrationToken: string,
   postgresPassword: string,
+  bundleRef: HostBundleRef,
 ): CustomerHostConfig {
   return {
     machineId,
     clerkUserId: input.clerkUserId,
     handle: input.handle,
-    imageVersion: config.imageVersion,
-    hostBundleUrl: config.hostBundleUrl,
+    imageVersion: bundleRef.imageVersion,
+    updateChannel: config.imageVersion,
+    hostBundleUrl: bundleRef.hostBundleUrl,
     platformRegisterUrl: config.platformRegisterUrl,
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
@@ -213,6 +217,46 @@ function buildHostConfig(
     r2Bucket: config.r2Bucket,
     r2Prefix: `${config.r2PrefixRoot}/${input.clerkUserId}/` as `matrixos-sync/${string}/`,
     postgresPassword,
+  };
+}
+
+const HOST_BUNDLE_CHANNELS = new Set(['stable', 'canary', 'beta', 'dev']);
+
+interface HostBundleRef {
+  imageVersion: string;
+  hostBundleUrl: string;
+}
+
+function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
+  const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
+  const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
+  if (config.hostBundleUrl.includes(currentSegment)) {
+    return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
+  }
+  // Defensive fallback for future URL-template changes. The current generated
+  // URL always contains the encoded image-version segment above.
+  const url = new URL(config.hostBundleUrl);
+  url.pathname = `/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`;
+  return url.toString();
+}
+
+async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): Promise<HostBundleRef> {
+  if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
+    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
+  }
+
+  const release = await getHostBundleReleaseByChannel(db, config.imageVersion);
+  if (!release) {
+    logCustomerVpsError(
+      `host bundle channel missing release channel=${config.imageVersion}`,
+      new Error('falling back to configured host bundle URL without immutable version pin'),
+    );
+    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
+  }
+
+  return {
+    imageVersion: release.version,
+    hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
   };
 }
 
@@ -337,12 +381,20 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
+
+      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      if (existingBeforeBundleResolve) {
+        return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+      }
+
+      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
         input,
         machineId,
         registration.token,
         postgresPassword,
+        bundleRef,
       );
 
       const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
@@ -355,7 +407,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           clerkUserId: input.clerkUserId,
           handle: input.handle,
           status: 'provisioning',
-          imageVersion: deps.config.imageVersion,
+          imageVersion: bundleRef.imageVersion,
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
@@ -497,6 +549,21 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
+      const currentTime = now();
+      const machineId = machineIdFactory();
+      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
+      const postgresPassword = postgresPasswordFactory();
+      // Resolve before claiming recovery so bundle lookup failures do not clear
+      // the old provider server id and leave a billable VPS untracked.
+      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+      const hostConfig = buildHostConfig(
+        deps.config,
+        { clerkUserId: active.clerkUserId, handle: active.handle },
+        machineId,
+        registration.token,
+        postgresPassword,
+        bundleRef,
+      );
       const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId);
       if (!existing) {
         const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
@@ -507,17 +574,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       const oldMachineId = existing.machineId;
       const oldServerId = active.hetznerServerId;
-      const currentTime = now();
-      const machineId = machineIdFactory();
-      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
-      const postgresPassword = postgresPasswordFactory();
-      const hostConfig = buildHostConfig(
-        deps.config,
-        { clerkUserId: existing.clerkUserId, handle: existing.handle },
-        machineId,
-        registration.token,
-        postgresPassword,
-      );
 
       let newServerId: number | null = null;
       try {
@@ -542,7 +598,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             hetznerServerId: server.id,
             publicIPv4: server.publicIPv4,
             publicIPv6: server.publicIPv6,
-            imageVersion: deps.config.imageVersion,
+            imageVersion: bundleRef.imageVersion,
             registrationTokenHash: registration.hash,
             registrationTokenExpiresAt: registration.expiresAt,
             provisionedAt: currentTime.toISOString(),

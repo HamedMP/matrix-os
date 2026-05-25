@@ -6,6 +6,7 @@ export interface CustomerVpsConfig {
   sshKeyName?: string;
   imageVersion: string;
   hostBundleUrl: string;
+  hostBundleUrlOverride?: boolean;
   platformRegisterUrl: string;
   platformSecret: string;
   r2AccessKeyId: string;
@@ -40,6 +41,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     hostBundleUrl:
       env.MATRIX_HOST_BUNDLE_URL ??
       `${bundleBaseUrl}/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`,
+    hostBundleUrlOverride: Boolean(env.MATRIX_HOST_BUNDLE_URL),
     platformRegisterUrl: `${platformUrl.replace(/\/$/, '')}/vps/register`,
     platformSecret: env.PLATFORM_SECRET ?? '',
     r2AccessKeyId: env.S3_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID ?? '',
