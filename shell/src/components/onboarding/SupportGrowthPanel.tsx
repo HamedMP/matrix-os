@@ -56,6 +56,8 @@ export function SupportGrowthPanel({
                 <p className="mt-1 text-xs text-[#17281f]/55">{draft.destination}</p>
               </div>
               {draft.status === "needs_review" ? (
+                // Rejection is supported by the service but intentionally deferred
+                // from this compact beta panel until the review workflow has room.
                 <button
                   type="button"
                   onClick={() => onApprove(draft.id)}

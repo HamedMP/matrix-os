@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 const MAX_OWNERS = 512;
 const MAX_ITEMS_PER_OWNER = 200;
-const UNSAFE_DISPLAY = /(sk_[a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
+const UNSAFE_DISPLAY = /(sk[_-][a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
 const SENSITIVE_TERMS = /\b(secret|token|postgres|database)\b/gi;
 
 export type CompanyContextType =
@@ -57,7 +57,7 @@ function flagsFor(item: CompanyContextItem): CompanyBrainReadiness["reviewFlags"
   if (/\bstale\b/.test(text)) {
     flags.push({ itemId: item.id, kind: "stale", message: "Check whether this context is still current." });
   }
-  if (/(^|[^a-z0-9-])contradict(?:ion|ions|ory|s|ed)?\b/.test(text)) {
+  if (/(^|[^a-z0-9-]|self-)contradict(?:ion|ions|ory|s|ed|ing)?\b/.test(text)) {
     flags.push({ itemId: item.id, kind: "contradiction", message: "Resolve contradictory context before agents rely on it." });
   }
   return flags;
@@ -86,7 +86,7 @@ export function createCompanyBrainReadinessService(options: {
   }
 
   async function getReadiness(ownerId: string): Promise<CompanyBrainReadiness> {
-    const items = getItems(ownerId);
+    const items = ownerItems.get(ownerId) ?? [];
     const reviewFlags = items.flatMap(flagsFor);
     const status = items.length === 0 ? "needs_context" : reviewFlags.length > 0 ? "needs_review" : "ready";
     return {

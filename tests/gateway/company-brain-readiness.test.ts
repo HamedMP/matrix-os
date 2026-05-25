@@ -79,7 +79,7 @@ describe("company brain readiness", () => {
     const res = await app.request(post("/context", {
       type: "customer_note",
       title: "Customer database migration",
-      summary: "Customer asked about database status; token=sk_test_secret must not be shown.",
+      summary: "Customer asked about database status; token=sk_test_secret and sk-ant-abc123 must not be shown.",
       source: "/home/matrix/notes/customer.md",
       visibility: "owner_only",
     }));
@@ -90,7 +90,7 @@ describe("company brain readiness", () => {
     expect(body.summary).toContain("Customer asked");
     expect(body.summary).toContain("[redacted]");
     expect(body.source).toBe("[redacted]");
-    expect(JSON.stringify(body)).not.toMatch(/database|token|secret|sk_test|\/home\//i);
+    expect(JSON.stringify(body)).not.toMatch(/database|token|secret|sk_test|sk-ant|\/home\//i);
   });
 
   it("marks stale and contradictory context for review", async () => {
@@ -147,14 +147,33 @@ describe("company brain readiness", () => {
     expect(body.reviewFlags).toEqual([]);
   });
 
-  it("marks contradict and contradictions wording for review", async () => {
+  it("marks contradicting wording for review", async () => {
     const service = createCompanyBrainReadinessService();
     const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });
 
     await app.request(post("/context", {
       type: "product_decision",
       title: "Pricing mismatch",
-      summary: "These entries contradict each other and create contradictions in the pricing docs.",
+      summary: "These entries are contradicting the offer page in the pricing docs.",
+      source: "notes/pricing",
+      visibility: "owner_only",
+    }));
+    const body = await (await app.request("/readiness")).json();
+
+    expect(body.status).toBe("needs_review");
+    expect(body.reviewFlags).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "contradiction" }),
+    ]));
+  });
+
+  it("marks self-contradictory wording for review", async () => {
+    const service = createCompanyBrainReadinessService();
+    const app = createCompanyBrainRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(post("/context", {
+      type: "product_decision",
+      title: "Pricing mismatch",
+      summary: "The launch guidance is self-contradictory across pricing notes.",
       source: "notes/pricing",
       visibility: "owner_only",
     }));

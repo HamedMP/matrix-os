@@ -4,7 +4,7 @@ import { ActivationRouteError } from "./activation-errors.js";
 
 const MAX_OWNERS = 512;
 const MAX_DRAFTS_PER_OWNER = 200;
-const UNSAFE_DISPLAY = /(sk_[a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
+const UNSAFE_DISPLAY = /(sk[_-][a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
 
 export type DraftActionType = "support_reply" | "social_post" | "acquisition_message" | "customer_follow_up";
 export type DraftActionStatus = "draft" | "needs_review" | "approved" | "sent" | "rejected";
@@ -57,7 +57,7 @@ function safeDisplay(value: string, fallback: string, max = 5000): string {
 function uncertaintyFlags(content: string): DraftUncertainty[] {
   const lower = content.toLowerCase();
   const flags: DraftUncertainty[] = [];
-  if (lower.includes("unsure") || lower.includes("unknown") || lower.includes("may ") || lower.includes("might ")) {
+  if (lower.includes("unsure") || lower.includes("unknown") || /\bmay (?!i\b|we\b|\d)/.test(lower) || /\bmight\b/.test(lower)) {
     flags.push({ kind: "uncertainty", message: "Confirm timing, facts, or missing context before sending." });
   }
   if (lower.includes("guarantee") || lower.includes("99.999") || /\b(?:always|never)\b/.test(lower)) {
@@ -89,7 +89,7 @@ export function createDraftActionReadinessService(options: {
   }
 
   async function getReadiness(ownerId: string): Promise<DraftActionReadiness> {
-    const drafts = draftsFor(ownerId);
+    const drafts = ownerDrafts.get(ownerId) ?? [];
     const pendingReview = drafts.filter((draft) => draft.status === "needs_review").length;
     const approved = drafts.filter((draft) => draft.status === "approved").length;
     return {
@@ -127,10 +127,11 @@ export function createDraftActionReadinessService(options: {
   }
 
   async function approveDraft(ownerId: string, draftId: string, approved: boolean): Promise<DraftAction> {
-    const draft = draftsFor(ownerId).find((candidate) => candidate.id === draftId);
+    const draft = ownerDrafts.get(ownerId)?.find((candidate) => candidate.id === draftId);
     if (!draft) {
       throw new ActivationRouteError("draft_not_found", "Draft was not found", { status: 404 });
     }
+    draftsFor(ownerId);
     if (draft.status === "approved" || draft.status === "sent" || draft.status === "rejected") {
       throw new ActivationRouteError("draft_already_decided", "Draft has already been decided", { status: 409 });
     }
