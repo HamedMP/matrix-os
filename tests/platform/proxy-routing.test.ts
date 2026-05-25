@@ -90,6 +90,13 @@ describe("platform proxy routing", () => {
     );
   });
 
+  it("only preserves the runtime selector after auth", () => {
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-in/?runtime=staging&session=secret")).toBe(
+      "/?runtime=staging",
+    );
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-up/?session=secret")).toBe("/");
+  });
+
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("ok", { status: 200 }),
@@ -712,6 +719,8 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
       "https://203.0.113.25:443/api/system/info",
@@ -726,6 +735,7 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("stale-db-staging-version");
     expect(html).toContain("2 vCPU");
     expect(html).toContain("4 GB RAM");
+    expect(html).toContain("background: linear-gradient(90deg, #2f392c");
   });
 
   it("does not show the runtime picker for unauthenticated root visits", async () => {
@@ -775,6 +785,45 @@ describe("platform proxy routing", () => {
     expect(html).toContain("afterSignInUrl: redirectTarget");
     expect(html).not.toContain("Choose a Matrix OS machine");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("persists a single machine runtime slot on cold root visits", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff132",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123476,
+      publicIPv4: "203.0.113.29",
+      imageVersion: "v082-login-shell-8935a7cd",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("shell");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.29:443/");
+    expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
   });
 
   it("shows the runtime picker route even when a runtime cookie already exists", async () => {

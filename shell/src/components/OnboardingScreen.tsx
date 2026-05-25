@@ -493,9 +493,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               </div>
 
               <div
-                className="relative flex w-full max-w-4xl justify-center"
+                className="relative flex w-full max-w-4xl justify-center overflow-hidden md:overflow-visible"
                 style={{
-                  minHeight: "12rem",
+                  minHeight: showModePicker ? "min(52vh, 34rem)" : "12rem",
                   opacity: entranceStage === "settled" ? 1 : 0,
                   transition: "opacity 1s cubic-bezier(0.16, 1, 0.3, 1) 0.45s",
                 }}
@@ -518,7 +518,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                   </button>
                 )}
 
-                <div className="grid w-full items-stretch gap-3 md:grid-cols-[1fr_auto_1fr_auto_1fr]">
+                <div className="grid max-h-[52vh] w-full items-stretch gap-2 overflow-y-auto pr-1 sm:gap-3 md:max-h-none md:grid-cols-[1fr_auto_1fr_auto_1fr] md:overflow-visible md:pr-0">
                   {[
                     {
                       label: "Talk to Aoede",
@@ -550,7 +550,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                         type="button"
                         onClick={item.onClick}
                         disabled={!showModePicker || phase !== "idle" || started}
-                        className={`${gridColumn} group flex min-h-[10rem] flex-col justify-center rounded-md border border-transparent px-5 py-4 text-left text-[#2f392c] transition hover:border-[#c4a265]/30 hover:bg-[#c4a265]/10 disabled:pointer-events-none md:px-6`}
+                        className={`${gridColumn} group flex min-h-[8.25rem] flex-col justify-center rounded-md border border-transparent px-4 py-4 text-left text-[#2f392c] transition hover:border-[#c4a265]/30 hover:bg-[#c4a265]/10 disabled:pointer-events-none sm:min-h-[9rem] md:min-h-[10rem] md:px-6`}
                         style={{
                           opacity: splitVisible ? 1 : 0,
                           transform: splitVisible ? "translateY(0) scale(1)" : "translateY(18px) scale(0.98)",

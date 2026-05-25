@@ -9,6 +9,7 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
@@ -49,10 +50,12 @@ import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
+import { OnboardingScreen } from "./OnboardingScreen";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { openAppInStandaloneTab } from "@/lib/open-app-tab";
+import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
@@ -63,10 +66,64 @@ import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const MATRIX_SHIMMER =
+  "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
 
 function iconUrlForSlug(slug: string | undefined): string | undefined {
   if (!slug) return undefined;
   return `/icons/${encodeURIComponent(slug)}.png`;
+}
+
+function MatrixFirstRunLoading() {
+  return (
+    <div
+      data-onboarding-brand={MATRIX_ONBOARDING_BRAND_VERSION}
+      className="fixed inset-0 z-[70] grid place-items-center overflow-hidden bg-[#fffdf6] px-6 text-[#2f392c]"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(196,162,101,0.14),transparent_31%),linear-gradient(180deg,#fffdf6_0%,#f5efe2_100%)]" />
+      <main className="relative grid w-full max-w-[620px] justify-items-center gap-7 text-center">
+        <div
+          aria-label="Matrix OS logo"
+          className="h-[132px] w-[124px] sm:h-[156px] sm:w-[148px]"
+          style={{
+            WebkitMaskImage: "url('/matrix-logo.svg')",
+            WebkitMaskRepeat: "no-repeat",
+            WebkitMaskSize: "contain",
+            WebkitMaskPosition: "center",
+            maskImage: "url('/matrix-logo.svg')",
+            maskRepeat: "no-repeat",
+            maskSize: "contain",
+            maskPosition: "center",
+            backgroundImage: MATRIX_SHIMMER,
+            backgroundSize: "300% 100%",
+            animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
+          }}
+        />
+        <div className="grid max-w-[520px] gap-3">
+          <h1
+            className="m-0 text-[2.1rem] font-medium uppercase leading-[0.96] sm:text-[3.4rem] lg:text-[4.25rem]"
+            style={{
+              fontFamily: "var(--font-orbitron), var(--font-sans), system-ui, sans-serif",
+              backgroundClip: "text",
+              WebkitBackgroundClip: "text",
+              color: "transparent",
+              backgroundImage: MATRIX_SHIMMER,
+              backgroundSize: "300% 100%",
+              animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
+            }}
+          >
+            Matrix OS
+          </h1>
+          <p className="m-0 text-base leading-7 text-[#2f392c]/65">
+            Checking your workspace and preparing the right Matrix surface.
+          </p>
+        </div>
+        <p className="inline-flex min-h-9 items-center justify-center rounded-full border border-[#2f392c]/10 bg-white/50 px-4 text-[13px] text-[#2f392c]/70 shadow-[0_12px_40px_rgba(47,57,44,0.08)]">
+          Loading Matrix
+        </p>
+      </main>
+    </div>
+  );
 }
 
 // Forgiving app-name lookup used by vocal mode's `open_app` tool and the
@@ -488,6 +545,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
+  const [showOnboarding, setShowOnboarding] = useState(true);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
@@ -519,6 +577,15 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       cache: "no-store",
       signal: controller.signal,
     })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("onboarding status unavailable");
+        return await res.json() as { complete?: unknown };
+      })
+      .then((status) => {
+        if (!cancelled) {
+          setShowOnboarding(status.complete !== true);
+        }
+      })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
           console.warn("[desktop] first-run status check failed:", err);
@@ -536,6 +603,19 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       controller.abort();
     };
   }, []);
+
+  const onboardingActive = firstRunStatus === "ready" && showOnboarding;
+  const completeOnboarding = useCallback(() => {
+    setShowOnboarding(false);
+    void saveDesktopConfig({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock,
+      pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
+      dockOrder,
+    }).catch((err: unknown) => {
+      console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
+    });
+  }, [dock, dockOrder, pinnedApps]);
 
   const animateMinimize = useCallback((id: string) => {
     if (minimizeTimers.current.has(id)) return;
@@ -1265,12 +1345,21 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
+  if (firstRunStatus === "checking") {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <MatrixFirstRunLoading />
+      </TooltipProvider>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
-      {firstRunStatus === "checking" ? (
-        <div className="fixed inset-0 z-[70] grid place-items-center bg-background text-sm text-muted-foreground">
-          <span>Matrix OS</span>
-        </div>
+      {onboardingActive ? (
+        <OnboardingScreen
+          onComplete={completeOnboarding}
+          onOpenTerminal={(path) => openWindow("Terminal", path ?? "__terminal__")}
+        />
       ) : null}
       {onboardingActive ? null : (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
@@ -1564,7 +1653,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         </div>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && (
+        {modeConfig.showDock && !onboardingActive && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               data-testid="dock-chat-mobile"
