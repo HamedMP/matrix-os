@@ -18,7 +18,6 @@ import {
   getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
-  countActiveUserMachinesByClerkId,
   listActiveUserMachinesByClerkId,
   listUserMachines,
   listAllUserMachines,
@@ -2126,18 +2125,14 @@ export function createApp(deps: {
       identity.source !== 'static-route' &&
       (path === '/runtime' || (path === '/' && runtimeSelection.source === 'default'));
     if (shouldOfferRuntimePicker) {
-      const needsPickerList = path === '/runtime'
-        || await countActiveUserMachinesByClerkId(db, identity.userId) > 1;
-      if (needsPickerList) {
-        const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
-        if (machines.length === 0 && path === '/runtime') {
-          return c.redirect('/');
-        }
-        if (path === '/runtime' || machines.length > 1) {
-          const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret);
-          applyNoStoreHeaders(c);
-          return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedSlot: requestRuntimeSlot }));
-        }
+      const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
+      if (machines.length === 0 && path === '/runtime') {
+        return c.redirect('/');
+      }
+      if (path === '/runtime' || machines.length > 1) {
+        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret);
+        applyNoStoreHeaders(c);
+        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedSlot: requestRuntimeSlot }));
       }
     }
 
