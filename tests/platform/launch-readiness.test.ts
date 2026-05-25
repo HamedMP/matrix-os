@@ -182,6 +182,51 @@ describe('platform/launch-readiness', () => {
     }
   });
 
+  it('matches the proxy default when entitlement evidence omits enforcement status', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      const loadWithoutEnforcement = createPlatformLaunchEvidenceLoader({
+        db,
+        env: { MATRIX_LAUNCH_ENTITLEMENT_GATE: 'true' } as NodeJS.ProcessEnv,
+      });
+      await expect(loadWithoutEnforcement()).resolves.toMatchObject({
+        entitlementGate: true,
+      });
+
+      const loadWithEnforcement = createPlatformLaunchEvidenceLoader({
+        db,
+        env: {
+          MATRIX_LAUNCH_ENTITLEMENT_GATE: 'true',
+          MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'active',
+        } as NodeJS.ProcessEnv,
+      });
+      await expect(loadWithEnforcement()).resolves.toMatchObject({
+        entitlementGate: true,
+      });
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+
+  it('does not pass entitlement evidence for unrecognized enforcement statuses', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      const loadEvidence = createPlatformLaunchEvidenceLoader({
+        db,
+        env: {
+          MATRIX_LAUNCH_ENTITLEMENT_GATE: 'true',
+          MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'not-real',
+        } as NodeJS.ProcessEnv,
+      });
+
+      await expect(loadEvidence()).resolves.toMatchObject({
+        entitlementGate: false,
+      });
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+
   it('does not pass entitlement evidence for blocking enforcement statuses', async () => {
     const { db } = await createTestPlatformDb();
     try {

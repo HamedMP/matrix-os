@@ -1,5 +1,6 @@
 import type { PlatformDB } from './db.js';
 import { getHostBundleReleaseByChannel } from './db.js';
+import { EntitlementStatusSchema } from './profile-routing.js';
 
 export type LaunchReadinessStatus = 'pass' | 'fail';
 export type LaunchReadinessOverallStatus = 'ready' | 'blocked';
@@ -243,7 +244,7 @@ export function createPlatformLaunchEvidenceLoader(options: {
       companyBrain: readEvidenceFlag(env, 'MATRIX_LAUNCH_COMPANY_BRAIN'),
       supportGrowth: readEvidenceFlag(env, 'MATRIX_LAUNCH_SUPPORT_GROWTH'),
       adminControlSurface: readEvidenceFlag(env, 'MATRIX_LAUNCH_ADMIN_CONTROL_SURFACE'),
-      entitlementGate: readEvidenceFlag(env, 'MATRIX_LAUNCH_ENTITLEMENT_GATE'),
+      entitlementGate: readEvidenceFlag(env, 'MATRIX_LAUNCH_ENTITLEMENT_GATE') && readEntitlementStatusAllowsRuntime(env),
     };
   };
 }

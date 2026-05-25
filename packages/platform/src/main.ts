@@ -768,8 +768,8 @@ async function resolveAppDomainIdentity(opts: {
     };
   }
   let machine = await getActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot);
-  if (!machine && opts.runtimeSlot !== 'primary') {
-    machine = await getActiveUserMachineByClerkId(opts.db, result.userId, 'primary');
+  if (!machine) {
+    machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
   }
   if (!machine) {
     return null;
