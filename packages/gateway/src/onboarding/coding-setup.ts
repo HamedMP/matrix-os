@@ -16,7 +16,7 @@ export interface CodingSetupProvider {
 }
 
 export interface CodingSetupAggregationDeps {
-  hasGitHubConnection: (ownerId: string) => Promise<boolean>;
+  hasGitHubConnection: (ownerId: string, selectedProject: MatrixProjectOption | null) => Promise<boolean>;
   listMatrixProjects: (ownerId: string) => Promise<MatrixProjectOption[]>;
   getSelectedProjectSlug?: (ownerId: string) => Promise<string | null>;
   hasIssueSource: (ownerId: string) => Promise<boolean>;
@@ -30,17 +30,16 @@ export interface CodingSetupAggregationDeps {
 
 function deriveHandoffStatus(statuses: SymphonyRunStatus[]): CodingHandoffStatus {
   if (statuses.some((status) => status === "blocked")) return "needs_input";
-  if (statuses.some((status) => status === "failed" || status === "stopped")) return "failed";
-  if (statuses.some((status) => status === "queued" || status === "running" || status === "retrying")) return "running";
   if (statuses.some((status) => status === "handoff" || status === "completed")) return "ready";
+  if (statuses.some((status) => status === "queued" || status === "running" || status === "retrying")) return "running";
+  if (statuses.some((status) => status === "failed" || status === "stopped")) return "failed";
   return "idle";
 }
 
 export function createCodingSetupProvider(deps: CodingSetupAggregationDeps): CodingSetupProvider {
   return {
     async getCodingSetup(ownerId: string): Promise<CodingSetupStatus> {
-      const [githubConnected, projects, selectedProjectSlug, issueSourceConfigured, symphony] = await Promise.all([
-        deps.hasGitHubConnection(ownerId),
+      const [projects, selectedProjectSlug, issueSourceConfigured, symphony] = await Promise.all([
         deps.listMatrixProjects(ownerId),
         deps.getSelectedProjectSlug?.(ownerId) ?? Promise.resolve(null),
         deps.hasIssueSource(ownerId),
@@ -49,7 +48,10 @@ export function createCodingSetupProvider(deps: CodingSetupAggregationDeps): Cod
       const selectedProject = selectedProjectSlug
         ? projects.find((project) => project.slug === selectedProjectSlug) ?? null
         : null;
-      const terminalReady = await deps.hasTerminalContext(ownerId, selectedProject?.slug ?? null);
+      const [githubConnected, terminalReady] = await Promise.all([
+        deps.hasGitHubConnection(ownerId, selectedProject),
+        deps.hasTerminalContext(ownerId, selectedProject?.slug ?? null),
+      ]);
 
       return {
         githubConnected,
@@ -57,9 +59,7 @@ export function createCodingSetupProvider(deps: CodingSetupAggregationDeps): Cod
         issueSourceConfigured,
         symphonyReady: symphony.ready,
         terminalReady,
-        activeAgents: symphony.activeAgents.includes("hermes")
-          ? symphony.activeAgents
-          : [...symphony.activeAgents, "hermes"],
+        activeAgents: [...symphony.activeAgents, "hermes"],
         handoffStatus: deriveHandoffStatus(symphony.runStatuses),
       };
     },

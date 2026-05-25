@@ -50,6 +50,65 @@ describe("agent credential status routes", () => {
     expect(body.routingExplanation).toContain("Hermes remains");
   });
 
+  it("verifies Claude or Codex through an actual owner-scoped probe when configured", async () => {
+    const service = createAgentCredentialStatusService({
+      now: () => new Date("2026-05-23T00:00:00.000Z"),
+      probeAgent: async (ownerId, agent) => ({
+        available: ownerId === testPrincipal.userId && agent === "codex",
+      }),
+    });
+    const app = createAgentCredentialRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const verified = await app.request(post("/credentials/codex/verify"));
+
+    expect(verified.status).toBe(200);
+    await expect(verified.json()).resolves.toMatchObject({
+      agent: "codex",
+      status: "available",
+      verifiedAt: "2026-05-23T00:00:00.000Z",
+    });
+    const body = await (await app.request("/credentials/status")).json();
+    expect(body.activeAgents).toEqual(["codex", "hermes"]);
+  });
+
+  it("derives probed agent availability live instead of caching verified state", async () => {
+    let codexAvailable = true;
+    const service = createAgentCredentialStatusService({
+      now: () => new Date("2026-05-23T00:00:00.000Z"),
+      probeAgent: async (_ownerId, agent) => ({
+        available: agent === "codex" && codexAvailable,
+      }),
+    });
+    const app = createAgentCredentialRoutes({ service, getPrincipal: () => testPrincipal });
+
+    expect((await app.request(post("/credentials/codex/verify"))).status).toBe(200);
+    codexAvailable = false;
+
+    const body = await (await app.request("/credentials/status")).json();
+    expect(body.activeAgents).toEqual(["hermes"]);
+    expect(body.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agent: "codex", status: "missing", verifiedAt: null }),
+    ]));
+  });
+
+  it("does not mark an agent available when the login probe fails", async () => {
+    const service = createAgentCredentialStatusService({
+      probeAgent: async () => ({ available: false }),
+    });
+    const app = createAgentCredentialRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const verified = await app.request(post("/credentials/claude/verify"));
+
+    expect(verified.status).toBe(409);
+    expect(await verified.json()).toEqual({
+      error: "agent_auth_required",
+      message: "Log in to the agent before verifying credentials",
+      retryable: true,
+    });
+    const body = await (await app.request("/credentials/status")).json();
+    expect(body.activeAgents).toEqual(["hermes"]);
+  });
+
   it("accepts bodyless verify requests because no payload is required", async () => {
     const service = createAgentCredentialStatusService({
       now: () => new Date("2026-05-23T00:00:00.000Z"),

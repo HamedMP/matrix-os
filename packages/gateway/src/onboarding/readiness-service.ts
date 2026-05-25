@@ -49,7 +49,7 @@ const GOAL_STEPS: Record<OnboardingGoalId, OnboardingStepSummary[]> = {
     { id: "terminal.ready", required: false, title: "Verify terminal access", unlocks: ["coding"] },
   ],
   app_building: [
-    { id: "hermes.available", required: true, title: "Verify Hermes", unlocks: ["app_building"] },
+    { id: "hermes.continuity", required: true, title: "Verify Hermes", unlocks: ["app_building"] },
     { id: "skills.ready", required: true, title: "Verify app-building skills", unlocks: ["app_building"] },
   ],
   company_brain: [
@@ -57,7 +57,7 @@ const GOAL_STEPS: Record<OnboardingGoalId, OnboardingStepSummary[]> = {
   ],
   assistant: [
     { id: "integrations.capabilities", required: true, title: "Approve assistant capabilities", unlocks: ["assistant", "integrations"] },
-    { id: "hermes.available", required: true, title: "Verify Hermes", unlocks: ["assistant"] },
+    { id: "hermes.continuity", required: true, title: "Verify Hermes", unlocks: ["assistant"] },
   ],
 };
 
@@ -86,7 +86,6 @@ const BASE_GATES: ReadinessGateSummary[] = [
   { id: "canvas.ready", category: "shell", criticality: "release_critical", status: "unknown", message: "Canvas readiness has not been checked", remediation: "Open Canvas and verify built-ins", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "terminal.ready", category: "coding", criticality: "goal_required", status: "unknown", message: "Terminal readiness has not been checked", remediation: "Open terminal for the selected project", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "skills.ready", category: "agent", criticality: "release_critical", status: "unknown", message: "Skill readiness has not been checked", remediation: "Verify Matrix skills are available", owner: "matrix", lastCheckedAt: null, evidence: [] },
-  { id: "hermes.available", category: "agent", criticality: "release_critical", status: "pass", message: "Hermes is available as the Matrix system agent", remediation: null, owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "hermes.continuity", category: "agent", criticality: "release_critical", status: "pass", message: "Hermes remains available as the Matrix system agent", remediation: null, owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "visual.qa", category: "ux", criticality: "release_critical", status: "unknown", message: "Onboarding visual QA has not been checked", remediation: "Run desktop and mobile visual QA", owner: "matrix", lastCheckedAt: null, evidence: [] },
   { id: "github.connected", category: "integration", criticality: "goal_required", status: "unknown", message: "GitHub is not connected yet", remediation: "Connect GitHub to unlock coding workflows", owner: "user", lastCheckedAt: null, evidence: [] },
@@ -165,9 +164,11 @@ export function createReadinessService(options: {
     if (!codingSetup) return null;
     switch (gate.id) {
       case "github.connected":
-        return codingSetup.githubConnected
-          ? { status: "pass", message: "GitHub is connected for coding workflows", remediation: null, lastCheckedAt: checkedAt }
-          : { status: "fail", message: "GitHub is needed before Matrix can start coding work", remediation: "Connect GitHub to unlock coding workflows", lastCheckedAt: checkedAt };
+        if (!codingSetup.selectedProject) return null;
+        if (!codingSetup.githubConnected) {
+          return { status: "fail", message: "GitHub is needed before Matrix can start coding work", remediation: "Connect GitHub to unlock coding workflows", lastCheckedAt: checkedAt };
+        }
+        return { status: "pass", message: "GitHub is connected for coding workflows", remediation: null, lastCheckedAt: checkedAt };
       case "project.selected":
         return codingSetup.selectedProject
           ? { status: "pass", message: `${codingSetup.selectedProject.name} is selected for coding work`, remediation: null, lastCheckedAt: checkedAt, evidence: [codingSetup.selectedProject.slug] }
@@ -221,10 +222,12 @@ export function createReadinessService(options: {
     const cached = cache.get(ownerId);
     if (cached) return cached;
     const record = await ensureRecord(ownerId);
-    const codingSetup = record.selectedGoalIds.includes("coding") && options.codingSetup
-      ? await options.codingSetup.getCodingSetup(ownerId)
-      : null;
-    const credentialStatus = options.agentCredentials ? await options.agentCredentials.getStatus(ownerId) : null;
+    const [codingSetup, credentialStatus] = await Promise.all([
+      record.selectedGoalIds.includes("coding") && options.codingSetup
+        ? options.codingSetup.getCodingSetup(ownerId)
+        : Promise.resolve(null),
+      options.agentCredentials ? options.agentCredentials.getStatus(ownerId) : Promise.resolve(null),
+    ]);
     const gates = deriveGates(record, codingSetup);
     const goals = Object.values(GOALS).map((goal) => ({
       ...goal,

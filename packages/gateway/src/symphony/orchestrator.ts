@@ -265,13 +265,17 @@ export function createMatrixSymphonyOrchestrator(options: {
           throw err;
         }
         if (duplicate) {
-          await append(ownerId, {
-            installationId: duplicate.installationId,
-            runId: duplicate.id,
-            type: "symphony.run.reused",
-            message: "Existing active coding run reused",
-            severity: "info",
-          });
+          try {
+            await append(ownerId, {
+              installationId: duplicate.installationId,
+              runId: duplicate.id,
+              type: "symphony.run.reused",
+              message: "Existing active coding run reused",
+              severity: "info",
+            });
+          } catch (appendErr: unknown) {
+            console.warn("[symphony] reuse-event append failed:", appendErr instanceof Error ? appendErr.message : String(appendErr));
+          }
           return duplicate;
         }
         throw err;

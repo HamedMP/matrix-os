@@ -448,8 +448,21 @@ export async function createGateway(config: GatewayConfig) {
   const readinessRepository = new InMemoryReadinessRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
   let platformDb: PlatformDb | null = null;
+  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
   const agentCredentialService = createAgentCredentialStatusService({
     onChange: (ownerId) => readinessCache.delete(ownerId),
+    probeAgent: async (_ownerId, agent) => {
+      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
+        agentDetectionInFlight = null;
+      });
+      const detected = await agentDetectionInFlight;
+      const status = detected.agents.find((candidate) => candidate.id === agent);
+      return {
+        available: Boolean(status?.installed && status.authState === "ok"),
+        missing: status?.installed === false,
+      };
+    },
   });
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
@@ -2429,20 +2442,38 @@ export async function createGateway(config: GatewayConfig) {
       ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
-    const listMatrixProjectOptions = async (ownerId: string) => {
-      const snapshot = await repository.getSnapshot(ownerId);
+    const listAllMatrixProjectOptions = async (ownerId: string) => {
       const result = await projectManager.listManagedProjects();
-      const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
-      const projects = result.projects
+      return result.projects
         .filter((project) => project.ownerScope.type === "user" && project.ownerScope.id === ownerId)
         .map((project) => ({
-        slug: project.slug,
-        name: project.name,
-        repositoryUrl: project.github?.htmlUrl ?? project.remote,
-        updatedAt: project.updatedAt,
-      }));
+          slug: project.slug,
+          name: project.name,
+          repositoryUrl: project.github?.htmlUrl ?? project.remote,
+          updatedAt: project.updatedAt,
+        }));
+    };
+    const codingSnapshotReads = new Map<string, Promise<Awaited<ReturnType<typeof repository.getSnapshot>>>>();
+    const getCodingSnapshot = async (ownerId: string) => {
+      const existing = codingSnapshotReads.get(ownerId);
+      if (existing) return await existing;
+      if (codingSnapshotReads.size >= 128) {
+        const oldestKey = codingSnapshotReads.keys().next().value as string | undefined;
+        if (oldestKey) codingSnapshotReads.delete(oldestKey);
+      }
+      const read = repository.getSnapshot(ownerId).finally(() => {
+        if (codingSnapshotReads.get(ownerId) === read) codingSnapshotReads.delete(ownerId);
+      });
+      codingSnapshotReads.set(ownerId, read);
+      return await read;
+    };
+    const listSelectedMatrixProjectOptions = async (ownerId: string) => {
+      const snapshot = await getCodingSnapshot(ownerId);
+      const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      if (!selectedSlug) return [];
+      const projects = await listAllMatrixProjectOptions(ownerId);
       const selectedProject = selectedSlug ? projects.find((project) => project.slug === selectedSlug) : null;
-      return selectedProject ? [selectedProject] : projects;
+      return selectedProject ? [selectedProject] : [];
     };
     const isGitHubRepositoryUrl = (repositoryUrl: string | null | undefined): boolean => {
       if (!repositoryUrl) return false;
@@ -2477,22 +2508,21 @@ export async function createGateway(config: GatewayConfig) {
       statusHub: matrixSymphonyStatusHub,
     });
     codingSetupProvider = createCodingSetupProvider({
-      hasGitHubConnection: async (ownerId) => {
-        const projects = await listMatrixProjectOptions(ownerId);
-        return projects.some((project) => isGitHubRepositoryUrl(project.repositoryUrl));
+      hasGitHubConnection: async (_ownerId, selectedProject) => {
+        return isGitHubRepositoryUrl(selectedProject?.repositoryUrl);
       },
-      listMatrixProjects: async (ownerId) => listMatrixProjectOptions(ownerId),
+      listMatrixProjects: async (ownerId) => listSelectedMatrixProjectOptions(ownerId),
       getSelectedProjectSlug: async (ownerId) => {
-        const snapshot = await repository.getSnapshot(ownerId);
+        const snapshot = await getCodingSnapshot(ownerId);
         return snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
       },
       hasIssueSource: async (ownerId) => {
         if (platformDb && await hasConnectedLinearIntegration(platformDb, ownerId)) return true;
-        const snapshot = await repository.getSnapshot(ownerId);
+        const snapshot = await getCodingSnapshot(ownerId);
         return Boolean(snapshot.rule);
       },
       getSymphonyStatus: async (ownerId) => {
-        const snapshot = await repository.getSnapshot(ownerId);
+        const snapshot = await getCodingSnapshot(ownerId);
         const activeStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff", "completed"]);
         const handoffActiveStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff"]);
         const activeHandoffRuns = snapshot.runs.filter((run) => handoffActiveStatuses.has(run.status));
@@ -2509,8 +2539,8 @@ export async function createGateway(config: GatewayConfig) {
       },
       hasTerminalContext: async (ownerId, projectSlug) => {
         if (!projectSlug) return false;
-        const projects = await listMatrixProjectOptions(ownerId);
-        if (!projects.some((project) => project.slug === projectSlug)) return false;
+        const localOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
+        if (!localOwnerId || ownerId !== localOwnerId) return false;
         const projectRoot = join(homePath, "projects", projectSlug);
         const repoRoot = join(projectRoot, "repo");
         return sessionRegistry.list().some((session) =>
@@ -2525,7 +2555,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       orchestrator: matrixSymphonyOrchestrator,
       statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: (ownerId) => listMatrixProjectOptions(ownerId),
+      listMatrixProjects: (ownerId) => listAllMatrixProjectOptions(ownerId),
     }));
   } else {
     console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");

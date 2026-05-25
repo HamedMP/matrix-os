@@ -22,11 +22,11 @@ test.describe("onboarding activation", () => {
           ],
           gates: [
             {
-              id: "hermes.available",
+              id: "hermes.continuity",
               category: "agent",
               criticality: "release_critical",
               status: "pass",
-              message: "Hermes is available as the Matrix system agent",
+              message: "Hermes remains available as the Matrix system agent",
               remediation: null,
               owner: "matrix",
               lastCheckedAt: null,
@@ -186,7 +186,7 @@ test.describe("onboarding activation", () => {
       });
     });
 
-    await page.goto("/");
+    await openManualSetup(page);
 
     await expect(page.getByText("Agent setup")).toBeVisible();
     await expect(page.getByText("Hermes is the Matrix system agent")).toBeVisible();

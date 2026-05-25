@@ -10,11 +10,11 @@ export function CodingHandoffSummary({
   status: "idle" | "running" | "needs_input" | "ready" | "failed" | null;
 }) {
   const agents = activeAgents.length > 0 ? activeAgents : ["hermes" as const];
-  const statusLabel = status === "needs_input"
-    ? "Needs input"
-    : status
-      ? status.replaceAll("_", " ")
-      : "Idle";
+  const statusLabel = !status || status === "idle"
+    ? "Idle"
+    : status === "needs_input"
+      ? "Needs input"
+      : status.replaceAll("_", " ");
   return (
     <section className="rounded-md border border-[#17281f]/10 bg-[#17281f]/5 p-4">
       <div className="flex items-center justify-between gap-3">

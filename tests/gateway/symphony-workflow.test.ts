@@ -153,7 +153,12 @@ describe("Symphony workflow", () => {
         ) ?? null,
       listRuns: async (_ownerId, input) =>
         Array.from(runs.values()).filter((run) => !input?.status || run.status === input.status),
-      appendEvent: async (_ownerId, event) => ({ id: "evt_1", createdAt: "2026-05-23T00:00:00.000Z", ...event }),
+      appendEvent: async (_ownerId, event) => {
+        if (event.type === "symphony.run.reused") {
+          throw new Error("event log unavailable");
+        }
+        return { id: "evt_1", createdAt: "2026-05-23T00:00:00.000Z", ...event };
+      },
       recordPoll: async (_ownerId, at) => {
         snapshot.lastPollAt = at;
       },

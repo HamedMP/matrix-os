@@ -92,7 +92,7 @@ describe("activation readiness contracts", () => {
   });
 
   it("merges shared setup step unlocks across selected goals", () => {
-    const hermesStep = stepsForGoals(["app_building", "assistant"]).find((step) => step.id === "hermes.available");
+    const hermesStep = stepsForGoals(["app_building", "assistant"]).find((step) => step.id === "hermes.continuity");
 
     expect(hermesStep).toMatchObject({
       required: true,

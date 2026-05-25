@@ -415,6 +415,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                   <div className="hidden w-px bg-gradient-to-b from-transparent via-[#2f392c]/20 to-transparent md:col-start-4 md:row-start-1 md:block" style={{ opacity: splitVisible ? 1 : 0 }} />
                 </div>
               </div>
+            </div>
 
             <button
               type="button"
