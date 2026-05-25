@@ -342,5 +342,42 @@ describe('platform/customer-vps-routes', () => {
       }
     });
 
+    it('GET /fleet includes runtime probe metrics when available', async () => {
+      const service = {
+        listAllMachines: vi.fn().mockResolvedValue(sampleMachines),
+      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+      const probeMachineRuntime = vi.fn().mockResolvedValue({
+        healthy: true,
+        probeLatencyMs: 87,
+        load1: 0.32,
+        cpuCount: 2,
+        memoryTotalBytes: 4 * 1024 * 1024 * 1024,
+        memoryFreeBytes: 1024 * 1024 * 1024,
+        diskTotalBytes: 40 * 1024 * 1024 * 1024,
+        diskFreeBytes: 30 * 1024 * 1024 * 1024,
+      });
+      const app = new Hono();
+      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret, probeMachineRuntime }));
+
+      const res = await app.request('/vps/fleet', {
+        headers: { authorization: `Bearer ${platformSecret}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(probeMachineRuntime).toHaveBeenCalledTimes(1);
+      expect(body.machines[0]).toMatchObject({
+        handle: 'alice',
+        healthy: true,
+        probeLatencyMs: 87,
+        load1: 0.32,
+        cpuCount: 2,
+        memoryTotalBytes: 4294967296,
+        memoryFreeBytes: 1073741824,
+        diskTotalBytes: 42949672960,
+        diskFreeBytes: 32212254720,
+      });
+    });
+
   });
 });
