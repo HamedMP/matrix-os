@@ -1101,6 +1101,7 @@ export function createApp(deps: {
     if (pendingVpsRuntimeMetrics?.machineKey === machineKey) {
       return (await pendingVpsRuntimeMetrics.promise).values;
     }
+    const probeStartedAt = Date.now();
     const promise = Promise.allSettled(
       machines.map(async (machine): Promise<VpsRuntimeMetricInput> => ({
         handle: machine.handle,
@@ -1114,11 +1115,17 @@ export function createApp(deps: {
         .map((result) => result.value);
       const updated = {
         machineKey,
-        expiresAt: Date.now() + VPS_RUNTIME_METRICS_TTL_MS,
+        expiresAt: probeStartedAt + VPS_RUNTIME_METRICS_TTL_MS,
         values,
       };
-      cachedVpsRuntimeMetrics = updated;
-      return updated;
+      if (
+        !cachedVpsRuntimeMetrics
+        || cachedVpsRuntimeMetrics.machineKey !== machineKey
+        || cachedVpsRuntimeMetrics.expiresAt < updated.expiresAt
+      ) {
+        cachedVpsRuntimeMetrics = updated;
+      }
+      return cachedVpsRuntimeMetrics.machineKey === machineKey ? cachedVpsRuntimeMetrics : updated;
     }).catch((err: unknown): CachedVpsRuntimeMetrics => {
       logPlatformRouteError('/metrics vps runtime cache', err);
       if (cachedVpsRuntimeMetrics?.machineKey === machineKey) {

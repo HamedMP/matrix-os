@@ -301,6 +301,63 @@ describe('platform/api', () => {
     }
   });
 
+  it('GET /metrics does not overwrite fresher /vps/fleet runtime cache with an older probe', async () => {
+    metricsRegistry.resetMetrics();
+    const machine = {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'clerk_1',
+      handle: 'alice',
+      publicIPv4: '203.0.113.10',
+      publicIPv6: null,
+      status: 'running' as const,
+      imageVersion: 'v2026.05.24-1',
+      provisionedAt: '2026-05-24T10:00:00.000Z',
+      lastSeenAt: '2026-05-24T10:00:00.000Z',
+      deletedAt: null,
+      failureCode: null,
+      failureAt: null,
+    };
+    await insertUserMachine(db, machine);
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const customerVpsService = {
+      listAllMachines: vi.fn().mockResolvedValue([machine]),
+    };
+    const metricsApp = createApp({
+      db,
+      orchestrator,
+      platformSecret,
+      customerVpsService: customerVpsService as any,
+    });
+    const olderMetricsProbe = createDeferred<Response>();
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(olderMetricsProbe.promise)
+      .mockResolvedValueOnce(new Response('unhealthy', { status: 503 }));
+    globalThis.fetch = fetchMock;
+    try {
+      const metricsRequest = metricsApp.request('/metrics');
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      const fleet = await metricsApp.request('/vps/fleet', {
+        headers: adminHeaders,
+      });
+      expect(fleet.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      olderMetricsProbe.resolve(createSystemInfoResponse());
+      const metrics = await metricsRequest;
+      expect(metrics.status).toBe(200);
+      expect(await metrics.text()).toContain('matrix_vps_healthy{handle="alice"} 0');
+
+      const nextMetrics = await metricsApp.request('/metrics');
+      expect(await nextMetrics.text()).toContain('matrix_vps_healthy{handle="alice"} 0');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('POST /containers/provision rejects missing fields', async () => {
     const res = await app.request('/containers/provision', {
       method: 'POST',
