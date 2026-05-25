@@ -393,6 +393,16 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     ON user_machines(clerk_user_id, runtime_slot)
     WHERE deleted_at IS NULL
   `.execute(db);
+  // A Matrix login can own more than one active VPS slot. Slot-qualified
+  // routing selects the requested runtime; unqualified handle routing resolves
+  // deterministically to primary first in the read helpers below.
+  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_active`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_slot_active`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_handle_slot_active
+    ON user_machines(handle, runtime_slot)
+    WHERE deleted_at IS NULL
+  `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
 
@@ -919,6 +929,10 @@ export async function getActiveUserMachineByHandle(
     .where('deleted_at', 'is', null);
   if (runtimeSlot) {
     query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
   }
   const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -938,6 +952,10 @@ export async function getRunningUserMachineByHandle(
     .where('deleted_at', 'is', null);
   if (runtimeSlot) {
     query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
   }
   const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;

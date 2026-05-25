@@ -66,6 +66,22 @@ describe("sync-jwt: issuance", () => {
     expect(issued.claims.exp - issued.claims.iat).toBe(oneDay);
     expect(issued.expiresAt).toBe((1_700_000_000 + oneDay) * 1000);
   });
+
+  it("can carry the selected runtime slot for same-handle VPS sessions", async () => {
+    const issued = await issueSyncJwt({
+      secret: SECRET,
+      clerkUserId: "user_abc",
+      handle: "alice",
+      gatewayUrl: "https://code.matrix-os.com",
+      runtimeSlot: "staging",
+      now: 1_700_000_000,
+    });
+
+    expect(issued.claims.runtime_slot).toBe("staging");
+    await expect(verifySyncJwt(issued.token, { secret: SECRET, now: 1_700_000_000 })).resolves.toMatchObject({
+      runtime_slot: "staging",
+    });
+  });
 });
 
 describe("sync-jwt: verification", () => {

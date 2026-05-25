@@ -182,7 +182,7 @@ describe('platform/launch-readiness', () => {
     }
   });
 
-  it('matches the proxy default when entitlement evidence omits enforcement status', async () => {
+  it('requires explicit active entitlement evidence before launch readiness passes', async () => {
     const { db } = await createTestPlatformDb();
     try {
       const loadWithoutEnforcement = createPlatformLaunchEvidenceLoader({
@@ -190,7 +190,7 @@ describe('platform/launch-readiness', () => {
         env: { MATRIX_LAUNCH_ENTITLEMENT_GATE: 'true' } as NodeJS.ProcessEnv,
       });
       await expect(loadWithoutEnforcement()).resolves.toMatchObject({
-        entitlementGate: true,
+        entitlementGate: false,
       });
 
       const loadWithEnforcement = createPlatformLaunchEvidenceLoader({
@@ -288,6 +288,33 @@ describe('platform/launch-readiness', () => {
       await expect(res.json()).resolves.toMatchObject({
         launchReady: false,
         overallStatus: 'blocked',
+      });
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+
+  it('uses the app injected env for operator readiness evidence', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      const app = createApp({
+        db,
+        orchestrator: stubOrchestrator(),
+        platformSecret: 'platform-secret',
+        env: {
+          MATRIX_LAUNCH_ENTITLEMENT_GATE: 'true',
+          MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'active',
+        } as NodeJS.ProcessEnv,
+      });
+
+      const res = await app.request('/api/operator/launch-readiness', {
+        headers: { authorization: 'Bearer platform-secret' },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.gates.find((gate: { id: string }) => gate.id === 'entitlement.access_gate')).toMatchObject({
+        status: 'pass',
       });
     } finally {
       await destroyTestPlatformDb(db);

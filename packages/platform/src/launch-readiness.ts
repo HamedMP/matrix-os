@@ -196,7 +196,7 @@ const RELEASE_CRITICAL_GATES: GateDefinition[] = [
     owner: 'operator',
     passMessage: 'Paid-beta entitlement gate preserves owner data.',
     failMessage: 'Paid-beta entitlement gate has not passed.',
-    remediation: 'Set MATRIX_PAID_BETA_ENTITLEMENT_STATUS=active and verify entitlement denial blocks paid-only access without deleting owner data.',
+    remediation: 'Set MATRIX_LAUNCH_ENTITLEMENT_GATE=true, set MATRIX_PAID_BETA_ENTITLEMENT_STATUS=active, and verify entitlement denial blocks paid-only access without deleting owner data.',
     evidenceKey: 'entitlementGate',
   },
 ];
@@ -244,14 +244,14 @@ export function createPlatformLaunchEvidenceLoader(options: {
       companyBrain: readEvidenceFlag(env, 'MATRIX_LAUNCH_COMPANY_BRAIN'),
       supportGrowth: readEvidenceFlag(env, 'MATRIX_LAUNCH_SUPPORT_GROWTH'),
       adminControlSurface: readEvidenceFlag(env, 'MATRIX_LAUNCH_ADMIN_CONTROL_SURFACE'),
-      entitlementGate: readEvidenceFlag(env, 'MATRIX_LAUNCH_ENTITLEMENT_GATE') && readEntitlementStatusAllowsRuntime(env),
+      entitlementGate: readEvidenceFlag(env, 'MATRIX_LAUNCH_ENTITLEMENT_GATE') && readEntitlementStatusExplicitlyActive(env),
     };
   };
 }
 
-function readEntitlementStatusAllowsRuntime(env: NodeJS.ProcessEnv): boolean {
+function readEntitlementStatusExplicitlyActive(env: NodeJS.ProcessEnv): boolean {
   const raw = env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS?.trim();
-  if (!raw) return true;
+  if (!raw) return false;
   return EntitlementStatusSchema.safeParse(raw).data === 'active';
 }
 

@@ -238,6 +238,45 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("blocks provisioning boot pages when paid-beta entitlement denies runtime access", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "machine-alice-provisioning-expired",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "provisioning",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(402);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("routes sync JWT bearer requests through app.matrix-os.com to the matching container", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -277,6 +316,17 @@ describe("platform proxy routing", () => {
       handle: "alice",
       hetznerServerId: 125,
       publicIPv4: "203.0.113.13",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "machine-alice-mobile-app-staging",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      hetznerServerId: 126,
+      publicIPv4: "203.0.113.14",
       status: "running",
       imageVersion: "matrix-os-host-dev",
       provisionedAt: "2026-05-06T00:00:00.000Z",
@@ -465,9 +515,20 @@ describe("platform proxy routing", () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff123",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123467,
+      publicIPv4: "203.0.113.21",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T11:00:00.000Z",
+    });
+    await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff124",
       clerkUserId: "user_alice",
-      handle: "alice-staging",
+      handle: "alice",
       runtimeSlot: "staging",
       status: "running",
       hetznerServerId: 123468,
@@ -567,9 +628,20 @@ describe("platform proxy routing", () => {
   it("persists the selected runtime slot while a staging VPS is booting", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff129",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123470,
+      publicIPv4: "203.0.113.23",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T11:00:00.000Z",
+    });
+    await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff125",
       clerkUserId: "user_alice",
-      handle: "alice-staging",
+      handle: "alice",
       runtimeSlot: "staging",
       status: "provisioning",
       hetznerServerId: 123469,
@@ -577,6 +649,9 @@ describe("platform proxy routing", () => {
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("primary", { status: 200 }),
+    );
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -595,6 +670,7 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(503);
     expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
+    expect(fetchMock).not.toHaveBeenCalled();
 
     const followUp = await app.request("/", {
       headers: {
@@ -606,6 +682,7 @@ describe("platform proxy routing", () => {
 
     expect(followUp.status).toBe(503);
     expect(followUp.headers.get("set-cookie")).toContain("matrix_runtime_slot=staging");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("falls back to primary when a stale staging runtime cookie has no machine", async () => {
@@ -643,6 +720,90 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.24:443/?view=home");
     expect(res.headers.get("set-cookie")).toContain("matrix_runtime_slot=primary");
+  });
+
+  it("does not use handle fallback across different Clerk users", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff131",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "staging",
+      status: "provisioning",
+      hetznerServerId: 123475,
+      publicIPv4: null,
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff130",
+      clerkUserId: "user_bob",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123474,
+      publicIPv4: "203.0.113.30",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T11:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong owner", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?runtime=staging", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "matrix_runtime_slot=staging",
+      },
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("Booting Matrix OS");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("matrix_runtime_slot=primary");
+  });
+
+  it("strips runtime with URLSearchParams while preserving encoded values", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff129",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123473,
+      publicIPv4: "203.0.113.29",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?%72untime=staging&next=a%23b&view=home", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.29:443/?next=a%23b&view=home");
   });
 
   it("blocks runtime proxying when paid-beta entitlement denies access", async () => {
@@ -683,6 +844,33 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_alice",
     });
+  });
+
+  it("blocks legacy container proxying when paid-beta entitlement denies access", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the legacy container code-server when no running VPS exists", async () => {
