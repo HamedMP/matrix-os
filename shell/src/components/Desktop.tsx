@@ -46,6 +46,7 @@ import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { OnboardingScreen } from "./OnboardingScreen";
 import { GuidedTour } from "./onboarding/GuidedTour";
+import { WelcomeOverlay } from "./onboarding/WelcomeOverlay";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
@@ -496,6 +497,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   // don't, they stay on the onboarding screen -- no transition needed.
   const [showSetup, setShowSetup] = useState(true);
   const [showTour, setShowTour] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
   const setupChecked = useRef(false);
 
   useEffect(() => {
@@ -1301,7 +1303,10 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         />
       )}
       {showTour && (
-        <GuidedTour onComplete={() => setShowTour(false)} />
+        <GuidedTour onComplete={() => { setShowTour(false); setShowWelcome(true); }} />
+      )}
+      {showWelcome && (
+        <WelcomeOverlay onComplete={() => setShowWelcome(false)} />
       )}
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
         {/* Desktop dock -- hidden in ambient/conversational modes and during setup */}

@@ -316,7 +316,7 @@ export function GuidedTour({ onComplete }: GuidedTourProps) {
   // Auto-advance after success message shown (longer for interactive steps)
   useEffect(() => {
     if (!actionDone) return;
-    const delay = isInteractive ? 4800 : 3200;
+    const delay = isInteractive ? 2800 : 3200;
     const t = setTimeout(() => goNext(), delay);
     return () => clearTimeout(t);
   }, [actionDone, isInteractive]);

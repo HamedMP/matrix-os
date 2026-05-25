@@ -18,8 +18,8 @@ const MANUAL_STEPS = [
     body: "Matrix OS learns how you work. It sets up your environment based on what you care about — your tools, your workflows, your preferences.",
   },
   {
-    heading: "One last thing",
-    body: "To unlock the full experience, you'll need an Anthropic API key. This powers the AI that runs throughout Matrix OS.",
+    heading: "Bring your own agents.",
+    body: "The system is model agnostic, so you can run your local agents or use any cloud provider.",
   },
 ];
 
@@ -38,9 +38,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
   const [showMicDialog, setShowMicDialog] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualStep, setManualStep] = useState(0);
+  const [showModePicker, setShowModePicker] = useState(false);
+  const [splitVisible, setSplitVisible] = useState(false);
+  const [continueExiting, setContinueExiting] = useState(false);
+  const [entranceStage, setEntranceStage] = useState<"hidden" | "center" | "settled">("hidden");
   const [headingVisible, setHeadingVisible] = useState(false);
   const [bodyVisible, setBodyVisible] = useState(false);
   const [buttonVisible, setButtonVisible] = useState(false);
+  const [exiting, setExiting] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -55,21 +60,43 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
 
   useEffect(() => {
     if (ob.alreadyComplete) return;
+    // A successful voice-mode completion ("done" stage) now routes through
+    // the guided tour just like manual mode, so both paths end with the
+    // dashboard tour + welcome overlay. Skip buttons still call onComplete
+    // directly to bypass the tour.
+    const onFinishedSuccessfully = onStartTour ?? onComplete;
     if (ob.stage === "done" && gainNodeRef.current && audioCtxRef.current) {
       const gain = gainNodeRef.current;
       const ctx = audioCtxRef.current;
       gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 2);
-      setTimeout(onComplete, 2000);
+      setTimeout(onFinishedSuccessfully, 2000);
     } else if (ob.stage === "done") {
-      setTimeout(onComplete, 800);
+      setTimeout(onFinishedSuccessfully, 800);
     }
-  }, [ob.stage, ob.alreadyComplete, onComplete]);
+  }, [ob.stage, ob.alreadyComplete, onComplete, onStartTour]);
 
   useEffect(() => {
     return () => {
       ambientRef.current?.pause();
       audioCtxRef.current?.close();
+    };
+  }, []);
+
+  // Entrance choreography, three beats:
+  //   "hidden"  → everything invisible, logo pre-positioned at viewport center.
+  //   "center"  → logo fades in big and centered, alone. Holds here a moment.
+  //   "settled" → logo eases into its lockup spot while the title and Continue
+  //               button fade in beneath it.
+  // Staged so the centered logo gets a real beat on screen before the rest
+  // arrives. The first flip is one tick after mount so the "hidden" styles
+  // paint first and the fade-in actually transitions.
+  useEffect(() => {
+    const t1 = setTimeout(() => setEntranceStage("center"), 90);
+    const t2 = setTimeout(() => setEntranceStage("settled"), 90 + 1900);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
     };
   }, []);
 
@@ -80,6 +107,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     setHeadingVisible(false);
     setBodyVisible(false);
     setButtonVisible(false);
+    setExiting(false);
 
     // First step: long pause after the panel rises, then slow staggered reveals.
     // Subsequent steps: tighter timing since we're already in the flow.
@@ -133,6 +161,23 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
     }, 600);
   }
 
+  // Continue → split reveal, choreographed in two beats:
+  //   1. The Continue button fades/drifts away and the logo lockup begins
+  //      settling upward (continueExiting flips immediately on click).
+  //   2. ~520ms later, once the button has cleared, the split mounts and the
+  //      two panels + divider animate in on the next frame.
+  // State-driven inline transitions (not CSS keyframes) so timing is fully
+  // controllable here and doesn't depend on a CSS recompile.
+  function handleContinue() {
+    setContinueExiting(true);
+    setTimeout(() => {
+      setShowModePicker(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setSplitVisible(true));
+      });
+    }, 520);
+  }
+
   // iOS-style "page rise" transition: panel slides up from below, revealing the walkthrough
   function handleStartManual() {
     setManualMode(true);
@@ -143,9 +188,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
   }
 
   function handleManualNext() {
-    setButtonVisible(false);
-    setTimeout(() => setBodyVisible(false), 60);
-    setTimeout(() => setHeadingVisible(false), 120);
+    // Trigger symmetric fade-out (mirror of fade-in) — button leaves first,
+    // body second, heading last. Each element runs onboard-text-fall.
+    setExiting(true);
 
     setTimeout(() => {
       if (manualStep < MANUAL_STEPS.length - 1) {
@@ -156,7 +201,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
         setManualMode(false);
         ob.start(false);
       }
-    }, 500);
+    }, 1100);
   }
 
   const handleVoiceMode = useCallback(async () => {
@@ -203,35 +248,40 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
         />
 
         <div
-          className="flex-1 flex flex-col items-center justify-center gap-16"
+          className="flex-1 flex flex-col items-center justify-center"
           style={{
             position: "relative",
             zIndex: 2,
-            // Landing exits gracefully as the panel rises over it
+            gap: showModePicker ? "2.5rem" : "2.5rem",
+            transition: "gap 1s cubic-bezier(0.16, 1, 0.3, 1)",
             ...(manualMode && (phase === "ascending" || phase === "whiteout")
               ? { animation: "onboard-landing-exit 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards" }
               : {}),
           }}
         >
-          {/* Title — "Enter Matrix OS" with gilded shimmer */}
-          <h1
-            className="cursor-default select-none"
+          {/* Logo + title lockup — begins settling upward the moment Continue is
+              pressed (continueExiting), so the motion leads the split reveal. */}
+          <div
+            className="flex flex-col items-center"
             style={{
-              fontFamily: "var(--font-serif), Georgia, serif",
-              fontSize: "clamp(2rem, 5vw, 3rem)",
-              fontWeight: 300,
-              letterSpacing: "-0.02em",
-              lineHeight: 1.1,
-              transition: "all 1.2s cubic-bezier(0.16, 1, 0.3, 1)",
-              transform: isPreReveal ? "translateY(-24px) scale(1.06)" : "translateY(0) scale(1)",
-              opacity: phase === "black" ? 0 : 1,
+              gap: "1.6rem",
+              transition: "transform 1.6s cubic-bezier(0.16, 1, 0.3, 1)",
+              transform: continueExiting ? "scale(0.78) translateY(-12px)" : "scale(1) translateY(0)",
             }}
           >
-            <span
+            {/* Rabbit logo — CSS mask with shimmer gradient */}
+            <div
               style={{
-                backgroundClip: "text",
-                WebkitBackgroundClip: "text",
-                color: "transparent",
+                width: "120px",
+                height: "155px",
+                WebkitMaskImage: "url('/matrix-logo.svg')",
+                WebkitMaskRepeat: "no-repeat",
+                WebkitMaskSize: "contain",
+                WebkitMaskPosition: "center",
+                maskImage: "url('/matrix-logo.svg')",
+                maskRepeat: "no-repeat",
+                maskSize: "contain",
+                maskPosition: "center",
                 backgroundImage:
                   phase === "ascending" || phase === "whiteout"
                     ? "linear-gradient(90deg, #D9B673 0%, #E8C988 50%, #D9B673 100%)"
@@ -240,79 +290,242 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                       : "linear-gradient(90deg, #2F392C 0%, #2F392C 25%, #C4A265 50%, #2F392C 75%, #2F392C 100%)",
                 backgroundSize: "300% 100%",
                 animation: !isTransitioning
-                  ? "onboard-shimmer 6s ease-in-out infinite, onboard-glow 6s ease-in-out infinite"
+                  ? "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite"
                   : "none",
-                transition: "background-image 1.6s cubic-bezier(0.16, 1, 0.3, 1)",
+                transition: "opacity 1s cubic-bezier(0.16, 1, 0.3, 1), transform 1.7s cubic-bezier(0.16, 1, 0.3, 1)",
+                transform: entranceStage !== "settled"
+                  ? "translateY(30vh) scale(1.6)"
+                  : isPreReveal
+                    ? "translateY(-24px) scale(1.06)"
+                    : "translateY(0) scale(1)",
+                opacity: entranceStage === "hidden" ? 0 : phase === "black" ? 0 : 1,
+              }}
+            />
+
+            {/* Title — "Matrix OS" with shimmer */}
+            <h1
+              className="cursor-default select-none"
+              style={{
+                fontFamily: "var(--font-orbitron), sans-serif",
+                fontSize: "clamp(1.6rem, 4vw, 2.4rem)",
+                fontWeight: 500,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase" as const,
+                lineHeight: 1.1,
+                margin: 0,
+                transition:
+                  "opacity 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.35s, transform 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.35s",
+                transform: entranceStage !== "settled"
+                  ? "translateY(16px) scale(0.98)"
+                  : isPreReveal
+                    ? "translateY(-24px) scale(1.06)"
+                    : "translateY(0) scale(1)",
+                opacity: entranceStage !== "settled" ? 0 : phase === "black" ? 0 : 1,
               }}
             >
-              Enter Matrix OS
-            </span>
-          </h1>
+              <span
+                style={{
+                  backgroundClip: "text",
+                  WebkitBackgroundClip: "text",
+                  color: "transparent",
+                  backgroundImage:
+                    phase === "ascending" || phase === "whiteout"
+                      ? "linear-gradient(90deg, #D9B673 0%, #E8C988 50%, #D9B673 100%)"
+                      : isTransitioning
+                        ? "linear-gradient(90deg, #C4A265 0%, #C4A265 100%)"
+                        : "linear-gradient(90deg, #2F392C 0%, #2F392C 25%, #C4A265 50%, #2F392C 75%, #2F392C 100%)",
+                  backgroundSize: "300% 100%",
+                  animation: !isTransitioning
+                    ? "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite"
+                    : "none",
+                  transition: "background-image 1.6s cubic-bezier(0.16, 1, 0.3, 1)",
+                }}
+              >
+                Matrix OS
+              </span>
+            </h1>
+          </div>
 
-          {/* Mode picker — split at screen center */}
+          {/* Choice region — the split grid is ALWAYS mounted so it reserves its
+              layout height; its panels simply stay invisible (opacity 0) until
+              the reveal. The Continue button is overlaid absolutely on top in
+              phase 1. Because the region's size never changes when we swap
+              button → split, the logo above never jumps. */}
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
+              position: "relative",
               width: "100%",
-              maxWidth: "32rem",
-              transition: "all 1s cubic-bezier(0.16, 1, 0.3, 1)",
-              opacity: isTransitioning ? 0 : 1,
-              transform: isTransitioning ? "translateY(12px)" : "translateY(0)",
-              pointerEvents: isTransitioning ? "none" : "auto",
+              display: "flex",
+              justifyContent: "center",
+              opacity: entranceStage === "settled" ? 1 : 0,
+              transition: "opacity 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.55s",
             }}
           >
-            <button
-              onClick={handleVoiceMode}
-              disabled={isTransitioning}
-              style={{
-                fontFamily: "var(--font-serif), Georgia, serif",
-                fontSize: "0.875rem",
-                fontWeight: 300,
-                color: "#2F392C",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: "0.25rem 0",
-                textAlign: "right",
-                paddingRight: "1.5rem",
-                transition: "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "scale(1.05)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "scale(1)";
-              }}
-            >
-              Interactive mode
-            </button>
+            {/* Continue overlay (phase 1) */}
+            {!showModePicker && (
+              <button
+                onClick={handleContinue}
+                disabled={isTransitioning}
+                style={{
+                  position: "absolute",
+                  top: "50%",
+                  left: "50%",
+                  padding: "0.55rem 1.8rem",
+                  fontFamily: "var(--font-inter), system-ui, sans-serif",
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                  letterSpacing: "0.02em",
+                  color: "#2F392C",
+                  background: "none",
+                  border: "1px solid rgba(47, 57, 44, 0.25)",
+                  borderRadius: "999px",
+                  cursor: continueExiting ? "default" : "pointer",
+                  pointerEvents: continueExiting ? "none" : "auto",
+                  opacity: continueExiting || isTransitioning ? 0 : 1,
+                  transform: continueExiting
+                    ? "translate(-50%, calc(-50% + 10px)) scale(0.94)"
+                    : "translate(-50%, -50%) scale(1)",
+                  transition:
+                    "opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), transform 0.5s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.45s, color 0.45s",
+                }}
+                onMouseEnter={(e) => {
+                  if (continueExiting) return;
+                  e.currentTarget.style.borderColor = "#C4A265";
+                  e.currentTarget.style.color = "#C4A265";
+                }}
+                onMouseLeave={(e) => {
+                  if (continueExiting) return;
+                  e.currentTarget.style.borderColor = "rgba(47, 57, 44, 0.25)";
+                  e.currentTarget.style.color = "#2F392C";
+                }}
+              >
+                Continue
+              </button>
+            )}
 
-            <button
-              onClick={handleStartManual}
-              disabled={isTransitioning}
+            {/* Split into two choices (always in flow to reserve height) */}
+            <div
               style={{
-                fontFamily: "var(--font-serif), Georgia, serif",
-                fontSize: "0.875rem",
-                fontWeight: 300,
-                color: "#2F392C",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: "0.25rem 0",
-                textAlign: "left",
-                paddingLeft: "1.5rem",
-                transition: "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "scale(1.05)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "scale(1)";
+                display: "grid",
+                gridTemplateColumns: "1fr auto 1fr",
+                alignItems: "stretch",
+                width: "100%",
+                maxWidth: "56rem",
+                pointerEvents: showModePicker && !isTransitioning ? "auto" : "none",
               }}
             >
-              Manual mode
-            </button>
+              {([
+                {
+                  label: "Talk to Aoede",
+                  sub: "Let our voice guide walk you through setup, hands-free. Just speak and Aoede sets everything up for you.",
+                  onClick: handleVoiceMode,
+                  align: "flex-end" as const,
+                  textAlign: "right" as const,
+                  delay: "0.3s",
+                },
+                {
+                  label: "Explore manually",
+                  sub: "Step through Matrix OS at your own pace and configure things exactly how you like them.",
+                  onClick: handleStartManual,
+                  align: "flex-start" as const,
+                  textAlign: "left" as const,
+                  delay: "0.45s",
+                },
+              ] as const).map((item, i) => (
+                <button
+                  key={i}
+                  onClick={item.onClick}
+                  disabled={isTransitioning}
+                  style={{
+                    gridColumn: i === 0 ? 1 : 3,
+                    gridRow: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: item.align,
+                    justifyContent: "center",
+                    gap: "0.7rem",
+                    padding: "1.5rem 2.5rem",
+                    textAlign: item.textAlign,
+                    fontFamily: "var(--font-inter), system-ui, sans-serif",
+                    color: "#2F392C",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    borderRadius: "14px",
+                    opacity: splitVisible ? 1 : 0,
+                    transform: splitVisible ? "translateY(0) scale(1)" : "translateY(18px) scale(0.97)",
+                    transition:
+                      `opacity 1s cubic-bezier(0.16, 1, 0.3, 1) ${item.delay}, transform 1s cubic-bezier(0.16, 1, 0.3, 1) ${item.delay}, background 0.4s cubic-bezier(0.16, 1, 0.3, 1)`,
+                  }}
+                  onMouseEnter={(e) => {
+                    const btn = e.currentTarget;
+                    btn.style.background = "rgba(196, 162, 101, 0.07)";
+                    const label = btn.querySelector("[data-label]") as HTMLElement;
+                    if (label) label.style.color = "#C4A265";
+                    const line = btn.querySelector("[data-line]") as HTMLElement;
+                    if (line) line.style.width = "3rem";
+                  }}
+                  onMouseLeave={(e) => {
+                    const btn = e.currentTarget;
+                    btn.style.background = "none";
+                    const label = btn.querySelector("[data-label]") as HTMLElement;
+                    if (label) label.style.color = "#2F392C";
+                    const line = btn.querySelector("[data-line]") as HTMLElement;
+                    if (line) line.style.width = "1.5rem";
+                  }}
+                >
+                  <span
+                    data-label=""
+                    style={{
+                      fontSize: "1.15rem",
+                      fontWeight: 600,
+                      letterSpacing: "0.01em",
+                      transition: "color 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                  <span
+                    data-line=""
+                    style={{
+                      width: "1.5rem",
+                      height: "2px",
+                      background: "#C4A265",
+                      borderRadius: "2px",
+                      transition: "width 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "0.82rem",
+                      fontWeight: 400,
+                      lineHeight: 1.6,
+                      opacity: 0.55,
+                      maxWidth: "16rem",
+                    }}
+                  >
+                    {item.sub}
+                  </span>
+                </button>
+              ))}
+
+              {/* Vertical divider — grows from center */}
+              <div
+                aria-hidden
+                style={{
+                  width: "1px",
+                  alignSelf: "stretch",
+                  margin: "0.5rem 0",
+                  background: "linear-gradient(to bottom, transparent, rgba(47, 57, 44, 0.2) 20%, rgba(47, 57, 44, 0.2) 80%, transparent)",
+                  gridColumn: "2",
+                  gridRow: "1",
+                  transformOrigin: "center",
+                  transform: splitVisible ? "scaleY(1)" : "scaleY(0)",
+                  opacity: splitVisible ? 1 : 0,
+                  transition: "transform 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.2s, opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.2s",
+                }}
+              />
+            </div>
           </div>
         </div>
 
@@ -332,9 +545,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               onComplete();
             }}
             style={{
-              fontFamily: "var(--font-serif), Georgia, serif",
+              fontFamily: "var(--font-inter), system-ui, sans-serif",
               fontSize: "0.625rem",
-              fontStyle: "italic",
+              fontWeight: 400,
+              letterSpacing: "0.06em",
               color: "#2F392C",
               opacity: 0.35,
               background: "none",
@@ -379,7 +593,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
             className="max-w-lg text-center flex flex-col items-center"
             style={{ gap: "2rem" }}
           >
-            {/* Heading — clean scale-up reveal */}
+            {/* Heading — clean scale-up reveal; mirrors out via onboard-text-fall */}
             <h2
               key={`heading-${manualStep}`}
               style={{
@@ -391,39 +605,47 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 lineHeight: 1.1,
                 opacity: 0,
                 transform: "scale(0.94) translateY(10px)",
-                ...(headingVisible
+                ...(exiting
                   ? {
-                      animation: "onboard-text-rise 2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-text-fall 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both",
                     }
-                  : {}),
+                  : headingVisible
+                    ? {
+                        animation: "onboard-text-rise 2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      }
+                    : {}),
               }}
             >
               {MANUAL_STEPS[manualStep].heading}
             </h2>
 
-            {/* Body — clean scale-up reveal */}
+            {/* Body — clean scale-up reveal; mirrors out via onboard-text-fall */}
             <p
               key={`body-${manualStep}`}
               style={{
-                fontFamily: "Arial, Helvetica, sans-serif",
-                fontSize: "1.05rem",
-                fontWeight: 300,
+                fontFamily: "var(--font-inter), system-ui, sans-serif",
+                fontSize: "1rem",
+                fontWeight: 400,
                 color: "#2F392C",
                 lineHeight: 1.8,
                 maxWidth: "28rem",
                 opacity: 0,
                 transform: "scale(0.94) translateY(10px)",
-                ...(bodyVisible
+                ...(exiting
                   ? {
-                      animation: "onboard-text-rise 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-text-fall 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both",
                     }
-                  : {}),
+                  : bodyVisible
+                    ? {
+                        animation: "onboard-text-rise 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      }
+                    : {}),
               }}
             >
               {MANUAL_STEPS[manualStep].body}
             </p>
 
-            {/* Continue button — clean scale-up reveal */}
+            {/* Continue button — clean scale-up reveal; mirrors out via onboard-text-fall */}
             <button
               key={`btn-${manualStep}`}
               onClick={handleManualNext}
@@ -432,9 +654,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
-                fontFamily: "Arial, Helvetica, sans-serif",
-                fontSize: "0.875rem",
-                fontWeight: 400,
+                fontFamily: "var(--font-inter), system-ui, sans-serif",
+                fontSize: "0.8rem",
+                fontWeight: 500,
+                letterSpacing: "0.03em",
                 color: "#2F392C",
                 background: "none",
                 border: "none",
@@ -443,11 +666,15 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
                 cursor: "pointer",
                 opacity: 0,
                 transform: "scale(0.94) translateY(10px)",
-                ...(buttonVisible
+                ...(exiting
                   ? {
-                      animation: "onboard-text-rise 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      animation: "onboard-text-fall 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0s both",
                     }
-                  : {}),
+                  : buttonVisible
+                    ? {
+                        animation: "onboard-text-rise 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                      }
+                    : {}),
                 transition: "gap 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-bottom-color 0.3s",
               }}
               onMouseEnter={(e) => {
@@ -476,10 +703,10 @@ export function OnboardingScreen({ onComplete, onOpenTerminal, onStartTour }: On
               bottom: "1.5rem",
               left: "50%",
               transform: "translateX(-50%)",
-              fontFamily: "var(--font-serif), Georgia, serif",
+              fontFamily: "var(--font-inter), system-ui, sans-serif",
               fontSize: "0.625rem",
-              fontStyle: "italic",
-              letterSpacing: "0.15em",
+              fontWeight: 400,
+              letterSpacing: "0.06em",
               color: "#2F392C",
               opacity: buttonVisible ? 0.35 : 0,
               background: "none",

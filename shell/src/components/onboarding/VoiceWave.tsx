@@ -167,10 +167,19 @@ export function VoiceWave({ state, className }: VoiceWaveProps) {
       const spd = speedRef.current;
       const t = timeRef.current;
 
-      // Trailing fade: don't fully clear — leave ghost of previous frames
-      // Use the page background color (#FAFAF9) so wave blends seamlessly
-      ctx.fillStyle = "rgba(250, 250, 249, 0.18)";
+      // Trailing fade: erase 18% of alpha per frame instead of painting an
+      // 18%-opaque page-color rectangle on top. Painting a translucent fill
+      // bakes the wide amber/rust glow shadows into the trail, giving the
+      // wave area a warm tint that doesn't match the page. Using
+      // destination-out keeps the canvas truly transparent in non-wave
+      // pixels, so the page background (whatever it is) shows through
+      // identically to the rest of the screen — and wave glows decay to
+      // transparent rather than to off-cream.
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
       ctx.fillRect(0, 0, w, h);
+      ctx.restore();
 
       // Draw each wave layer: blur pass first, then crisp line on top
       for (const layer of LAYERS) {

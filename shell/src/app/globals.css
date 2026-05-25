@@ -110,6 +110,18 @@
   }
 }
 
+/* Mirror of onboard-text-rise — text exits along the same path it entered. */
+@keyframes onboard-text-fall {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+}
+
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
