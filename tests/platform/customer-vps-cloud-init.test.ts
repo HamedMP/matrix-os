@@ -205,7 +205,9 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
-    expect(cloudInit).toContain("printf '%s\\n' \"$MATRIX_IMAGE_VERSION\" >/opt/matrix/app/BUNDLE_VERSION");
+    expect(cloudInit).not.toContain("printf '%s\\n' \"$MATRIX_IMAGE_VERSION\" >/opt/matrix/app/BUNDLE_VERSION");
+    expect(cloudInit).toContain('bundle_version="$(sed -n');
+    expect(cloudInit).toContain("printf '%s\\n' \"$bundle_version\" >/opt/matrix/app/BUNDLE_VERSION");
     expect(cloudInit).toContain('chmod -R g+rwX /opt/matrix/app');
   });
 

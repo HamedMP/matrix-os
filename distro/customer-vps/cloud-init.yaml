@@ -725,8 +725,19 @@ runcmd:
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
     chmod -R g+rwX /opt/matrix/app
-    printf '%s\n' "$MATRIX_IMAGE_VERSION" >/opt/matrix/app/BUNDLE_VERSION
-    chown matrix:matrix /opt/matrix/app/BUNDLE_VERSION
+    if [ -f /opt/matrix/release.json ]; then
+      bundle_version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' /opt/matrix/release.json | head -n 1)"
+      if [ -n "$bundle_version" ]; then
+        printf '%s\n' "$bundle_version" >/opt/matrix/app/BUNDLE_VERSION
+        chown matrix:matrix /opt/matrix/app/BUNDLE_VERSION
+      else
+        echo "matrix-host: release metadata has no version; leaving BUNDLE_VERSION unchanged" >&2
+      fi
+    elif [ -f /opt/matrix/app/BUNDLE_VERSION ]; then
+      chown matrix:matrix /opt/matrix/app/BUNDLE_VERSION
+    else
+      echo "matrix-host: release metadata missing; leaving BUNDLE_VERSION absent" >&2
+    fi
     if [ -d /opt/matrix/systemd ]; then
       install -d -o root -g root -m 0755 /etc/systemd/system
       install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/
