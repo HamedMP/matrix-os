@@ -67,6 +67,15 @@ describe('platform/customer-vps', () => {
     return { service, hetzner, systemStore };
   }
 
+  it('defaults new customer VPS provisioning to the beta host bundle channel', () => {
+    const config = loadCustomerVpsConfig({
+      PLATFORM_PUBLIC_URL: 'https://app.matrix-os.com',
+    });
+
+    expect(config.imageVersion).toBe('beta');
+    expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/beta/matrix-host-bundle.tar.gz');
+  });
+
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService();
 
