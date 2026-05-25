@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createElixirSymphonyProxyRoutes } from "../../packages/gateway/src/symphony/proxy.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 function json(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -10,6 +15,16 @@ function json(body: unknown, init?: ResponseInit): Response {
 }
 
 describe("Elixir Symphony proxy routes", () => {
+  it("wires the gateway to the Elixir proxy instead of the TypeScript orchestrator route table", async () => {
+    const server = await readFile(resolve(repoRoot, "packages/gateway/src/server.ts"), "utf8");
+
+    expect(server).toContain("createElixirSymphonyProxyRoutes");
+    expect(server).toContain('app.route("/api/symphony", createElixirSymphonyProxyRoutes())');
+    expect(server).not.toContain("createMatrixSymphonyOrchestrator({");
+    expect(server).not.toContain("KyselySymphonyRepository");
+    expect(server).not.toContain("createSymphonyRoutes({");
+  });
+
   it("normalizes loopback Elixir state without exposing raw upstream errors", async () => {
     const fetchImpl = vi.fn(async () => json({
       generated_at: "2026-05-25T00:00:00Z",
