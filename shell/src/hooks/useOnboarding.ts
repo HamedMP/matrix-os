@@ -480,7 +480,8 @@ export function useOnboarding(): OnboardingHook {
         break;
       case "goal_selected":
         setSelectedGoalIds((prev) => {
-          const goalId = msg.goalId as OnboardingGoalId;
+          if (!isOnboardingGoalId(msg.goalId)) return prev;
+          const goalId = msg.goalId;
           return prev.includes(goalId) ? prev : [...prev, goalId];
         });
         setOnboardingSteps(coerceOnboardingSteps(msg.steps));
