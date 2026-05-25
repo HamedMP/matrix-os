@@ -93,7 +93,7 @@ describe('platform/customer-vps', () => {
   it('pins channel image versions to the current immutable host bundle release at provision time', async () => {
     await upsertHostBundleRelease(db, {
       version: 'v2026.05.25-80',
-      channel: 'stable',
+      channel: 'beta',
       gitCommit: 'adb12c560b8e6253fd0047eb2375b379e7659cbe',
       gitRef: 'main',
       buildTime: '2026-05-25T11:58:42.274Z',
@@ -106,7 +106,7 @@ describe('platform/customer-vps', () => {
       changelog: 'Release latest main host bundle',
       createdAt: '2026-05-25T12:14:58.275Z',
     });
-    await promoteHostBundleChannel(db, 'stable', 'v2026.05.25-80');
+    await promoteHostBundleChannel(db, 'beta', 'v2026.05.25-80');
     const { service, hetzner } = createService();
 
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -117,7 +117,7 @@ describe('platform/customer-vps', () => {
       'MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/v2026.05.25-80/matrix-host-bundle.tar.gz',
     );
     expect(createInput?.userData).toContain('MATRIX_IMAGE_VERSION=v2026.05.25-80');
-    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
+    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=beta');
   });
 
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
