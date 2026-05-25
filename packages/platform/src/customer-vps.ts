@@ -233,6 +233,8 @@ function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: s
   if (config.hostBundleUrl.includes(currentSegment)) {
     return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
   }
+  // Defensive fallback for future URL-template changes. The current generated
+  // URL always contains the encoded image-version segment above.
   const url = new URL(config.hostBundleUrl);
   url.pathname = `/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`;
   return url.toString();
@@ -551,6 +553,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
+      // Resolve before claiming recovery so bundle lookup failures do not clear
+      // the old provider server id and leave a billable VPS untracked.
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
