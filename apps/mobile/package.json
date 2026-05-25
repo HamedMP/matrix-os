@@ -33,7 +33,7 @@
     "expo-secure-store": "~55.0.9",
     "expo-speech": "~55.0.9",
     "expo-splash-screen": "~55.0.12",
-    "expo-status-bar": "~55.0.4",
+    "expo-status-bar": "~56.0.4",
     "expo-system-ui": "~55.0.10",
     "expo-web-browser": "~55.0.10",
     "nativewind": "^5.0.0-preview",
