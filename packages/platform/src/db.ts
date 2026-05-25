@@ -1019,6 +1019,23 @@ export async function listActiveUserMachinesByClerkId(
   return rows.map(mapUserMachine);
 }
 
+export async function countActiveUserMachinesByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+  limit = 2,
+): Promise<number> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .select('machine_id')
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('status', 'in', ['running', 'provisioning', 'recovering'])
+    .limit(limit)
+    .execute();
+  return rows.length;
+}
+
 export async function updateUserMachine(
   db: PlatformDB,
   machineId: string,

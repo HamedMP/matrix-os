@@ -487,6 +487,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   // busy because the popup auto-opens then resists close.
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
+  const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
@@ -507,6 +508,32 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     const timers = minimizeTimers.current;
     return () => {
       for (const timer of timers.values()) clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const timeout = window.setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
+    void fetch("/api/settings/onboarding-status", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn("[desktop] first-run status check failed:", err);
+        }
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (!cancelled) {
+          setFirstRunStatus("ready");
+        }
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
     };
   }, []);
 
@@ -1240,6 +1267,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   return (
     <TooltipProvider delayDuration={300}>
+      {firstRunStatus === "checking" ? (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-background text-sm text-muted-foreground">
+          <span>Matrix OS</span>
+        </div>
+      ) : null}
       {onboardingActive ? null : (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
           {desktopMode === "canvas" ? (
