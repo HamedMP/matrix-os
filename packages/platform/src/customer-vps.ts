@@ -547,6 +547,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
+      const currentTime = now();
+      const machineId = machineIdFactory();
+      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
+      const postgresPassword = postgresPasswordFactory();
+      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+      const hostConfig = buildHostConfig(
+        deps.config,
+        { clerkUserId: active.clerkUserId, handle: active.handle },
+        machineId,
+        registration.token,
+        postgresPassword,
+        bundleRef,
+      );
       const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId);
       if (!existing) {
         const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
@@ -557,22 +570,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       const oldMachineId = existing.machineId;
       const oldServerId = active.hetznerServerId;
-      const currentTime = now();
-      const machineId = machineIdFactory();
-      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
-      const postgresPassword = postgresPasswordFactory();
 
       let newServerId: number | null = null;
       try {
-        const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
-        const hostConfig = buildHostConfig(
-          deps.config,
-          { clerkUserId: existing.clerkUserId, handle: existing.handle },
-          machineId,
-          registration.token,
-          postgresPassword,
-          bundleRef,
-        );
         const userData = renderCloudInitTemplate(
           deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
           hostConfig,
