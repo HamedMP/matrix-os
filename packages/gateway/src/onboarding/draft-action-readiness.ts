@@ -5,7 +5,6 @@ import { ActivationRouteError } from "./activation-errors.js";
 const MAX_OWNERS = 512;
 const MAX_DRAFTS_PER_OWNER = 200;
 const UNSAFE_DISPLAY = /(sk_[a-z0-9][a-z0-9_-]*|\/home\/[^\s,;]+|[A-Za-z0-9_.-]*(?:secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*[^\s,;]+)/gi;
-const SENSITIVE_TERMS = /\b(secret|token|postgres|database)\b/gi;
 
 export type DraftActionType = "support_reply" | "social_post" | "acquisition_message" | "customer_follow_up";
 export type DraftActionStatus = "draft" | "needs_review" | "approved" | "sent" | "rejected";
@@ -51,7 +50,6 @@ function safeDisplay(value: string, fallback: string, max = 5000): string {
   if (!trimmed) return fallback;
   const redacted = trimmed
     .replace(UNSAFE_DISPLAY, "[redacted]")
-    .replace(SENSITIVE_TERMS, "[redacted]")
     .trim();
   return redacted || fallback;
 }

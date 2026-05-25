@@ -105,8 +105,25 @@ describe("support and growth draft readiness", () => {
 
     const draft = await created.json();
     expect(draft.content).toContain("Tell the customer");
+    expect(draft.content).toContain("database migration is done");
     expect(draft.content).toContain("[redacted]");
-    expect(draft.content).not.toMatch(/database|token|secret|sk_test/i);
+    expect(draft.content).not.toMatch(/token=|secret|sk_test/i);
+  });
+
+  it("preserves legitimate support language that contains sensitive-domain words", async () => {
+    const service = createDraftActionReadinessService();
+    const app = createDraftActionRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const created = await app.request(post("/drafts", {
+      type: "support_reply",
+      content: "Tell the customer the database backup and token lifecycle docs are ready.",
+      destination: "Customer ticket #43",
+      createdByAgent: "hermes",
+    }));
+
+    const draft = await created.json();
+    expect(draft.content).toBe("Tell the customer the database backup and token lifecycle docs are ready.");
+    expect(draft.content).not.toContain("[redacted]");
   });
 
   it("does not flag polite May support openers as uncertain language", async () => {
