@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
-import { createApp, escapeInlineScriptJson } from "../../packages/platform/src/main.js";
+import { buildPostAuthRedirectPath, createApp, escapeInlineScriptJson } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
@@ -81,6 +81,12 @@ describe("platform proxy routing", () => {
   it("escapes JSON embedded in auth page inline scripts", () => {
     expect(escapeInlineScriptJson('/?next=</script><script src=/x.js>&runtime=staging')).toBe(
       '"/?next=\\u003c/script\\u003e\\u003cscript src=/x.js\\u003e\\u0026runtime=staging"',
+    );
+  });
+
+  it("keeps post-auth redirects same-origin when the request path starts with double slashes", () => {
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com//evil.example/?runtime=staging")).toBe(
+      "/evil.example/?runtime=staging",
     );
   });
 

@@ -459,11 +459,16 @@ function buildRuntimeSlotCookie(runtimeSlot: string): string {
   ].join('; ');
 }
 
-function buildPostAuthRedirectPath(rawUrl: string): string {
+export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
-    const path = url.pathname === '/sign-in' || url.pathname === '/sign-up' ? '/' : url.pathname;
-    return `${path}${url.search}`;
+    const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
+    const path = /^\/sign-(?:in|up)\/?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const runtime = url.searchParams.get('runtime');
+    if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
+      return `${path}?runtime=${encodeURIComponent(runtime)}`;
+    }
+    return path;
   } catch (err: unknown) {
     console.warn('[platform] Failed to build post-auth redirect:', err instanceof Error ? err.message : String(err));
     return '/';
