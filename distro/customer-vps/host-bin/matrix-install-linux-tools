@@ -69,5 +69,9 @@ if [ -x "$BREW_PREFIX/bin/gh" ]; then
 fi
 
 "$BREW_BIN" --version
-"$BREW_PREFIX/bin/gt" --version
-"$BREW_PREFIX/bin/gh" --version
+if [ -x "$BREW_PREFIX/bin/gt" ]; then
+  "$BREW_PREFIX/bin/gt" --version
+fi
+if [ -x "$BREW_PREFIX/bin/gh" ]; then
+  "$BREW_PREFIX/bin/gh" --version
+fi
