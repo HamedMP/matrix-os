@@ -487,7 +487,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   // busy because the popup auto-opens then resists close.
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
-  const showSetup = false;
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
@@ -1241,7 +1240,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   return (
     <TooltipProvider delayDuration={300}>
-      {!showSetup && (
+      {onboardingActive ? null : (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
           {desktopMode === "canvas" ? (
             <CanvasToolbar />
@@ -1249,8 +1248,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         </MenuBar>
       )}
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
-        {/* Desktop dock -- hidden in ambient/conversational modes and during setup */}
-        {modeConfig.showDock && !showSetup && <div
+        {/* Desktop dock -- hidden in ambient/conversational modes and during onboarding. */}
+        {modeConfig.showDock && !onboardingActive && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",
@@ -1636,9 +1635,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             </div>
           )}
 
-          {modeConfig.showWindows && desktopMode === "canvas" && !showSetup && <CanvasRenderer />}
+          {!onboardingActive && modeConfig.showWindows && desktopMode === "canvas" && <CanvasRenderer />}
 
-          {vocalMounted && !showSetup && (
+          {!onboardingActive && vocalMounted && (
             <VocalPanel
               active={vocalActive}
               chat={chat}
