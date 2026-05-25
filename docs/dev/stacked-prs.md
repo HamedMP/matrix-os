@@ -22,32 +22,37 @@ Keep each PR under the normal review target: ideally under 1000 additions and
 Install and authenticate the Graphite CLI, then initialize it once in the repo:
 
 ```bash
-gt auth
-gt repo init
+gt init
 ```
+
+The CLI prompts for the trunk branch, normally `main`, and stores config in
+`.git/.graphite_repo_config`. If `gt` is not installed or authenticated, stop
+and fix that before creating, submitting, or updating Matrix OS stacks.
 
 Check the current stack before changing it:
 
 ```bash
-gt stack
+gt log short
+# or:
+gt ls
 ```
 
 ## Create A Stack
 
-Graphite works best when each branch is created from already-staged changes.
-Do not create an empty branch first.
+Use Graphite for branch creation and commits. Start from trunk for the first
+layer, then create each upstack layer from its parent branch.
+Use the trunk name selected during `gt init`; in this repo it is usually
+`main`.
 
 ```bash
-git status --short
+gt checkout <trunk>
 gt sync
 
 # Make the first logical slice, then:
-gt add <files>
-gt create -m "feat(messages): add setup contracts"
+gt create --all --message "feat(messages): add setup contracts"
 
-# Make the next dependent slice on top of the current branch, then:
-gt add <files>
-gt create -m "feat(messages): add permission gates"
+# Make the next dependent slice on top of the current branch:
+gt create --all --message "feat(messages): add permission gates"
 ```
 
 Repeat this for each layer. The current branch becomes the parent of the next
@@ -58,11 +63,18 @@ Repeat this for each layer. The current branch becomes the parent of the next
 Use `gt modify` when changing the current branch in a stack:
 
 ```bash
-gt add <files>
-gt modify
+gt modify --all
 ```
 
-If you edit a lower branch, restack descendants before validating:
+If you need a separate follow-up commit instead of amending the current branch:
+
+```bash
+gt modify --commit --all --message "fix(messages): address review feedback"
+```
+
+If you edit a lower branch, Graphite normally restacks descendants for
+`gt modify`. If manual conflict repair is needed, restack descendants before
+validating:
 
 ```bash
 gt restack
@@ -85,6 +97,12 @@ Submit the whole stack, including upstack descendants:
 gt submit --stack
 ```
 
+Open the current PR or stack in Graphite after submitting:
+
+```bash
+gt pr
+```
+
 For a fast published stack update, use the alias:
 
 ```bash
@@ -97,6 +115,13 @@ create new ones.
 
 ## Matrix OS Rules
 
+- Use Graphite commands for Matrix OS stack operations. Prefer `gt checkout`,
+  `gt create --all --message`, `gt modify --all`, `gt submit --stack`,
+  `gt sync`, `gt restack`, `gt top`, and `gt pr` over raw git/gh equivalents
+  when creating, updating, publishing, and opening stacked PRs.
+- If Graphite is missing or unauthenticated, treat that as an environment
+  blocker for stack operations and install/authenticate it instead of silently
+  falling back to raw git for stack work.
 - PR titles must be Conventional Commit titles, for example
   `feat(messages): add permission gates`.
 - Backend PR bodies must include the required Invariants section from
