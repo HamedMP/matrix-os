@@ -245,6 +245,10 @@ async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): 
 
   const release = await getHostBundleReleaseByChannel(db, config.imageVersion);
   if (!release) {
+    logCustomerVpsError(
+      `host bundle channel missing release channel=${config.imageVersion}`,
+      new Error('falling back to configured host bundle URL without immutable version pin'),
+    );
     return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
   }
 
@@ -375,6 +379,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
+
+      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      if (existingBeforeBundleResolve) {
+        return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+      }
+
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
@@ -551,18 +561,18 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
-      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
-      const hostConfig = buildHostConfig(
-        deps.config,
-        { clerkUserId: existing.clerkUserId, handle: existing.handle },
-        machineId,
-        registration.token,
-        postgresPassword,
-        bundleRef,
-      );
 
       let newServerId: number | null = null;
       try {
+        const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+        const hostConfig = buildHostConfig(
+          deps.config,
+          { clerkUserId: existing.clerkUserId, handle: existing.handle },
+          machineId,
+          registration.token,
+          postgresPassword,
+          bundleRef,
+        );
         const userData = renderCloudInitTemplate(
           deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
           hostConfig,

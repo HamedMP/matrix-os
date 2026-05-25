@@ -683,15 +683,21 @@ runcmd:
     install -d -o matrix -g matrix -m 0755 /home/matrix/home/.config /home/matrix/home/.config/systemd /home/matrix/home/.config/systemd/user
     install -d -o matrix -g matrix -m 0700 /home/matrix/home/.config/gh
     if [ -d /home/matrix/.config/gh ] && [ ! -L /home/matrix/.config/gh ]; then
-      cp -an /home/matrix/.config/gh/. /home/matrix/home/.config/gh/ || true
-      rm -rf /home/matrix/.config/gh
+      if cp -an /home/matrix/.config/gh/. /home/matrix/home/.config/gh/; then
+        rm -rf /home/matrix/.config/gh
+      else
+        echo "matrix-host: failed to migrate .config/gh; skipping removal" >&2
+      fi
     fi
     ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh
     chown -h matrix:matrix /home/matrix/.config/gh
     install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh
     if [ -d /home/matrix/.ssh ] && [ ! -L /home/matrix/.ssh ]; then
-      cp -an /home/matrix/.ssh/. /home/matrix/home/.ssh/ || true
-      rm -rf /home/matrix/.ssh
+      if cp -an /home/matrix/.ssh/. /home/matrix/home/.ssh/; then
+        rm -rf /home/matrix/.ssh
+      else
+        echo "matrix-host: failed to migrate .ssh; skipping removal" >&2
+      fi
     fi
     ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh
     chown -h matrix:matrix /home/matrix/.ssh
