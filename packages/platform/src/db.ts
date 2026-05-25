@@ -1012,6 +1012,7 @@ export async function listActiveUserMachinesByClerkId(
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('deleted_at', 'is', null)
+    .where('status', 'in', ['running', 'provisioning', 'recovering'])
     .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
     .orderBy('provisioned_at', 'desc')
     .execute();
