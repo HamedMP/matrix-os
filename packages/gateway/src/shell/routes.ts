@@ -280,9 +280,45 @@ function safeError(c: Context, err: unknown) {
     );
   }
   const shellErr = toShellError(err);
-  console.warn("[shell] route failed:", err instanceof Error ? err.message : String(err));
+  if (shellErr.diagnostic) {
+    console.warn("[shell] route failed:", {
+      code: shellErr.code,
+      diagnostic: shellErr.diagnostic,
+      ...describeErrorForLog(shellErr),
+    });
+  } else {
+    console.warn("[shell] route failed:", err instanceof Error ? err.message : String(err));
+  }
   return c.json(
     { error: { code: shellErr.code, message: shellErr.safeMessage } },
     (shellErr.status ?? 500) as 500,
   );
+}
+
+function describeErrorForLog(err: unknown) {
+  if (!(err instanceof Error)) {
+    return { message: String(err) };
+  }
+  const context: {
+    message: string;
+    cause?: string | { message: string; code?: string | number; signal?: string };
+  } = { message: err.message };
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const causeContext: { message: string; code?: string | number; signal?: string } = {
+      message: cause.message,
+    };
+    const code = (cause as NodeJS.ErrnoException).code;
+    const signal = (cause as { signal?: unknown }).signal;
+    if (typeof code === "string" || typeof code === "number") {
+      causeContext.code = code;
+    }
+    if (typeof signal === "string") {
+      causeContext.signal = signal;
+    }
+    context.cause = causeContext;
+  } else if (cause !== undefined) {
+    context.cause = String(cause);
+  }
+  return context;
 }

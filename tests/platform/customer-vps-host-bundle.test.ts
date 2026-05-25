@@ -160,6 +160,7 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
+    expect(launcher).toContain('export PATH="/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
     expect(launcher).toContain('sync_bundled_home_assets');
     expect(launcher).toContain('sync-matrix-agent-skills.sh');

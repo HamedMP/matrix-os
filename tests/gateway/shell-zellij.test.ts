@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
+  classifyZellijFailure,
   createZellijAdapter,
   sanitizeZellijError,
 } from "../../packages/gateway/src/shell/zellij.js";
@@ -41,6 +42,61 @@ describe("zellij adapter", () => {
     await expect(adapter.createSession({ name: "main" })).rejects.toMatchObject({
       code: "zellij_failed",
       safeMessage: "Shell operation failed",
+    });
+  });
+
+  it("classifies a missing zellij binary for server diagnostics", async () => {
+    const missing = Object.assign(new Error("spawn zellij ENOENT"), {
+      code: "ENOENT",
+      syscall: "spawn zellij",
+    });
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(missing, "", "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.createSession({ name: "main" })).rejects.toMatchObject({
+      code: "zellij_failed",
+      diagnostic: {
+        binary: "zellij",
+        kind: "binary_not_found",
+      },
+    });
+  });
+
+  it("classifies zellij timeouts without exposing stderr", () => {
+    const timedOut = Object.assign(new Error("Command timed out"), {
+      code: null,
+      killed: true,
+      signal: "SIGTERM",
+    });
+
+    expect(classifyZellijFailure(timedOut, "details from /home/alice/project")).toEqual({
+      binary: "zellij",
+      kind: "timeout",
+      signal: "SIGTERM",
+      stderr: "details from [path]",
+    });
+  });
+
+  it("keeps errno strings separate from process exit codes", () => {
+    const missing = Object.assign(new Error("spawn zellij ENOENT"), {
+      code: "ENOENT",
+    });
+    const failed = Object.assign(new Error("zellij exited"), {
+      code: 1,
+    });
+
+    expect(classifyZellijFailure(missing, "")).toEqual({
+      binary: "zellij",
+      errorCode: "ENOENT",
+      kind: "binary_not_found",
+    });
+    expect(classifyZellijFailure(failed, "")).toEqual({
+      binary: "zellij",
+      exitCode: 1,
+      kind: "process_failed",
     });
   });
 
