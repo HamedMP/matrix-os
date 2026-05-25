@@ -388,7 +388,11 @@ exit 1
         errorCode: null,
       });
     } finally {
-      process.env.PATH = originalPath;
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
       if (originalExpectedHome === undefined) {
         delete process.env.EXPECTED_MATRIX_HOME;
       } else {
