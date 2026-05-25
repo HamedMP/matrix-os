@@ -2,6 +2,7 @@ export interface ShellSafeError extends Error {
   code: string;
   safeMessage: string;
   status?: number;
+  diagnostic?: unknown;
 }
 
 export function shellError(

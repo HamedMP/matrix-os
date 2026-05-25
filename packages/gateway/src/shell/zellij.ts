@@ -8,6 +8,15 @@ import { shellError, type ShellSafeError } from "./errors.js";
 type ExecFile = typeof nodeExecFile;
 type Spawn = typeof nodeSpawn;
 
+export interface ZellijFailureDiagnostic {
+  binary: "zellij";
+  kind: "binary_not_found" | "timeout" | "process_failed";
+  stderr?: string;
+  errorCode?: string;
+  exitCode?: number;
+  signal?: string;
+}
+
 export interface ZellijAdapterDeps {
   execFile?: ExecFile;
   spawn?: Spawn;
@@ -48,6 +57,37 @@ export function sanitizeZellijError(stderr: string): string {
     .trim();
 }
 
+export function classifyZellijFailure(err: unknown, stderr: string): ZellijFailureDiagnostic {
+  const safeStderr = sanitizeZellijError(stderr);
+  const diagnostic: ZellijFailureDiagnostic = {
+    binary: "zellij",
+    kind: "process_failed",
+  };
+
+  if (err instanceof Error) {
+    const code = (err as NodeJS.ErrnoException & { code?: string | number | null }).code;
+    const signal = (err as { signal?: unknown }).signal;
+    const killed = (err as { killed?: unknown }).killed === true;
+    if (code === "ENOENT") {
+      diagnostic.kind = "binary_not_found";
+    } else if (code === "ETIMEDOUT" || (code == null && killed && signal === "SIGTERM")) {
+      diagnostic.kind = "timeout";
+    }
+    if (typeof code === "number") {
+      diagnostic.exitCode = code;
+    } else if (typeof code === "string") {
+      diagnostic.errorCode = code;
+    }
+    if (typeof signal === "string") {
+      diagnostic.signal = signal;
+    }
+  }
+  if (safeStderr) {
+    diagnostic.stderr = safeStderr;
+  }
+  return diagnostic;
+}
+
 export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter {
   const execFile = deps.execFile ?? nodeExecFile;
   const spawn = deps.spawn ?? nodeSpawn;
@@ -67,6 +107,8 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
             (safe as ShellSafeError & { stderr?: string }).stderr = sanitizeZellijError(
               typeof stderr === "string" ? stderr : String(stderr ?? ""),
             );
+            (safe as ShellSafeError & { diagnostic?: ZellijFailureDiagnostic }).diagnostic =
+              classifyZellijFailure(err, typeof stderr === "string" ? stderr : String(stderr ?? ""));
             reject(safe);
             return;
           }
