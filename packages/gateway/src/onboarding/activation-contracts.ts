@@ -225,8 +225,8 @@ export const RecordAgentActionRequestSchema = z.object({
   agent: AgentIdSchema,
   capability: ReadinessGateIdSchema,
   status: AgentActionStatusSchema,
-  summary: z.string().trim().min(1).max(500),
-  target: z.string().trim().min(1).max(240),
+  summary: SafeDisplayTextSchema,
+  target: SafeDisplayTextSchema,
 });
 export type RecordAgentActionRequest = z.infer<typeof RecordAgentActionRequestSchema>;
 

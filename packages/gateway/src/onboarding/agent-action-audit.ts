@@ -7,7 +7,7 @@ import type {
 
 const MAX_ACTIONS = 500;
 const MAX_ACTION_OWNERS = 512;
-const UNSAFE_DISPLAY = /(secret|token|postgres|pipedream|anthropic|\bsk[-_][a-z0-9]+|\/home\/|\/tmp\/|database)/i;
+const UNSAFE_DISPLAY = /(secret|token|password|bearer\s+[a-z0-9._~+/=-]+|postgres|pipedream|anthropic|\bsk[-_][a-z0-9]+|\/home\/|\/tmp\/)/i;
 
 export interface AgentActionAuditService {
   recordAction(ownerId: string, input: {
@@ -21,7 +21,7 @@ export interface AgentActionAuditService {
 }
 
 function safeDisplay(value: string, fallback: string): string {
-  const trimmed = value.trim().slice(0, 220);
+  const trimmed = value.trim().slice(0, 240);
   if (!trimmed || UNSAFE_DISPLAY.test(trimmed)) return fallback;
   return trimmed;
 }

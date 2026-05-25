@@ -301,6 +301,27 @@ describe("integration capability routes", () => {
     });
   });
 
+  it("rejects audit summaries longer than the safe display field", async () => {
+    const service = createIntegrationCapabilityService();
+    const audit = createAgentActionAuditService();
+    const app = createIntegrationCapabilityRoutes({ service, audit, getPrincipal: () => testPrincipal });
+
+    const res = await app.request(post("/actions", {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "a".repeat(241),
+      target: "Primary calendar",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "invalid_request",
+      message: "Request is invalid",
+      retryable: false,
+    });
+  });
+
   it("keeps normal task identifiers in audit summaries", async () => {
     const audit = createAgentActionAuditService({
       now: () => new Date("2026-05-24T00:00:00.000Z"),
@@ -315,6 +336,39 @@ describe("integration capability routes", () => {
     });
 
     expect(action.summary).toBe("Completed task_123 for launch prep");
+  });
+
+  it("keeps normal database wording in audit summaries", async () => {
+    const audit = createAgentActionAuditService({
+      now: () => new Date("2026-05-24T00:00:00.000Z"),
+    });
+
+    const action = await audit.recordAction(testPrincipal.userId, {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "Updated task in project database",
+      target: "Primary calendar",
+    });
+
+    expect(action.summary).toBe("Updated task in project database");
+  });
+
+  it("scrubs password and bearer-shaped audit displays", async () => {
+    const audit = createAgentActionAuditService({
+      now: () => new Date("2026-05-24T00:00:00.000Z"),
+    });
+
+    const action = await audit.recordAction(testPrincipal.userId, {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "Created event with password=hunter2",
+      target: "Bearer abc.def.ghi",
+    });
+
+    expect(action.summary).toBe("Agent action completed");
+    expect(action.target).toBe("Connected service");
   });
 
   it("does not evict audit events when read-only action checks see unknown owners", async () => {

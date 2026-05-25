@@ -165,6 +165,9 @@ export function createIntegrationCapabilityService(options: {
   }
 
   async function withOwnerMutation<T>(ownerId: string, operation: () => Promise<T>): Promise<T> {
+    if (!ownerMutationQueues.has(ownerId) && ownerMutationQueues.size >= MAX_OWNERS) {
+      throw new ActivationRouteError("capability_queue_busy", "Capability approvals are busy; try again", { status: 503, retryable: true });
+    }
     const previous = ownerMutationQueues.get(ownerId) ?? Promise.resolve();
     const next = previous.catch((err: unknown) => {
       console.warn("[integrations] previous capability approval mutation failed:", err instanceof Error ? err.message : String(err));
@@ -172,11 +175,6 @@ export function createIntegrationCapabilityService(options: {
     const tracked = next.catch((err: unknown) => {
       console.warn("[integrations] capability approval mutation failed:", err instanceof Error ? err.message : String(err));
     });
-    ownerMutationQueues.delete(ownerId);
-    if (ownerMutationQueues.size >= MAX_OWNERS) {
-      const oldestKey = ownerMutationQueues.keys().next().value as string | undefined;
-      if (oldestKey) ownerMutationQueues.delete(oldestKey);
-    }
     ownerMutationQueues.set(ownerId, tracked);
     try {
       return await next;
@@ -217,10 +215,13 @@ export function createIntegrationCapabilityService(options: {
     const connected = await connectedCapabilitiesFor(ownerId);
     const capability = registryBackedCapabilities(connected).find((candidate) => candidate.id === capabilityId);
     if (!capability) return null;
+    if (!connected.has(capabilityId)) {
+      return { capabilityId, approvedAgents: [] };
+    }
     const state = await findState(ownerId);
     return {
       capabilityId,
-      approvedAgents: capability.status === "connected" ? state?.approved[capabilityId] ?? [] : [],
+      approvedAgents: state?.approved[capabilityId] ?? [],
     };
   }
 

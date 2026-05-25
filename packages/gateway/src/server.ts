@@ -458,14 +458,30 @@ export async function createGateway(config: GatewayConfig) {
   let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
+  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
   async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
     if (platformDb) {
       try {
         const dbForLookup = platformDb;
-        const user = await platformDb.getUserByClerkId(ownerId);
-        const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
-        if (!platformUserId) return [];
-        const services = await platformDb.listConnectedServices(platformUserId);
+        const services = await withCapabilityLookupTimeout(async () => {
+          const user = await dbForLookup.getUserByClerkId(ownerId);
+          const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
+          if (!platformUserId) return [];
+          return dbForLookup.listConnectedServices(platformUserId);
+        });
         return capabilityIdsForConnectedServices(services.map((service) => service.service));
       } catch (err: unknown) {
         console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));

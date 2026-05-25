@@ -229,6 +229,16 @@ export function createReadinessService(options: {
     return "degraded" as const;
   }
 
+  async function getIntegrationCapabilityStatus(ownerId: string, record: OnboardingReadinessRecord) {
+    if (!record.selectedGoalIds.includes("assistant") || !options.integrationCapabilities) return null;
+    try {
+      return await options.integrationCapabilities.listCapabilities(ownerId);
+    } catch (err: unknown) {
+      console.warn("[onboarding] integration capability readiness lookup failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
   async function getReadiness(ownerId: string): Promise<ReadinessResponse> {
     const cached = cache.get(ownerId);
     if (cached) return cached;
@@ -238,9 +248,7 @@ export function createReadinessService(options: {
         ? options.codingSetup.getCodingSetup(ownerId)
         : Promise.resolve(null),
       options.agentCredentials ? options.agentCredentials.getStatus(ownerId) : Promise.resolve(null),
-      record.selectedGoalIds.includes("assistant") && options.integrationCapabilities
-        ? options.integrationCapabilities.listCapabilities(ownerId)
-        : Promise.resolve(null),
+      getIntegrationCapabilityStatus(ownerId, record),
     ]);
     const integrationApproved = integrationStatus && integrationStatus.capabilities.length > 0
       ? integrationStatus.capabilities.some((capability) =>
