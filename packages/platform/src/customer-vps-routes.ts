@@ -12,6 +12,7 @@ import {
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
 import { refreshVpsMetrics, refreshVpsRuntimeMetrics } from './metrics.js';
+import type { VpsRuntimeMetricInput } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
 
@@ -48,6 +49,12 @@ export interface CustomerVpsRoutesDeps {
     diskTotalBytes?: number | null;
     diskFreeBytes?: number | null;
   }>;
+  recordRuntimeMetrics?: (machines: Array<VpsRuntimeMetricInput & {
+    machineId: string;
+    status: string;
+    publicIPv4: string | null;
+    imageVersion: string | null;
+  }>) => void;
 }
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
@@ -199,6 +206,7 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
 
       refreshVpsMetrics(machines);
       refreshVpsRuntimeMetrics(machines);
+      deps.recordRuntimeMetrics?.(machines);
 
       const FLEET_LIMIT = 500;
       return c.json({ fleet: buildFleetSummary(machines), machines, truncated: machines.length >= FLEET_LIMIT });

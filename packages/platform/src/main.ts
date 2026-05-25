@@ -1048,7 +1048,15 @@ export function createApp(deps: {
     promise: Promise<CachedVpsRuntimeMetrics>;
   } | null = null;
 
-  function getVpsRuntimeMetricsCacheKey(machines: UserMachineRecord[]): string {
+  function getVpsRuntimeMetricsCacheKey(
+    machines: Array<{
+      machineId: string;
+      handle: string;
+      status: string;
+      publicIPv4: string | null;
+      imageVersion: string | null;
+    }>,
+  ): string {
     return machines
       .map((machine) => [
         machine.machineId,
@@ -1059,6 +1067,23 @@ export function createApp(deps: {
       ].join(':'))
       .sort()
       .join('|');
+  }
+
+  function updateCachedVpsRuntimeMetrics(
+    machines: Array<{
+      machineId: string;
+      handle: string;
+      status: string;
+      publicIPv4: string | null;
+      imageVersion: string | null;
+    }>,
+    values: VpsRuntimeMetricInput[],
+  ): void {
+    cachedVpsRuntimeMetrics = {
+      machineKey: getVpsRuntimeMetricsCacheKey(machines),
+      expiresAt: Date.now() + VPS_RUNTIME_METRICS_TTL_MS,
+      values,
+    };
   }
 
   async function getCachedVpsRuntimeMetrics(
@@ -1087,12 +1112,13 @@ export function createApp(deps: {
       const values = probed
         .filter((result): result is PromiseFulfilledResult<VpsRuntimeMetricInput> => result.status === 'fulfilled')
         .map((result) => result.value);
-      cachedVpsRuntimeMetrics = {
+      const updated = {
         machineKey,
         expiresAt: Date.now() + VPS_RUNTIME_METRICS_TTL_MS,
         values,
       };
-      return cachedVpsRuntimeMetrics;
+      cachedVpsRuntimeMetrics = updated;
+      return updated;
     }).catch((err: unknown): CachedVpsRuntimeMetrics => {
       logPlatformRouteError('/metrics vps runtime cache', err);
       if (cachedVpsRuntimeMetrics?.machineKey === machineKey) {
@@ -2003,6 +2029,7 @@ export function createApp(deps: {
       platformSecret,
       probeMachineHealth,
       probeMachineRuntime,
+      recordRuntimeMetrics: (machines) => updateCachedVpsRuntimeMetrics(machines, machines),
     }));
   }
 
