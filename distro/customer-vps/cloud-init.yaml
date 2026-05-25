@@ -689,8 +689,12 @@ runcmd:
         echo "matrix-host: failed to migrate .config/gh; skipping removal" >&2
       fi
     fi
-    ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh
-    chown -h matrix:matrix /home/matrix/.config/gh
+    if [ ! -e /home/matrix/.config/gh ] || [ -L /home/matrix/.config/gh ]; then
+      ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh
+      chown -h matrix:matrix /home/matrix/.config/gh
+    else
+      echo "matrix-host: .config/gh remains a real directory; skipping symlink" >&2
+    fi
     install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh
     if [ -d /home/matrix/.ssh ] && [ ! -L /home/matrix/.ssh ]; then
       if cp -an /home/matrix/.ssh/. /home/matrix/home/.ssh/; then
@@ -699,8 +703,12 @@ runcmd:
         echo "matrix-host: failed to migrate .ssh; skipping removal" >&2
       fi
     fi
-    ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh
-    chown -h matrix:matrix /home/matrix/.ssh
+    if [ ! -e /home/matrix/.ssh ] || [ -L /home/matrix/.ssh ]; then
+      ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh
+      chown -h matrix:matrix /home/matrix/.ssh
+    else
+      echo "matrix-host: .ssh remains a real directory; skipping symlink" >&2
+    fi
     ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user
     chown -h matrix:matrix /home/matrix/.config/systemd/user
     install -d -o root -g root -m 0755 /home/matrixos
