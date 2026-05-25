@@ -289,7 +289,6 @@ describe('platform/api', () => {
       expect((await firstRequest).status).toBe(200);
 
       const thirdRequest = metricsApp.request('/metrics');
-      await new Promise((resolve) => setTimeout(resolve, 25));
       expect(fetchMock).toHaveBeenCalledTimes(3);
 
       secondKeyAliceProbe.resolve(createSystemInfoResponse());

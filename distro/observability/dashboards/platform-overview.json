@@ -180,7 +180,7 @@
           "refId": "A"
         }
       ],
-      "title": "Platform Response Time by Route",
+      "title": "Platform p95 Response Time",
       "type": "timeseries"
     },
     {
