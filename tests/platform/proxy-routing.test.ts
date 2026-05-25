@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
-import { createApp } from "../../packages/platform/src/main.js";
+import { createApp, escapeInlineScriptJson } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
@@ -75,6 +75,12 @@ describe("platform proxy routing", () => {
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
+  });
+
+  it("escapes JSON embedded in auth page inline scripts", () => {
+    expect(escapeInlineScriptJson('/?next=</script><script src=/x.js>&runtime=staging')).toBe(
+      '"/?next=\\u003c/script\\u003e\\u003cscript src=/x.js\\u003e\\u0026runtime=staging"',
+    );
   });
 
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {

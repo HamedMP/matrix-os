@@ -935,6 +935,13 @@ function getGatewayUrlForHandle(handle: string): string {
   return 'https://app.matrix-os.com';
 }
 
+export function escapeInlineScriptJson(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
 function getAuthPage(
   publishableKey: string,
   mode: 'sign-in' | 'sign-up',
@@ -942,7 +949,7 @@ function getAuthPage(
   redirectTarget: string,
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
-  const redirectTargetJson = JSON.stringify(redirectTarget);
+  const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
