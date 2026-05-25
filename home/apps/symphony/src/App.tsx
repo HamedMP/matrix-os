@@ -23,6 +23,7 @@ interface SymphonyRun {
 interface SymphonyState {
   service: {
     status: "ready" | "degraded" | "unavailable";
+    credentialStatus?: "connected" | "setup_required" | "unavailable" | "not_required";
     generatedAt: string | null;
   };
   groups: Record<RunGroup, SymphonyRun[]>;
@@ -144,6 +145,7 @@ export default function App() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null);
   const [detail, setDetail] = useState<SymphonyIssueDetail | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const selectedIssueRef = useRef<string | null>(null);
   const detailAbortRef = useRef<AbortController | null>(null);
@@ -182,6 +184,7 @@ export default function App() {
     setState(next);
     const nextActive = chooseActiveIssue(next, selectedIssueRef.current, preferredIssue);
     setActiveIssue(nextActive);
+    setLoading(false);
     if (nextActive) {
       try {
         await loadIssueDetail(nextActive);
@@ -200,6 +203,7 @@ export default function App() {
     void loadState().catch((err: unknown) => {
       console.warn("[symphony] state load failed:", err instanceof Error ? err.message : String(err));
       setError("Symphony is unavailable.");
+      setLoading(false);
     });
   }, [loadState]);
 
@@ -286,6 +290,18 @@ export default function App() {
         <Metric label="Done / Handoff" value={state.groups.done.length} />
       </section>
 
+      {loading && (
+        <div className="mx-5 mb-4 border bg-white px-4 py-3 text-sm text-muted-foreground">
+          Loading Symphony state...
+        </div>
+      )}
+
+      {state.service.credentialStatus === "setup_required" && (
+        <div className="mx-5 mb-4 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Connect Linear in Matrix Integrations to let Symphony poll assigned work.
+        </div>
+      )}
+
       <section className="grid gap-5 px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
         <div className="space-y-4">
           {RUN_GROUPS.map((group) => (
@@ -323,6 +339,7 @@ export default function App() {
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold">{detail?.issueIdentifier ?? activeIssue ?? "No active issue"}</h2>
               <p className="text-sm text-muted-foreground">Service: {state.service.status}</p>
+              <p className="text-sm text-muted-foreground">Linear: {state.service.credentialStatus ?? "unavailable"}</p>
             </div>
             {detail?.workpadUrl && (
               <Button variant="outline" size="sm" onClick={() => window.open(detail.workpadUrl!, "_blank", "noopener,noreferrer")}>

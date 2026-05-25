@@ -23,7 +23,7 @@ function json(body: unknown, init?: ResponseInit): Response {
 
 function symphonyState() {
   return {
-    service: { status: "ready", generatedAt: "2026-05-25T00:00:00Z" },
+    service: { status: "ready", credentialStatus: "connected", generatedAt: "2026-05-25T00:00:00Z" },
     groups: {
       queue: [{ issueIdentifier: "MAT-31", status: "queued", latestEvent: "Queued" }],
       running: [{ issueIdentifier: "MAT-32", status: "running", sessionId: "thread-1-turn-2", turnCount: 2, latestEvent: "session_started" }],
@@ -109,6 +109,7 @@ describe("Symphony app", () => {
     expect(screen.getAllByText("Needs Attention").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Done / Handoff").length).toBeGreaterThan(0);
     expect(screen.getAllByText("thread-1-turn-2").length).toBeGreaterThan(0);
+    expect(screen.getByText("Linear: connected")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
     expect(screen.getAllByText("session_started").length).toBeGreaterThan(0);
     expect(screen.getByText("/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32")).toBeTruthy();
@@ -223,6 +224,47 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getAllByText("Queue").length).toBeGreaterThan(0));
     expect(screen.queryByText("Symphony is unavailable.")).toBeNull();
     expect(screen.getByText("Issue detail could not be loaded.")).toBeTruthy();
+  });
+
+  it("clears initial loading once state is ready before issue detail resolves", async () => {
+    let resolveDetail: (response: Response) => void = () => {};
+    const detailResponse = new Promise<Response>((resolve) => {
+      resolveDetail = resolve;
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/symphony/state") {
+        return json({
+          service: { status: "ready", credentialStatus: "setup_required", generatedAt: "2026-05-25T00:00:00Z" },
+          groups: {
+            queue: [],
+            running: [{ issueIdentifier: "MAT-32", status: "running" }],
+            needsAttention: [],
+            done: [],
+          },
+        });
+      }
+      if (url === "/api/symphony/issues/MAT-32") {
+        return detailResponse;
+      }
+      return json({ ok: true });
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Connect Linear in Matrix Integrations to let Symphony poll assigned work.")).toBeTruthy();
+    });
+    expect(screen.queryByText("Loading Symphony state...")).toBeNull();
+
+    resolveDetail(json({
+      issueIdentifier: "MAT-32",
+      status: "running",
+      allowedActions: ["refresh"],
+      logs: { codexSessionLogs: [] },
+      recentEvents: [],
+    }));
   });
 
   it("keeps long session and workspace text visible for mobile-friendly layouts", async () => {

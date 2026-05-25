@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{Config, Linear.Bridge, Orchestrator, StatusDashboard}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -13,6 +13,7 @@ defmodule SymphonyElixirWeb.Presenter do
       %{} = snapshot ->
         %{
           generated_at: generated_at,
+          credential_status: credential_status(),
           counts: %{
             running: length(snapshot.running),
             retrying: length(snapshot.retrying)
@@ -24,10 +25,18 @@ defmodule SymphonyElixirWeb.Presenter do
         }
 
       :timeout ->
-        %{generated_at: generated_at, error: %{code: "snapshot_timeout", message: "Snapshot timed out"}}
+        %{
+          generated_at: generated_at,
+          credential_status: credential_status(),
+          error: %{code: "snapshot_timeout", message: "Snapshot timed out"}
+        }
 
       :unavailable ->
-        %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
+        %{
+          generated_at: generated_at,
+          credential_status: credential_status(),
+          error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}
+        }
     end
   end
 
@@ -180,6 +189,37 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
+
+  defp credential_status do
+    case Config.settings() do
+      {:ok, settings} ->
+        cond do
+          settings.tracker.kind != "linear" ->
+            "not_required"
+
+          is_binary(settings.tracker.api_key) and settings.tracker.api_key == Bridge.credential() ->
+            if matrix_linear_bridge_configured?(), do: "connected", else: "setup_required"
+
+          is_binary(settings.tracker.api_key) ->
+            "connected"
+
+          true ->
+            "setup_required"
+        end
+
+      {:error, _reason} ->
+        "unavailable"
+    end
+  end
+
+  defp matrix_linear_bridge_configured? do
+    Enum.all?(["PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "MATRIX_HANDLE"], fn name ->
+      case System.get_env(name) do
+        value when is_binary(value) and value != "" -> true
+        _ -> false
+      end
+    end)
+  end
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

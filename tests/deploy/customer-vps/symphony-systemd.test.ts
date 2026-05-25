@@ -207,8 +207,10 @@ describe("customer VPS Symphony systemd unit", () => {
 
   it("routes Linear through the Matrix-owned integration bridge by default", async () => {
     const linearClient = await readFile("packages/symphony-elixir/lib/symphony_elixir/linear/client.ex", "utf8");
+    const presenter = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/presenter.ex", "utf8");
 
     expect(linearClient).toContain("Bridge.credential()");
+    expect(presenter).toContain("is_binary(settings.tracker.api_key) and settings.tracker.api_key == Bridge.credential()");
     expect(linearClient).toContain("PLATFORM_INTERNAL_URL");
     expect(linearClient).toContain("UPGRADE_TOKEN");
     expect(linearClient).toContain("MATRIX_HANDLE");

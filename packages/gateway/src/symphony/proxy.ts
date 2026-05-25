@@ -172,6 +172,7 @@ function normalizeState(body: unknown) {
     service: {
       status: parsed.error ? "degraded" : "ready",
       generatedAt: parsed.generated_at ?? null,
+      credentialStatus: parsed.credential_status ?? "unavailable",
     },
     groups: {
       queue: [],

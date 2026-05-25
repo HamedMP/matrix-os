@@ -1,51 +1,80 @@
 ---
 title: Symphony
-description: Run assigned Linear tickets with Matrix-owned coding agents and worktrees.
+description: Run Linear tickets through the Matrix-owned Elixir Symphony service.
 ---
 
 # Symphony
 
-Symphony turns selected Linear tickets into Matrix-owned coding-agent runs. You
-choose which team, labels, states, and assignees Symphony can react to. Matrix
-creates the worktree, starts the agent session, and shows the status in one
-dashboard.
+Symphony is the Matrix coding-agent operator for Linear work. On each customer
+VPS it runs as `matrix-symphony.service`, owned by the `matrix` user with
+`MATRIX_HOME=/home/matrix/home`.
 
-## Set Up Linear
+The service is an adapted Elixir runtime. It polls eligible Linear issues,
+creates Matrix-owned workspaces, starts agents through `codex app-server`, and
+exposes loopback state to the Matrix gateway. The browser never talks to the
+Elixir service directly.
 
-Open Symphony from Matrix and use **Setup**.
+## Linear Access
 
-Add a Linear API secret server-side, then choose:
+Connect Linear from Matrix settings or the Integrations app. Symphony uses that
+Matrix-owned connection through the platform integration bridge.
 
-- Matrix project
-- Linear team
-- Required labels
-- Active and terminal states
-- Optional assignee IDs
-- Agent and concurrency
+You do not need to put `LINEAR_API_KEY` on the VPS. The Elixir runtime defaults
+to the Matrix credential bridge, which calls the platform internal integrations
+route using the VPS internal token. The UI only receives coarse setup or
+availability status, not provider tokens or raw provider errors.
 
-The browser only sees whether a credential exists. It never receives your
-Linear token.
+For local development, an explicit `SYMPHONY_LINEAR_API_KEY` or
+`SYMPHONY_LINEAR_CREDENTIAL` can still override the bridge.
 
-## Run Tickets
+## Runtime Paths
 
-After setup, Symphony previews eligible tickets. Press **Start** to let Symphony
-poll Linear and claim work.
+Symphony workspaces live under the owner home:
 
-For every eligible ticket, Symphony creates or reuses one Matrix worktree,
-acquires the worktree lease, starts one agent session, and records the run in
-the dashboard. Duplicate active claims for the same ticket are rejected.
+```txt
+/home/matrix/home/projects/matrix-os/symphony-workspaces/<issue>
+```
 
-## Operate Runs
+Runtime logs live under:
 
-The dashboard groups work by Queue, Running, Needs Attention, and Done/Handoff.
-Each run shows the ticket, agent, worktree, session, latest event, and actions to
-stop, retry, open the Matrix workspace, or open the Linear ticket.
+```txt
+/home/matrix/home/system/symphony/logs
+```
 
-If Linear, workflow loading, worktree creation, or agent startup fails, Symphony
-shows a generic attention state while detailed errors stay in server logs.
+Updates replace `/opt/matrix/app` only. They must not overwrite owner data under
+`/home/matrix/home`.
 
-## Workflow Policy
+## Matrix App
 
-Repository instructions stay in `WORKFLOW.md` inside the selected Matrix
-project. Matrix stores runtime rules and credentials separately so teams can
-version coding policy without putting secrets in the repo.
+Open Symphony from Matrix to see the Elixir runtime state. The app shows:
+
+- Queue, Running, Needs Attention, and Done/Handoff groups
+- active issue identifier
+- Codex app-server session ID and turn count
+- latest event and message
+- workspace path
+- workpad link when available
+- recent logs
+
+Use **Refresh** to ask the Elixir runtime to poll and reconcile now. Use
+**Stop** to terminate the active issue session through the gateway proxy.
+
+## Service Operations
+
+The host bundle installs and starts:
+
+```bash
+systemctl status matrix-symphony.service
+journalctl -u matrix-symphony.service -f
+```
+
+The service binds to `127.0.0.1:4766`. Matrix gateway proxies authenticated
+requests from `/api/symphony/*` to that loopback API with validation, body
+limits, timeouts, and generic error mapping.
+
+## Migration Notes
+
+The old in-gateway TypeScript Symphony runner is no longer the runtime source of
+truth for the Matrix app. Gateway routes now proxy the Elixir service instead of
+maintaining a separate run table. Existing docs or workflows that mention
+manual Symphony API-key setup should be moved to Matrix Integrations.

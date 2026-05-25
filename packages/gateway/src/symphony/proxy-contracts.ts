@@ -26,6 +26,7 @@ const ElixirRetryEntrySchema = z.object({
 
 export const ElixirStateSchema = z.object({
   generated_at: z.string().optional(),
+  credential_status: z.enum(["connected", "setup_required", "unavailable", "not_required"]).optional(),
   error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
   running: z.array(ElixirRunningEntrySchema).optional(),
   retrying: z.array(ElixirRetryEntrySchema).optional(),
