@@ -609,11 +609,7 @@ write_files:
           ;;
       esac
 
-<<<<<<< HEAD
-      if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$snapshot_path"; then
-=======
-      if ! matrixctl r2 get "$snapshot_key" "$snapshot_path"; then
->>>>>>> 1e60cfc9 (fix(platform): route staging admin proxy handles)
+      if ! /opt/matrix/bin/matrixctl r2 get "$snapshot_key" "$snapshot_path"; then
         echo "matrix-restore: failed to fetch snapshot" >&2
         exit 1
       fi

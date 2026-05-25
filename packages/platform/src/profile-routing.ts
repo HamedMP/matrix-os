@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod/v4";
 
 const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
 
@@ -9,7 +10,8 @@ export interface CustomerVpsProxyMachine {
   publicIPv4: string | null;
 }
 
-export type EntitlementStatus = 'active' | 'missing' | 'expired' | 'disabled' | 'changed';
+export const EntitlementStatusSchema = z.enum(['active', 'missing', 'expired', 'disabled', 'changed']);
+export type EntitlementStatus = z.infer<typeof EntitlementStatusSchema>;
 
 export interface EntitlementState {
   status: EntitlementStatus;

@@ -1070,6 +1070,35 @@ describe("platform proxy routing", () => {
     expect(headers.get("cookie")).toBeNull();
   });
 
+  it("allows operator /proxy/:handle access to a running VPS when user entitlement denies access", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff128",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123472,
+      publicIPv4: "203.0.113.28",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/proxy/alice/api/ping", {
+      headers: { authorization: "Bearer platform-secret-123" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.28:443/api/ping");
+  });
+
   it("rejects invalid /proxy/:handle values before DNS interpolation", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("ok", { status: 200 }),

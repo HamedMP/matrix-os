@@ -59,8 +59,8 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import {
   buildCustomerVpsProxyUrl,
   deriveEntitlementAccess,
+  EntitlementStatusSchema,
   type EntitlementAccessDecision,
-  type EntitlementStatus,
 } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
@@ -94,7 +94,6 @@ const RUNTIME_SLOT_COOKIE = 'matrix_runtime_slot';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
-const EntitlementStatusSchema = z.enum(['active', 'missing', 'expired', 'disabled', 'changed']);
 const HOST_BUNDLE_FILES = new Set([
   'matrix-host-bundle.tar.gz',
   'matrix-host-bundle.tar.gz.sha256',
@@ -448,7 +447,7 @@ function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): En
     console.warn('[platform] Invalid MATRIX_PAID_BETA_ENTITLEMENT_STATUS; denying paid runtime access.');
     return deriveEntitlementAccess({ status: 'changed' });
   }
-  return deriveEntitlementAccess({ status: parsed.data as EntitlementStatus });
+  return deriveEntitlementAccess({ status: parsed.data });
 }
 
 function buildCodeSessionCookie(token: string): string {
@@ -1627,7 +1626,7 @@ export function createApp(deps: {
       }
 
       const qs = buildForwardedQueryString(c.req.url);
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs, { entitlement });
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
@@ -1776,7 +1775,7 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs, { entitlement });
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
@@ -2153,11 +2152,6 @@ export function createApp(deps: {
     }
     try {
       if (deps.customerVpsService) {
-        const entitlement = getRuntimeEntitlementDecision();
-        if (!entitlement.provisioningAllowed) {
-          applyNoStoreHeaders(c);
-          return c.json({ error: 'Paid beta access required' }, 402);
-        }
         const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
@@ -2463,12 +2457,7 @@ export function createApp(deps: {
     const qs = buildForwardedQueryString(c.req.url);
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
     if (runningMachine) {
-      const entitlement = getRuntimeEntitlementDecision();
-      if (!entitlement.runtimeProxyAllowed) {
-        applyNoStoreHeaders(c);
-        return c.json({ error: 'Paid beta access required' }, 402);
-      }
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs, { entitlement });
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
