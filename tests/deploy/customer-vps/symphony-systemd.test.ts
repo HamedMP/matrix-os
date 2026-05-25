@@ -85,4 +85,22 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(statusDashboard).not.toContain("when byte_size(value) > max");
     expect(statusDashboard).toContain("String.trim_trailing");
   });
+
+  it("keeps Codex dynamic tools inside the workspace and bounded on Linear calls", async () => {
+    const appServer = await readFile("packages/symphony-elixir/lib/symphony_elixir/codex/app_server.ex", "utf8");
+    const dynamicTool = await readFile("packages/symphony-elixir/lib/symphony_elixir/codex/dynamic_tool.ex", "utf8");
+    const linearClient = await readFile("packages/symphony-elixir/lib/symphony_elixir/linear/client.ex", "utf8");
+
+    expect(appServer).toContain("DynamicTool.execute(tool, arguments, workspace: workspace)");
+    expect(appServer).toContain("issue_value(issue, :identifier)");
+    expect(appServer).toContain("issue_id = issue_value(issue, :id)");
+    expect(appServer).toContain('Map.get(issue, Atom.to_string(key))');
+    expect(dynamicTool).toContain("resolve_workpad_path");
+    expect(dynamicTool).toContain("File.realpath(expanded_root)");
+    expect(dynamicTool).toContain("file path must stay inside the workspace");
+    expect(linearClient).toContain("receive_timeout: 30_000");
+    expect(linearClient).toContain("@max_pages 200");
+    expect(linearClient).toContain("Linear pagination hit the #{@max_pages}-page limit");
+    expect(linearClient).toContain("{:ok, issues, %{has_next_page: false, end_cursor: nil}}");
+  });
 });
