@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coerceOnboardingSteps, coerceReadinessGates, coerceReadinessResponse } from "@/hooks/useOnboarding";
+import { coerceOnboardingSteps, coerceReadinessGates, coerceReadinessOverallStatus, coerceReadinessResponse } from "@/hooks/useOnboarding";
 
 describe("coerceReadinessGates", () => {
   it("filters malformed readiness gate records before UI rendering", () => {
@@ -44,6 +44,14 @@ describe("coerceReadinessResponse", () => {
       systemAgent: "hermes",
       activeAgents: ["hermes"],
     });
+  });
+});
+
+describe("coerceReadinessOverallStatus", () => {
+  it("falls back when websocket readiness updates send malformed status values", () => {
+    expect(coerceReadinessOverallStatus("ready")).toBe("ready");
+    expect(coerceReadinessOverallStatus("unknown")).toBe("degraded");
+    expect(coerceReadinessOverallStatus(undefined)).toBe("degraded");
   });
 });
 

@@ -38,13 +38,18 @@ test.describe("onboarding activation", () => {
         },
       });
     });
+    await page.route("**/api/settings/onboarding-status", async (route) => {
+      await route.fulfill({ json: { complete: false } });
+    });
 
     await page.goto("/");
 
+    await expect(page.getByRole("heading", { name: "Matrix OS" })).toBeVisible();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: /Set up manually/i }).click();
     await expect(page.getByText("Set up Matrix around the work you want done first.")).toBeVisible();
     await page.getByRole("button", { name: /Code with Matrix/i }).click();
     await expect(page.getByText("Required · Connect GitHub")).toBeVisible();
     await expect(page.getByText("Hermes is available as the Matrix system agent")).toBeVisible();
   });
 });
-

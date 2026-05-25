@@ -74,6 +74,12 @@ function coerceActiveAgents(value: unknown): OnboardingReadiness["activeAgents"]
   return agents.length > 0 ? agents : ["hermes"];
 }
 
+export function coerceReadinessOverallStatus(value: unknown): OnboardingReadiness["overallStatus"] {
+  return typeof value === "string" && READINESS_OVERALL_STATUSES.has(value as OnboardingReadiness["overallStatus"])
+    ? value as OnboardingReadiness["overallStatus"]
+    : "degraded";
+}
+
 export function coerceReadinessGates(value: unknown): ReadinessGateSummary[] {
   if (!Array.isArray(value)) return [];
   return value.filter((gate): gate is ReadinessGateSummary => {
@@ -122,9 +128,7 @@ export function coerceReadinessResponse(value: unknown): OnboardingReadiness {
   const candidate = value && typeof value === "object" ? value as Partial<OnboardingReadiness> : {};
   const goals = coerceReadinessGoals(candidate.goals);
   return {
-    overallStatus: typeof candidate.overallStatus === "string" && READINESS_OVERALL_STATUSES.has(candidate.overallStatus as OnboardingReadiness["overallStatus"])
-      ? candidate.overallStatus as OnboardingReadiness["overallStatus"]
-      : "degraded",
+    overallStatus: coerceReadinessOverallStatus(candidate.overallStatus),
     goals,
     gates: coerceReadinessGates(candidate.gates),
     systemAgent: "hermes",
@@ -196,6 +200,9 @@ export function useOnboarding(): OnboardingHook {
   const nextStartTimeRef = useRef(0);
   const playGainRef = useRef<GainNode | null>(null);
   const goalSelectionSeqRef = useRef(0);
+  const readinessRefreshSeqRef = useRef(0);
+  const readinessRef = useRef<OnboardingReadiness | null>(null);
+  const pendingActiveAgentsRef = useRef<OnboardingReadiness["activeAgents"] | null>(null);
   // Tracks whether the hook is still mounted so async mic setup can bail
   // out cleanly if the user dismisses onboarding while the mic permission
   // prompt or audioWorklet module load is in flight. Without this, the
@@ -322,13 +329,18 @@ export function useOnboarding(): OnboardingHook {
       })
       .then((next) => {
         if (!mountedRef.current || requestSeq !== readinessRefreshSeqRef.current) return;
-        setReadiness(next);
+        const activeAgents = pendingActiveAgentsRef.current;
+        setReadiness(activeAgents ? { ...next, activeAgents } : next);
         setSelectedGoalIds(next.goals.filter((goal) => goal.selected).map((goal) => goal.id));
       })
       .catch((err: unknown) => {
         console.warn("[onboarding] readiness refresh failed:", err instanceof Error ? err.message : String(err));
       });
   }, []);
+
+  useEffect(() => {
+    readinessRef.current = readiness;
+  }, [readiness]);
 
   // Send JSON message to gateway
   const send = useCallback((msg: Record<string, unknown>) => {
@@ -470,27 +482,35 @@ export function useOnboarding(): OnboardingHook {
         break;
       }
       case "readiness_update":
-        setReadiness((prev) => ({
-          overallStatus: msg.overallStatus as OnboardingReadiness["overallStatus"],
-          goals: prev?.goals ?? [],
-          gates: coerceReadinessGates(msg.checklist),
-          systemAgent: prev?.systemAgent ?? "hermes",
-          activeAgents: prev?.activeAgents ?? ["hermes"],
-        }));
+        if (!readinessRef.current) {
+          refreshReadiness();
+          break;
+        }
+        setReadiness((prev) => {
+          const current = prev ?? readinessRef.current;
+          if (!current) return prev;
+          return {
+            overallStatus: coerceReadinessOverallStatus(msg.overallStatus),
+            goals: current.goals,
+            gates: coerceReadinessGates(msg.checklist),
+            systemAgent: current.systemAgent,
+            activeAgents: current.activeAgents,
+          };
+        });
         break;
       case "goal_selected":
-        setSelectedGoalIds((prev) => {
-          if (!isOnboardingGoalId(msg.goalId)) return prev;
-          const goalId = msg.goalId;
-          return prev.includes(goalId) ? prev : [...prev, goalId];
-        });
+        if (!isOnboardingGoalId(msg.goalId)) break;
+        const selectedGoalId = msg.goalId;
+        readinessRefreshSeqRef.current += 1;
+        setSelectedGoalIds((prev) => prev.includes(selectedGoalId) ? prev : [...prev, selectedGoalId]);
         setOnboardingSteps(coerceOnboardingSteps(msg.steps));
         break;
       case "agent_status":
+        pendingActiveAgentsRef.current = coerceActiveAgents(msg.activeAgents);
         setReadiness((prev) => prev ? {
           ...prev,
           systemAgent: "hermes",
-          activeAgents: coerceActiveAgents(msg.activeAgents),
+          activeAgents: pendingActiveAgentsRef.current ?? ["hermes"],
         } : prev);
         break;
       case "mode_change":
@@ -507,7 +527,7 @@ export function useOnboarding(): OnboardingHook {
         setError(msg.message as string);
         break;
     }
-  }, [playAudio]);
+  }, [playAudio, refreshReadiness]);
 
   const connect = useCallback(async (): Promise<WebSocket | null> => {
     const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");
@@ -600,6 +620,7 @@ export function useOnboarding(): OnboardingHook {
       ? selectedGoalIds.filter((id) => id !== goalId)
       : [...selectedGoalIds, goalId];
     const normalizedGoalIds = nextGoalIds.length > 0 ? nextGoalIds : [goalId];
+    readinessRefreshSeqRef.current += 1;
     setSelectedGoalIds(normalizedGoalIds);
     void fetch("/api/onboarding/goals", {
       method: "POST",

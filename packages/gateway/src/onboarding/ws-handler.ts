@@ -19,7 +19,8 @@ import {
   type OnboardingStage,
   type OnboardingState,
 } from "./types.js";
-import { stepsForGoals } from "./readiness-service.js";
+import type { OnboardingGoalId } from "./activation-contracts.js";
+import { stepsForGoals, type ReadinessService } from "./readiness-service.js";
 import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {
@@ -27,6 +28,8 @@ export interface OnboardingDeps {
   geminiApiKey?: string;
   geminiConnection?: GeminiLiveConnection;
   geminiModel: string;
+  readinessService?: Pick<ReadinessService, "getReadiness" | "selectGoals">;
+  ownerId?: string;
 }
 
 type SendFn = (msg: GatewayToShell) => void;
@@ -60,6 +63,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   let audioMode = false;
   let toolCallThisTurn = false;
   let audioBytesReceived = 0;
+  let goalSelectionQueue = Promise.resolve();
   const profileBuilder = createProfileBuilder();
 
   async function isOnboardingComplete(): Promise<boolean> {
@@ -334,7 +338,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         break;
 
       case "select_goal":
-        send({ type: "goal_selected", goalId: msg.goalId, steps: stepsForGoals([msg.goalId]) });
+        await handleSelectGoal(msg.goalId);
         break;
 
       // Deferred scope: durable step completion, retries, and capability
@@ -413,6 +417,40 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       }
       default:
         return null;
+    }
+  }
+
+  async function handleSelectGoal(goalId: OnboardingGoalId): Promise<void> {
+    const queued = goalSelectionQueue.then(
+      () => persistSelectGoal(goalId),
+      () => persistSelectGoal(goalId),
+    );
+    goalSelectionQueue = queued.catch((err: unknown) => {
+      console.warn("[onboarding] goal selection queue failed:", err instanceof Error ? err.message : String(err));
+      return undefined;
+    });
+    await queued;
+  }
+
+  async function persistSelectGoal(goalId: OnboardingGoalId): Promise<void> {
+    try {
+      const selectedGoalIds = deps.readinessService && deps.ownerId
+        ? (await deps.readinessService.getReadiness(deps.ownerId)).goals
+          .filter((goal) => goal.selected)
+          .map((goal) => goal.id)
+        : [];
+      const nextGoalIds = Array.from(new Set([...selectedGoalIds, goalId]));
+      const persisted = deps.readinessService && deps.ownerId
+        ? await deps.readinessService.selectGoals(deps.ownerId, nextGoalIds)
+        : null;
+      send({
+        type: "goal_selected",
+        goalId,
+        steps: persisted?.steps ?? stepsForGoals(nextGoalIds),
+      });
+    } catch (err: unknown) {
+      console.warn("[onboarding] select_goal persistence failed:", err instanceof Error ? err.message : String(err));
+      send({ type: "error", code: "internal", stage: sm.current, message: "Could not update setup goal", retryable: true });
     }
   }
 
