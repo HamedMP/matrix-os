@@ -82,10 +82,12 @@ describe("permission revocation abort behavior", () => {
     });
 
     expect(revoked.revision).toBe(granted.revision + 1);
-    await expect(repository.listWorkItems({ ownerId, roomId })).resolves.toEqual([
+    const workItems = await repository.listWorkItems({ ownerId, roomId });
+    expect(workItems).toHaveLength(2);
+    expect(workItems).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: "cancelled" }),
       expect.objectContaining({ status: "cancel_requested" }),
-    ]);
+    ]));
     await expect(repository.getReply({ ownerId, replyId: reply.id })).resolves.toMatchObject({
       status: "cancelled",
       cancelReason: "permission_revoked",
