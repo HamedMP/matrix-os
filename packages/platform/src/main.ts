@@ -1198,14 +1198,50 @@ function machineStrength(machine: UserMachineRecord): {
   };
 }
 
+type RuntimePickerMachine = UserMachineRecord & {
+  displayVersion: string;
+};
+
+function releaseVersionFromProbe(probe: Awaited<ReturnType<typeof probeCustomerVpsRelease>>): string | null {
+  const release = probe.release;
+  if (!release || typeof release !== 'object' || !('version' in release)) {
+    return null;
+  }
+  const version = (release as { version?: unknown }).version;
+  return typeof version === 'string' && version.trim() ? version : null;
+}
+
+async function buildRuntimePickerMachines(
+  machines: UserMachineRecord[],
+  platformSecret: string,
+): Promise<RuntimePickerMachine[]> {
+  const enriched = await Promise.allSettled(machines.map(async (machine): Promise<RuntimePickerMachine> => {
+    if (machine.status !== 'running' || !platformSecret) {
+      return { ...machine, displayVersion: machine.imageVersion ?? 'Version pending' };
+    }
+    const probe = await probeCustomerVpsRelease(machine, platformSecret);
+    return {
+      ...machine,
+      displayVersion: releaseVersionFromProbe(probe) ?? machine.imageVersion ?? 'Version pending',
+    };
+  }));
+  return enriched.map((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+    return {
+      ...machines[index]!,
+      displayVersion: machines[index]?.imageVersion ?? 'Version pending',
+    };
+  });
+}
+
 function getRuntimePickerPage(input: {
-  machines: UserMachineRecord[];
+  machines: RuntimePickerMachine[];
   selectedSlot: string;
 }): string {
   const rows = input.machines.map((machine) => {
     const strength = machineStrength(machine);
     const isSelected = machine.runtimeSlot === input.selectedSlot;
-    const version = machine.imageVersion ?? 'Version pending';
+    const version = machine.displayVersion;
     const started = new Date(machine.provisionedAt).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -2089,8 +2125,9 @@ export function createApp(deps: {
         return c.redirect('/');
       }
       if (path === '/runtime' || machines.length > 1) {
+        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret);
         applyNoStoreHeaders(c);
-        return c.html(getRuntimePickerPage({ machines, selectedSlot: requestRuntimeSlot }));
+        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedSlot: requestRuntimeSlot }));
       }
     }
 

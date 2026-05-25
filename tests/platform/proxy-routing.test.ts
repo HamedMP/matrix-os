@@ -678,13 +678,16 @@ describe("platform proxy routing", () => {
       status: "running",
       hetznerServerId: 123473,
       publicIPv4: "203.0.113.26",
-      imageVersion: "v082-login-shell-8935a7cd",
+      imageVersion: "stale-db-staging-version",
       serverType: "cpx22",
       provisionedAt: "2026-05-25T11:23:51.076Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("shell", { status: 200 }),
-    );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const version = String(url).includes("203.0.113.26")
+        ? "v082-login-shell-8935a7cd"
+        : "matrix-os-host-2026.04.26-1";
+      return Response.json({ release: { version }, startedAt: "2026-05-25T11:25:00.000Z" });
+    });
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -702,12 +705,17 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://203.0.113.25:443/api/system/info",
+      "https://203.0.113.26:443/api/system/info",
+    ]);
     const html = await res.text();
     expect(html).toContain("Choose a Matrix OS machine");
     expect(html).toContain("href=\"/?runtime=primary\"");
     expect(html).toContain("href=\"/?runtime=staging\"");
     expect(html).toContain("v082-login-shell-8935a7cd");
+    expect(html).not.toContain("stale-db-staging-version");
     expect(html).toContain("2 vCPU");
     expect(html).toContain("4 GB RAM");
   });
@@ -787,9 +795,12 @@ describe("platform proxy routing", () => {
       serverType: "cpx22",
       provisionedAt: "2026-05-25T11:23:51.076Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("shell", { status: 200 }),
-    );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const version = String(url).includes("203.0.113.28")
+        ? "v082-login-shell-8935a7cd"
+        : "matrix-os-host-2026.04.26-1";
+      return Response.json({ release: { version }, startedAt: "2026-05-25T11:25:00.000Z" });
+    });
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -808,7 +819,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const html = await res.text();
     expect(html).toContain("Choose a Matrix OS machine");
     expect(html).toContain("href=\"/?runtime=staging\"");
@@ -836,6 +847,9 @@ describe("platform proxy routing", () => {
       }),
       platformSecret: "platform-secret-123",
     });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ release: { version: "matrix-os-host-2026.04.26-1" } }),
+    );
 
     const res = await app.request("/runtime", {
       headers: {
