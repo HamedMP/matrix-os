@@ -32,6 +32,16 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("treats zellij's no-active-sessions response as an empty session list", async () => {
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(Object.assign(new Error("zellij exited"), { code: 1 }), "", "NO ACTIVE ZELLIJ SESSIONS FOUND\n");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.listSessions()).resolves.toEqual([]);
+  });
+
   it("sanitizes stderr before surfacing errors", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(new Error("boom"), "", "failed in /home/alice/.ssh with zellij internals");
