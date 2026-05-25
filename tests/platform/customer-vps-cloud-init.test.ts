@@ -15,6 +15,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     imageVersion: 'stable',
+    updateChannel: 'stable',
     hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
@@ -51,6 +52,7 @@ describe('platform/customer-vps-cloud-init', () => {
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
+    expect(rendered).toContain('MATRIX_IMAGE_VERSION=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
 
@@ -116,9 +118,10 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
     expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
-    expect(cloudInit).toContain('matrix-messaging-health /opt/matrix/bin/matrix-messaging-backup /opt/matrix/bin/matrix-messaging-restore');
+    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
-    expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{imageVersion}}');
+    expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
+    expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
@@ -181,6 +184,11 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(buildScript).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix/home/.config /home/matrix/home/.config/systemd /home/matrix/home/.config/systemd/user');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.config/gh');
+    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh');
+    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
@@ -197,6 +205,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
+    expect(cloudInit).toContain("printf '%s\\n' \"$MATRIX_IMAGE_VERSION\" >/opt/matrix/app/BUNDLE_VERSION");
+    expect(cloudInit).toContain('chmod -R g+rwX /opt/matrix/app');
   });
 
   it('grants the customer matrix user passwordless sudo for host installers', () => {
@@ -214,18 +224,22 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user');
   });
 
-  it('installs Homebrew and Graphite CLI on customer Linux hosts', () => {
+  it('installs Homebrew, Graphite CLI, and GitHub CLI on customer Linux hosts', () => {
     const root = process.cwd();
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
     const bundleScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
 
     expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
     expect(installer).toContain('retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
+    expect(installer).toContain('cd "${HOME:-/home/matrix}"');
     expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite');
+    expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install gh');
     expect(installer).toContain('/etc/profile.d/homebrew.sh');
+    expect(installer).toContain('if [ -n "${PWD:-}" ] && [ ! -r "${PWD}" ]; then');
     expect(installer).toContain('"eval \\"\\$(${BREW_BIN} shellenv bash)\\""');
     expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
     expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
+    expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
     expect(bundleScript).toContain('matrix-install-linux-tools');
   });
 

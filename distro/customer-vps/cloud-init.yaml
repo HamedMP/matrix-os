@@ -519,8 +519,8 @@ write_files:
         exit 1
       fi
 
-      matrixctl r2 put "$snapshot_path" "$snapshot_key"
-      matrixctl r2 put-latest "$snapshot_key"
+      /opt/matrix/bin/matrixctl r2 put "$snapshot_path" "$snapshot_key"
+      /opt/matrix/bin/matrixctl r2 put-latest "$snapshot_key"
   - path: /opt/matrix/bin/matrix-restore.sh
     owner: root:root
     permissions: "0750"
@@ -539,17 +539,17 @@ write_files:
       mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
       rm -f "$restore_flag"
 
-      if ! matrixctl r2 exists system/vps-meta.json; then
+      if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then
         touch "$restore_flag"
         exit 0
       fi
 
-      if ! matrixctl r2 exists system/db/latest; then
+      if ! /opt/matrix/bin/matrixctl r2 exists system/db/latest; then
         touch "$restore_flag"
         exit 0
       fi
 
-      if ! matrixctl r2 get system/db/latest "$latest_file"; then
+      if ! /opt/matrix/bin/matrixctl r2 get system/db/latest "$latest_file"; then
         echo "matrix-restore: failed to fetch latest pointer" >&2
         exit 1
       fi
@@ -563,7 +563,7 @@ write_files:
           ;;
       esac
 
-      if ! matrixctl r2 get "$latest_key" "$snapshot_path"; then
+      if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$snapshot_path"; then
         echo "matrix-restore: failed to fetch snapshot" >&2
         exit 1
       fi
@@ -617,7 +617,7 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_IMAGE_VERSION={{imageVersion}}
-      MATRIX_UPDATE_CHANNEL={{imageVersion}}
+      MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
@@ -674,12 +674,27 @@ runcmd:
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
     install -d -o matrix -g matrix -m 0755 /opt/matrix/messaging /opt/matrix/messaging/bin
     install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config
-    install -d -o matrix -g matrix -m 0755 /home/matrix/.config/systemd /home/matrix/home/.config/systemd/user
+    install -d -o matrix -g matrix -m 0755 /home/matrix/.config/systemd
     install -d -o root -g root -m 0750 /etc/sudoers.d
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
     install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o matrix -g matrix -m 0755 /home/matrix/home/.config /home/matrix/home/.config/systemd /home/matrix/home/.config/systemd/user
+    install -d -o matrix -g matrix -m 0700 /home/matrix/home/.config/gh
+    if [ -d /home/matrix/.config/gh ] && [ ! -L /home/matrix/.config/gh ]; then
+      cp -an /home/matrix/.config/gh/. /home/matrix/home/.config/gh/ || true
+      rm -rf /home/matrix/.config/gh
+    fi
+    ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh
+    chown -h matrix:matrix /home/matrix/.config/gh
+    install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh
+    if [ -d /home/matrix/.ssh ] && [ ! -L /home/matrix/.ssh ]; then
+      cp -an /home/matrix/.ssh/. /home/matrix/home/.ssh/ || true
+      rm -rf /home/matrix/.ssh
+    fi
+    ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh
+    chown -h matrix:matrix /home/matrix/.ssh
     ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user
     chown -h matrix:matrix /home/matrix/.config/systemd/user
     install -d -o root -g root -m 0755 /home/matrixos
@@ -695,6 +710,9 @@ runcmd:
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    chmod -R g+rwX /opt/matrix/app
+    printf '%s\n' "$MATRIX_IMAGE_VERSION" >/opt/matrix/app/BUNDLE_VERSION
+    chown matrix:matrix /opt/matrix/app/BUNDLE_VERSION
     if [ -d /opt/matrix/systemd ]; then
       install -d -o root -g root -m 0755 /etc/systemd/system
       install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/
@@ -703,7 +721,14 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-install-hermes /opt/matrix/bin/matrix-install-linux-tools /opt/matrix/bin/matrix-messaging-health /opt/matrix/bin/matrix-messaging-backup /opt/matrix/bin/matrix-messaging-restore
+    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
+      chmod 0750 "/opt/matrix/bin/${required_bin}"
+    done
+    for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
+      if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
+        chmod 0750 "/opt/matrix/bin/${optional_bin}"
+      fi
+    done
     for cli in node npm npx claude codex opencode pi code-server uv uvx; do
       if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then
         ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"

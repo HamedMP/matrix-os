@@ -7,7 +7,9 @@ import {
   getActiveUserMachineByClerkId,
   getUserMachine,
   listPendingProviderDeletions,
+  promoteHostBundleChannel,
   updateUserMachine,
+  upsertHostBundleRelease,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
@@ -75,6 +77,36 @@ describe('platform/customer-vps', () => {
     const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
+  });
+
+  it('pins channel image versions to the current immutable host bundle release at provision time', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.25-80',
+      channel: 'stable',
+      gitCommit: 'adb12c560b8e6253fd0047eb2375b379e7659cbe',
+      gitRef: 'main',
+      buildTime: '2026-05-25T11:58:42.274Z',
+      bundleKey: 'system-bundles/v2026.05.25-80/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.25-80/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Release latest main host bundle',
+      createdAt: '2026-05-25T12:14:58.275Z',
+    });
+    await promoteHostBundleChannel(db, 'stable', 'v2026.05.25-80');
+    const { service, hetzner } = createService();
+
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe('v2026.05.25-80');
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(
+      'MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/v2026.05.25-80/matrix-host-bundle.tar.gz',
+    );
+    expect(createInput?.userData).toContain('MATRIX_IMAGE_VERSION=v2026.05.25-80');
+    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
   it('templates the platform verification token into provisioned customer hosts', async () => {

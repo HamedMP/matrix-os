@@ -16,6 +16,24 @@ matrixos project add github.com/owner/repo
 
 Project import validates repository URLs, stages clones safely, and creates a durable project record before worktrees, sessions, or reviews attach to it.
 
+## Installing tools
+
+Your Matrix VPS is your own Linux machine. The `matrix` user has passwordless `sudo`, so you can install operating-system packages directly:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y jq ripgrep
+```
+
+Developer CLIs that are not available from Ubuntu's default package repositories are installed with Homebrew on Linux:
+
+```bash
+brew install gh
+brew install withgraphite/tap/graphite
+```
+
+Baseline developer tools such as Git, Homebrew, Graphite CLI, and GitHub CLI are installed automatically on new Matrix VPSes.
+
 ## Data ownership
 
 Your workspace data belongs to you. Source repositories live under `~/projects`, session records live under `~/system/sessions`, transcripts live under `~/system/session-output`, and review state lives under `~/system/reviews`.
