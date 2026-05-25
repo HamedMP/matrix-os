@@ -88,6 +88,14 @@ export function classifyZellijFailure(err: unknown, stderr: string): ZellijFailu
   return diagnostic;
 }
 
+function isNoActiveSessionsFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const stderr = (err as { stderr?: unknown }).stderr;
+  return typeof stderr === "string" && /no active zellij sessions found/i.test(stderr);
+}
+
 export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter {
   const execFile = deps.execFile ?? nodeExecFile;
   const spawn = deps.spawn ?? nodeSpawn;
@@ -121,7 +129,15 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
 
   return {
     async listSessions() {
-      const stdout = await run(["list-sessions", "--no-formatting"]);
+      let stdout: string;
+      try {
+        stdout = await run(["list-sessions", "--no-formatting"]);
+      } catch (err) {
+        if (isNoActiveSessionsFailure(err)) {
+          return [];
+        }
+        throw err;
+      }
       return stdout
         .split(/\r?\n/)
         .map((line) => line.trim().split(/\s+/)[0])
