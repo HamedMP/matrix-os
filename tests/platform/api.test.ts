@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createHmac } from 'node:crypto';
-import { type PlatformDB, insertContainer, insertUserMachine } from '../../packages/platform/src/db.js';
+import { type PlatformDB, insertContainer, insertUserMachine, updateUserMachine } from '../../packages/platform/src/db.js';
 import { createOrchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { metricsRegistry } from '../../packages/platform/src/metrics.js';
@@ -352,6 +352,85 @@ describe('platform/api', () => {
       const nextMetrics = await metricsApp.request('/metrics');
       expect(await nextMetrics.text()).toContain('matrix_vps_healthy{handle="alice"} 0');
       expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('GET /metrics does not overwrite changed-fleet runtime cache with an older probe', async () => {
+    metricsRegistry.resetMetrics();
+    const alice = {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'clerk_1',
+      handle: 'alice',
+      publicIPv4: '203.0.113.10',
+      publicIPv6: null,
+      status: 'running' as const,
+      imageVersion: 'v2026.05.24-1',
+      provisionedAt: '2026-05-24T10:00:00.000Z',
+      lastSeenAt: '2026-05-24T10:00:00.000Z',
+      deletedAt: null,
+      failureCode: null,
+      failureAt: null,
+    };
+    const bob = {
+      machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      clerkUserId: 'clerk_2',
+      handle: 'bob',
+      publicIPv4: '203.0.113.11',
+      publicIPv6: null,
+      status: 'running' as const,
+      imageVersion: 'v2026.05.24-1',
+      provisionedAt: '2026-05-24T10:01:00.000Z',
+      lastSeenAt: '2026-05-24T10:01:00.000Z',
+      deletedAt: null,
+      failureCode: null,
+      failureAt: null,
+    };
+    await insertUserMachine(db, alice);
+    await insertUserMachine(db, bob);
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const customerVpsService = {
+      listAllMachines: vi.fn().mockResolvedValue([alice]),
+    };
+    const metricsApp = createApp({
+      db,
+      orchestrator,
+      platformSecret,
+      customerVpsService: customerVpsService as any,
+    });
+    const olderAliceProbe = createDeferred<Response>();
+    const olderBobProbe = createDeferred<Response>();
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(olderAliceProbe.promise)
+      .mockReturnValueOnce(olderBobProbe.promise)
+      .mockResolvedValueOnce(new Response('unhealthy', { status: 503 }));
+    globalThis.fetch = fetchMock;
+    try {
+      const metricsRequest = metricsApp.request('/metrics');
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+      await updateUserMachine(db, bob.machineId, {
+        status: 'deleted',
+        deletedAt: '2026-05-24T10:02:00.000Z',
+      });
+      const fleet = await metricsApp.request('/vps/fleet', {
+        headers: adminHeaders,
+      });
+      expect(fleet.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+
+      olderAliceProbe.resolve(createSystemInfoResponse());
+      olderBobProbe.resolve(createSystemInfoResponse());
+      expect((await metricsRequest).status).toBe(200);
+
+      const nextMetrics = await metricsApp.request('/metrics');
+      const text = await nextMetrics.text();
+      expect(text).toContain('matrix_vps_healthy{handle="alice"} 0');
+      expect(text).not.toContain('matrix_vps_healthy{handle="bob"}');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -1120,8 +1120,10 @@ export function createApp(deps: {
       };
       if (
         !cachedVpsRuntimeMetrics
-        || cachedVpsRuntimeMetrics.machineKey !== machineKey
-        || cachedVpsRuntimeMetrics.expiresAt < updated.expiresAt
+        || (
+          cachedVpsRuntimeMetrics.machineKey === machineKey
+          && cachedVpsRuntimeMetrics.expiresAt < updated.expiresAt
+        )
       ) {
         cachedVpsRuntimeMetrics = updated;
       }
