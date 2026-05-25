@@ -387,7 +387,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
 
-      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
+        deps.db,
+        input.clerkUserId,
+        input.runtimeSlot,
+      );
       if (existingBeforeBundleResolve) {
         return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
       }
