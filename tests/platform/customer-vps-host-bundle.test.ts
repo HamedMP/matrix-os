@@ -87,6 +87,8 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('scripts/publish-release-r2.mjs');
     expect(publishScript).toContain('exec node "$ROOT_DIR/scripts/publish-release-r2.mjs"');
     expect(nodePublisher).toContain('IfNoneMatch: "*"');
+    expect(nodePublisher).toContain('existing immutable bundle has no checksum metadata');
+    expect(nodePublisher).not.toContain('head.Metadata?.sha256 && head.Metadata.sha256 !== expectedSha256');
     expect(nodePublisher).toContain('R2_ACCESS_KEY_ID');
     expect(nodePublisher).toContain('R2_SECRET_ACCESS_KEY');
     expect(nodePublisher).toContain('AbortSignal.timeout(30_000)');

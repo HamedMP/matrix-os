@@ -122,7 +122,10 @@ async function verifyExistingBundle(s3, key, expectedSize, expectedSha256) {
   if (head.ContentLength !== expectedSize) {
     throw new Error(`existing immutable bundle size mismatch for s3://${bucket}/${key}`);
   }
-  if (head.Metadata?.sha256 && head.Metadata.sha256 !== expectedSha256) {
+  if (!head.Metadata?.sha256) {
+    throw new Error(`existing immutable bundle has no checksum metadata for s3://${bucket}/${key}; publish a new version or remove the unverifiable legacy object`);
+  }
+  if (head.Metadata.sha256 !== expectedSha256) {
     throw new Error(`existing immutable bundle checksum metadata mismatch for s3://${bucket}/${key}`);
   }
   console.log(`  Immutable object already exists: s3://${bucket}/${key}`);

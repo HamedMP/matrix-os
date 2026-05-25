@@ -75,6 +75,7 @@ describe("platform proxy routing", () => {
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
+    delete process.env.HETZNER_SERVER_TYPE;
   });
 
   it("escapes JSON embedded in auth page inline scripts", () => {
@@ -811,6 +812,78 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain("Choose a Matrix OS machine");
     expect(html).toContain("href=\"/?runtime=staging\"");
+  });
+
+  it("shows unknown CPU and RAM for legacy machines without stored server type", async () => {
+    process.env.HETZNER_SERVER_TYPE = "cpx22";
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff134",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123478,
+      publicIPv4: "203.0.113.30",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/runtime", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("CPU/RAM unavailable");
+    expect(html).toContain("Unknown plan");
+    expect(html).not.toContain("2 vCPU");
+  });
+
+  it("redirects the runtime picker when the user has no active VPS machines", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff135",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "failed",
+      hetznerServerId: 123479,
+      publicIPv4: null,
+      imageVersion: "v082-login-shell-8935a7cd",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/runtime", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+      redirect: "manual",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
   });
 
   it("does not show the runtime picker for a failed secondary VPS on cold root visits", async () => {

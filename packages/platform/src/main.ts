@@ -1175,7 +1175,14 @@ function machineStrength(machine: UserMachineRecord): {
   label: string;
   detail: string;
 } {
-  const serverType = machine.serverType ?? process.env.HETZNER_SERVER_TYPE ?? 'cpx22';
+  const serverType = machine.serverType;
+  if (!serverType) {
+    return {
+      serverType: 'Unknown plan',
+      label: 'Unknown',
+      detail: 'CPU/RAM unavailable',
+    };
+  }
   const strength = SERVER_STRENGTHS[serverType.toLowerCase()];
   if (!strength) {
     return {
@@ -2078,6 +2085,9 @@ export function createApp(deps: {
       (path === '/runtime' || (path === '/' && runtimeSelection.source === 'default'));
     if (shouldOfferRuntimePicker) {
       const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
+      if (machines.length === 0 && path === '/runtime') {
+        return c.redirect('/');
+      }
       if (path === '/runtime' || machines.length > 1) {
         applyNoStoreHeaders(c);
         return c.html(getRuntimePickerPage({ machines, selectedSlot: requestRuntimeSlot }));
