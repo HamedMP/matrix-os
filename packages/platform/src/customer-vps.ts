@@ -231,7 +231,7 @@ function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: s
   const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
   const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
   if (config.hostBundleUrl.includes(currentSegment)) {
-    return config.hostBundleUrl.replace(currentSegment, pinnedSegment);
+    return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
   }
   const url = new URL(config.hostBundleUrl);
   url.pathname = `/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`;
