@@ -103,4 +103,19 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(linearClient).toContain("Linear pagination hit the #{@max_pages}-page limit");
     expect(linearClient).toContain("{:ok, issues, %{has_next_page: false, end_cursor: nil}}");
   });
+
+  it("keeps orchestrator state bounded and callback annotations explicit", async () => {
+    const orchestrator = await readFile("packages/symphony-elixir/lib/symphony_elixir/orchestrator.ex", "utf8");
+
+    expect(orchestrator).not.toContain("completed: MapSet.new()");
+    expect(orchestrator).not.toContain("completed: MapSet.put");
+    expect(orchestrator).toContain("@impl true");
+    expect(orchestrator).toContain("def handle_call(:snapshot");
+    expect(orchestrator).toContain("def handle_call(:request_refresh");
+    expect(orchestrator).toContain("Process.cancel_timer(state.tick_timer_ref)");
+    expect(orchestrator).toContain("if state.poll_check_in_progress do");
+    expect(orchestrator).toContain("cleanup_issue_workspace(Map.get(metadata, :identifier))");
+    expect(orchestrator).toContain("state = %{state | claimed: MapSet.put(state.claimed, issue.id)}");
+    expect(orchestrator).toContain("defp retry_delay(_attempt, _metadata), do: @failure_retry_base_ms");
+  });
 });
