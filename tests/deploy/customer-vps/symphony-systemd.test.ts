@@ -51,6 +51,7 @@ describe("customer VPS Symphony systemd unit", () => {
     const mix = await readFile("packages/symphony-elixir/mix.exs", "utf8");
     const workflow = await readFile("packages/symphony-elixir/WORKFLOW.md", "utf8");
     const configSchema = await readFile("packages/symphony-elixir/lib/symphony_elixir/config/schema.ex", "utf8");
+    const linearBridge = await readFile("packages/symphony-elixir/lib/symphony_elixir/linear/bridge.ex", "utf8");
     const buildScript = await readFile("scripts/build-host-bundle.sh", "utf8");
 
     expect(license).toContain("Apache License");
@@ -63,6 +64,9 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(workflow).toContain('host: "127.0.0.1"');
     expect(configSchema).toContain("SYMPHONY_WORKSPACE_ROOT");
     expect(configSchema).toContain("MATRIX_HOME");
+    expect(configSchema).toContain("SYMPHONY_LINEAR_CREDENTIAL");
+    expect(configSchema).toContain("Bridge.credential()");
+    expect(linearBridge).toContain("matrixos:integration:linear");
     expect(configSchema).toContain("SYMPHONY_LINEAR_API_KEY");
     expect(configSchema).toContain("SYMPHONY_LINEAR_PROJECT_SLUG");
     expect(buildScript).toContain("cp -a \"$ROOT_DIR/packages\" \"$STAGE_DIR/app/packages\"");
@@ -71,6 +75,7 @@ describe("customer VPS Symphony systemd unit", () => {
   it("keeps observability failures distinct from missing issues", async () => {
     const presenter = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/presenter.ex", "utf8");
     const controller = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/controllers/observability_api_controller.ex", "utf8");
+    const router = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/router.ex", "utf8");
     const pubsub = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/observability_pubsub.ex", "utf8");
     const staticAssets = await readFile(
       "packages/symphony-elixir/lib/symphony_elixir_web/controllers/static_asset_controller.ex",
@@ -84,6 +89,8 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(controller).toContain("orchestrator_unavailable");
     expect(controller).toContain('code: "snapshot_timeout"');
     expect(controller).toContain("put_status(503)");
+    expect(router).toContain('post("/api/v1/runs/:issue_identifier/stop"');
+    expect(router).not.toContain('post("/api/v1/:issue_identifier/stop"');
     expect(pubsub).toContain("_ = Phoenix.PubSub.broadcast");
     expect(pubsub).toContain(":ok");
     const dashboardLive = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/live/dashboard_live.ex", "utf8");
@@ -196,5 +203,21 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(prBodyCheck).toContain("|> Enum.drop_while(&(&1 != current_heading))");
     expect(prBodyCheck).toContain("|> Enum.drop(1)");
     expect(prBodyCheck).not.toContain('"\n\n" <- binary_part(doc, section_start, 2)');
+  });
+
+  it("routes Linear through the Matrix-owned integration bridge by default", async () => {
+    const linearClient = await readFile("packages/symphony-elixir/lib/symphony_elixir/linear/client.ex", "utf8");
+
+    expect(linearClient).toContain("Bridge.credential()");
+    expect(linearClient).toContain("PLATFORM_INTERNAL_URL");
+    expect(linearClient).toContain("UPGRADE_TOKEN");
+    expect(linearClient).toContain("MATRIX_HANDLE");
+    expect(linearClient).toContain("/internal/containers/");
+    expect(linearClient).toContain("/integrations/call");
+    expect(linearClient).toContain("URI.encode(handle, &URI.char_unreserved?/1)");
+    expect(linearClient).not.toContain("URI.encode_www_form(handle)");
+    expect(linearClient).toContain('service: "linear"');
+    expect(linearClient).toContain('action: "graphql"');
+    expect(linearClient).toContain(":matrix_linear_bridge_error");
   });
 });

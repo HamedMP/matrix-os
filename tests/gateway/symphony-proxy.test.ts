@@ -60,6 +60,7 @@ describe("Elixir Symphony proxy routes", () => {
       },
     });
     expect(JSON.stringify(body)).not.toContain("lin_secret");
+    expect(body.groups.needsAttention[0].allowedActions).toContain("stop");
   });
 
   it("rejects unauthenticated callers before contacting Elixir", async () => {
@@ -107,6 +108,44 @@ describe("Elixir Symphony proxy routes", () => {
     });
 
     const res = await app.request("/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: { code: "invalid_response", message: "Symphony returned an invalid response" } });
+  });
+
+  it("proxies stop actions to the Elixir issue stop endpoint", async () => {
+    const fetchImpl = vi.fn(async () => json({ stopped: true, stopped_at: "2026-05-25T00:00:01Z" }));
+    const app = createElixirSymphonyProxyRoutes({
+      fetchImpl,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const res = await app.request("/runs/MAT-32/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledWith("http://127.0.0.1:4766/api/v1/runs/MAT-32/stop", expect.objectContaining({
+      method: "POST",
+      signal: expect.any(AbortSignal),
+    }));
+    expect(await res.json()).toEqual({ stopped: true, stoppedAt: "2026-05-25T00:00:01Z" });
+  });
+
+  it("maps malformed stop responses to generic invalid-response errors", async () => {
+    const fetchImpl = vi.fn(async () => json({ stopped: false }));
+    const app = createElixirSymphonyProxyRoutes({
+      fetchImpl,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const res = await app.request("/runs/MAT-32/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -219,6 +258,6 @@ describe("Elixir Symphony proxy routes", () => {
       method: "POST",
       signal: expect.any(AbortSignal),
     }));
-    expect(await res.json()).toEqual({ stopped: true });
+    expect(await res.json()).toEqual({ stopped: true, stoppedAt: null });
   });
 });

@@ -55,6 +55,11 @@ export const ElixirRefreshSchema = z.object({
   requested_at: z.string().optional(),
 }).passthrough();
 
+export const ElixirStopSchema = z.object({
+  stopped: z.literal(true).optional(),
+  stopped_at: z.string().optional(),
+}).passthrough();
+
 export function genericProxyError(code: string, message: string) {
   return { error: { code, message } };
 }
