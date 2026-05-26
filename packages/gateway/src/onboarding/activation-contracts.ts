@@ -128,6 +128,26 @@ export const AgentCredentialSummarySchema = z.object({
 });
 export type AgentCredentialSummary = z.infer<typeof AgentCredentialSummarySchema>;
 
+export const AgentCredentialStatusResponseSchema = z.object({
+  systemAgent: z.literal("hermes"),
+  activeAgents: z.array(AgentIdSchema).min(1).max(3),
+  agents: z.array(AgentCredentialSummarySchema),
+  routingExplanation: z.string().trim().min(1).max(300),
+});
+export type AgentCredentialStatusResponse = z.infer<typeof AgentCredentialStatusResponseSchema>;
+
+export const AgentCredentialParamsSchema = z.object({
+  agent: AgentIdSchema,
+});
+export type AgentCredentialParams = z.infer<typeof AgentCredentialParamsSchema>;
+
+export const VerifyAgentCredentialResponseSchema = z.object({
+  agent: AgentIdSchema,
+  status: AgentCredentialStatusSchema,
+  verifiedAt: ActivationDateSchema,
+});
+export type VerifyAgentCredentialResponse = z.infer<typeof VerifyAgentCredentialResponseSchema>;
+
 export const ReadinessOverallStatusSchema = z.enum([
   "ready",
   "degraded",
@@ -136,6 +156,15 @@ export const ReadinessOverallStatusSchema = z.enum([
 ]);
 export type ReadinessOverallStatus = z.infer<typeof ReadinessOverallStatusSchema>;
 
+export const CodingHandoffStatusSchema = z.enum([
+  "idle",
+  "running",
+  "needs_input",
+  "ready",
+  "failed",
+]);
+export type CodingHandoffStatus = z.infer<typeof CodingHandoffStatusSchema>;
+
 export const ReadinessResponseSchema = z.object({
   overallStatus: ReadinessOverallStatusSchema,
   goals: z.array(OnboardingGoalSummarySchema),
@@ -143,6 +172,7 @@ export const ReadinessResponseSchema = z.object({
   systemAgent: z.literal("hermes"),
   activeAgents: z.array(AgentIdSchema).min(1).max(3),
   agents: z.array(AgentCredentialSummarySchema),
+  codingHandoffStatus: CodingHandoffStatusSchema.nullable(),
 });
 export type ReadinessResponse = z.infer<typeof ReadinessResponseSchema>;
 
@@ -174,4 +204,3 @@ export const ActivationErrorResponseSchema = z.object({
   retryable: z.boolean(),
 });
 export type ActivationErrorResponse = z.infer<typeof ActivationErrorResponseSchema>;
-

@@ -89,20 +89,20 @@
 
 ### Tests First
 
-- [ ] T030 [P] [US2] Write failing tests for GitHub/project setup gates in `tests/gateway/activation-readiness-routes.test.ts`
-- [ ] T031 [P] [US2] Write failing duplicate-run prevention test in `tests/gateway/symphony-workflow.test.ts`
-- [ ] T032 [P] [US2] Write failing e2e coding setup path test in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T030 [P] [US2] Write failing tests for GitHub/project setup gates in `tests/gateway/activation-readiness-routes.test.ts`
+- [X] T031 [P] [US2] Write failing duplicate-run prevention test in `tests/gateway/symphony-workflow.test.ts`
+- [X] T032 [P] [US2] Write failing e2e coding setup path test in `tests/e2e/onboarding-activation.spec.ts`
 
 ### Implementation
 
-- [ ] T033 [US2] Add coding setup gate derivation for GitHub, project, issue source, Symphony, and terminal in `packages/gateway/src/onboarding/readiness-service.ts`
-- [ ] T034 [US2] Add coding setup option aggregation from Symphony and project manager in `packages/gateway/src/onboarding/coding-setup.ts`
-- [ ] T035 [US2] Add duplicate coding task guard using Symphony run state in `packages/gateway/src/symphony/orchestrator.ts`
-- [ ] T036 [US2] Extend Symphony route responses with safe active-agents and handoff status in `packages/gateway/src/symphony/routes.ts`
-- [ ] T037 [P] [US2] Create coding setup connector component in `shell/src/components/onboarding/CodingSetupPanel.tsx`
-- [ ] T038 [P] [US2] Create coding handoff summary component in `shell/src/components/onboarding/CodingHandoffSummary.tsx`
-- [ ] T039 [US2] Wire coding setup panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
-- [ ] T040 [US2] Add terminal context launch action for coding setup in `shell/src/lib/app-launch.ts`
+- [X] T033 [US2] Add coding setup gate derivation for GitHub, project, issue source, Symphony, and terminal in `packages/gateway/src/onboarding/readiness-service.ts`
+- [X] T034 [US2] Add coding setup option aggregation from Symphony and project manager in `packages/gateway/src/onboarding/coding-setup.ts`
+- [X] T035 [US2] Add duplicate coding task guard using Symphony run state in `packages/gateway/src/symphony/orchestrator.ts`
+- [X] T036 [US2] Extend Symphony route responses with safe active-agents and handoff status in `packages/gateway/src/symphony/routes.ts`
+- [X] T037 [P] [US2] Create coding setup connector component in `shell/src/components/onboarding/CodingSetupPanel.tsx`
+- [X] T038 [P] [US2] Create coding handoff summary component in `shell/src/components/onboarding/CodingHandoffSummary.tsx`
+- [X] T039 [US2] Wire coding setup panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
+- [X] T040 [US2] Add terminal context launch action for coding setup in `shell/src/lib/app-launch.ts`
 
 **Checkpoint**: US2 can pass without assistant/company-brain/support workflows.
 
@@ -116,20 +116,20 @@
 
 ### Tests First
 
-- [ ] T041 [P] [US3] Write failing credential status route tests in `tests/gateway/agent-credential-status.test.ts`
-- [ ] T042 [P] [US3] Write failing no-Claude Hermes golden-path e2e test in `tests/e2e/onboarding-activation.spec.ts`
-- [ ] T043 [P] [US3] Write failing credential upgrade and connected-Hermes continuity tests in `tests/gateway/onboarding-activation.test.ts`
+- [X] T041 [P] [US3] Write failing credential status route tests in `tests/gateway/agent-credential-status.test.ts`
+- [X] T042 [P] [US3] Write failing no-Claude Hermes golden-path e2e test in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T043 [P] [US3] Write failing credential upgrade and connected-Hermes continuity tests in `tests/gateway/onboarding-activation.test.ts`
 
 ### Implementation
 
-- [ ] T044 [US3] Implement agent credential status service in `packages/gateway/src/onboarding/agent-credential-status.ts`
-- [ ] T045 [US3] Add agent credential status and verify routes in `packages/gateway/src/onboarding/agent-credential-routes.ts`
-- [ ] T046 [US3] Wire agent credential routes in `packages/gateway/src/server.ts`
-- [ ] T047 [US3] Add Hermes system-agent continuity gate and additive active-agent routing explanation in `packages/gateway/src/onboarding/readiness-service.ts`
-- [ ] T048 [P] [US3] Create agent credential panel in `shell/src/components/onboarding/AgentCredentialPanel.tsx`
-- [ ] T049 [US3] Add agent credential hook in `shell/src/hooks/useAgentCredentialStatus.ts`
-- [ ] T050 [US3] Wire agent panel into onboarding and coding run status in `shell/src/components/OnboardingScreen.tsx`
-- [ ] T051 [US3] Add safe Claude/Codex/Hermes display copy in `shell/src/components/onboarding/AgentCredentialPanel.tsx`
+- [X] T044 [US3] Implement agent credential status service in `packages/gateway/src/onboarding/agent-credential-status.ts`
+- [X] T045 [US3] Add agent credential status and verify routes in `packages/gateway/src/onboarding/agent-credential-routes.ts`
+- [X] T046 [US3] Wire agent credential routes in `packages/gateway/src/server.ts`
+- [X] T047 [US3] Add Hermes system-agent continuity gate and additive active-agent routing explanation in `packages/gateway/src/onboarding/readiness-service.ts`
+- [X] T048 [P] [US3] Create agent credential panel in `shell/src/components/onboarding/AgentCredentialPanel.tsx`
+- [X] T049 [US3] Add agent credential hook in `shell/src/hooks/useAgentCredentialStatus.ts`
+- [X] T050 [US3] Wire agent panel into onboarding and coding run status in `shell/src/components/OnboardingScreen.tsx`
+- [X] T051 [US3] Add safe Claude/Codex/Hermes display copy in `shell/src/components/onboarding/AgentCredentialPanel.tsx`
 
 **Checkpoint**: No-Claude onboarding is useful, and connecting Claude/Codex does not disable Hermes.
 

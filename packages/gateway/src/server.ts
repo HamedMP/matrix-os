@@ -78,7 +78,12 @@ import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrinci
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
+import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
+import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
+import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -441,7 +446,42 @@ export async function createGateway(config: GatewayConfig) {
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
-  const readinessService = createReadinessService({ repository: readinessRepository });
+  const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
+  let platformDb: PlatformDb | null = null;
+  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
+  const agentCredentialService = createAgentCredentialStatusService({
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    probeAgent: async (_ownerId, agent) => {
+      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
+        agentDetectionInFlight = null;
+      });
+      const detected = await agentDetectionInFlight;
+      const status = detected.agents.find((candidate) => candidate.id === agent);
+      return {
+        available: Boolean(status?.installed && status.authState === "ok"),
+        missing: status?.installed === false,
+      };
+    },
+  });
+  let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
+  const unavailableCodingSetup: CodingSetupStatus = {
+    githubConnected: false,
+    selectedProject: null,
+    issueSourceConfigured: false,
+    symphonyReady: false,
+    terminalReady: false,
+    activeAgents: ["hermes"],
+    handoffStatus: "idle",
+  };
+  const readinessService = createReadinessService({
+    repository: readinessRepository,
+    cache: readinessCache,
+    agentCredentials: agentCredentialService,
+    codingSetup: {
+      getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
+    },
+  });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -787,7 +827,6 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   // Platform DB + Integrations (Pipedream Connect)
-  let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
@@ -1332,6 +1371,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
+  app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -2402,6 +2442,52 @@ export async function createGateway(config: GatewayConfig) {
       ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
+    const listAllMatrixProjectOptions = async (ownerId: string) => {
+      const result = await projectManager.listManagedProjects();
+      return result.projects
+        .filter((project) => project.ownerScope.type === "user" && project.ownerScope.id === ownerId)
+        .map((project) => ({
+          slug: project.slug,
+          name: project.name,
+          repositoryUrl: project.github?.htmlUrl ?? project.remote,
+          updatedAt: project.updatedAt,
+        }));
+    };
+    const codingSnapshotReads = new Map<string, Promise<Awaited<ReturnType<typeof repository.getSnapshot>>>>();
+    const getCodingSnapshot = async (ownerId: string) => {
+      const existing = codingSnapshotReads.get(ownerId);
+      if (existing) return await existing;
+      if (codingSnapshotReads.size >= 128) {
+        const oldestKey = codingSnapshotReads.keys().next().value as string | undefined;
+        if (oldestKey) codingSnapshotReads.delete(oldestKey);
+      }
+      const read = repository.getSnapshot(ownerId).finally(() => {
+        if (codingSnapshotReads.get(ownerId) === read) codingSnapshotReads.delete(ownerId);
+      });
+      codingSnapshotReads.set(ownerId, read);
+      return await read;
+    };
+    const listSelectedMatrixProjectOptions = async (ownerId: string) => {
+      const snapshot = await getCodingSnapshot(ownerId);
+      const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      if (!selectedSlug) return [];
+      const projects = await listAllMatrixProjectOptions(ownerId);
+      const selectedProject = selectedSlug ? projects.find((project) => project.slug === selectedSlug) : null;
+      return selectedProject ? [selectedProject] : [];
+    };
+    const isGitHubRepositoryUrl = (repositoryUrl: string | null | undefined): boolean => {
+      if (!repositoryUrl) return false;
+      try {
+        const parsed = new URL(repositoryUrl);
+        return parsed.hostname === "github.com" || parsed.hostname.endsWith(".github.com");
+      } catch (_err) {
+        return /^git@github\.com:/i.test(repositoryUrl);
+      }
+    };
+    const isWithinPath = (parent: string, child: string): boolean => {
+      const relativePath = normalize(relative(resolve(parent), resolve(child)));
+      return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
+    };
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const agentSessionManager = createAgentSessionManager({
@@ -2421,6 +2507,47 @@ export async function createGateway(config: GatewayConfig) {
       agentStatusProvider: agentLauncher,
       statusHub: matrixSymphonyStatusHub,
     });
+    codingSetupProvider = createCodingSetupProvider({
+      hasGitHubConnection: async (_ownerId, selectedProject) => {
+        return isGitHubRepositoryUrl(selectedProject?.repositoryUrl);
+      },
+      listMatrixProjects: async (ownerId) => listSelectedMatrixProjectOptions(ownerId),
+      getSelectedProjectSlug: async (ownerId) => {
+        const snapshot = await getCodingSnapshot(ownerId);
+        return snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      },
+      hasIssueSource: async (ownerId) => {
+        if (platformDb && await hasConnectedLinearIntegration(platformDb, ownerId)) return true;
+        const snapshot = await getCodingSnapshot(ownerId);
+        return Boolean(snapshot.rule);
+      },
+      getSymphonyStatus: async (ownerId) => {
+        const snapshot = await getCodingSnapshot(ownerId);
+        const activeStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff", "completed"]);
+        const handoffActiveStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff"]);
+        const activeHandoffRuns = snapshot.runs.filter((run) => handoffActiveStatuses.has(run.status));
+        const handoffRuns = activeHandoffRuns.length > 0 ? activeHandoffRuns : snapshot.runs.slice(0, 1);
+        const activeAgents = Array.from(new Set(snapshot.runs
+          .filter((run) => activeStatuses.has(run.status))
+          .map((run) => run.agent)
+          .filter((agent) => agent === "claude" || agent === "codex")));
+        return {
+          ready: Boolean(snapshot.installation?.enabled && snapshot.installation.credentialConfigured && snapshot.rule),
+          runStatuses: handoffRuns.map((run) => run.status),
+          activeAgents,
+        };
+      },
+      hasTerminalContext: async (ownerId, projectSlug) => {
+        if (!projectSlug) return false;
+        const localOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
+        if (!localOwnerId || ownerId !== localOwnerId) return false;
+        const projectRoot = join(homePath, "projects", projectSlug);
+        const repoRoot = join(projectRoot, "repo");
+        return sessionRegistry.list().some((session) =>
+          isWithinPath(projectRoot, session.cwd) || isWithinPath(repoRoot, session.cwd)
+        );
+      },
+    });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();
     app.route("/api/symphony", createSymphonyRoutes({
       repository,
@@ -2428,15 +2555,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       orchestrator: matrixSymphonyOrchestrator,
       statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: async () => {
-        const result = await projectManager.listManagedProjects();
-        return result.projects.map((project) => ({
-          slug: project.slug,
-          name: project.name,
-          repositoryUrl: project.github?.htmlUrl ?? project.remote,
-          updatedAt: project.updatedAt,
-        }));
-      },
+      listMatrixProjects: (ownerId) => listAllMatrixProjectOptions(ownerId),
     }));
   } else {
     console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");

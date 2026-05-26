@@ -1288,7 +1288,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             });
             setShowSetup(false);
           }}
-          onOpenTerminal={() => openWindow("Terminal", "__terminal__")}
+          onOpenTerminal={(path = "__terminal__") => openWindow("Terminal", path)}
         />
       )}
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">

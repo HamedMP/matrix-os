@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
+import { useAgentCredentialStatus } from "@/hooks/useAgentCredentialStatus";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
@@ -9,6 +10,9 @@ import { BrandFrame } from "./onboarding/BrandFrame";
 import { CapabilityIntro } from "./onboarding/CapabilityIntro";
 import { GoalSelector } from "./onboarding/GoalSelector";
 import { ReadinessChecklist } from "./onboarding/ReadinessChecklist";
+import { CodingSetupPanel } from "./onboarding/CodingSetupPanel";
+import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
+import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -20,11 +24,12 @@ const SHIMMER_ANIMATION =
 
 interface OnboardingScreenProps {
   onComplete: () => void;
-  onOpenTerminal: () => void;
+  onOpenTerminal: (path?: string) => void;
 }
 
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
+  const agentCredentials = useAgentCredentialStatus();
   const mic = useMicPermission();
   const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
@@ -179,6 +184,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
   // ── Voice conversation screen (editorial style) ─────────────
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
+  const codingSelected = ob.selectedGoalIds.includes("coding");
 
   // Render nothing for the one frame between "alreadyComplete" becoming
   // true and the parent unmounting us via the effect above. Placing this
@@ -232,6 +238,18 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                   </div>
                 </div>
               )}
+
+              {codingSelected && (
+                <div className="grid gap-3">
+                  <CodingSetupPanel gates={ob.readiness?.gates ?? []} onOpenTerminal={onOpenTerminal} />
+                  <CodingHandoffSummary
+                    activeAgents={ob.readiness?.activeAgents ?? ["hermes"]}
+                    status={ob.readiness?.codingHandoffStatus ?? null}
+                  />
+                </div>
+              )}
+
+              <AgentCredentialPanel status={agentCredentials.status} error={agentCredentials.error} onVerify={agentCredentials.verify} />
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button

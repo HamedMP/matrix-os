@@ -24,6 +24,58 @@ describe("activation readiness contracts", () => {
     });
   });
 
+  it("keeps Hermes additive when Claude or Codex credentials are connected later", async () => {
+    const { service } = createTestReadinessService(undefined, {
+      agentCredentials: {
+        systemAgent: "hermes",
+        activeAgents: ["claude", "codex", "hermes"],
+        routingExplanation: "Hermes remains the Matrix system agent while Claude and Codex add specialist paths.",
+        agents: [
+          {
+            agent: "claude",
+            status: "available",
+            coordinationRole: "core_agent",
+            workflows: ["core_agent"],
+            degradedWorkflows: [],
+            verifiedAt: "2026-05-23T00:00:00.000Z",
+            nextAction: null,
+          },
+          {
+            agent: "codex",
+            status: "available",
+            coordinationRole: "coding_specialist",
+            workflows: ["coding"],
+            degradedWorkflows: [],
+            verifiedAt: "2026-05-23T00:00:00.000Z",
+            nextAction: null,
+          },
+          {
+            agent: "hermes",
+            status: "available",
+            coordinationRole: "system_agent",
+            workflows: ["app_building", "assistant", "integrations", "company_brain"],
+            degradedWorkflows: [],
+            verifiedAt: null,
+            nextAction: null,
+          },
+        ],
+      },
+    });
+
+    const readiness = await service.getReadiness(testPrincipal.userId);
+
+    expect(readiness.systemAgent).toBe("hermes");
+    expect(readiness.activeAgents).toEqual(["claude", "codex", "hermes"]);
+    expect(readiness.agents.find((agent) => agent.agent === "hermes")).toMatchObject({
+      status: "available",
+      coordinationRole: "system_agent",
+    });
+    expect(readiness.gates.find((gate) => gate.id === "hermes.continuity")).toMatchObject({
+      status: "pass",
+      message: "Hermes remains available as the Matrix system agent",
+    });
+  });
+
   it("derives degraded status until release-critical gates pass", async () => {
     const { service } = createTestReadinessService();
 
@@ -36,11 +88,11 @@ describe("activation readiness contracts", () => {
   it("validates goal request boundaries", () => {
     expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["coding"] })).not.toThrow();
     expect(() => SelectGoalsRequestSchema.parse({ goalIds: [] })).toThrow();
-    expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["paid-beta-readiness"] })).toThrow();
+    expect(() => SelectGoalsRequestSchema.parse({ goalIds: ["unknown-launch-slug"] })).toThrow();
   });
 
   it("merges shared setup step unlocks across selected goals", () => {
-    const hermesStep = stepsForGoals(["app_building", "assistant"]).find((step) => step.id === "hermes.available");
+    const hermesStep = stepsForGoals(["app_building", "assistant"]).find((step) => step.id === "hermes.continuity");
 
     expect(hermesStep).toMatchObject({
       required: true,

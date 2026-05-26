@@ -35,6 +35,7 @@ describe("coerceReadinessResponse", () => {
       gates: "bad",
       systemAgent: "claude",
       activeAgents: undefined,
+      codingHandoffStatus: "running",
     });
 
     expect(readiness).toMatchObject({
@@ -43,6 +44,7 @@ describe("coerceReadinessResponse", () => {
       gates: [],
       systemAgent: "hermes",
       activeAgents: ["hermes"],
+      codingHandoffStatus: "running",
     });
   });
 });

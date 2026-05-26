@@ -21,7 +21,8 @@ describe("activation readiness routes", () => {
     const body = await res.json();
     expect(body.systemAgent).toBe("hermes");
     expect(body.activeAgents).toContain("hermes");
-    expect(body.gates.some((gate: { id: string }) => gate.id === "hermes.available")).toBe(true);
+    expect(body.gates.some((gate: { id: string }) => gate.id === "hermes.available")).toBe(false);
+    expect(body.gates.some((gate: { id: string }) => gate.id === "hermes.continuity")).toBe(true);
     expect(JSON.stringify(body)).not.toMatch(/secret|token|postgres|\/home\//i);
   });
 
@@ -37,9 +38,84 @@ describe("activation readiness routes", () => {
     expect(body.steps.map((step: { id: string }) => step.id)).toEqual(expect.arrayContaining([
       "github.connected",
       "project.selected",
+      "issue_source.selected",
       "integrations.capabilities",
-      "hermes.available",
+      "hermes.continuity",
     ]));
+  });
+
+  it("derives coding setup gates from GitHub, project, issue source, Symphony, and terminal state", async () => {
+    const { service } = createTestReadinessService(undefined, {
+      codingSetup: {
+        githubConnected: true,
+        selectedProject: { slug: "matrix-os", name: "Matrix OS" },
+        issueSourceConfigured: true,
+        symphonyReady: true,
+        terminalReady: false,
+        activeAgents: ["codex", "hermes"],
+        handoffStatus: "running",
+      },
+    });
+    const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(jsonRequest("/goals", { goalIds: ["coding"] }));
+    const res = await app.request("/readiness");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const gatesById = new Map(body.gates.map((gate: { id: string }) => [gate.id, gate]));
+    expect(gatesById.get("github.connected")).toMatchObject({
+      status: "pass",
+      message: "GitHub is connected for coding workflows",
+      remediation: null,
+    });
+    expect(gatesById.get("project.selected")).toMatchObject({
+      status: "pass",
+      message: "Matrix OS is selected for coding work",
+    });
+    expect(gatesById.get("issue_source.selected")).toMatchObject({
+      status: "pass",
+      message: "A task source is connected for coding work",
+    });
+    expect(gatesById.get("symphony.ready")).toMatchObject({
+      status: "pass",
+      message: "Symphony is ready to dispatch coding work",
+    });
+    expect(gatesById.get("terminal.ready")).toMatchObject({
+      status: "fail",
+      remediation: "Open the Matrix terminal for the selected project",
+    });
+    expect(body.activeAgents).toEqual(["codex", "hermes"]);
+    expect(body.codingHandoffStatus).toBe("running");
+  });
+
+  it("keeps GitHub gated until a coding project is selected", async () => {
+    const { service } = createTestReadinessService(undefined, {
+      codingSetup: {
+        githubConnected: true,
+        selectedProject: null,
+        issueSourceConfigured: true,
+        symphonyReady: true,
+        terminalReady: false,
+        activeAgents: ["codex", "hermes"],
+        handoffStatus: "idle",
+      },
+    });
+    const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(jsonRequest("/goals", { goalIds: ["coding"] }));
+    const body = await (await app.request("/readiness")).json();
+    const gatesById = new Map(body.gates.map((gate: { id: string }) => [gate.id, gate]));
+
+    expect(gatesById.get("github.connected")).toMatchObject({
+      status: "unknown",
+      message: "GitHub is not connected yet",
+      remediation: "Connect GitHub to unlock coding workflows",
+    });
+    expect(gatesById.get("project.selected")).toMatchObject({
+      status: "fail",
+      remediation: "Choose a repository or project",
+    });
   });
 
   it("leaves assistant capability approval indeterminate until an integration is connected", async () => {
