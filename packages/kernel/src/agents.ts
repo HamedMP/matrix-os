@@ -158,14 +158,10 @@ SHAPES & ELEVATION:
 - Glass-morphism for cards: background rgba(255,255,255,0.55) + backdrop-filter blur(12px) + border.
 - Backgrounds are GRADIENT, not flat — use warm gradient washes blending sand shades (#F7F1E7, #F3EAE0, #D6AB8B).
 
-ICONS (load via Iconify CDN):
-<script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>
-Usage: <iconify-icon icon="lucide:settings" width="20"></iconify-icon>
-- UI controls: lucide: prefix (lucide:search, lucide:plus, lucide:x)
-- Weather: meteocons: prefix (meteocons:clear-day-fill)
-- Loading: svg-spinners: prefix (svg-spinners:ring-resize)
-- Brand logos: simple-icons: prefix (simple-icons:gmail)
-- NEVER use text characters as icons (+, ×, →, ✓). Always use Iconify. Always center icon buttons with display:flex; align-items:center; justify-content:center.
+ICONS:
+- Use inline SVG or bundled local icon assets only.
+- Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
+- NEVER use text characters as icons (+, ×, →, ✓). Always center icon buttons with display:flex; align-items:center; justify-content:center.
 
 ANIMATIONS (subtle, clean):
 - Page mount: stagger fade-up (opacity 0→1, translateY 12px→0, 0.5s ease, 60ms delay between siblings)
@@ -186,7 +182,7 @@ DO:
 - Use Orbitron only for H1/H2 display and large stat numbers
 - Capsule-round all buttons and inputs (50px)
 - Stagger-animate elements on page mount
-- Use Iconify for all icons (never text characters)
+- Use inline SVG or bundled local icons for all icons (never text characters)
 
 DON'T:
 - Use dark backgrounds (this is a light-mode OS)

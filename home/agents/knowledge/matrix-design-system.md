@@ -141,13 +141,9 @@ border-radius: 22px;
 
 ## Icons
 
-Load via Iconify CDN — one script tag for every icon set:
+Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-```html
-<script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>
-```
-
-Usage: `<iconify-icon icon="lucide:settings" width="20"></iconify-icon>`
+Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 
 | Purpose          | Set            | Prefix           | Examples                             |
 |------------------|----------------|------------------|--------------------------------------|
@@ -159,9 +155,9 @@ Usage: `<iconify-icon icon="lucide:settings" width="20"></iconify-icon>`
 | Flags            | Circle Flags   | `circle-flags:`  | `circle-flags:se`                    |
 | Decorative       | Fluent Emoji   | `fluent-emoji:`  | `fluent-emoji:waving-hand`           |
 
-Default to `lucide:` for all UI icons. Only use specialist sets when the domain is obvious.
+Default to simple line-style SVGs for all UI icons. Only use specialist bundled assets when the domain is obvious.
 
-**NEVER use text characters as icons.** No `+`, `×`, `→`, `✓`, `⚙`. Text characters have unpredictable baselines and never center properly. Always use `<iconify-icon>`.
+**NEVER use text characters as icons.** No `+`, `×`, `→`, `✓`, `⚙`. Text characters have unpredictable baselines and never center properly. Use inline SVG or a bundled local asset.
 
 ## Animation
 
@@ -227,7 +223,7 @@ Animate width from 0 to target on mount.
 - Page load = one orchestrated wave (stagger all top-level elements)
 - Hover lift on every clickable card and button
 - Loading always uses warm-tinted skeletons, never blank space
-- Spinners: use `<iconify-icon icon="svg-spinners:ring-resize">`, never custom
+- Spinners: use a local CSS/SVG spinner, never a remote script
 - Reduced motion fallback is mandatory
 
 ## Component Patterns
@@ -298,7 +294,7 @@ input:focus, select:focus {
 
 ### Icon Buttons
 
-Always use flexbox centering and Iconify icons:
+Always use flexbox centering and inline SVG or bundled local icons:
 
 ```css
 .icon-btn {
@@ -316,12 +312,16 @@ Always use flexbox centering and Iconify icons:
 ```
 
 ```html
-<button class="icon-btn"><iconify-icon icon="lucide:plus" width="16"></iconify-icon></button>
+<button class="icon-btn" aria-label="Add">
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+</button>
 ```
 
 ## Common Pitfalls (non-negotiable)
 
-1. **Never use text characters as icons.** `+`, `×`, `→`, `✓` never center. Always use `<iconify-icon>`.
+1. **Never use text characters as icons.** `+`, `×`, `→`, `✓` never center. Use inline SVG or bundled local assets.
 2. **Always center icon buttons with flexbox.** `display:flex; align-items:center; justify-content:center`.
 3. **Components must fill space intentionally.** No empty whitespace corners. Use horizontal layouts for compact stat/info cards.
 4. **Touch targets: minimum 36×36px.** Even if the icon is 16px.
