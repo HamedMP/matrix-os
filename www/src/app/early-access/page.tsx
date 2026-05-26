@@ -4,8 +4,7 @@ import Script from "next/script";
 const TALLY_FORM_ID = "2ED9lb";
 const DISCORD_URL = "https://discord.gg/cSBBQWtPwV";
 const TALLY_QUERY_KEYS = [
-  "email",
-  "userId",
+  "invite",
   "source",
   "userGroup",
   "utm_source",
@@ -71,7 +70,6 @@ export default async function EarlyAccessPage({ searchParams }: { searchParams: 
 
         <section className="flex min-h-[760px] flex-col">
           <iframe
-            src={tallyUrl}
             data-tally-src={tallyUrl}
             loading="lazy"
             width="100%"
@@ -79,6 +77,8 @@ export default async function EarlyAccessPage({ searchParams }: { searchParams: 
             frameBorder="0"
             marginHeight={0}
             marginWidth={0}
+            sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+            referrerPolicy="strict-origin-when-cross-origin"
             title="Matrix Early Access Request"
             className="min-h-[760px] w-full flex-1"
           />
