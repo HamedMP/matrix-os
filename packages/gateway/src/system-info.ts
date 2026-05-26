@@ -1,5 +1,6 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statfsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { loadSkills } from "@matrix-os/kernel";
 import type { HostBundleRelease } from "./system-update.js";
 
@@ -54,6 +55,16 @@ export interface SystemInfo {
   templateVersion: string;
   installedVersion: string;
   startedAt: string;
+  resources: {
+    cpuCount: number;
+    loadAverage: [number, number, number];
+    memoryTotalBytes: number;
+    memoryFreeBytes: number;
+    diskTotalBytes: number | null;
+    diskFreeBytes: number | null;
+    homeDiskTotalBytes: number | null;
+    homeDiskFreeBytes: number | null;
+  };
   release?: HostBundleRelease;
 }
 
@@ -74,6 +85,19 @@ function readReleaseInfo(homePath: string): HostBundleRelease | undefined {
     }
   }
   return undefined;
+}
+
+function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } | null {
+  try {
+    const stats = statfsSync(path);
+    return {
+      totalBytes: Number(stats.blocks) * Number(stats.bsize),
+      freeBytes: Number(stats.bavail) * Number(stats.bsize),
+    };
+  } catch (err) {
+    logSystemInfoReadFailure(`Failed to read disk usage for ${path}`, err);
+    return null;
+  }
 }
 
 export function getSystemInfo(homePath: string): SystemInfo {
@@ -132,6 +156,10 @@ export function getSystemInfo(homePath: string): SystemInfo {
     logSystemInfoReadFailure("Failed to read installed version", err);
   }
 
+  const rootDisk = readDiskUsage("/");
+  const homeDisk = readDiskUsage(homePath);
+  const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
+
   return {
     version: getVersion(),
     image: process.env.MATRIX_IMAGE ?? "unknown",
@@ -147,6 +175,16 @@ export function getSystemInfo(homePath: string): SystemInfo {
     templateVersion,
     installedVersion,
     startedAt,
+    resources: {
+      cpuCount: cpus().length,
+      loadAverage: [load1, load5, load15],
+      memoryTotalBytes: totalmem(),
+      memoryFreeBytes: freemem(),
+      diskTotalBytes: rootDisk?.totalBytes ?? null,
+      diskFreeBytes: rootDisk?.freeBytes ?? null,
+      homeDiskTotalBytes: homeDisk?.totalBytes ?? null,
+      homeDiskFreeBytes: homeDisk?.freeBytes ?? null,
+    },
     release: readReleaseInfo(homePath),
   };
 }

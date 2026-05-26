@@ -6,6 +6,7 @@ export interface CustomerHostConfig {
   clerkUserId: string;
   handle: string;
   imageVersion: string;
+  updateChannel: string;
   hostBundleUrl: string;
   platformRegisterUrl: string;
   platformInternalUrl: string;

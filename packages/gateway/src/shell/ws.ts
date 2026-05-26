@@ -1,8 +1,8 @@
-import type { ChildProcess } from "node:child_process";
 import { z } from "zod/v4";
 import { ShellReplayBuffer } from "./replay-buffer.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
+import type { ShellAttachProcess } from "./zellij.js";
 
 const ShellWsInputSchema = z.object({
   type: z.literal("input"),
@@ -35,7 +35,7 @@ interface ShellWsRegistry {
 }
 
 interface ShellWsAdapter {
-  attachSession(name: string, options?: { signal?: AbortSignal }): ChildProcess;
+  attachSession(name: string, options?: { signal?: AbortSignal }): ShellAttachProcess;
 }
 
 export interface ShellWsHandlerOptions {
@@ -119,15 +119,29 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
     const abortController = new AbortController();
     const replayBuffer = buffers.get(safeName);
-    const child = options.adapter.attachSession(safeName, {
-      signal: abortController.signal,
-    });
+    let child: ShellAttachProcess;
+    try {
+      child = options.adapter.attachSession(safeName, {
+        signal: abortController.signal,
+      });
+    } catch (err: unknown) {
+      console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+      sendJson(ws, {
+        type: "error",
+        code: "attach_failed",
+        message: "Shell attach failed",
+      });
+      ws.close?.();
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
     let closed = false;
+    let dataDisposable: { dispose(): void } | null = null;
+    let exitDisposable: { dispose(): void } | null = null;
     const cleanupProcessListeners = () => {
-      child.stdout?.off("data", onStdout);
-      child.stderr?.off("data", onStderr);
-      child.off("close", onChildClose);
-      child.off("error", onChildError);
+      dataDisposable?.dispose();
+      exitDisposable?.dispose();
+      dataDisposable = null;
+      exitDisposable = null;
     };
 
     sendJson(ws, {
@@ -144,8 +158,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(ws, event);
     }
 
-    const onStdout = (chunk: Buffer | string) => {
-      const data = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+    const onData = (data: string) => {
       void replayBuffer.writePersistent(data)
         .then((result) => {
           if (result.seq !== null) {
@@ -156,35 +169,16 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           console.warn("[shell] failed to persist terminal output:", err instanceof Error ? err.message : String(err));
         });
     };
-    const onStderr = (chunk: Buffer | string) => {
-      // zellij stderr may contain paths or implementation details; keep it server-side only.
-      const length = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
-      if (length > 0) {
-        console.warn("[shell] zellij attach emitted stderr");
-      }
-    };
-    const onChildClose = (code: number | null) => {
+    const onExit = (event: { exitCode: number }) => {
       if (closed) {
         return;
       }
       closed = true;
       cleanupProcessListeners();
-      sendJson(ws, { type: "exit", code: code ?? null });
+      sendJson(ws, { type: "exit", code: event.exitCode });
     };
-    const onChildError = (err: unknown) => {
-      console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
-      if (!closed) {
-        sendJson(ws, {
-          type: "error",
-          code: "attach_failed",
-          message: "Shell attach failed",
-        });
-      }
-    };
-    child.stdout?.on("data", onStdout);
-    child.stderr?.on("data", onStderr);
-    child.once("close", onChildClose);
-    child.once("error", onChildError);
+    dataDisposable = child.onData(onData);
+    exitDisposable = child.onExit(onExit);
 
     const closeSession = () => {
       if (closed) {
@@ -220,10 +214,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "input") {
-          child.stdin?.write(msg.data);
+          child.write(msg.data);
+          return;
         }
-        // child_process does not expose PTY resize. The message is validated
-        // and accepted so clients can use the same protocol as PTY-backed paths.
+        if (msg.type === "resize") {
+          child.resize(msg.cols, msg.rows);
+        }
       },
       onClose: closeSession,
     };
