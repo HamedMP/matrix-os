@@ -15,6 +15,10 @@ export interface CustomerVpsConfig {
   r2AccountId: string;
   r2Bucket: string;
   r2PrefixRoot: string;
+  posthogToken: string;
+  posthogProjectToken: string;
+  posthogHost: string;
+  posthogApiHost: string;
   provisionEtaSeconds: number;
   registrationTokenTtlMs: number;
   reconciliationBatchSize: number;
@@ -50,6 +54,15 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     r2AccountId: env.R2_ACCOUNT_ID ?? '',
     r2Bucket: env.S3_BUCKET ?? env.R2_BUCKET ?? 'matrixos-sync',
     r2PrefixRoot: env.R2_PREFIX_ROOT ?? 'matrixos-sync',
+    posthogToken: env.POSTHOG_TOKEN ?? env.NEXT_PUBLIC_POSTHOG_KEY ?? '',
+    posthogProjectToken:
+      env.POSTHOG_PROJECT_TOKEN ??
+      env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ??
+      env.POSTHOG_TOKEN ??
+      env.NEXT_PUBLIC_POSTHOG_KEY ??
+      '',
+    posthogHost: env.POSTHOG_HOST ?? env.NEXT_PUBLIC_POSTHOG_HOST ?? '',
+    posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
     registrationTokenTtlMs: numberFromEnv(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS, 15 * 60 * 1000),
     reconciliationBatchSize: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE, 50),

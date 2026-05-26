@@ -38,6 +38,7 @@ export interface ProcessManagerOptions {
   reaperIntervalMs?: number;
   maxRestartAttempts?: number;
   restartBackoffMs?: number[];
+  appDatabaseUrlResolver?: (slug: string, manifest: AppManifest) => string | undefined;
 }
 
 const MAX_RESTART_ATTEMPTS = 3;
@@ -52,6 +53,7 @@ export class ProcessManager {
   private readonly maxProcesses: number;
   private readonly maxRestartAttempts: number;
   private readonly restartBackoffMs: number[];
+  private readonly appDatabaseUrlResolver?: (slug: string, manifest: AppManifest) => string | undefined;
   private readonly reaperInterval: ReturnType<typeof setInterval> | null;
   private readonly restartTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private shuttingDown = false;
@@ -62,6 +64,7 @@ export class ProcessManager {
     this.maxProcesses = opts.maxProcesses ?? 10;
     this.maxRestartAttempts = opts.maxRestartAttempts ?? MAX_RESTART_ATTEMPTS;
     this.restartBackoffMs = opts.restartBackoffMs ?? BACKOFF_SCHEDULE;
+    this.appDatabaseUrlResolver = opts.appDatabaseUrlResolver;
 
     const reaperMs = opts.reaperIntervalMs ?? 30_000;
     if (reaperMs > 0) {
@@ -234,9 +237,9 @@ export class ProcessManager {
       this.processes.delete(slug);
       throw new SpawnError("spawn_failed", `App "${slug}" has no serve configuration`);
     }
-    if (manifest.database === "postgres" && !process.env.DATABASE_URL) {
+    if (manifest.database === "postgres" && !this.appDatabaseUrlResolver?.(slug, manifest)) {
       this.processes.delete(slug);
-      throw new SpawnError("spawn_failed", `App "${slug}" requires Postgres but DATABASE_URL is not configured`);
+      throw new SpawnError("spawn_failed", `App "${slug}" requires a scoped Postgres database URL`);
     }
 
     const port = this.portPool.allocate();
@@ -253,7 +256,9 @@ export class ProcessManager {
       throw new SpawnError("spawn_failed", `Cannot resolve app directory for "${slug}"`);
     }
     const appDir = resolved.entry.appDir;
-    const databaseUrl = manifest.database === "postgres" ? process.env.DATABASE_URL : undefined;
+    const databaseUrl = manifest.database === "postgres"
+      ? this.appDatabaseUrlResolver?.(slug, manifest)
+      : undefined;
     const env = safeEnv({ slug, port: port!, homeDir: this.homeDir, databaseUrl });
 
     const startCmd = manifest.serve!.start;

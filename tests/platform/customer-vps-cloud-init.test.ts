@@ -29,6 +29,10 @@ describe('platform/customer-vps-cloud-init', () => {
     r2Bucket: 'matrixos-sync',
     r2Prefix: 'matrixos-sync/user_123/',
     postgresPassword: 'postgres-secret',
+    posthogToken: 'phc_public',
+    posthogProjectToken: 'phc_project',
+    posthogHost: 'https://eu.i.posthog.com',
+    posthogApiHost: '/ingest',
   };
 
   it('renders required host variables into the cloud-init template', () => {
@@ -83,6 +87,20 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).not.toContain("AWS_SECRET_ACCESS_KEY=''\n");
   });
 
+  it('renders public PostHog project-key telemetry into customer host env', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const rendered = renderCloudInitTemplate(cloudInit, input);
+
+    expect(rendered).toContain('POSTHOG_TOKEN=phc_public');
+    expect(rendered).toContain('POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(rendered).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
+  });
+
   it('renders valid YAML for the production customer cloud-init', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
@@ -127,6 +145,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
+    expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
+    expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
     expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
     expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
   });

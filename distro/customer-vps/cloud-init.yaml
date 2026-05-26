@@ -672,6 +672,13 @@ write_files:
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
+      POSTHOG_TOKEN={{posthogToken}}
+      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
+      POSTHOG_HOST={{posthogHost}}
+      NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
+      NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}
+      NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/r2.env
     owner: root:root

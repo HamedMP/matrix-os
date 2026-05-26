@@ -51,6 +51,10 @@ describe('platform/customer-vps', () => {
         S3_SECRET_ACCESS_KEY: 'r2-secret-key',
         S3_ENDPOINT: 'https://r2.example',
         R2_BUCKET: 'matrixos-sync',
+        POSTHOG_TOKEN: 'phc_public',
+        POSTHOG_PROJECT_TOKEN: 'phc_project',
+        POSTHOG_HOST: 'https://eu.i.posthog.com',
+        NEXT_PUBLIC_POSTHOG_API_HOST: '/ingest',
       }),
       hetzner,
       systemStore,
@@ -205,6 +209,21 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
     expect(createInput?.userData).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
     expect(createInput?.userData).toContain("R2_ENDPOINT='https://r2.example'");
+  });
+
+  it('templates public PostHog telemetry into provisioned customer hosts', async () => {
+    const { service, hetzner } = createService();
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain('POSTHOG_TOKEN=phc_public');
+    expect(createInput?.userData).toContain('POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(createInput?.userData).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {
