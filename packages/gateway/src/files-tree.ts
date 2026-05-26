@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
-import { resolveWithinHome } from "./path-security.js";
+import { isDeniedFileApiPath, resolveWithinHome } from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -102,7 +102,7 @@ export async function listDirectory(
   requestedPath: string,
 ): Promise<FileTreeEntry[] | null> {
   const resolved = resolveWithinHome(homePath, requestedPath);
-  if (!resolved) return null;
+  if (!resolved || isDeniedFileApiPath(homePath, requestedPath)) return null;
 
   let entries: Dirent<string>[];
   try {
