@@ -1,4 +1,8 @@
-import { GatewayClient, DEFAULT_GATEWAY_FETCH_TIMEOUT_MS } from "../lib/gateway-client";
+import {
+  GatewayClient,
+  DEFAULT_GATEWAY_FETCH_TIMEOUT_MS,
+  assertSecureTokenTransport,
+} from "../lib/gateway-client";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
 describe("GatewayClient", () => {
@@ -25,6 +29,37 @@ describe("GatewayClient", () => {
   it("strips trailing slashes from base URL", () => {
     const client = new GatewayClient("http://localhost:4000///");
     expect(client.httpUrl).toBe("http://localhost:4000");
+  });
+
+  it("allows token transport over HTTPS and loopback HTTP only", () => {
+    expect(() => new GatewayClient("https://app.matrix-os.com", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://localhost:4000", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://127.0.0.1:4000", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://[::1]:4000", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://app.matrix-os.com", "token")).toThrow(
+      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+    );
+  });
+
+  it("rejects insecure remote gateway URLs for deferred token sources", () => {
+    const getToken = jest.fn<Promise<string | null>, []>().mockResolvedValue("token");
+    expect(() => new GatewayClient("http://app.matrix-os.com", getToken)).toThrow(
+      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+    );
+  });
+
+  it("rejects websocket query tokens over insecure remote gateway URLs", () => {
+    const client = new GatewayClient("http://app.matrix-os.com");
+    expect(() => client.setWebSocketToken("ws-token")).toThrow(
+      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+    );
+  });
+
+  it("validates standalone gateway token transport URLs", () => {
+    expect(() => assertSecureTokenTransport("wss://app.matrix-os.com")).not.toThrow();
+    expect(() => assertSecureTokenTransport("ws://app.matrix-os.com")).toThrow(
+      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+    );
   });
 
   it("registers message handlers", () => {
