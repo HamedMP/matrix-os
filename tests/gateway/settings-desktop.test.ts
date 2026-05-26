@@ -337,6 +337,39 @@ describe("Settings: desktop + theme + wallpapers", () => {
     });
   });
 
+  describe("GET /channels", () => {
+    it("redacts channel secrets from settings responses", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({
+          channels: {
+            telegram: { enabled: true, token: "bot-token", allowFrom: ["123"] },
+            slack: { botToken: "xoxb-secret", appToken: "xapp-secret" },
+            discord: {
+              enabled: true,
+              nested: { webhookSecret: "", password: false },
+              list: [{ apiKey: "nested-key" }],
+            },
+          },
+        }),
+      );
+
+      const res = await app.request("/api/settings/channels");
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        telegram: { enabled: true, token: "[redacted]", allowFrom: ["123"], status: "not configured" },
+        slack: { botToken: "[redacted]", appToken: "[redacted]", status: "not configured" },
+        discord: {
+          enabled: true,
+          nested: { webhookSecret: "[redacted]", password: "[redacted]" },
+          list: [{ apiKey: "[redacted]" }],
+          status: "not configured",
+        },
+      });
+    });
+  });
+
   describe("PUT /channels/:id", () => {
     it("rejects unknown channel ids", async () => {
       const res = await app.request("/api/settings/channels/not-a-channel", {
@@ -347,6 +380,28 @@ describe("Settings: desktop + theme + wallpapers", () => {
 
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "Invalid channel id" });
+    });
+
+    it("rejects channel secret rewrites through settings", async () => {
+      const res = await app.request("/api/settings/channels/telegram", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "new-token" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Secret fields cannot be updated here" });
+    });
+
+    it("rejects nested channel secret rewrites through settings", async () => {
+      const res = await app.request("/api/settings/channels/telegram", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhook: { secret: "nested-secret" } }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Secret fields cannot be updated here" });
     });
 
     it("returns 500 when channel restart fails", async () => {

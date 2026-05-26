@@ -41,6 +41,16 @@ const CHANNEL_IDS = new Set<ChannelId>([
   "push",
   "voice",
 ]);
+const CHANNEL_SECRET_KEYS = new Set([
+  "token",
+  "botToken",
+  "appToken",
+  "signingSecret",
+  "webhookSecret",
+  "secret",
+  "apiKey",
+  "password",
+]);
 
 function isValidFilename(name: string): boolean {
   return /^[a-zA-Z0-9_.-]+$/.test(name) && !name.includes("..");
@@ -62,6 +72,32 @@ function isVisibleWallpaperFile(entry: { name: string; isFile(): boolean }): boo
 
 function isValidChannelId(channelId: string): channelId is ChannelId {
   return CHANNEL_IDS.has(channelId as ChannelId);
+}
+
+function redactChannelConfig(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((child) => redactChannelConfig(child));
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (CHANNEL_SECRET_KEYS.has(key)) {
+      redacted[key] = child == null ? child : "[redacted]";
+    } else if (child && typeof child === "object") {
+      redacted[key] = redactChannelConfig(child);
+    } else {
+      redacted[key] = child;
+    }
+  }
+  return redacted;
+}
+
+function containsChannelSecretUpdate(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((child) => containsChannelSecretUpdate(child));
+
+  return Object.entries(value as Record<string, unknown>).some(([key, child]) => (
+    CHANNEL_SECRET_KEYS.has(key) || containsChannelSecretUpdate(child)
+  ));
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -125,7 +161,10 @@ export function createSettingsRoutes(opts: {
     const status = channelManager.status();
     const merged: Record<string, unknown> = {};
     for (const [id, config] of Object.entries(channels)) {
-      merged[id] = { ...(config as Record<string, unknown>), status: status[id] ?? "not configured" };
+      merged[id] = {
+        ...(redactChannelConfig(config) as Record<string, unknown>),
+        status: status[id] ?? "not configured",
+      };
     }
     return c.json(merged);
   });
@@ -144,6 +183,9 @@ export function createSettingsRoutes(opts: {
         console.warn("[settings] Failed to parse channel config request:", err);
       }
       return c.json({ error: "Invalid JSON" }, 400);
+    }
+    if (containsChannelSecretUpdate(body)) {
+      return c.json({ error: "Secret fields cannot be updated here" }, 400);
     }
 
     const cfg = await readConfig();
