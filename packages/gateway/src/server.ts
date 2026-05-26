@@ -72,7 +72,7 @@ import { createReadinessService } from "./onboarding/readiness-service.js";
 import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
 import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
-import type { createCodingSetupProvider, CodingSetupStatus } from "./onboarding/coding-setup.js";
+import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
@@ -540,7 +540,6 @@ export async function createGateway(config: GatewayConfig) {
   const agentActionAuditService = createAgentActionAuditService();
   const companyBrainService = createCompanyBrainReadinessService();
   const draftActionService = createDraftActionReadinessService();
-  let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
     selectedProject: null,
@@ -556,7 +555,7 @@ export async function createGateway(config: GatewayConfig) {
     agentCredentials: agentCredentialService,
     integrationCapabilities: integrationCapabilityService,
     codingSetup: {
-      getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
+      getCodingSetup: async () => unavailableCodingSetup,
     },
   });
   const adminControlService = createAdminControlService({
