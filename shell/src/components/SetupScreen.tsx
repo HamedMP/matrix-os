@@ -11,10 +11,9 @@ const GATEWAY_URL = getGatewayUrl();
 
 interface SetupScreenProps {
   onComplete: () => void;
-  onOpenTerminal: () => void;
 }
 
-export function SetupScreen({ onComplete, onOpenTerminal }: SetupScreenProps) {
+export function SetupScreen({ onComplete }: SetupScreenProps) {
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<"idle" | "validating" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -29,6 +28,7 @@ export function SetupScreen({ onComplete, onOpenTerminal }: SetupScreenProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey: apiKey.trim() }),
+        signal: AbortSignal.timeout(10_000),
       });
       const data = await res.json();
 
@@ -39,14 +39,17 @@ export function SetupScreen({ onComplete, onOpenTerminal }: SetupScreenProps) {
         setStatus("error");
         setErrorMsg(data.error ?? "Validation failed");
       }
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setErrorMsg("The server took too long to respond");
+      } else {
+        setErrorMsg("Could not reach the server");
+      }
       setStatus("error");
-      setErrorMsg("Could not reach the server");
     }
   }
 
   function handleClaudeCode() {
-    onOpenTerminal();
     onComplete();
   }
 
@@ -138,7 +141,7 @@ export function SetupScreen({ onComplete, onOpenTerminal }: SetupScreenProps) {
                 onClick={handleClaudeCode}
               >
                 <TerminalIcon className="size-4" />
-                Open Terminal
+                Enter Workspace
               </Button>
             </CardContent>
           </Card>

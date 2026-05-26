@@ -41,6 +41,34 @@ describe("T135: System info", () => {
     }
   });
 
+  it("includes runtime identity from the VPS environment", () => {
+    const homePath = tmpHome();
+    const previousHandle = process.env.MATRIX_HANDLE;
+    const previousMachineId = process.env.MATRIX_MACHINE_ID;
+    const previousRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
+    process.env.MATRIX_HANDLE = "hamedmp-staging";
+    process.env.MATRIX_MACHINE_ID = "11111111-2222-3333-4444-555555555555";
+    process.env.MATRIX_RUNTIME_SLOT = "staging";
+
+    try {
+      const info = getSystemInfo(homePath);
+
+      expect(info.runtime).toEqual({
+        handle: "hamedmp-staging",
+        machineId: "11111111-2222-3333-4444-555555555555",
+        runtimeSlot: "staging",
+      });
+    } finally {
+      if (previousHandle === undefined) delete process.env.MATRIX_HANDLE;
+      else process.env.MATRIX_HANDLE = previousHandle;
+      if (previousMachineId === undefined) delete process.env.MATRIX_MACHINE_ID;
+      else process.env.MATRIX_MACHINE_ID = previousMachineId;
+      if (previousRuntimeSlot === undefined) delete process.env.MATRIX_RUNTIME_SLOT;
+      else process.env.MATRIX_RUNTIME_SLOT = previousRuntimeSlot;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("includes installed host bundle release provenance", () => {
     const homePath = tmpHome();
     const releasePath = join(homePath, "release.json");

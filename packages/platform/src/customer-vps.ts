@@ -95,6 +95,7 @@ export interface DeployResult {
 export interface DeployTarget {
   version?: string;
   channel?: 'stable' | 'canary' | 'beta' | 'dev';
+  handle?: string;
 }
 
 export interface CustomerVpsService {
@@ -710,7 +711,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async deploy(target?: DeployTarget): Promise<DeployResult> {
-      const machines = await listRunningUserMachines(deps.db, 500);
+      const runningMachines = await listRunningUserMachines(deps.db, 500);
+      const machines = target?.handle
+        ? runningMachines.filter((machine) => machine.handle === target.handle)
+        : runningMachines;
       const results: DeployResult['results'] = [];
       let triggered = 0;
       let failed = 0;

@@ -52,6 +52,32 @@ export interface ShellAttachOptions {
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 
+type MaybeTtyStream = NodeJS.ReadStream & {
+  isTTY?: boolean;
+  columns?: number;
+  rows?: number;
+  setRawMode?: (enabled: boolean) => unknown;
+  resume?: () => unknown;
+};
+
+function terminalSize(input: MaybeTtyStream, output: NodeJS.WriteStream): {
+  cols: number;
+  rows: number;
+} | null {
+  const maybeOutput = output as NodeJS.WriteStream & { columns?: number; rows?: number };
+  const rawCols = typeof maybeOutput.columns === "number" ? maybeOutput.columns : input.columns;
+  const rawRows = typeof maybeOutput.rows === "number" ? maybeOutput.rows : input.rows;
+  if (!Number.isInteger(rawCols) || !Number.isInteger(rawRows)) {
+    return null;
+  }
+  const cols = rawCols as number;
+  const rows = rawRows as number;
+  if (cols < 1 || rows < 1 || cols > 500 || rows > 200) {
+    return null;
+  }
+  return { cols, rows };
+}
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -206,13 +232,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const ws = new WebSocketImpl(createAttachUrl(name, attachOptions), { headers });
       const output = attachOptions.output ?? process.stdout;
       const errorOutput = attachOptions.errorOutput ?? process.stderr;
-      const input = attachOptions.input ?? process.stdin;
+      const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
       const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
       let pendingInput = "";
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
         let socketOpen = false;
+        let rawModeEnabled = false;
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
         const timeout = setTimeout(() => {
@@ -223,10 +250,15 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         const cleanup = () => {
           clearTimeout(timeout);
           input.off?.("data", onInput);
+          process.off("SIGWINCH", onResize);
           ws.off?.("open", onOpen);
           ws.off?.("message", onMessage);
           ws.off?.("close", onClose);
           ws.off?.("error", onError);
+          if (rawModeEnabled) {
+            input.setRawMode?.(false);
+            rawModeEnabled = false;
+          }
         };
         const settle = (fn: () => void) => {
           if (settled) {
@@ -242,6 +274,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           socketOpen = true;
           clearTimeout(timeout);
+          sendResizeFrame();
           for (const frame of queuedFrames.splice(0)) {
             sendFrame(frame);
           }
@@ -276,14 +309,40 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         };
         const onInput = (chunk: Buffer | string) => {
           const data = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
-          pendingInput = `${pendingInput}${data}`.slice(-detachSequence.length);
-          if (pendingInput === detachSequence) {
-            sendFrame(JSON.stringify({ type: "detach" }));
-            ws.close();
-            settle(() => resolve({ detached: true }));
+          let outbound = "";
+          for (const char of data) {
+            pendingInput += char;
+            if (pendingInput === detachSequence) {
+              pendingInput = "";
+              if (outbound.length > 0) {
+                sendFrame(JSON.stringify({ type: "input", data: outbound }));
+              }
+              sendFrame(JSON.stringify({ type: "detach" }));
+              ws.close();
+              settle(() => resolve({ detached: true }));
+              return;
+            }
+            if (detachSequence.startsWith(pendingInput)) {
+              continue;
+            }
+            while (pendingInput.length > 0 && !detachSequence.startsWith(pendingInput)) {
+              outbound += pendingInput[0];
+              pendingInput = pendingInput.slice(1);
+            }
+          }
+          if (outbound.length > 0) {
+            sendFrame(JSON.stringify({ type: "input", data: outbound }));
+          }
+        };
+        const sendResizeFrame = () => {
+          const size = terminalSize(input, output);
+          if (!size) {
             return;
           }
-          sendFrame(JSON.stringify({ type: "input", data }));
+          sendFrame(JSON.stringify({ type: "resize", ...size }));
+        };
+        const onResize = () => {
+          sendResizeFrame();
         };
         const onOpen = () => {
           markOpen();
@@ -328,6 +387,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         ws.on("message", onMessage);
         ws.on("close", onClose);
         ws.on("error", onError);
+        if (input.isTTY && typeof input.setRawMode === "function") {
+          input.setRawMode(true);
+          rawModeEnabled = true;
+          input.resume?.();
+          process.on("SIGWINCH", onResize);
+        }
         input.on?.("data", onInput);
       });
     },

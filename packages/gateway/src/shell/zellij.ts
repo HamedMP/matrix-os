@@ -43,6 +43,7 @@ export interface ZellijFailureDiagnostic {
 
 export interface ZellijAdapterDeps {
   execFile?: ExecFile;
+  spawn?: unknown;
   spawnPty?: PtySpawn;
   timeoutMs?: number;
   cwd?: string;

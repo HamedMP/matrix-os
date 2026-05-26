@@ -299,6 +299,38 @@ export function createSettingsRoutes(opts: {
     }
   });
 
+  app.post("/onboarding-complete", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
+    const completePath = join(homePath, "system", "onboarding-complete.json");
+    try {
+      await mkdir(dirname(completePath), { recursive: true });
+    } catch (err) {
+      console.warn("[settings] Failed to create onboarding directory:", err);
+      return c.json({ error: "Unable to update onboarding" }, 500);
+    }
+    try {
+      await writeFile(completePath, JSON.stringify({ completedAt: new Date().toISOString(), source: "shell" }) + "\n", { flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+        console.warn("[settings] Failed to mark onboarding complete:", err);
+        return c.json({ error: "Unable to update onboarding" }, 500);
+      }
+    }
+    return c.json({ ok: true, complete: true });
+  });
+
+  app.post("/onboarding-reset", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
+    const completePath = join(homePath, "system", "onboarding-complete.json");
+    try {
+      await unlink(completePath);
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        console.warn("[settings] Failed to reset onboarding:", err);
+        return c.json({ error: "Unable to reset onboarding" }, 500);
+      }
+    }
+    return c.json({ ok: true, complete: false });
+  });
+
   app.post("/api-key", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: { apiKey: string };
     try {

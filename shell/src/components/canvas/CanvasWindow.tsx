@@ -484,7 +484,10 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const appContent = (
     <>
       {win.path.startsWith("__terminal__") ? (
-        <TerminalApp mobile={isMobile} />
+        <TerminalApp
+          mobile={isMobile}
+          launchTargetId={win.id}
+        />
       ) : win.path === "__workspace__" ? (
         <WorkspaceApp />
       ) : win.path === "__file-browser__" ? (

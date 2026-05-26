@@ -186,6 +186,26 @@ describe('platform/customer-vps-routes', () => {
     expect(service.deploy).toHaveBeenCalledWith({ channel: 'dev' });
   });
 
+  it('deploys to a named VPS through the route contract', async () => {
+    const service = {
+      deploy: vi.fn().mockResolvedValue({ triggered: 1, failed: 0, results: [] }),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const res = await app.request('/vps/deploy', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 'v083-elixir-symphony-202605261600-4c421d32', handle: 'hamedmp-elixir' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(service.deploy).toHaveBeenCalledWith({
+      version: 'v083-elixir-symphony-202605261600-4c421d32',
+      handle: 'hamedmp-elixir',
+    });
+  });
+
   it('rejects ambiguous deploy targets', async () => {
     const service = {
       deploy: vi.fn(),
