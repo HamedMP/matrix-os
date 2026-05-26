@@ -14,6 +14,16 @@ function childProcess() {
   });
 }
 
+function ptyProcess() {
+  return {
+    kill: vi.fn(),
+    resize: vi.fn(),
+    write: vi.fn(),
+    onData: vi.fn(() => ({ dispose: vi.fn() })),
+    onExit: vi.fn(() => ({ dispose: vi.fn() })),
+  };
+}
+
 describe("zellij adapter", () => {
   it("uses execFile with argument arrays and bounded timeouts", async () => {
     const child = childProcess();
@@ -110,21 +120,68 @@ describe("zellij adapter", () => {
     });
   });
 
-  it("kills attach processes when the caller aborts", () => {
-    const child = childProcess();
-    const spawn = vi.fn(() => child);
+  it("starts attach through a PTY with a scrubbed zellij environment", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
     const controller = new AbortController();
-    const adapter = createZellijAdapter({ execFile: vi.fn(), spawn, timeoutMs: 25 });
+    const adapter = createZellijAdapter({
+      execFile: vi.fn(),
+      spawnPty,
+      timeoutMs: 25,
+      env: {
+        HOME: "/home/matrix",
+        PATH: "/opt/matrix/bin",
+        TERM: "screen-256color",
+        XDG_RUNTIME_DIR: "/run/user/999",
+        ZELLIJ: "0",
+        ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
+        ZELLIJ_CONFIG_FILE: "/home/matrix/.config/zellij/config.kdl",
+        ZELLIJ_SESSION_NAME: "main",
+        ZELLIJ_PANE_ID: "1",
+        ZELLIJ_SOCKET_DIR: "/run/user/999/zellij",
+        SECRET_TOKEN: "nope",
+      },
+      cwd: "/opt/matrix/app",
+    });
+
+    adapter.attachSession("main", { signal: controller.signal });
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["attach", "main"],
+      expect.objectContaining({
+        cols: 120,
+        rows: 40,
+        name: "xterm-256color",
+        cwd: "/opt/matrix/app",
+        env: expect.objectContaining({
+          HOME: "/home/matrix",
+          PATH: "/opt/matrix/bin",
+          TERM: "xterm-256color",
+          XDG_RUNTIME_DIR: "/run/user/999",
+          ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
+          ZELLIJ_CONFIG_FILE: "/home/matrix/.config/zellij/config.kdl",
+          ZELLIJ_SOCKET_DIR: "/run/user/999/zellij",
+        }),
+      }),
+    );
+    const env = spawnPty.mock.calls[0]?.[2].env;
+    expect(env).not.toHaveProperty("ZELLIJ");
+    expect(env).not.toHaveProperty("ZELLIJ_SESSION_NAME");
+    expect(env).not.toHaveProperty("ZELLIJ_PANE_ID");
+    expect(env).not.toHaveProperty("SECRET_TOKEN");
+  });
+
+  it("kills attach PTYs when the caller aborts", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const controller = new AbortController();
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
 
     adapter.attachSession("main", { signal: controller.signal });
     controller.abort();
 
-    expect(spawn).toHaveBeenCalledWith(
-      "zellij",
-      ["attach", "main"],
-      expect.objectContaining({ stdio: "pipe" }),
-    );
-    expect(child.kill).toHaveBeenCalled();
+    expect(pty.kill).toHaveBeenCalled();
   });
 
   it("creates sessions in the requested cwd using headless attach", async () => {
