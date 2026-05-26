@@ -91,6 +91,19 @@ describe('platform/metrics', () => {
     expect(normalizePlatformMetricPath(path)).toBe(expected);
   });
 
+  it('collapses unknown request paths to avoid unbounded metric cardinality', () => {
+    expect(normalizePlatformMetricPath('/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toBe('/:path');
+    expect(normalizePlatformMetricPath('/random/user/supplied/path')).toBe('/:path');
+    expect(normalizePlatformMetricPath('/')).toBe('/');
+  });
+
+  it.each(['/health', '/metrics', '/containers', '/vps', '/runtime'])(
+    'keeps exact platform metric path %s distinct',
+    (path) => {
+      expect(normalizePlatformMetricPath(path)).toBe(path);
+    },
+  );
+
   it('refreshes VPS version labels for Grafana scraping', async () => {
     refreshVpsMetrics([
       {
