@@ -68,4 +68,21 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(staticAssets).toContain('put_resp_header("cache-control", "no-cache")');
     expect(staticAssets).not.toContain("max-age=31536000");
   });
+
+  it("keeps terminal status dashboard rendering stable", async () => {
+    const statusDashboard = await readFile("packages/symphony-elixir/lib/symphony_elixir/status_dashboard.ex", "utf8");
+
+    expect(statusDashboard).toContain("def handle_info(:tick, state)");
+    expect(statusDashboard).toContain("schedule_tick(state.refresh_ms)");
+    expect(statusDashboard).toContain("Throughput graph:");
+    expect(statusDashboard).toContain("|> Enum.map(&format_retry_summary/1)");
+    expect(statusDashboard).toMatch(/catch\s*:exit,\s*_reason\s*->\s*:error/);
+    expect(statusDashboard).toContain("defp tps_graph(samples, now_ms, _current_tokens)");
+    expect(statusDashboard).toMatch(/samples\s*\|>\s*prune_graph_samples\(now_ms\)/);
+    expect(statusDashboard).toContain("String.length(value) <= width");
+    expect(statusDashboard).toContain("when String.length(value) > max");
+    expect(statusDashboard).not.toContain('Enum.map_join(", ", &format_retry_summary/1)');
+    expect(statusDashboard).not.toContain("when byte_size(value) > max");
+    expect(statusDashboard).toContain("String.trim_trailing");
+  });
 });
