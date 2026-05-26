@@ -15,6 +15,7 @@ import { CodingSetupPanel } from "./onboarding/CodingSetupPanel";
 import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
 import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
+import { AdminControlPanel, type AdminControlSurface } from "./onboarding/AdminControlPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -43,11 +44,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [continueExiting, setContinueExiting] = useState(false);
   const [entranceStage, setEntranceStage] = useState<"hidden" | "center" | "settled">("hidden");
   const [logoMediaAvailable, setLogoMediaAvailable] = useState(true);
+  const [adminSurface, setAdminSurface] = useState<AdminControlSurface | null>(null);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const continueTimerRef = useRef<number | null>(null);
   const continueFrameRef = useRef<number | null>(null);
+  const adminActionControllerRef = useRef<AbortController | null>(null);
 
   // Live subtitle — accumulated AI transcript fragments, synced with voice
   const subtitle = ob.currentSubtitle;
@@ -103,10 +106,61 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       if (continueFrameRef.current !== null) {
         window.cancelAnimationFrame(continueFrameRef.current);
       }
+      adminActionControllerRef.current?.abort();
       ambientRef.current?.pause();
       audioCtxRef.current?.close();
     };
   }, []);
+
+  const refreshAdminSurface = useCallback((signal?: AbortSignal) => {
+    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+    void fetch("/api/admin/control-surface", {
+      headers: { Accept: "application/json" },
+      signal: requestSignal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("admin control request failed");
+        return await res.json() as AdminControlSurface;
+      })
+      .then((surface) => {
+        setAdminSurface(surface);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[onboarding] admin control load failed:", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    refreshAdminSurface(controller.signal);
+    return () => controller.abort();
+  }, [refreshAdminSurface]);
+
+  const resumeAdminSetup = useCallback((target: string) => {
+    adminActionControllerRef.current?.abort();
+    const controller = new AbortController();
+    adminActionControllerRef.current = controller;
+    const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+    void fetch("/api/admin/control-surface/setup-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target, intent: "resume" }),
+      signal: requestSignal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("admin setup request failed");
+        return await res.json();
+      })
+      .then(() => refreshAdminSurface(controller.signal))
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[onboarding] admin setup failed:", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (adminActionControllerRef.current === controller) adminActionControllerRef.current = null;
+      });
+  }, [refreshAdminSurface]);
 
   function startAmbientAudio() {
     const audio = new Audio("/onboarding-ambient.wav");
@@ -262,6 +316,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                   onApprove={integrationCapabilities.approveForHermes}
                 />
               )}
+
+              <AdminControlPanel surface={adminSurface} onResumeSetup={resumeAdminSetup} />
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button

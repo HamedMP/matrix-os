@@ -87,6 +87,8 @@ import { createAgentCredentialRoutes } from "./onboarding/agent-credential-route
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
+import { createAdminControlService } from "./onboarding/admin-control-service.js";
+import { createAdminControlRoutes } from "./onboarding/admin-control-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -552,6 +554,11 @@ export async function createGateway(config: GatewayConfig) {
     codingSetup: {
       getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
     },
+  });
+  const adminControlService = createAdminControlService({
+    agentCredentials: agentCredentialService,
+    integrations: integrationCapabilityService,
+    readiness: readinessService,
   });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
@@ -1444,6 +1451,7 @@ export async function createGateway(config: GatewayConfig) {
     service: integrationCapabilityService,
     audit: agentActionAuditService,
   }));
+  app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
