@@ -26,21 +26,45 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(wrapper).toContain("export SYMPHONY_HOST=\"${SYMPHONY_HOST:-127.0.0.1}\"");
     expect(wrapper).toContain("export SYMPHONY_PORT=\"${SYMPHONY_PORT:-4766}\"");
     expect(wrapper).toContain("export SYMPHONY_WORKSPACE_ROOT=\"${SYMPHONY_WORKSPACE_ROOT:-$MATRIX_HOME/projects/matrix-os/symphony-workspaces}\"");
-    expect(wrapper).toContain("exec \"$SYMPHONY_BIN\" \"$WORKFLOW_FILE\"");
+    expect(wrapper).toContain("--i-understand-that-this-will-be-running-without-the-usual-guardrails");
+    expect(wrapper).toContain("--logs-root \"$MATRIX_HOME/system/symphony/logs\"");
+    expect(wrapper).toContain("--port \"$SYMPHONY_PORT\"");
+    expect(wrapper).toContain("\"$WORKFLOW_FILE\"");
 
     expect(buildScript).toContain("\"$STAGE_DIR/bin/matrix-symphony\"");
+  });
+
+  it("provisions Erlang runtime and enables Symphony during customer VPS bootstrap", async () => {
+    const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
+
+    expect(cloudInit).toContain("erlang-base");
+    expect(cloudInit).toContain("erlang-ssl");
+    expect(cloudInit).toContain("matrix-symphony");
+    expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
   });
 
   it("packages the adapted Elixir Symphony source and license in the host bundle app tree", async () => {
     const license = await readFile("packages/symphony-elixir/LICENSE", "utf8");
     const notice = await readFile("packages/symphony-elixir/NOTICE", "utf8");
     const readme = await readFile("packages/symphony-elixir/README.md", "utf8");
+    const mix = await readFile("packages/symphony-elixir/mix.exs", "utf8");
+    const workflow = await readFile("packages/symphony-elixir/WORKFLOW.md", "utf8");
+    const configSchema = await readFile("packages/symphony-elixir/lib/symphony_elixir/config/schema.ex", "utf8");
     const buildScript = await readFile("scripts/build-host-bundle.sh", "utf8");
 
     expect(license).toContain("Apache License");
     expect(notice).toContain("Matrix-adapted Elixir Symphony");
     expect(notice).toContain("Copyright 2026 Matrix OS contributors");
     expect(readme).toContain("Matrix-adapted Elixir Symphony");
+    expect(mix).toContain("app: :symphony_elixir");
+    expect(workflow).toContain('root: "$SYMPHONY_WORKSPACE_ROOT"');
+    expect(workflow).toContain('command: "$SYMPHONY_CODEX_COMMAND"');
+    expect(workflow).toContain('host: "127.0.0.1"');
+    expect(configSchema).toContain("SYMPHONY_WORKSPACE_ROOT");
+    expect(configSchema).toContain("MATRIX_HOME");
+    expect(configSchema).toContain("SYMPHONY_LINEAR_API_KEY");
+    expect(configSchema).toContain("SYMPHONY_LINEAR_PROJECT_SLUG");
     expect(buildScript).toContain("cp -a \"$ROOT_DIR/packages\" \"$STAGE_DIR/app/packages\"");
   });
 
@@ -117,5 +141,60 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(orchestrator).toContain("cleanup_issue_workspace(Map.get(metadata, :identifier))");
     expect(orchestrator).toContain("state = %{state | claimed: MapSet.put(state.claimed, issue.id)}");
     expect(orchestrator).toContain("defp retry_delay(_attempt, _metadata), do: @failure_retry_base_ms");
+  });
+
+  it("uses Matrix-owned repository and runtime endpoint secrets", async () => {
+    const beforeRemove = await readFile("packages/symphony-elixir/lib/mix/tasks/workspace.before_remove.ex", "utf8");
+    const config = await readFile("packages/symphony-elixir/config/config.exs", "utf8");
+    const configSchema = await readFile("packages/symphony-elixir/lib/symphony_elixir/config/schema.ex", "utf8");
+    const pathSafety = await readFile("packages/symphony-elixir/lib/symphony_elixir/path_safety.ex", "utf8");
+    const prBodyCheck = await readFile("packages/symphony-elixir/lib/mix/tasks/pr_body.check.ex", "utf8");
+    const workflow = await readFile("packages/symphony-elixir/WORKFLOW.md", "utf8");
+    const workspace = await readFile("packages/symphony-elixir/lib/symphony_elixir/workspace.ex", "utf8");
+    const workflowStore = await readFile("packages/symphony-elixir/lib/symphony_elixir/workflow_store.ex", "utf8");
+    const promptBuilder = await readFile("packages/symphony-elixir/lib/symphony_elixir/prompt_builder.ex", "utf8");
+    const agentRunner = await readFile("packages/symphony-elixir/lib/symphony_elixir/agent_runner.ex", "utf8");
+    const runtimeConfig = await readFile("packages/symphony-elixir/lib/symphony_elixir/config.ex", "utf8");
+    const httpServer = await readFile("packages/symphony-elixir/lib/symphony_elixir/http_server.ex", "utf8");
+
+    expect(beforeRemove).toContain('@default_repo "HamedMP/matrix-os"');
+    expect(beforeRemove).not.toContain("openai/symphony");
+    expect(config).toContain('System.get_env("SYMPHONY_SECRET_KEY_BASE")');
+    expect(config).toContain(":crypto.strong_rand_bytes");
+    expect(config).toContain('check_origin: ["//localhost", "//127.0.0.1", "//[::1]"]');
+    expect(config).not.toContain('secret_key_base: String.duplicate("s", 64)');
+    expect(config).not.toContain("check_origin: false");
+    expect(pathSafety).toContain("@max_symlink_hops 40");
+    expect(pathSafety).toContain("{:error, :eloop}");
+    expect(prBodyCheck).toContain("~r/^\\#{2,6}\\s+.+$/m");
+    expect(prBodyCheck).not.toContain("~r/^\\#{4,6}\\s+.+$/m");
+    expect(workflow).not.toContain("danger-full-access");
+    expect(workflow).not.toContain("dangerFullAccess");
+    expect(workspace).toContain("Workspace removal failed");
+    expect(workspace).toContain("Workspace issue cleanup failed");
+    expect(workspace).toContain("Workspace before_run hook setup failed");
+    expect(workspace).toContain("Workspace after_run hook setup failed");
+    expect(workspace).toContain("{:workspace_path_not_directory, workspace}");
+    expect(workspace).toContain('Logger.error("Workspace removal failed path=#{workspace} error=#{Exception.message(error)}")');
+    expect(workflowStore).toContain("{:ok, new_state.workflow, {:stale, reason}}");
+    expect(workflowStore).toContain("File.stat(path)");
+    expect(workflowStore).not.toContain("File.read(path)");
+    expect(promptBuilder).toContain("{:error, {:workflow_unavailable, reason}}");
+    expect(promptBuilder).toContain("{:error, {:stale_workflow, reason}}");
+    expect(agentRunner).toContain("{:ok, prompt} <- build_turn_prompt");
+    expect(agentRunner).toContain("with {:ok, max_turns} <- max_turns(opts)");
+    expect(agentRunner).toContain("err in ArgumentError -> {:error, {:config_unavailable, Exception.message(err)}}");
+    expect(runtimeConfig).toContain("case settings() do");
+    expect(runtimeConfig).toContain("log_config_fallback(\"server_port\", reason)");
+    expect(runtimeConfig).toContain("@fallback_max_concurrent_agents 1");
+    expect(httpServer).toContain("with {:ok, %{host: host, port: port}} <- server_options(opts) do");
+    expect(httpServer).toContain("{:error, {:config_unavailable, reason}}");
+    expect(configSchema).toContain('"excludeTmpdirEnvVar" => true');
+    expect(configSchema).toContain('"excludeSlashTmp" => true');
+    expect(workflow).toContain("Host read-only access is intentional");
+    expect(prBodyCheck).toContain("skip_heading_newlines(doc, section_start)");
+    expect(prBodyCheck).toContain("|> Enum.drop_while(&(&1 != current_heading))");
+    expect(prBodyCheck).toContain("|> Enum.drop(1)");
+    expect(prBodyCheck).not.toContain('"\n\n" <- binary_part(doc, section_start, 2)');
   });
 });

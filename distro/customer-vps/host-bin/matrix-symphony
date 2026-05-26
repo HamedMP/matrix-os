@@ -18,4 +18,9 @@ export SYMPHONY_CODEX_COMMAND="${SYMPHONY_CODEX_COMMAND:-codex app-server}"
 export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 
 mkdir -p "$SYMPHONY_WORKSPACE_ROOT"
-exec "$SYMPHONY_BIN" "$WORKFLOW_FILE"
+mkdir -p "$MATRIX_HOME/system/symphony/logs"
+exec "$SYMPHONY_BIN" \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --logs-root "$MATRIX_HOME/system/symphony/logs" \
+  --port "$SYMPHONY_PORT" \
+  "$WORKFLOW_FILE"

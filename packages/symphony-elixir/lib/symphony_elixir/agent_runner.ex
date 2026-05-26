@@ -47,10 +47,10 @@ defmodule SymphonyElixir.AgentRunner do
   defp send_codex_update(_recipient, _issue, _message), do: :ok
 
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts) do
-    max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace) do
+    with {:ok, max_turns} <- max_turns(opts),
+         {:ok, session} <- AppServer.start_session(workspace) do
       try do
         do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
       after
@@ -59,10 +59,21 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
-    prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
+  defp max_turns(opts) do
+    case Keyword.fetch(opts, :max_turns) do
+      {:ok, max_turns} ->
+        {:ok, max_turns}
 
-    with {:ok, turn_session} <-
+      :error ->
+        with {:ok, settings} <- runtime_settings() do
+          {:ok, settings.agent.max_turns}
+        end
+    end
+  end
+
+  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
+    with {:ok, prompt} <- build_turn_prompt(issue, opts, turn_number, max_turns),
+         {:ok, turn_session} <-
            AppServer.run_turn(
              app_session,
              prompt,
@@ -103,24 +114,27 @@ defmodule SymphonyElixir.AgentRunner do
   defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
 
   defp build_turn_prompt(_issue, _opts, turn_number, max_turns) do
-    """
-    Continuation guidance:
+    {:ok,
+     """
+     Continuation guidance:
 
-    - The previous Codex turn completed normally, but the Linear issue is still in an active state.
-    - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
-    - Resume from the current workspace and workpad state instead of restarting from scratch.
-    - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
-    - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
-    """
+     - The previous Codex turn completed normally, but the Linear issue is still in an active state.
+     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
+     - Resume from the current workspace and workpad state instead of restarting from scratch.
+     - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
+     - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
+     """}
   end
 
   defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
       {:ok, [%Issue{} = refreshed_issue | _]} ->
-        if active_issue_state?(refreshed_issue.state) do
-          {:continue, refreshed_issue}
-        else
-          {:done, refreshed_issue}
+        with {:ok, active?} <- active_issue_state?(refreshed_issue.state) do
+          if active? do
+            {:continue, refreshed_issue}
+          else
+            {:done, refreshed_issue}
+          end
         end
 
       {:ok, []} ->
@@ -136,11 +150,22 @@ defmodule SymphonyElixir.AgentRunner do
   defp active_issue_state?(state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
 
-    Config.settings!().tracker.active_states
-    |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
+    with {:ok, settings} <- runtime_settings() do
+      active? =
+        settings.tracker.active_states
+        |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
+
+      {:ok, active?}
+    end
   end
 
-  defp active_issue_state?(_state_name), do: false
+  defp active_issue_state?(_state_name), do: {:ok, false}
+
+  defp runtime_settings do
+    {:ok, Config.settings!()}
+  rescue
+    err in ArgumentError -> {:error, {:config_unavailable, Exception.message(err)}}
+  end
 
   defp normalize_issue_state(state_name) when is_binary(state_name) do
     state_name
