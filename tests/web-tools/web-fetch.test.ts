@@ -156,4 +156,42 @@ describe("createWebFetchTool", () => {
 
     await expect(tool.execute({ url: "https://example.com/missing" })).rejects.toThrow("404");
   });
+
+  it("follows redirects after validating each target URL", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: new Map([["location", "https://example.com/final"]]),
+        text: () => Promise.resolve("redirect"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Map([["content-type", "text/markdown"]]),
+        text: () => Promise.resolve(SAMPLE_MARKDOWN),
+      });
+    const tool = createWebFetchTool({ cache, fetcher });
+
+    await expect(tool.execute({ url: "https://example.com/redirect" })).resolves.toMatchObject({
+      content: SAMPLE_MARKDOWN,
+      extractedVia: "cloudflare-markdown",
+    });
+    expect(fetcher).toHaveBeenNthCalledWith(1, "https://example.com/redirect", expect.objectContaining({ redirect: "manual" }));
+    expect(fetcher).toHaveBeenNthCalledWith(2, "https://example.com/final", expect.objectContaining({ redirect: "manual" }));
+  });
+
+  it("rejects redirects to SSRF-blocked targets", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 302,
+      headers: new Map([["location", "http://127.0.0.1/admin"]]),
+      text: () => Promise.resolve("redirect"),
+    });
+    const tool = createWebFetchTool({ cache, fetcher });
+
+    await expect(tool.execute({ url: "https://example.com/redirect" })).rejects.toThrow("SSRF blocked");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });
