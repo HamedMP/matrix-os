@@ -133,7 +133,15 @@ export function ensureConnected() {
   }
 }
 
-export function sendMessage(msg: { type: string; text?: string; sessionId?: string; requestId?: string }) {
+type ClientMessage = {
+  type: string;
+  text?: string;
+  displayText?: string;
+  sessionId?: string;
+  requestId?: string;
+};
+
+export function sendMessage(msg: ClientMessage) {
   const data = JSON.stringify(msg);
   if (globalSocket?.readyState === WebSocket.OPEN) {
     globalSocket.send(data);
@@ -188,7 +196,7 @@ export function useSocket() {
     };
   }, []);
 
-  const send = useCallback((msg: { type: string; text?: string; sessionId?: string; requestId?: string }) => {
+  const send = useCallback((msg: ClientMessage) => {
     sendMessage(msg);
   }, []);
 
