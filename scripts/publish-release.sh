@@ -65,6 +65,18 @@ if [ ! -f "$BUNDLE" ]; then
   exit 1
 fi
 
+if ! command -v aws >/dev/null 2>&1; then
+  echo "aws CLI not found; publishing through scripts/publish-release-r2.mjs"
+  NODE_PUBLISH_ARGS=("$VERSION" "--channel" "$CHANNEL" "--severity" "$SEVERITY")
+  if [ -n "$CHANGELOG" ]; then
+    NODE_PUBLISH_ARGS+=("--changelog" "$CHANGELOG")
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    NODE_PUBLISH_ARGS+=("--dry-run")
+  fi
+  exec node "$ROOT_DIR/scripts/publish-release-r2.mjs" "${NODE_PUBLISH_ARGS[@]}"
+fi
+
 : "${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID}"
 : "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID}"
 : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"

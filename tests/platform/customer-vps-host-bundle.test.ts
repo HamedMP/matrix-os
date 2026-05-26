@@ -78,6 +78,22 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
   });
 
+  it('publish script falls back to the checked-in Node R2 publisher when aws is unavailable', () => {
+    const root = process.cwd();
+    const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
+    const nodePublisher = readFileSync(join(root, 'scripts/publish-release-r2.mjs'), 'utf8');
+
+    expect(publishScript).toContain('command -v aws');
+    expect(publishScript).toContain('scripts/publish-release-r2.mjs');
+    expect(publishScript).toContain('exec node "$ROOT_DIR/scripts/publish-release-r2.mjs"');
+    expect(nodePublisher).toContain('IfNoneMatch: "*"');
+    expect(nodePublisher).toContain('existing immutable bundle has no checksum metadata');
+    expect(nodePublisher).not.toContain('head.Metadata?.sha256 && head.Metadata.sha256 !== expectedSha256');
+    expect(nodePublisher).toContain('R2_ACCESS_KEY_ID');
+    expect(nodePublisher).toContain('R2_SECRET_ACCESS_KEY');
+    expect(nodePublisher).toContain('AbortSignal.timeout(30_000)');
+  });
+
   it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');

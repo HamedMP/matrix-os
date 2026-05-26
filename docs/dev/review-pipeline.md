@@ -195,6 +195,22 @@ Many PR #30 misses were not code-local — they were wiring issues visible only 
 
 This pass cannot be done from code alone — it requires mentally (or actually) running the flow end-to-end.
 
+### Pass 5: Launch Readiness Review (paid-beta gates only)
+
+PRs touching onboarding launch readiness, operator reports, or paid entitlement behavior must answer these before review:
+
+1. **Launch gate source of truth**: Which gates come from platform DB state, which gates come from explicit QA evidence, and which gates are intentionally still manual?
+
+2. **Unsafe-by-default behavior**: Does the operator report stay `blocked` when evidence is missing, stale, or unreachable?
+
+3. **Hermes continuity**: Do Claude or Codex credentials add capability without disabling Hermes as the Matrix system agent?
+
+4. **Entitlement data safety**: Does missing, expired, disabled, or changed entitlement block paid-only access without deleting owner files, owner Postgres data, backups, or export paths?
+
+5. **Visual QA evidence**: Are desktop, mobile, reduced-motion, missing-media, no-Claude Hermes, connected Claude/Codex, admin/control, coding, and assistant-integration paths recorded?
+
+6. **Operator remediations**: Does every failing release-critical gate name a safe remediation owner and next action without exposing provider, database, filesystem, or secret details?
+
 ## Adversarial Test Requirements
 
 PRs touching these areas must include adversarial tests, not just happy-path:

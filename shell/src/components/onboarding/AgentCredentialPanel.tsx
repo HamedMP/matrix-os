@@ -60,7 +60,7 @@ export function AgentCredentialPanel({
 
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         {agents.map((agent) => {
-          const verifiableAgent = agent.agent === "claude" || agent.agent === "codex" ? agent.agent : null;
+          const verifyAgent = agent.agent === "claude" || agent.agent === "codex" ? agent.agent : null;
           return (
             <div key={agent.agent} className="rounded-md border border-[#17281f]/10 bg-[#f8f5ee]/75 p-3">
               <div className="flex items-center justify-between gap-2">
@@ -72,10 +72,10 @@ export function AgentCredentialPanel({
               </div>
               <p className="mt-2 text-xs leading-5 text-[#17281f]/68">{statusCopy(agent.agent, agent.status)}</p>
               <p className="mt-1 text-xs capitalize text-[#17281f]/48">{agent.coordinationRole.replaceAll("_", " ")}</p>
-              {agent.nextAction && verifiableAgent && (
+              {agent.nextAction && verifyAgent && (
                 <button
                   type="button"
-                  onClick={() => onVerify(verifiableAgent)}
+                  onClick={() => onVerify(verifyAgent)}
                   className="mt-3 inline-flex min-h-8 items-center gap-1.5 rounded-md border border-[#17281f]/12 bg-white/70 px-2.5 text-xs font-medium text-[#17281f] transition hover:border-[#17281f]/28"
                 >
                   <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />

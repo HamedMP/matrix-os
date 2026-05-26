@@ -18,6 +18,7 @@ import {
   getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
+  listActiveUserMachinesByClerkId,
   listUserMachines,
   listAllUserMachines,
   updateLastActive,
@@ -84,6 +85,7 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
+const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
 const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
@@ -398,15 +400,31 @@ function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
-function readRuntimeSlot(cookieHeader: string | undefined, rawUrl: string): string {
+type RuntimeSlotSource = 'query' | 'cookie' | 'default';
+
+interface RuntimeSlotSelection {
+  slot: string;
+  source: RuntimeSlotSource;
+}
+
+function readRuntimeSlotSelection(cookieHeader: string | undefined, rawUrl: string): RuntimeSlotSelection {
   try {
     const querySlot = new URL(rawUrl, 'https://app.matrix-os.com').searchParams.get('runtime');
-    if (querySlot && RuntimeSlotSchema.safeParse(querySlot).success) return querySlot;
+    if (querySlot && RuntimeSlotSchema.safeParse(querySlot).success) {
+      return { slot: querySlot, source: 'query' };
+    }
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse runtime slot URL:', err instanceof Error ? err.message : String(err));
   }
   const cookieSlot = readCookie(cookieHeader, RUNTIME_SLOT_COOKIE);
-  return cookieSlot && RuntimeSlotSchema.safeParse(cookieSlot).success ? cookieSlot : 'primary';
+  if (cookieSlot && RuntimeSlotSchema.safeParse(cookieSlot).success) {
+    return { slot: cookieSlot, source: 'cookie' };
+  }
+  return { slot: 'primary', source: 'default' };
+}
+
+function readRuntimeSlot(cookieHeader: string | undefined, rawUrl: string): string {
+  return readRuntimeSlotSelection(cookieHeader, rawUrl).slot;
 }
 
 function buildForwardedQueryString(rawUrl: string): string {
@@ -440,6 +458,22 @@ function buildRuntimeSlotCookie(runtimeSlot: string): string {
     'SameSite=Lax',
     'Max-Age=86400',
   ].join('; ');
+}
+
+export function buildPostAuthRedirectPath(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl, 'https://app.matrix-os.com');
+    const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
+    const path = /^\/sign-(?:in|up)\/?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const runtime = url.searchParams.get('runtime');
+    if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
+      return `${path}?runtime=${encodeURIComponent(runtime)}`;
+    }
+    return path;
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to build post-auth redirect:', err instanceof Error ? err.message : String(err));
+    return '/';
+  }
 }
 
 function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): EntitlementAccessDecision {
@@ -792,7 +826,9 @@ async function resolveAppDomainIdentity(opts: {
   };
 }
 
-async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string): Promise<{
+async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string, options: {
+  timeoutMs?: number;
+} = {}): Promise<{
   reachable: boolean;
   statusCode?: number;
   release?: unknown;
@@ -818,7 +854,7 @@ async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecre
       method: 'GET',
       headers,
       redirect: 'manual',
-      signal: AbortSignal.timeout(VPS_RELEASE_PROBE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(options.timeoutMs ?? VPS_RELEASE_PROBE_TIMEOUT_MS),
       dispatcher: customerVpsProxyDispatcher,
     } as RequestInit & { dispatcher: Agent });
     if (!response.ok) {
@@ -907,12 +943,21 @@ function getGatewayUrlForHandle(handle: string): string {
   return 'https://app.matrix-os.com';
 }
 
+export function escapeInlineScriptJson(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
 function getAuthPage(
   publishableKey: string,
   mode: 'sign-in' | 'sign-up',
   scriptNonce: string,
+  redirectTarget: string,
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
+  const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -938,18 +983,19 @@ function getAuthPage(
     type="text/javascript"
   ></script>
   <script nonce="${scriptNonce}">
+    var redirectTarget = ${redirectTargetJson};
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
-          window.location.replace('/');
+          window.location.replace(redirectTarget);
           return;
         }
         var el = document.getElementById('auth');
         el.innerHTML = '';
         if ('${mode}' === 'sign-up') {
-          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: '/' });
+          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget });
         } else {
-          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: '/' });
+          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget });
         }
       });
     }
@@ -1114,6 +1160,236 @@ function getVpsBootPage(input: { status: string }) {
       <p>${detail}</p>
     </div>
     <p class="status">Instance status: <strong>${escapeHtml(input.status)}</strong></p>
+  </main>
+</body>
+</html>`;
+}
+
+const SERVER_STRENGTHS: Record<string, { vcpu: number; memoryGiB: number; diskGiB?: number }> = {
+  cpx11: { vcpu: 2, memoryGiB: 2, diskGiB: 40 },
+  cpx21: { vcpu: 3, memoryGiB: 4, diskGiB: 80 },
+  cpx22: { vcpu: 2, memoryGiB: 4, diskGiB: 80 },
+  cpx31: { vcpu: 4, memoryGiB: 8, diskGiB: 160 },
+  cpx41: { vcpu: 8, memoryGiB: 16, diskGiB: 240 },
+  cpx51: { vcpu: 16, memoryGiB: 32, diskGiB: 360 },
+  cx22: { vcpu: 2, memoryGiB: 4, diskGiB: 40 },
+  cx32: { vcpu: 4, memoryGiB: 8, diskGiB: 80 },
+  cx42: { vcpu: 8, memoryGiB: 16, diskGiB: 160 },
+  cx52: { vcpu: 16, memoryGiB: 32, diskGiB: 320 },
+};
+
+function machineStrength(machine: UserMachineRecord): {
+  serverType: string;
+  label: string;
+  detail: string;
+} {
+  const serverType = machine.serverType;
+  if (!serverType) {
+    return {
+      serverType: 'Unknown plan',
+      label: 'Unknown',
+      detail: 'CPU/RAM unavailable',
+    };
+  }
+  const strength = SERVER_STRENGTHS[serverType.toLowerCase()];
+  if (!strength) {
+    return {
+      serverType,
+      label: serverType,
+      detail: 'CPU/RAM unavailable',
+    };
+  }
+  return {
+    serverType,
+    label: `${strength.vcpu} vCPU`,
+    detail: `${strength.memoryGiB} GB RAM${strength.diskGiB ? ` · ${strength.diskGiB} GB disk` : ''}`,
+  };
+}
+
+type RuntimePickerMachine = UserMachineRecord & {
+  displayVersion: string;
+};
+
+function releaseVersionFromProbe(probe: Awaited<ReturnType<typeof probeCustomerVpsRelease>>): string | null {
+  const release = probe.release;
+  if (!release || typeof release !== 'object' || !('version' in release)) {
+    return null;
+  }
+  const version = (release as { version?: unknown }).version;
+  return typeof version === 'string' && version.trim() ? version : null;
+}
+
+async function buildRuntimePickerMachines(
+  machines: UserMachineRecord[],
+  platformSecret: string,
+): Promise<RuntimePickerMachine[]> {
+  const enriched = await Promise.allSettled(machines.map(async (machine): Promise<RuntimePickerMachine> => {
+    if (machine.status !== 'running' || !platformSecret) {
+      return { ...machine, displayVersion: machine.imageVersion ?? 'Version pending' };
+    }
+    const probe = await probeCustomerVpsRelease(machine, platformSecret, {
+      timeoutMs: RUNTIME_PICKER_PROBE_TIMEOUT_MS,
+    });
+    return {
+      ...machine,
+      displayVersion: releaseVersionFromProbe(probe) ?? machine.imageVersion ?? 'Version pending',
+    };
+  }));
+  return enriched.map((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+    return {
+      ...machines[index]!,
+      displayVersion: machines[index]?.imageVersion ?? 'Version pending',
+    };
+  });
+}
+
+function getRuntimePickerPage(input: {
+  machines: RuntimePickerMachine[];
+  selectedSlot: string;
+}): string {
+  const rows = input.machines.map((machine) => {
+    const strength = machineStrength(machine);
+    const isSelected = machine.runtimeSlot === input.selectedSlot;
+    const version = machine.displayVersion;
+    const started = new Date(machine.provisionedAt).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+    const statusClass = machine.status === 'running' ? 'good' : machine.status === 'failed' ? 'bad' : 'wait';
+    return `<a class="machine ${isSelected ? 'selected' : ''}" href="/?runtime=${encodeURIComponent(machine.runtimeSlot)}">
+      <div class="topline">
+        <div>
+          <strong>${escapeHtml(machine.runtimeSlot)}</strong>
+          <span>${escapeHtml(machine.handle)}</span>
+        </div>
+        <em class="${statusClass}">${escapeHtml(machine.status)}</em>
+      </div>
+      <div class="details">
+        <span>${escapeHtml(version)}</span>
+        <span>${escapeHtml(strength.label)}</span>
+        <span>${escapeHtml(strength.detail)}</span>
+        <span>${escapeHtml(strength.serverType)}</span>
+        <span>Created ${escapeHtml(started)}</span>
+      </div>
+    </a>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Select Matrix OS Machine</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #2f392c;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(196, 162, 101, 0.12), transparent 31%),
+        linear-gradient(180deg, #fffdf6 0%, #f5efe2 100%);
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+    main { width: min(940px, 100%); }
+    header { margin-bottom: 22px; }
+    .eyebrow { color: rgba(47, 57, 44, 0.62); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.22em; margin-bottom: 10px; }
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 6vw, 64px);
+      font-weight: 500;
+      line-height: 0.98;
+      text-transform: uppercase;
+      background: linear-gradient(90deg, #2f392c 0%, #2f392c 24%, #c4a265 50%, #2f392c 76%, #2f392c 100%);
+      background-size: 300% 100%;
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      animation: shimmer 8s ease-in-out infinite, glow 8s ease-in-out infinite;
+    }
+    p { color: rgba(47, 57, 44, 0.68); font-size: 16px; line-height: 1.6; max-width: 620px; margin: 14px 0 0; }
+    .list { display: grid; gap: 12px; margin-top: 24px; }
+    .machine {
+      display: block;
+      color: inherit;
+      text-decoration: none;
+      background: rgba(255, 255, 255, 0.64);
+      border: 1px solid rgba(47, 57, 44, 0.12);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 18px 60px rgba(47, 57, 44, 0.10);
+      backdrop-filter: blur(16px);
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+    .machine:hover { transform: translateY(-1px); border-color: rgba(196, 162, 101, 0.55); background: rgba(255, 255, 255, 0.82); }
+    .machine.selected { border-color: rgba(196, 162, 101, 0.82); }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    strong { display: block; font-size: 20px; text-transform: capitalize; }
+    .topline span { display: block; color: rgba(47, 57, 44, 0.62); font-size: 14px; margin-top: 4px; }
+    em {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    em.good { color: #075f3b; background: rgba(223, 246, 232, 0.9); }
+    em.wait { color: #74520a; background: rgba(255, 240, 199, 0.92); }
+    em.bad { color: #8a1f2b; background: rgba(255, 225, 229, 0.92); }
+    .details {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .details span {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: rgba(47, 57, 44, 0.06);
+      color: rgba(47, 57, 44, 0.78);
+      padding: 6px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    @media (max-width: 560px) {
+      body { padding: 18px; place-items: start center; }
+      .topline { align-items: flex-start; }
+      .details span { width: 100%; justify-content: space-between; }
+    }
+    @keyframes shimmer {
+      0%, 100% { background-position: 200% 0; }
+      50% { background-position: -100% 0; }
+    }
+    @keyframes glow {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.12); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      h1 { animation-duration: 1ms; animation-iteration-count: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Matrix OS runtime</div>
+      <h1>Choose a Matrix OS machine</h1>
+      <p>Select where this browser session should land. Primary stays untouched while staging can run breaking features and new bundles.</p>
+    </header>
+    <section class="list" aria-label="Available Matrix OS machines">
+      ${rows}
+    </section>
   </main>
 </body>
 </html>`;
@@ -1778,7 +2054,9 @@ export function createApp(deps: {
 
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
-    const requestRuntimeSlot = readRuntimeSlot(cookieHeader, c.req.url);
+    const runtimeSelection = readRuntimeSlotSelection(cookieHeader, c.req.url);
+    const requestRuntimeSlot = runtimeSelection.slot;
+    let singleMachineRuntimeSlot: string | null = null;
 
     const path = c.req.path;
     const isGatewayPath = isAppDomain && (
@@ -1841,7 +2119,10 @@ export function createApp(deps: {
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce));
+      if (runtimeSelection.source === 'query') {
+        c.header('set-cookie', buildRuntimeSlotCookie(requestRuntimeSlot));
+      }
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url)));
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
@@ -1869,7 +2150,30 @@ export function createApp(deps: {
       });
     }
 
-    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
+    const shouldOfferRuntimePicker =
+      isAppDomain &&
+      identity.userId &&
+      identity.source !== 'mobile-session' &&
+      identity.source !== 'static-route' &&
+      (path === '/runtime' || (path === '/' && runtimeSelection.source === 'default'));
+    if (shouldOfferRuntimePicker) {
+      const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
+      if (machines.length === 0 && path === '/runtime') {
+        return c.redirect('/');
+      }
+      if (path === '/runtime' || machines.length > 1) {
+        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret);
+        applyNoStoreHeaders(c);
+        c.header('X-Frame-Options', 'DENY');
+        c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
+        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedSlot: requestRuntimeSlot }));
+      }
+      if (machines.length === 1 && runtimeSelection.source === 'default') {
+        singleMachineRuntimeSlot = machines[0]!.runtimeSlot;
+      }
+    }
+
+    let runtimeSlot = identity.runtimeSlot ?? singleMachineRuntimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)

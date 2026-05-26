@@ -68,6 +68,35 @@ describe("E2E: Channel status + Message API", () => {
     }
   }, 5_000);
 
+  it("POST /api/message rejects malformed JSON before dispatch", async () => {
+    const res = await fetch(`${gw.url}/api/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{not-json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid JSON" });
+  });
+
+  it("POST /api/message rejects schema-invalid message bodies before dispatch", async () => {
+    const missingText = await fetch(`${gw.url}/api/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(missingText.status).toBe(400);
+    expect(await missingText.json()).toEqual({ error: "Invalid message body" });
+
+    const emptyText = await fetch(`${gw.url}/api/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "" }),
+    });
+    expect(emptyText.status).toBe(400);
+    expect(await emptyText.json()).toEqual({ error: "Invalid message body" });
+  });
+
   it("POST /api/message with sessionId is accepted", async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
