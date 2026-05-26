@@ -76,6 +76,9 @@ import {
 } from "./auth.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
+import { createReadinessService } from "./onboarding/readiness-service.js";
+import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -437,6 +440,8 @@ export async function createGateway(config: GatewayConfig) {
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
+  const readinessRepository = new InMemoryReadinessRepository();
+  const readinessService = createReadinessService({ repository: readinessRepository });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -1326,6 +1331,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
