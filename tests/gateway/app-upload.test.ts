@@ -153,5 +153,27 @@ describe("T1460-T1463: App upload", () => {
       expect(existsSync(join(APPS_DIR, "nested-app", "assets", "style.css"))).toBe(true);
       expect(existsSync(join(APPS_DIR, "nested-app", "assets", "images", "logo.png"))).toBe(true);
     });
+
+    it("allows uploaded filenames that contain dot-dot without traversing", () => {
+      const result = handleAppUpload(TEST_HOME, "dotted-app", {
+        "index.html": "<h1>Main</h1>",
+        "assets/style..min.css": "body { color: red; }",
+      });
+
+      expect(result.success).toBe(true);
+      expect(existsSync(join(APPS_DIR, "dotted-app", "assets", "style..min.css"))).toBe(true);
+    });
+
+    it("rejects uploaded file paths that escape the app directory", () => {
+      const result = handleAppUpload(TEST_HOME, "escape-app", {
+        "index.html": "<h1>Main</h1>",
+        "../owned.txt": "owned",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/invalid.*path/i);
+      expect(existsSync(join(TEST_HOME, "apps", "owned.txt"))).toBe(false);
+      expect(existsSync(join(APPS_DIR, "escape-app"))).toBe(false);
+    });
   });
 });
