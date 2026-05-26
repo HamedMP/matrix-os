@@ -16,6 +16,12 @@ export interface BridgeHandler {
   openApp?: (name: string, path: string) => void;
 }
 
+export interface BridgeMessageValidation {
+  expectedSource?: MessageEventSource | null;
+  expectedOrigins?: ReadonlySet<string>;
+  expectedApp?: string;
+}
+
 export const THEME_VAR_MAP: Record<string, string> = {
   "--background": "--matrix-bg",
   "--foreground": "--matrix-fg",
@@ -42,12 +48,16 @@ export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
 export function handleBridgeMessage(
   event: MessageEvent,
   handler: BridgeHandler,
+  validation: BridgeMessageValidation = {},
 ) {
+  if (validation.expectedSource && event.source !== validation.expectedSource) return;
+  if (validation.expectedOrigins && !validation.expectedOrigins.has(event.origin)) return;
   const data = event.data;
   if (!data || typeof data !== "object" || typeof data.type !== "string") return;
   if (!data.type.startsWith("os:")) return;
 
   const msg = data as BridgeMessage;
+  if (validation.expectedApp && msg.app !== validation.expectedApp) return;
 
   switch (msg.type) {
     case "os:generate":
@@ -102,9 +112,35 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
   var app = ${JSON.stringify(appName)};
   var currentTheme = ${themeJson};
 
-  function post(type, payload) {
-    window.parent.postMessage({ type: type, app: app, payload: payload }, "*");
-  }
+	  function post(type, payload) {
+	    window.parent.postMessage({ type: type, app: app, payload: payload }, "*");
+	  }
+
+	  function parentFetch(url, init, timeoutMs) {
+	    return new Promise(function(resolve, reject) {
+	      var channel = new MessageChannel();
+	      var timer = setTimeout(function() {
+	        channel.port1.close();
+	        reject(new Error("MatrixOS bridge fetch timed out"));
+	      }, timeoutMs || 10000);
+	      channel.port1.onmessage = function(e) {
+	        clearTimeout(timer);
+	        channel.port1.close();
+	        if (e.data && e.data.ok) {
+	          resolve({
+	            json: function() { return Promise.resolve(e.data.body); }
+	          });
+	        } else {
+	          reject(new Error("MatrixOS bridge fetch failed"));
+	        }
+	      };
+	      window.parent.postMessage(
+	        { type: "os:bridge-fetch", app: app, payload: { url: url, init: init || {} } },
+	        "*",
+	        [channel.port2]
+	      );
+	    });
+	  }
 
   // Inject theme style tag
   var themeStyle = document.createElement("style");
@@ -189,22 +225,21 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
     app: { name: app },
 
     integrations: function() {
-      return fetch("/api/bridge/service", { signal: AbortSignal.timeout(10000) })
-        .then(function(r) { return r.json(); })
-        .then(function(d) { return d.services || []; });
-    },
+	      return parentFetch("/api/bridge/service", {}, 10000)
+	        .then(function(r) { return r.json(); })
+	        .then(function(d) { return d.services || []; });
+	    },
 
-    service: function(service, action, params, label) {
-      return fetch("/api/bridge/service", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label }),
-        signal: AbortSignal.timeout(35000)
-      }).then(function(r) { return r.json(); });
-    },
+	    service: function(service, action, params, label) {
+	      return parentFetch("/api/bridge/service", {
+	        method: "POST",
+	        headers: { "Content-Type": "application/json" },
+	        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label })
+	      }, 35000).then(function(r) { return r.json(); });
+	    },
 
-    db: {
-      find: function(table, opts) {
+	    db: {
+	      find: function(table, opts) {
         var body = { app: app, action: "find", table: table };
         if (opts) {
           if (opts.where) body.filter = opts.where;
@@ -212,58 +247,52 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
           if (opts.limit) body.limit = opts.limit;
           if (opts.offset) body.offset = opts.offset;
         }
-        return fetch("/api/bridge/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(10000)
-        }).then(function(r) { return r.json(); });
-      },
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify(body)
+	        }, 10000).then(function(r) { return r.json(); });
+	      },
 
-      findOne: function(table, id) {
-        return fetch("/api/bridge/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "findOne", table: table, id: id }),
-          signal: AbortSignal.timeout(10000)
-        }).then(function(r) { return r.json(); });
-      },
+	      findOne: function(table, id) {
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ app: app, action: "findOne", table: table, id: id })
+	        }, 10000).then(function(r) { return r.json(); });
+	      },
 
-      insert: function(table, data) {
-        return fetch("/api/bridge/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "insert", table: table, data: data }),
-          signal: AbortSignal.timeout(10000)
-        }).then(function(r) { return r.json(); });
-      },
+	      insert: function(table, data) {
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ app: app, action: "insert", table: table, data: data })
+	        }, 10000).then(function(r) { return r.json(); });
+	      },
 
-      update: function(table, id, data) {
-        return fetch("/api/bridge/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data }),
-          signal: AbortSignal.timeout(10000)
-        }).then(function(r) { return r.json(); });
-      },
+	      update: function(table, id, data) {
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
+	        }, 10000).then(function(r) { return r.json(); });
+	      },
 
-      delete: function(table, id) {
-        return fetch("/api/bridge/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "delete", table: table, id: id }),
-          signal: AbortSignal.timeout(10000)
-        }).then(function(r) { return r.json(); });
-      },
+	      delete: function(table, id) {
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ app: app, action: "delete", table: table, id: id })
+	        }, 10000).then(function(r) { return r.json(); });
+	      },
 
-      count: function(table, filter) {
-        return fetch("/api/bridge/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "count", table: table, filter: filter }),
-          signal: AbortSignal.timeout(10000)
-        }).then(function(r) { return r.json(); }).then(function(d) { return d.count; });
-      },
+	      count: function(table, filter) {
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ app: app, action: "count", table: table, filter: filter })
+	        }, 10000).then(function(r) { return r.json(); }).then(function(d) { return d.count; });
+	      },
 
       onChange: function(table, callback) {
         var wrappedCb = function(key, changedApp) {
