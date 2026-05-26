@@ -6,6 +6,7 @@ import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
+import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
@@ -152,11 +153,14 @@ const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
   initialCommand?: string;
+  initialLabel?: string;
+  initialClaudeMode?: boolean;
   initialSessionId?: string;
+  launchTargetId?: string;
   mobile?: boolean;
 }
 
-export function TerminalApp({ initialCommand, initialSessionId, mobile = false }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const isLightTheme = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
@@ -307,7 +311,7 @@ export function TerminalApp({ initialCommand, initialSessionId, mobile = false }
 
     async function initLayout() {
       if (initialCommand) {
-        addTab(DEFAULT_CWD, "Claude Code", true);
+        addTab(DEFAULT_CWD, initialLabel ?? "Terminal", initialClaudeMode, initialCommand);
         if (!cancelled) setInitialized(true);
         return;
       }
@@ -352,6 +356,24 @@ export function TerminalApp({ initialCommand, initialSessionId, mobile = false }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!initialized) {
+      return;
+    }
+
+    const drainLaunches = (event?: Event) => {
+      const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
+      if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
+      for (const launch of drainTerminalLaunchQueue(launchTargetId)) {
+        addTab(DEFAULT_CWD, launch.label, launch.claudeMode, launch.command);
+      }
+    };
+
+    drainLaunches();
+    window.addEventListener(TERMINAL_LAUNCH_EVENT, drainLaunches);
+    return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, drainLaunches);
+  }, [addTab, initialized, launchTargetId]);
 
   useEffect(() => {
     if (!initialized) {

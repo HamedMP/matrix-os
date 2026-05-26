@@ -65,6 +65,7 @@ export interface DeleteResponse {
 export interface RecoverResponse {
   oldMachineId: string | null;
   machineId: string;
+  runtimeSlot: string;
   status: 'recovering';
   etaSeconds: number;
 }
@@ -73,6 +74,7 @@ export interface StatusResponse {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   status: CustomerVpsStatus;
   imageVersion: string | null;
   publicIPv4: string | null;
@@ -93,6 +95,7 @@ export interface DeployResult {
 export interface DeployTarget {
   version?: string;
   channel?: 'stable' | 'canary' | 'beta' | 'dev';
+  handle?: string;
 }
 
 export interface CustomerVpsService {
@@ -127,6 +130,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_MACHINE_ID={{machineId}}',
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
+  '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
@@ -175,6 +179,7 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
     machineId: row.machineId,
     clerkUserId: row.clerkUserId,
     handle: row.handle,
+    runtimeSlot: row.runtimeSlot,
     status: row.status as CustomerVpsStatus,
     imageVersion: row.imageVersion,
     publicIPv4: row.publicIPv4,
@@ -203,6 +208,7 @@ function buildHostConfig(
     machineId,
     clerkUserId: input.clerkUserId,
     handle: input.handle,
+    runtimeSlot: input.runtimeSlot,
     imageVersion: bundleRef.imageVersion,
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
@@ -382,7 +388,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
 
-      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
+        deps.db,
+        input.clerkUserId,
+        input.runtimeSlot,
+      );
       if (existingBeforeBundleResolve) {
         return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
       }
@@ -398,7 +408,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
 
       const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
-        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId);
+        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId, input.runtimeSlot);
         if (existing) {
           return { existing };
         }
@@ -406,8 +416,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           machineId,
           clerkUserId: input.clerkUserId,
           handle: input.handle,
+          runtimeSlot: input.runtimeSlot,
           status: 'provisioning',
           imageVersion: bundleRef.imageVersion,
+          serverType: deps.config.serverType,
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
@@ -431,6 +443,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           labels: {
             app: 'matrix-os',
             clerk_user_id: input.clerkUserId,
+            runtime_slot: input.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -535,7 +548,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async recover(input) {
-      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!active) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
@@ -546,7 +559,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       // claimUserMachineRecovery WHERE clause below remains the authoritative
       // concurrency guard; keeping the backup check before the claim avoids
       // leaving a machine in recovering state when no snapshot exists.
-      if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
+      if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId, input.runtimeSlot))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
       const currentTime = now();
@@ -558,15 +571,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
-        { clerkUserId: active.clerkUserId, handle: active.handle },
+        { clerkUserId: active.clerkUserId, handle: active.handle, runtimeSlot: active.runtimeSlot },
         machineId,
         registration.token,
         postgresPassword,
         bundleRef,
       );
-      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId);
+      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!existing) {
-        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
         if (latest?.status === 'recovering') {
           throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
         }
@@ -587,6 +600,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           labels: {
             app: 'matrix-os',
             clerk_user_id: existing.clerkUserId,
+            runtime_slot: existing.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -599,6 +613,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             publicIPv4: server.publicIPv4,
             publicIPv6: server.publicIPv6,
             imageVersion: bundleRef.imageVersion,
+            serverType: deps.config.serverType,
             registrationTokenHash: registration.hash,
             registrationTokenExpiresAt: registration.expiresAt,
             provisionedAt: currentTime.toISOString(),
@@ -654,6 +669,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return {
         oldMachineId,
         machineId,
+        runtimeSlot: existing.runtimeSlot,
         status: 'recovering',
         etaSeconds: deps.config.provisionEtaSeconds,
       };
@@ -695,7 +711,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async deploy(target?: DeployTarget): Promise<DeployResult> {
-      const machines = await listRunningUserMachines(deps.db, 500);
+      const runningMachines = await listRunningUserMachines(deps.db, 500);
+      const machines = target?.handle
+        ? runningMachines.filter((machine) => machine.handle === target.handle)
+        : runningMachines;
       const results: DeployResult['results'] = [];
       let triggered = 0;
       let failed = 0;

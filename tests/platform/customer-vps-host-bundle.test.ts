@@ -24,6 +24,10 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
     expect(script).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(script).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
+    expect(script).toContain('GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"');
+    expect(script).toContain('GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"');
+    expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
+    expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
     expect(script).toContain('runtime/code-server');
     expect(script).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-gateway"');
@@ -34,6 +38,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-update');
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');
+    expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('bin app runtime systemd release.json');
   });
 
@@ -76,6 +81,22 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"');
     expect(publishScript).toContain('upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"');
     expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
+  });
+
+  it('publish script falls back to the checked-in Node R2 publisher when aws is unavailable', () => {
+    const root = process.cwd();
+    const publishScript = readFileSync(join(root, 'scripts/publish-release.sh'), 'utf8');
+    const nodePublisher = readFileSync(join(root, 'scripts/publish-release-r2.mjs'), 'utf8');
+
+    expect(publishScript).toContain('command -v aws');
+    expect(publishScript).toContain('scripts/publish-release-r2.mjs');
+    expect(publishScript).toContain('exec node "$ROOT_DIR/scripts/publish-release-r2.mjs"');
+    expect(nodePublisher).toContain('IfNoneMatch: "*"');
+    expect(nodePublisher).toContain('existing immutable bundle has no checksum metadata');
+    expect(nodePublisher).not.toContain('head.Metadata?.sha256 && head.Metadata.sha256 !== expectedSha256');
+    expect(nodePublisher).toContain('R2_ACCESS_KEY_ID');
+    expect(nodePublisher).toContain('R2_SECRET_ACCESS_KEY');
+    expect(nodePublisher).toContain('AbortSignal.timeout(30_000)');
   });
 
   it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {
@@ -181,6 +202,7 @@ describe('customer VPS host bundle', () => {
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
 
     expect(restore).toContain('/opt/matrix/bin/matrixctl r2 exists system/vps-meta.json');
-    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get system/db/latest "$latest_file"');
+    expect(restore).toContain('latest_pointer_key="system/db/latest"');
+    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"');
   });
 });

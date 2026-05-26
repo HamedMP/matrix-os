@@ -75,6 +75,32 @@ For production user VPSes, preinstalling Agent plus the Matrix skills is safe be
 
 For dev VPSes, also make the Agent install path writable by the `matrix` user so Agent, Codex, and Claude CLIs can self-update without `EACCES`.
 
+## Developer CLI Bootstrap
+
+The developer ICP should be able to sign up, receive a VPS, and let their coding agent finish setup through the same terminal primitive the web shell uses. Do not create a separate SSH-style path for interactive commands.
+
+Document this minimal command surface for agents and humans:
+
+```bash
+matrix login
+matrix run -it -- claude
+matrix run -it -- codex
+matrix run -it --session setup -- gh auth login
+matrix shell attach setup
+```
+
+`matrix run -it` creates a zellij-backed Matrix shell session, starts the requested command in a pane, and attaches the local terminal over `/ws/terminal`. The local terminal is a dumb TTY: stdin is put in raw mode, Ctrl-C/Ctrl-D are forwarded to the remote process, terminal resizes are forwarded as `resize` frames, and `Ctrl-\ Ctrl-\` detaches without killing the remote session.
+
+Use named sessions for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all reattach the same VPS context:
+
+```bash
+matrix run -it --session setup -- gh auth login
+matrix run -it --session setup -- claude
+matrix shell attach setup
+```
+
+Non-interactive `matrix run -- <command>` should return the remote command exit status once the gateway exposes status-bearing command execution on top of the same zellij session model. Until then, developer setup docs should prefer `matrix run -it -- <interactive-command>`.
+
 ## Provisioning Hook
 
 The bootstrap step should run after the Matrix runtime user exists and before the shell is presented as ready:

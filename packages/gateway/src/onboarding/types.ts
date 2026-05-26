@@ -15,7 +15,7 @@ export const STAGE_TIMEOUTS: Record<Exclude<OnboardingStage, "done">, number> = 
   api_key: 300_000,
 };
 
-export const ACTIVATION_PATHS = ["api_key", "claude_code"] as const;
+export const ACTIVATION_PATHS = ["api_key", "claude_code", "hermes", "codex"] as const;
 export type ActivationPath = (typeof ACTIVATION_PATHS)[number];
 
 export const ERROR_CODES = [
@@ -35,7 +35,12 @@ export const ShellToGatewaySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("start"), audioFormat: z.enum(["pcm16", "text"]) }),
   z.object({ type: z.literal("audio"), data: z.string().max(MAX_AUDIO_CHUNK_BASE64_CHARS) }),
   z.object({ type: z.literal("text_input"), text: z.string().max(MAX_TEXT_INPUT_CHARS) }),
+  z.object({ type: z.literal("select_goal"), goalId: z.enum(["coding", "app_building", "company_brain", "assistant"]) }),
+  z.object({ type: z.literal("complete_step"), stepId: z.string().min(1).max(120) }),
+  z.object({ type: z.literal("skip_step"), stepId: z.string().min(1).max(120), reason: z.string().max(240).optional() }),
+  z.object({ type: z.literal("retry_gate"), gateId: z.string().min(1).max(120) }),
   z.object({ type: z.literal("choose_activation"), path: z.enum(ACTIVATION_PATHS) }),
+  z.object({ type: z.literal("approve_capability"), capabilityId: z.string().min(1).max(120), agent: z.enum(["claude", "codex", "hermes"]) }),
   z.object({ type: z.literal("set_api_key"), apiKey: z.string().max(MAX_API_KEY_CHARS) }),
   z.object({
     type: z.literal("confirm_apps"),
@@ -79,6 +84,33 @@ export const GatewayToShellSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("interrupted") }),
   z.object({ type: z.literal("turn_complete") }),
   z.object({ type: z.literal("contextual_content"), content: ContextualContentSchema }),
+  z.object({
+    type: z.literal("goal_selected"),
+    goalId: z.string(),
+    steps: z.array(z.object({
+      id: z.string(),
+      required: z.boolean(),
+      title: z.string(),
+      unlocks: z.array(z.string()),
+    })),
+  }),
+  z.object({
+    type: z.literal("readiness_update"),
+    checklist: z.array(z.record(z.string(), z.unknown())),
+    overallStatus: z.enum(["ready", "degraded", "blocked", "checking"]),
+  }),
+  z.object({
+    type: z.literal("agent_status"),
+    agents: z.array(z.record(z.string(), z.unknown())),
+    systemAgent: z.literal("hermes"),
+    activeAgents: z.array(z.enum(["claude", "codex", "hermes"])),
+  }),
+  z.object({
+    type: z.literal("integration_status"),
+    capabilities: z.array(z.record(z.string(), z.unknown())),
+  }),
+  z.object({ type: z.literal("visual_system"), version: z.string(), reducedMotion: z.boolean() }),
+  z.object({ type: z.literal("safe_action_summary"), action: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("api_key_result"), valid: z.boolean(), error: z.string().optional() }),
   z.object({ type: z.literal("onboarding_already_complete") }),
   z.object({

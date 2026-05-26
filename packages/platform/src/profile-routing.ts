@@ -1,12 +1,29 @@
 import { randomUUID } from "node:crypto";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod/v4";
 
 const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
 
 export interface CustomerVpsProxyMachine {
   status: string;
   publicIPv4: string | null;
+}
+
+export const EntitlementStatusSchema = z.enum(['active', 'missing', 'expired', 'disabled', 'changed']);
+export type EntitlementStatus = z.infer<typeof EntitlementStatusSchema>;
+
+export interface EntitlementState {
+  status: EntitlementStatus;
+  effectiveAt?: string;
+}
+
+export interface EntitlementAccessDecision {
+  status: EntitlementStatus;
+  runtimeProxyAllowed: boolean;
+  ownerDataPreserved: true;
+  ownerDataExportable: true;
+  remediation: string | null;
 }
 
 export function resolveSubdomain(host: string): string | null {
@@ -27,6 +44,41 @@ export function buildCustomerVpsProxyUrl(
   if (machine.status !== "running" || !machine.publicIPv4) return null;
   const safePath = path.startsWith("/") ? path : `/${path}`;
   return `https://${machine.publicIPv4}:443${safePath}${queryString}`;
+}
+
+export function deriveEntitlementAccess(state: EntitlementState): EntitlementAccessDecision {
+  switch (state.status) {
+    case 'active':
+      return {
+        status: state.status,
+        runtimeProxyAllowed: true,
+        ownerDataPreserved: true,
+        ownerDataExportable: true,
+        remediation: null,
+      };
+    case 'changed':
+      return {
+        status: state.status,
+        runtimeProxyAllowed: false,
+        ownerDataPreserved: true,
+        ownerDataExportable: true,
+        remediation: 'Review entitlement change before granting paid-only access.',
+      };
+    case 'missing':
+    case 'expired':
+    case 'disabled':
+      return {
+        status: state.status,
+        runtimeProxyAllowed: false,
+        ownerDataPreserved: true,
+        ownerDataExportable: true,
+        remediation: 'Renew paid beta access or ask an operator to grant access.',
+      };
+    default: {
+      const exhaustive: never = state.status;
+      throw new Error(`Unhandled entitlement status: ${String(exhaustive)}`);
+    }
+  }
 }
 
 export function isPublicProfilePath(path: string): boolean {

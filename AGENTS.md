@@ -193,6 +193,7 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
 - **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
 - **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
+- **Feature test VMs**: for risky shell/onboarding/platform changes, prefer a disposable test VPS over the user's primary computer. Use the same Clerk login, switch via `https://app.matrix-os.com/runtime` or explicit `https://app.matrix-os.com/vm/<handle>`, deploy exact bundle versions, and ask the user whether to delete the test VM after validation to avoid extra Hetzner charges.
 - **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
 
 ## Shell Gotchas
@@ -319,6 +320,8 @@ Read these on demand, not every session:
 - Owner-controlled Matrix home files for shell/terminal session metadata (`~/system/terminal-sessions.json`, terminal layout files) plus existing owner Postgres where current workspace/app data already lives. No new embedded database or ORM. (075-mobile-shell)
 - TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono gateway routes, Zod 4 via `zod/v4`, Kysely/Postgres, Matrix homeserver appservice support, self-hosted Telegram and WhatsApp bridge runtimes, existing Matrix OS shell/app bridge, Hermes/Claude Agent SDK V1 `query()` path (077-matrix-messaging-bridge)
 - Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
+- Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -343,5 +346,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/077-matrix-messaging-bridge/plan.md`.
+Current Spec Kit plan: `specs/082-paid-beta-readiness/plan.md`.
 <!-- SPECKIT END -->

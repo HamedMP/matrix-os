@@ -31,7 +31,12 @@ import { createAgentLauncher } from "./agent-launcher.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createCompositeSymphonyCredentialStore, createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
-import { createIntegrationAwareLinearGraphql, hasConnectedLinearIntegration } from "./symphony/linear-integration.js";
+import {
+  createIntegrationAwareLinearGraphql,
+  createInternalProxyLinearGraphql,
+  hasConnectedLinearIntegration,
+  hasConnectedLinearIntegrationViaInternalProxy,
+} from "./symphony/linear-integration.js";
 import { createLinearSource } from "./symphony/linear-source.js";
 import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
 import { KyselySymphonyRepository } from "./symphony/repository.js";
@@ -76,6 +81,23 @@ import {
 } from "./auth.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
+import { createReadinessService } from "./onboarding/readiness-service.js";
+import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
+import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
+import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
+import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
+import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
+import { createAdminControlService } from "./onboarding/admin-control-service.js";
+import { createAdminControlRoutes } from "./onboarding/admin-control-routes.js";
+import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
+import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
+import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
+import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -141,6 +163,7 @@ import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-cl
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
@@ -192,6 +215,15 @@ const BridgeCallBodySchema = z.object({
   action: z.string().min(1),
   label: z.string().trim().min(1).max(100).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
+});
+
+const ApiMessageBodySchema = z.object({
+  text: z.string().refine((value) => value.trim().length > 0),
+  sessionId: z.string().optional(),
+  from: z.object({
+    handle: z.string(),
+    displayName: z.string().optional(),
+  }).optional(),
 });
 
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
@@ -437,6 +469,118 @@ export async function createGateway(config: GatewayConfig) {
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
+  const readinessRepository = new InMemoryReadinessRepository();
+  const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
+  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
+  const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalHandle = process.env.MATRIX_HANDLE;
+  let platformDb: PlatformDb | null = null;
+  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
+  let internalIntegrationBaseUrl: string | null = null;
+  const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
+  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+  async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
+    if (platformDb) {
+      try {
+        const dbForLookup = platformDb;
+        const services = await withCapabilityLookupTimeout(async () => {
+          const user = await dbForLookup.getUserByClerkId(ownerId);
+          const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
+          if (!platformUserId) return [];
+          return dbForLookup.listConnectedServices(platformUserId);
+        });
+        return capabilityIdsForConnectedServices(services.map((service) => service.service));
+      } catch (err: unknown) {
+        console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));
+        return [];
+      }
+    }
+    if (!internalIntegrationBaseUrl) return [];
+    try {
+      const headers = new Headers({ Accept: "application/json" });
+      if (internalPlatformToken) headers.set("authorization", `Bearer ${internalPlatformToken}`);
+      const response = await fetch(internalIntegrationBaseUrl, {
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return [];
+      const body = await response.json() as unknown;
+      const connections = Array.isArray(body)
+        ? body
+        : body && typeof body === "object" && Array.isArray((body as { connections?: unknown }).connections)
+          ? (body as { connections: unknown[] }).connections
+          : [];
+      return capabilityIdsForConnectedServices(connections.flatMap((connection) =>
+        connection && typeof connection === "object" && typeof (connection as { service?: unknown }).service === "string"
+          ? [(connection as { service: string }).service]
+          : [],
+      ));
+    } catch (err: unknown) {
+      console.warn("[integrations] capability connection lookup failed:", err instanceof Error ? err.message : String(err));
+      return [];
+    }
+  }
+  const agentCredentialService = createAgentCredentialStatusService({
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    probeAgent: async (_ownerId, agent) => {
+      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
+        agentDetectionInFlight = null;
+      });
+      const detected = await agentDetectionInFlight;
+      const status = detected.agents.find((candidate) => candidate.id === agent);
+      return {
+        available: Boolean(status?.installed && status.authState === "ok"),
+        missing: status?.installed === false,
+      };
+    },
+  });
+  const integrationCapabilityService = createIntegrationCapabilityService({
+    getConnectedCapabilityIds,
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    storagePath: join(homePath, "system", "integration-capabilities.json"),
+  });
+  const agentActionAuditService = createAgentActionAuditService();
+  const companyBrainService = createCompanyBrainReadinessService();
+  const draftActionService = createDraftActionReadinessService();
+  let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
+  const unavailableCodingSetup: CodingSetupStatus = {
+    githubConnected: false,
+    selectedProject: null,
+    issueSourceConfigured: false,
+    symphonyReady: false,
+    terminalReady: false,
+    activeAgents: ["hermes"],
+    handoffStatus: "idle",
+  };
+  const readinessService = createReadinessService({
+    repository: readinessRepository,
+    cache: readinessCache,
+    agentCredentials: agentCredentialService,
+    integrationCapabilities: integrationCapabilityService,
+    codingSetup: {
+      getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
+    },
+  });
+  const adminControlService = createAdminControlService({
+    agentCredentials: agentCredentialService,
+    integrations: integrationCapabilityService,
+    readiness: readinessService,
+  });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -576,9 +720,6 @@ export async function createGateway(config: GatewayConfig) {
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
-  const internalPlatformToken = process.env.UPGRADE_TOKEN;
-  const internalHandle = process.env.MATRIX_HANDLE;
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle
       ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
@@ -664,20 +805,24 @@ export async function createGateway(config: GatewayConfig) {
       // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
       // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
       // identity is plumbed through.
-      const userId =
+      const baseUserId =
         process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
       if (!process.env.MATRIX_USER_ID) {
         console.warn(
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
+      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+        baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       homeMirror = createHomeMirror({
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId,
-        peerId: `gateway-${userId}`,
+        userId: syncUserId,
+        peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
         // commit. Without this the mirror is push-only (container -> R2)
@@ -698,7 +843,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
-  const internalIntegrationBaseUrl =
+  internalIntegrationBaseUrl =
     internalPlatformUrl && internalHandle
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
@@ -782,7 +927,6 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   // Platform DB + Integrations (Pipedream Connect)
-  let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
@@ -1326,6 +1470,15 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
+  app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/integrations", createIntegrationCapabilityRoutes({
+    service: integrationCapabilityService,
+    audit: agentActionAuditService,
+  }));
+  app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
+  app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
+  app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -1832,7 +1985,7 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "message") {
             clearConversationRunAttachment();
-            pendingText = parsed.text;
+            pendingText = parsed.displayText ?? parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
 
@@ -2201,6 +2354,8 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     geminiConnection: geminiLiveConnection,
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+    readinessService,
+    ownerId: process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
   });
 
   app.get(
@@ -2384,16 +2539,72 @@ export async function createGateway(config: GatewayConfig) {
     const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
     await repository.bootstrap();
     const fileCredentialStore = createFileSymphonyCredentialStore({ homePath });
+    const internalLinearProxy = internalIntegrationBaseUrl && internalPlatformToken
+      ? { baseUrl: internalIntegrationBaseUrl, token: internalPlatformToken }
+      : null;
     const credentialStore = platformDb && pipedreamClient
       ? createCompositeSymphonyCredentialStore({
         primary: fileCredentialStore,
         hasLinearIntegration: (ownerId) => hasConnectedLinearIntegration(platformDb!, ownerId),
       })
+      : internalLinearProxy
+        ? createCompositeSymphonyCredentialStore({
+          primary: fileCredentialStore,
+          hasLinearIntegration: () => hasConnectedLinearIntegrationViaInternalProxy(internalLinearProxy),
+        })
       : fileCredentialStore;
     const linearSource = platformDb && pipedreamClient
       ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
+      : internalLinearProxy
+        ? createLinearSource({ graphql: createInternalProxyLinearGraphql(internalLinearProxy) })
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
+    const listAllMatrixProjectOptions = async (ownerId: string) => {
+      const result = await projectManager.listManagedProjects();
+      return result.projects
+        .filter((project) => project.ownerScope.type === "user" && project.ownerScope.id === ownerId)
+        .map((project) => ({
+          slug: project.slug,
+          name: project.name,
+          repositoryUrl: project.github?.htmlUrl ?? project.remote,
+          updatedAt: project.updatedAt,
+        }));
+    };
+    const codingSnapshotReads = new Map<string, Promise<Awaited<ReturnType<typeof repository.getSnapshot>>>>();
+    const getCodingSnapshot = async (ownerId: string) => {
+      const existing = codingSnapshotReads.get(ownerId);
+      if (existing) return await existing;
+      if (codingSnapshotReads.size >= 128) {
+        const oldestKey = codingSnapshotReads.keys().next().value as string | undefined;
+        if (oldestKey) codingSnapshotReads.delete(oldestKey);
+      }
+      const read = repository.getSnapshot(ownerId).finally(() => {
+        if (codingSnapshotReads.get(ownerId) === read) codingSnapshotReads.delete(ownerId);
+      });
+      codingSnapshotReads.set(ownerId, read);
+      return await read;
+    };
+    const listSelectedMatrixProjectOptions = async (ownerId: string) => {
+      const snapshot = await getCodingSnapshot(ownerId);
+      const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      if (!selectedSlug) return [];
+      const projects = await listAllMatrixProjectOptions(ownerId);
+      const selectedProject = selectedSlug ? projects.find((project) => project.slug === selectedSlug) : null;
+      return selectedProject ? [selectedProject] : [];
+    };
+    const isGitHubRepositoryUrl = (repositoryUrl: string | null | undefined): boolean => {
+      if (!repositoryUrl) return false;
+      try {
+        const parsed = new URL(repositoryUrl);
+        return parsed.hostname === "github.com" || parsed.hostname.endsWith(".github.com");
+      } catch (_err) {
+        return /^git@github\.com:/i.test(repositoryUrl);
+      }
+    };
+    const isWithinPath = (parent: string, child: string): boolean => {
+      const relativePath = normalize(relative(resolve(parent), resolve(child)));
+      return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
+    };
     const worktreeManager = createWorktreeManager({ homePath });
     const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const agentSessionManager = createAgentSessionManager({
@@ -2413,6 +2624,47 @@ export async function createGateway(config: GatewayConfig) {
       agentStatusProvider: agentLauncher,
       statusHub: matrixSymphonyStatusHub,
     });
+    codingSetupProvider = createCodingSetupProvider({
+      hasGitHubConnection: async (_ownerId, selectedProject) => {
+        return isGitHubRepositoryUrl(selectedProject?.repositoryUrl);
+      },
+      listMatrixProjects: async (ownerId) => listSelectedMatrixProjectOptions(ownerId),
+      getSelectedProjectSlug: async (ownerId) => {
+        const snapshot = await getCodingSnapshot(ownerId);
+        return snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
+      },
+      hasIssueSource: async (ownerId) => {
+        if (platformDb && await hasConnectedLinearIntegration(platformDb, ownerId)) return true;
+        const snapshot = await getCodingSnapshot(ownerId);
+        return Boolean(snapshot.rule);
+      },
+      getSymphonyStatus: async (ownerId) => {
+        const snapshot = await getCodingSnapshot(ownerId);
+        const activeStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff", "completed"]);
+        const handoffActiveStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff"]);
+        const activeHandoffRuns = snapshot.runs.filter((run) => handoffActiveStatuses.has(run.status));
+        const handoffRuns = activeHandoffRuns.length > 0 ? activeHandoffRuns : snapshot.runs.slice(0, 1);
+        const activeAgents = Array.from(new Set(snapshot.runs
+          .filter((run) => activeStatuses.has(run.status))
+          .map((run) => run.agent)
+          .filter((agent) => agent === "claude" || agent === "codex")));
+        return {
+          ready: Boolean(snapshot.installation?.enabled && snapshot.installation.credentialConfigured && snapshot.rule),
+          runStatuses: handoffRuns.map((run) => run.status),
+          activeAgents,
+        };
+      },
+      hasTerminalContext: async (ownerId, projectSlug) => {
+        if (!projectSlug) return false;
+        const localOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
+        if (!localOwnerId || ownerId !== localOwnerId) return false;
+        const projectRoot = join(homePath, "projects", projectSlug);
+        const repoRoot = join(projectRoot, "repo");
+        return sessionRegistry.list().some((session) =>
+          isWithinPath(projectRoot, session.cwd) || isWithinPath(repoRoot, session.cwd)
+        );
+      },
+    });
     await matrixSymphonyOrchestrator.resumeEnabledInstallations();
     app.route("/api/symphony", createSymphonyRoutes({
       repository,
@@ -2420,15 +2672,7 @@ export async function createGateway(config: GatewayConfig) {
       linearSource,
       orchestrator: matrixSymphonyOrchestrator,
       statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: async () => {
-        const result = await projectManager.listManagedProjects();
-        return result.projects.map((project) => ({
-          slug: project.slug,
-          name: project.name,
-          repositoryUrl: project.github?.htmlUrl ?? project.remote,
-          updatedAt: project.updatedAt,
-        }));
-      },
+      listMatrixProjects: (ownerId) => listAllMatrixProjectOptions(ownerId),
     }));
   } else {
     console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");
@@ -2559,20 +2803,32 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
-    const body = await c.req.json<{
-      text: string;
-      sessionId?: string;
-      from?: { handle: string; displayName?: string };
-    }>();
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      console.warn("[gateway] Invalid /api/message JSON:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsedBody = ApiMessageBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid message body" }, 400);
+    }
+    const body = parsedBody.data;
     const events: KernelEvent[] = [];
 
     const context: DispatchContext | undefined = body.from
       ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
       : undefined;
 
-    await dispatcher.dispatch(body.text, body.sessionId, (event) => {
-      events.push(event);
-    }, context);
+    try {
+      await dispatcher.dispatch(body.text, body.sessionId, (event) => {
+        events.push(event);
+      }, context);
+    } catch (err: unknown) {
+      console.error("[gateway] Message dispatch failed:", err);
+      return c.json({ error: "Message dispatch failed" }, 500);
+    }
 
     return c.json({ events });
   });

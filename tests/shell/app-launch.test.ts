@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAppLaunchPath, iconUrlForSlug } from "../../shell/src/lib/app-launch.js";
+import { canonicalAppLaunchPath, iconUrlForSlug, terminalContextLaunchPath } from "../../shell/src/lib/app-launch.js";
 
 describe("app launch helpers", () => {
   it("canonicalizes runtime apps to slug routes before iframe rendering", () => {
@@ -30,5 +30,11 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("folder")).toBe("/icons/folder.svg");
     expect(iconUrlForSlug("chat")).toBe("/icons/chat.svg");
     expect(iconUrlForSlug("game-center")).toBe("/icons/game-center.png");
+  });
+
+  it("keeps project context for valid project slugs that are not icon slugs", () => {
+    expect(terminalContextLaunchPath("matrix_os")).toBe("__terminal__?project=matrix_os");
+    expect(terminalContextLaunchPath("org/matrix_os")).toBe("__terminal__?project=org%2Fmatrix_os");
+    expect(terminalContextLaunchPath("../matrix")).toBe("__terminal__");
   });
 });

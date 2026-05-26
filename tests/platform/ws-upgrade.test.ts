@@ -28,6 +28,7 @@ describe("isSafeWebSocketUpgradePath", () => {
   it("strips the websocket query token before proxying upstream", () => {
     expect(stripWebSocketUpgradeToken("/ws?token=abc123&cwd=projects")).toBe("/ws?cwd=projects");
     expect(stripWebSocketUpgradeToken("/ws/terminal?token=abc123")).toBe("/ws/terminal");
+    expect(stripWebSocketUpgradeToken("/ws?runtime=staging&token=abc123&cwd=projects")).toBe("/ws?cwd=projects");
   });
 
   it("prefers x-forwarded-host for websocket host resolution", () => {

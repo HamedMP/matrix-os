@@ -18,6 +18,7 @@ import {
   getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
+  listActiveUserMachinesByClerkId,
   listUserMachines,
   listAllUserMachines,
   updateLastActive,
@@ -56,11 +57,22 @@ import {
 import type { CustomerVpsService } from './customer-vps.js';
 import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
-import { buildCustomerVpsProxyUrl } from './profile-routing.js';
+import {
+  buildCustomerVpsProxyUrl,
+  deriveEntitlementAccess,
+  EntitlementStatusSchema,
+  type EntitlementAccessDecision,
+} from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import type { VpsRuntimeMetricInput } from './metrics.js';
+import {
+  createLaunchReadinessService,
+  createPlatformLaunchEvidenceLoader,
+} from './launch-readiness.js';
+import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
+import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -73,6 +85,7 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
+const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
 const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
@@ -161,6 +174,7 @@ const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
+  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
 });
 
 const SocialSendBodySchema = z.object({
@@ -385,6 +399,115 @@ function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
+type RuntimeSlotSource = 'query' | 'default';
+
+interface RuntimeSlotSelection {
+  slot: string;
+  source: RuntimeSlotSource;
+}
+
+function readRuntimeSlotSelection(rawUrl: string): RuntimeSlotSelection {
+  try {
+    const querySlot = new URL(rawUrl, 'https://app.matrix-os.com').searchParams.get('runtime');
+    if (querySlot && RuntimeSlotSchema.safeParse(querySlot).success) {
+      return { slot: querySlot, source: 'query' };
+    }
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to parse runtime slot URL:', err instanceof Error ? err.message : String(err));
+  }
+  return { slot: 'primary', source: 'default' };
+}
+
+function readRuntimeSlot(rawUrl: string): string {
+  return readRuntimeSlotSelection(rawUrl).slot;
+}
+
+function buildForwardedQueryString(rawUrl: string): string {
+  const queryStart = rawUrl.indexOf('?');
+  if (queryStart === -1) return '';
+  // Browser HTTP requests do not include fragments, but synthetic proxy tests
+  // may pass raw URLs with hashes; never forward fragment text as query data.
+  const hashStart = rawUrl.indexOf('#', queryStart);
+  const rawQuery = rawUrl.slice(queryStart + 1, hashStart === -1 ? undefined : hashStart);
+  const forwarded = rawQuery
+    .split('&')
+    .filter((part) => {
+      if (!part) return false;
+      const rawKey = part.split('=', 1)[0] ?? '';
+      // Decode the key before filtering so encoded variants such as
+      // `%72untime=staging` cannot leak the platform-only runtime selector to
+      // a customer VPS.
+      const parsedKey = new URLSearchParams(`${rawKey}=`).keys().next().value ?? rawKey;
+      return parsedKey !== 'runtime';
+    })
+    .join('&');
+  return forwarded ? `?${forwarded}` : '';
+}
+
+export function buildPostAuthRedirectPath(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl, 'https://app.matrix-os.com');
+    const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
+    const path = /^\/sign-(?:in|up)\/?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const runtime = url.searchParams.get('runtime');
+    if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
+      return `${path}?runtime=${encodeURIComponent(runtime)}`;
+    }
+    return path;
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to build post-auth redirect:', err instanceof Error ? err.message : String(err));
+    return '/';
+  }
+}
+
+function isAppDomainGatewayPath(path: string): boolean {
+  return (
+    path.startsWith('/api/') ||
+    path.startsWith('/ws') ||
+    path.startsWith('/files/') ||
+    path.startsWith('/modules/') ||
+    path === '/health'
+  );
+}
+
+interface ExplicitVmRoute {
+  handle: string;
+  upstreamPath: string;
+}
+
+function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
+  const match = path.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/(.*))?$/);
+  if (!match?.[1]) return null;
+  const rest = match[2];
+  return {
+    handle: match[1],
+    upstreamPath: rest ? `/${rest}` : '/',
+  };
+}
+
+function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!isAppDomainGatewayPath(path)) return null;
+  const handle = readCookie(cookieHeader, SHELL_ROUTE_COOKIE);
+  return handle && HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function readAppDomainRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  return readGatewayRouteCookie(path, cookieHeader) ?? readShellRouteCookie(path, cookieHeader);
+}
+
+function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): EntitlementAccessDecision {
+  const rawStatus = env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS?.trim();
+  if (!rawStatus) {
+    return deriveEntitlementAccess({ status: 'active' });
+  }
+  const parsed = EntitlementStatusSchema.safeParse(rawStatus);
+  if (!parsed.success) {
+    console.warn('[platform] Invalid MATRIX_PAID_BETA_ENTITLEMENT_STATUS; denying paid runtime access.');
+    return deriveEntitlementAccess({ status: 'changed' });
+  }
+  return deriveEntitlementAccess({ status: parsed.data });
+}
+
 function buildCodeSessionCookie(token: string): string {
   return [
     `${CODE_SESSION_COOKIE}=${encodeURIComponent(token)}`,
@@ -481,6 +604,10 @@ function escapeHtmlAttr(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function escapeHtml(value: string): string {
+  return escapeHtmlAttr(value);
+}
+
 function applyAuthPageHeaders(
   c: import('hono').Context,
   scriptNonce: string,
@@ -523,6 +650,7 @@ export function checkUnsafeDefaultSecrets(
 interface AppDomainIdentity {
   handle: string;
   userId: string;
+  runtimeSlot?: string;
   source?: 'auth' | 'mobile-session' | 'static-route';
 }
 
@@ -640,6 +768,9 @@ async function resolveAppDomainIdentity(opts: {
   clerkAuth?: ClerkAuth;
   db: PlatformDB;
   platformJwtSecret: string;
+  allowUnroutedClerkIdentity?: boolean;
+  requestedHandle?: string | null;
+  runtimeSlot: string;
   wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
   const codeSessionToken = readCookie(opts.cookieHeader, CODE_SESSION_COOKIE);
@@ -658,13 +789,17 @@ async function resolveAppDomainIdentity(opts: {
           userId: record.clerkUserId,
         };
       }
-      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle);
+      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
+        ? claims.runtime_slot
+        : undefined;
+      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
       if (machine?.clerkUserId !== claims.sub) {
         return null;
       }
       return {
         handle: machine.handle,
         userId: machine.clerkUserId,
+        runtimeSlot: machine.runtimeSlot,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -688,6 +823,17 @@ async function resolveAppDomainIdentity(opts: {
     return null;
   }
 
+  if (opts.requestedHandle) {
+    const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    if (requestedMachine && requestedMachine.clerkUserId === result.userId) {
+      return {
+        handle: requestedMachine.handle,
+        userId: result.userId,
+        runtimeSlot: requestedMachine.runtimeSlot,
+      };
+    }
+  }
+
   const record = await getContainerByClerkId(opts.db, result.userId);
   if (record) {
     return {
@@ -695,18 +841,32 @@ async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
     };
   }
-  const machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
+  let machine = opts.runtimeSlot !== 'primary'
+    ? await getActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot)
+    : undefined;
   if (!machine) {
+    machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
+  }
+  if (!machine) {
+    if (opts.allowUnroutedClerkIdentity) {
+      return {
+        handle: '',
+        userId: result.userId,
+      };
+    }
     return null;
   }
 
   return {
     handle: machine.handle,
     userId: result.userId,
+    runtimeSlot: machine.runtimeSlot,
   };
 }
 
-async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string): Promise<{
+async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string, options: {
+  timeoutMs?: number;
+} = {}): Promise<{
   reachable: boolean;
   statusCode?: number;
   release?: unknown;
@@ -732,7 +892,7 @@ async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecre
       method: 'GET',
       headers,
       redirect: 'manual',
-      signal: AbortSignal.timeout(VPS_RELEASE_PROBE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(options.timeoutMs ?? VPS_RELEASE_PROBE_TIMEOUT_MS),
       dispatcher: customerVpsProxyDispatcher,
     } as RequestInit & { dispatcher: Agent });
     if (!response.ok) {
@@ -821,12 +981,21 @@ function getGatewayUrlForHandle(handle: string): string {
   return 'https://app.matrix-os.com';
 }
 
+export function escapeInlineScriptJson(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
 function getAuthPage(
   publishableKey: string,
   mode: 'sign-in' | 'sign-up',
   scriptNonce: string,
+  redirectTarget: string,
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
+  const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -852,18 +1021,19 @@ function getAuthPage(
     type="text/javascript"
   ></script>
   <script nonce="${scriptNonce}">
+    var redirectTarget = ${redirectTargetJson};
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
-          window.location.replace('/');
+          window.location.replace(redirectTarget);
           return;
         }
         var el = document.getElementById('auth');
         el.innerHTML = '';
         if ('${mode}' === 'sign-up') {
-          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: '/' });
+          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget });
         } else {
-          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: '/' });
+          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget });
         }
       });
     }
@@ -875,39 +1045,6 @@ function getAuthPage(
   </script>
 </body>
 </html>`;
-}
-
-async function proxyToShell(c: import('hono').Context, host: string, port: number) {
-  const path = c.req.path;
-  const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-  const targetUrl = `http://${host}:${port}${path}${qs}`;
-  const originalHost = c.req.header('host') ?? 'app.matrix-os.com';
-
-  try {
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== 'host' && value) headers.set(key, String(value));
-    }
-    headers.set('host', originalHost);
-    headers.set('x-forwarded-host', originalHost);
-    headers.set('x-forwarded-proto', 'https');
-
-    const upstream = await fetch(targetUrl, {
-      method: c.req.method,
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(30_000),
-      body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-    });
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: sanitizeProxyResponseHeaders(upstream.headers),
-    });
-  } catch (err: unknown) {
-    logPlatformRouteError('proxyToShell', err);
-    return new Response('Auth service unavailable', { status: 502 });
-  }
 }
 
 function getNoContainerPage() {
@@ -936,11 +1073,11 @@ function getNoContainerPage() {
 </html>`;
 }
 
-function getVpsBootPage(input: { handle: string; status: string }) {
+function getVpsBootPage(input: { status: string }) {
   const title = input.status === 'recovering' ? 'Restoring Matrix OS' : 'Booting Matrix OS';
   const detail = input.status === 'recovering'
-    ? 'Your Matrix instance is restoring its workspace. This page will refresh automatically.'
-    : 'Your Matrix instance is starting for the first time. This usually takes a couple of minutes.';
+    ? 'Matrix is restoring your workspace and will bring you back automatically.'
+    : 'Matrix is preparing your cloud computer. This usually takes a couple of minutes.';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -950,21 +1087,348 @@ function getVpsBootPage(input: { handle: string; status: string }) {
   <title>${title}</title>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    main { width: min(520px, calc(100vw - 48px)); padding: 32px; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; background: rgba(15, 23, 42, 0.92); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32); }
-    .row { display: flex; align-items: center; gap: 14px; }
-    .spinner { width: 22px; height: 22px; border: 3px solid rgba(148, 163, 184, 0.45); border-top-color: #38bdf8; border-radius: 999px; animation: spin 1s linear infinite; }
-    h1 { font-size: 24px; line-height: 1.2; margin: 0; }
-    p { color: #cbd5e1; line-height: 1.55; margin: 16px 0 0; }
-    code { display: inline-block; margin-top: 18px; color: #93c5fd; background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 8px; padding: 7px 10px; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(196, 162, 101, 0.14), transparent 31%),
+        linear-gradient(180deg, #fffdf6 0%, #f5efe2 100%);
+      color: #2f392c;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 28px;
+    }
+    main {
+      width: min(620px, 100%);
+      display: grid;
+      justify-items: center;
+      gap: 28px;
+      text-align: center;
+    }
+    .mark {
+      width: 132px;
+      height: 132px;
+      border-radius: 50%;
+      border: 1px solid rgba(47, 57, 44, 0.12);
+      display: grid;
+      place-items: center;
+      background: rgba(255, 253, 246, 0.62);
+      box-shadow: 0 24px 90px rgba(47, 57, 44, 0.12);
+      position: relative;
+      overflow: hidden;
+    }
+    .mark::before {
+      content: "";
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      border: 2px solid rgba(196, 162, 101, 0.38);
+      border-top-color: #c4a265;
+      animation: spin 1.9s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+    }
+    .mark::after {
+      content: "M";
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-size: 30px;
+      font-weight: 700;
+      color: #2f392c;
+    }
+    .wordmark {
+      margin: 0;
+      font-size: clamp(34px, 8vw, 68px);
+      font-weight: 500;
+      line-height: 0.96;
+      text-transform: uppercase;
+      background: linear-gradient(90deg, #2f392c 0%, #2f392c 24%, #c4a265 50%, #2f392c 76%, #2f392c 100%);
+      background-size: 300% 100%;
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      animation: shimmer 8s ease-in-out infinite, glow 8s ease-in-out infinite;
+    }
+    .copy {
+      display: grid;
+      gap: 14px;
+      max-width: 520px;
+    }
+    p {
+      color: rgba(47, 57, 44, 0.68);
+      font-size: 16px;
+      line-height: 1.65;
+      margin: 0;
+    }
+    .status {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid rgba(47, 57, 44, 0.12);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.48);
+      padding: 7px 12px;
+      color: rgba(47, 57, 44, 0.72);
+      font-size: 13px;
+      box-shadow: 0 12px 40px rgba(47, 57, 44, 0.08);
+    }
+    strong { color: #2f392c; font-weight: 700; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes shimmer {
+      0%, 100% { background-position: 200% 0; }
+      50% { background-position: -100% 0; }
+    }
+    @keyframes glow {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.12); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .mark::before, .wordmark { animation-duration: 1ms; animation-iteration-count: 1; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <div class="row"><div class="spinner"></div><h1>${title}</h1></div>
-    <p>${detail}</p>
-    <code>${input.handle}.matrix-os.com - ${input.status}</code>
+    <div class="mark" aria-hidden="true"></div>
+    <div class="copy">
+      <h1 class="wordmark">${title}</h1>
+      <p>${detail}</p>
+    </div>
+    <p class="status">Instance status: <strong>${escapeHtml(input.status)}</strong></p>
+  </main>
+</body>
+</html>`;
+}
+
+const SERVER_STRENGTHS: Record<string, { vcpu: number; memoryGiB: number; diskGiB?: number }> = {
+  cpx11: { vcpu: 2, memoryGiB: 2, diskGiB: 40 },
+  cpx21: { vcpu: 3, memoryGiB: 4, diskGiB: 80 },
+  cpx22: { vcpu: 2, memoryGiB: 4, diskGiB: 80 },
+  cpx31: { vcpu: 4, memoryGiB: 8, diskGiB: 160 },
+  cpx41: { vcpu: 8, memoryGiB: 16, diskGiB: 240 },
+  cpx51: { vcpu: 16, memoryGiB: 32, diskGiB: 360 },
+  cx22: { vcpu: 2, memoryGiB: 4, diskGiB: 40 },
+  cx32: { vcpu: 4, memoryGiB: 8, diskGiB: 80 },
+  cx42: { vcpu: 8, memoryGiB: 16, diskGiB: 160 },
+  cx52: { vcpu: 16, memoryGiB: 32, diskGiB: 320 },
+};
+
+function machineStrength(machine: UserMachineRecord): {
+  serverType: string;
+  label: string;
+  detail: string;
+} {
+  const serverType = machine.serverType;
+  if (!serverType) {
+    return {
+      serverType: 'Unknown plan',
+      label: 'Unknown',
+      detail: 'CPU/RAM unavailable',
+    };
+  }
+  const strength = SERVER_STRENGTHS[serverType.toLowerCase()];
+  if (!strength) {
+    return {
+      serverType,
+      label: serverType,
+      detail: 'CPU/RAM unavailable',
+    };
+  }
+  return {
+    serverType,
+    label: `${strength.vcpu} vCPU`,
+    detail: `${strength.memoryGiB} GB RAM${strength.diskGiB ? ` · ${strength.diskGiB} GB disk` : ''}`,
+  };
+}
+
+type RuntimePickerMachine = UserMachineRecord & {
+  displayVersion: string;
+};
+
+function releaseVersionFromProbe(probe: Awaited<ReturnType<typeof probeCustomerVpsRelease>>): string | null {
+  const release = probe.release;
+  if (!release || typeof release !== 'object' || !('version' in release)) {
+    return null;
+  }
+  const version = (release as { version?: unknown }).version;
+  return typeof version === 'string' && version.trim() ? version : null;
+}
+
+async function buildRuntimePickerMachines(
+  machines: UserMachineRecord[],
+  platformSecret: string,
+): Promise<RuntimePickerMachine[]> {
+  const enriched = await Promise.allSettled(machines.map(async (machine): Promise<RuntimePickerMachine> => {
+    if (machine.status !== 'running' || !platformSecret) {
+      return { ...machine, displayVersion: machine.imageVersion ?? 'Version pending' };
+    }
+    const probe = await probeCustomerVpsRelease(machine, platformSecret, {
+      timeoutMs: RUNTIME_PICKER_PROBE_TIMEOUT_MS,
+    });
+    return {
+      ...machine,
+      displayVersion: releaseVersionFromProbe(probe) ?? machine.imageVersion ?? 'Version pending',
+    };
+  }));
+  return enriched.map((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+    return {
+      ...machines[index]!,
+      displayVersion: machines[index]?.imageVersion ?? 'Version pending',
+    };
+  });
+}
+
+function getRuntimePickerPage(input: {
+  machines: RuntimePickerMachine[];
+  selectedHandle: string | null;
+}): string {
+  const rows = input.machines.map((machine) => {
+    const strength = machineStrength(machine);
+    const isSelected = machine.handle === input.selectedHandle;
+    const version = machine.displayVersion;
+    const title = machine.runtimeSlot === 'primary' ? 'Main Computer' : `${machine.runtimeSlot} Computer`;
+    const started = new Date(machine.provisionedAt).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+    const statusClass = machine.status === 'running' ? 'good' : machine.status === 'failed' ? 'bad' : 'wait';
+    return `<a class="machine ${isSelected ? 'selected' : ''}" href="/vm/${encodeURIComponent(machine.handle)}">
+      <div class="topline">
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(machine.handle)}</span>
+        </div>
+        <em class="${statusClass}">${escapeHtml(machine.status)}</em>
+      </div>
+      <div class="details">
+        <span>${escapeHtml(version)}</span>
+        <span>${escapeHtml(strength.label)}</span>
+        <span>${escapeHtml(strength.detail)}</span>
+        <span>${escapeHtml(strength.serverType)}</span>
+        <span>Created ${escapeHtml(started)}</span>
+      </div>
+    </a>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Select Matrix OS Machine</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #2f392c;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(196, 162, 101, 0.12), transparent 31%),
+        linear-gradient(180deg, #fffdf6 0%, #f5efe2 100%);
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+    main { width: min(940px, 100%); }
+    header { margin-bottom: 22px; }
+    .eyebrow { color: rgba(47, 57, 44, 0.62); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.22em; margin-bottom: 10px; }
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 6vw, 64px);
+      font-weight: 500;
+      line-height: 0.98;
+      text-transform: uppercase;
+      background: linear-gradient(90deg, #2f392c 0%, #2f392c 24%, #c4a265 50%, #2f392c 76%, #2f392c 100%);
+      background-size: 300% 100%;
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      animation: shimmer 8s ease-in-out infinite, glow 8s ease-in-out infinite;
+    }
+    p { color: rgba(47, 57, 44, 0.68); font-size: 16px; line-height: 1.6; max-width: 620px; margin: 14px 0 0; }
+    .list { display: grid; gap: 12px; margin-top: 24px; }
+    .machine {
+      display: block;
+      color: inherit;
+      text-decoration: none;
+      background: rgba(255, 255, 255, 0.64);
+      border: 1px solid rgba(47, 57, 44, 0.12);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 18px 60px rgba(47, 57, 44, 0.10);
+      backdrop-filter: blur(16px);
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+    .machine:hover { transform: translateY(-1px); border-color: rgba(196, 162, 101, 0.55); background: rgba(255, 255, 255, 0.82); }
+    .machine.selected { border-color: rgba(196, 162, 101, 0.82); }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    strong { display: block; font-size: 20px; text-transform: capitalize; }
+    .topline span { display: block; color: rgba(47, 57, 44, 0.62); font-size: 14px; margin-top: 4px; }
+    em {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    em.good { color: #075f3b; background: rgba(223, 246, 232, 0.9); }
+    em.wait { color: #74520a; background: rgba(255, 240, 199, 0.92); }
+    em.bad { color: #8a1f2b; background: rgba(255, 225, 229, 0.92); }
+    .details {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .details span {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: rgba(47, 57, 44, 0.06);
+      color: rgba(47, 57, 44, 0.78);
+      padding: 6px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    @media (max-width: 560px) {
+      body { padding: 18px; place-items: start center; }
+      .topline { align-items: flex-start; }
+      .details span { width: 100%; justify-content: space-between; }
+    }
+    @keyframes shimmer {
+      0%, 100% { background-position: 200% 0; }
+      50% { background-position: -100% 0; }
+    }
+    @keyframes glow {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.12); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      h1 { animation-duration: 1ms; animation-iteration-count: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Switch Computer</div>
+      <h1>Choose your Matrix OS computer</h1>
+      <p>Use your main computer for daily work, or jump into a named test VM when validating a risky feature.</p>
+    </header>
+    <section class="list" aria-label="Available Matrix OS machines">
+      ${rows}
+    </section>
   </main>
 </body>
 </html>`;
@@ -1034,9 +1498,11 @@ export function createApp(deps: {
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   customerVpsObjectStore?: CustomerVpsObjectStore;
+  env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
-  const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
+  const appEnv = deps.env ?? process.env;
+  const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
   type CachedVpsRuntimeMetrics = {
     machineKey: string;
     expiresAt: number;
@@ -1583,7 +2049,7 @@ export function createApp(deps: {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
 
-      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      const qs = buildForwardedQueryString(c.req.url);
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
@@ -1627,17 +2093,18 @@ export function createApp(deps: {
 
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
-
     const path = c.req.path;
-    const isGatewayPath = isAppDomain && (
-      path.startsWith('/api/') ||
-      path.startsWith('/ws') ||
-      path.startsWith('/files/') ||
-      path.startsWith('/modules/') ||
-      path === '/health'
-    );
+    const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
+    const runtimeSelection = readRuntimeSlotSelection(c.req.url);
+    const requestRuntimeSlot = runtimeSelection.slot;
+    let singleMachineRuntimeSlot: string | null = null;
+
+    const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
+    const requestedRouteHandle = !explicitVmRoute && isAppDomain
+      ? readAppDomainRouteCookie(path, cookieHeader)
+      : null;
 
     let identity = await resolveAppDomainIdentity({
       authHeader,
@@ -1645,6 +2112,9 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
+      allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
+      requestedHandle: requestedRouteHandle,
+      runtimeSlot: requestRuntimeSlot,
     });
     if (!identity && isAppDomain) {
       const mobileSessionHandle =
@@ -1668,6 +2138,13 @@ export function createApp(deps: {
         };
       }
     }
+    const isCookieRoutedShellAsset = Boolean(
+      identity &&
+      requestedRouteHandle &&
+      identity.handle === requestedRouteHandle &&
+      isAppDomain &&
+      isAppDomainStaticAssetPath(path),
+    );
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
@@ -1680,6 +2157,10 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
+      if (isGatewayPath && requestedRouteHandle) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Matrix computer unavailable', code: 'machine_unavailable' }, 410);
+      }
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
@@ -1688,10 +2169,95 @@ export function createApp(deps: {
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce));
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url)));
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
+    if (isAppDomain && path === '/vm') {
+      return c.redirect('/runtime');
+    }
+    if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
+      return c.text('Invalid Matrix OS computer', 400);
+    }
+    if (isAppDomain && explicitVmRoute) {
+      if (!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
+      const machine = await getActiveUserMachineByHandle(db, explicitVmRoute.handle);
+      if (!machine || machine.clerkUserId !== identity.userId) {
+        applyNoStoreHeaders(c);
+        return c.text('Matrix OS computer unavailable', 404);
+      }
+      const entitlement = getRuntimeEntitlementDecision(appEnv);
+      if (!entitlement.runtimeProxyAllowed) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Paid beta access required' }, 402);
+      }
+      if (machine.status !== 'running') {
+        if (isGatewayPath) {
+          applyNoStoreHeaders(c);
+          return c.json({
+            error: 'VPS provisioning',
+            status: machine.status,
+          }, 503);
+        }
+        applyNoStoreHeaders(c);
+        return c.html(getVpsBootPage({ status: machine.status }), 503);
+      }
+      const qs = buildForwardedQueryString(c.req.url);
+      const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
+      }
+      const rawCookie = c.req.header('cookie');
+      if (rawCookie) {
+        const forwarded = rawCookie
+          .split(';')
+          .map((p) => p.trim())
+          .filter((p) => p.startsWith('matrix_app_session__'))
+          .join('; ');
+        if (forwarded) headers.set('cookie', forwarded);
+      }
+      headers.set('host', `${machine.handle}.matrix-os.com`);
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
+      headers.set('connection', 'close');
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
+        headers.set('x-platform-user-id', identity.userId);
+        headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
+      }
+
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: responseHeaders,
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain explicit vps proxy', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
+
     if (isAppDomain && isIntegrationPath) {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', identity.handle);
@@ -1707,6 +2273,7 @@ export function createApp(deps: {
         clerkUserId: identity.userId,
         handle: identity.handle,
         gatewayUrl: getGatewayUrlForHandle(identity.handle),
+        runtimeSlot: identity.runtimeSlot ?? requestRuntimeSlot,
         expiresInSec: WS_TOKEN_EXPIRES_IN_SEC,
       });
       return c.json({
@@ -1715,9 +2282,53 @@ export function createApp(deps: {
       });
     }
 
-    const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+    const shouldOfferRuntimePicker =
+      isAppDomain &&
+      identity.userId &&
+      identity.source !== 'mobile-session' &&
+      identity.source !== 'static-route' &&
+      path === '/runtime';
+    if (shouldOfferRuntimePicker) {
+      const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
+      if (machines.length === 0 && path === '/runtime') {
+        return c.redirect('/');
+      }
+      if (path === '/runtime' || machines.length > 1) {
+        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret);
+        applyNoStoreHeaders(c);
+        c.header('X-Frame-Options', 'DENY');
+        c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
+        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedHandle: identity.handle }));
+      }
+      if (machines.length === 1 && runtimeSelection.source === 'default') {
+        singleMachineRuntimeSlot = machines[0]!.runtimeSlot;
+      }
+    }
+
+    let runtimeSlot = identity.runtimeSlot ?? singleMachineRuntimeSlot ?? requestRuntimeSlot;
+    let requestedActiveMachine: UserMachineRecord | undefined;
+    let runningMachine = identity.userId
+      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+      : await getRunningUserMachineByHandle(db, identity.handle);
+    if (!runningMachine && identity.userId) {
+      requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
+      if (!requestedActiveMachine) {
+        const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
+        if (handleMachine?.clerkUserId === identity.userId) {
+          runningMachine = handleMachine;
+        }
+      }
+    }
     if (runningMachine) {
-      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      runtimeSlot = runningMachine.runtimeSlot;
+    }
+    const entitlement = getRuntimeEntitlementDecision(appEnv);
+    if (runningMachine) {
+      const qs = buildForwardedQueryString(c.req.url);
+      if (!entitlement.runtimeProxyAllowed) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Paid beta access required' }, 402);
+      }
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
@@ -1774,7 +2385,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        if (identity.source === 'static-route' && isAppDomainStaticAssetPath(path)) {
+        if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
         if (identity.source === 'mobile-session') {
@@ -1790,6 +2401,7 @@ export function createApp(deps: {
             clerkUserId: identity.userId,
             handle: runningMachine.handle,
             gatewayUrl: 'https://code.matrix-os.com',
+            runtimeSlot,
             expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
           });
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
@@ -1807,20 +2419,30 @@ export function createApp(deps: {
 
     const record = await getContainer(db, identity.handle);
     if (!record) {
-      const activeMachine = await getActiveUserMachineByHandle(db, identity.handle);
+      const activeMachine = requestedActiveMachine ?? (identity.userId
+        ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
+        : await getActiveUserMachineByHandle(db, identity.handle));
       if (activeMachine) {
+        if (!entitlement.runtimeProxyAllowed) {
+          applyNoStoreHeaders(c);
+          return c.json({ error: 'Paid beta access required' }, 402);
+        }
         if (isCodeDomain || isGatewayPath) {
+          applyNoStoreHeaders(c);
           return c.json({
             error: 'VPS provisioning',
             status: activeMachine.status,
           }, 503);
         }
-        return c.html(getVpsBootPage({
-          handle: activeMachine.handle,
-          status: activeMachine.status,
-        }), 503);
+        applyNoStoreHeaders(c);
+        return c.html(getVpsBootPage({ status: activeMachine.status }), 503);
       }
       return c.html(getNoContainerPage());
+    }
+
+    if (!entitlement.runtimeProxyAllowed) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Paid beta access required' }, 402);
     }
 
     if (record.status === 'stopped') {
@@ -1834,7 +2456,7 @@ export function createApp(deps: {
 
     await updateLastActive(db, record.handle);
 
-    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const qs = buildForwardedQueryString(c.req.url);
     const targetPort = isCodeDomain ? CODE_SERVER_PORT : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
@@ -1904,7 +2526,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        if (identity.source === 'static-route' && isAppDomainStaticAssetPath(path)) {
+        if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
         if (identity.source === 'mobile-session') {
@@ -2042,6 +2664,13 @@ export function createApp(deps: {
     }));
   }
 
+  app.route('/api/operator', createLaunchReadinessRoutes({
+    service: createLaunchReadinessService({
+      loadEvidence: createPlatformLaunchEvidenceLoader({ db, env: appEnv }),
+    }),
+    platformSecret,
+  }));
+
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
     if (c.req.path === '/health') return next();
@@ -2079,13 +2708,13 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName } = parsed.data;
+    const { handle, clerkUserId, displayName, runtimeSlot } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
-        const machine = await deps.customerVpsService.provision({ handle, clerkUserId });
+        const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
         if (matrixProvisioner) {
@@ -2101,6 +2730,7 @@ export function createApp(deps: {
           handle,
           clerkUserId,
           ...machine,
+          runtimeSlot,
         }, 202);
       }
 
@@ -2386,7 +3016,7 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid handle' }, 400);
     }
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
-    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const qs = buildForwardedQueryString(c.req.url);
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
     if (runningMachine) {
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
@@ -2741,6 +3371,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     }
   }
 
+  const appEnv = process.env;
   const app = createApp({
     db,
     docker,
@@ -2831,6 +3462,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const isCodeDomain = isCodeDomainHost(host);
 
     const path = req.url ?? '/';
+    const requestRuntimeSlot = readRuntimeSlot(path);
     const wsToken = getWebSocketUpgradeToken(path);
     let identity: AppDomainIdentity | null;
     try {
@@ -2840,6 +3472,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         clerkAuth,
         db,
         platformJwtSecret: PLATFORM_JWT_SECRET,
+        runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
     } catch (err: unknown) {
@@ -2855,9 +3488,26 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
+    let requestedActiveMachine: UserMachineRecord | undefined;
+    let runningMachine = identity.userId
+      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+      : await getRunningUserMachineByHandle(db, identity.handle);
+    if (!runningMachine && identity.userId) {
+      requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
+      if (!requestedActiveMachine) {
+        const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
+        if (handleMachine?.clerkUserId === identity.userId) {
+          runningMachine = handleMachine;
+        }
+      }
+    }
+    if (runningMachine) {
+      runtimeSlot = runningMachine.runtimeSlot;
+    }
     const record = await getContainer(db, identity.handle);
     if (!runningMachine && !record) { socket.destroy(); return; }
+    const entitlement = getRuntimeEntitlementDecision(appEnv);
     let activeUpstream: Socket | null = null;
     const onSocketError = () => activeUpstream?.destroy();
     socket.on('error', onSocketError);
@@ -2916,7 +3566,21 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       socket.pipe(upstream);
     };
 
-    if (runningMachine?.publicIPv4) {
+    if (runningMachine) {
+      if (!entitlement.runtimeProxyAllowed) {
+        console.warn(
+          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} path=${path}`,
+        );
+        socket.destroy();
+        return;
+      }
+      if (!runningMachine.publicIPv4) {
+        console.warn(
+          `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} path=${path}`,
+        );
+        socket.destroy();
+        return;
+      }
       const upstreamHostHeader = isCodeDomain ? host : `${runningMachine.handle}.matrix-os.com`;
       const headers = buildUpgradeHeaders(runningMachine.handle, true);
       const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
@@ -2940,6 +3604,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     }
 
     if (!record) { socket.destroy(); return; }
+    if (!entitlement.runtimeProxyAllowed) {
+      console.warn(
+        `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} path=${path}`,
+      );
+      socket.destroy();
+      return;
+    }
     const connectUpstream = async (attempt: number): Promise<void> => {
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {

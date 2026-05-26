@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasLabels } from "@/stores/canvas-labels";
-import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff } from "lucide-react";
+import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff, CircleHelpIcon } from "lucide-react";
 import { useDotGrid } from "../DotGrid";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 
@@ -54,7 +54,12 @@ export function autoArrangeWindows() {
   );
 }
 
-export function CanvasToolbar() {
+interface CanvasToolbarProps {
+  guideVisible?: boolean;
+  onOpenGuide?: () => void;
+}
+
+export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolbarProps = {}) {
   const zoom = useCanvasTransform((s) => s.zoom);
   const zoomIn = useCanvasTransform((s) => s.zoomIn);
   const zoomOut = useCanvasTransform((s) => s.zoomOut);
@@ -185,6 +190,21 @@ export function CanvasToolbar() {
       </button>
 
       <div className="w-px h-4 bg-border" />
+
+      {onOpenGuide && (
+        <>
+          <button
+            type="button"
+            onClick={onOpenGuide}
+            className={`p-1 rounded transition-colors ${guideVisible ? "bg-muted text-foreground" : "hover:bg-muted text-muted-foreground"}`}
+            aria-label="Show get started guide"
+            title="Show get started guide"
+          >
+            <CircleHelpIcon className="size-3.5" />
+          </button>
+          <div className="w-px h-4 bg-border" />
+        </>
+      )}
 
       <div className="flex items-center rounded-md bg-muted/50 p-0.5 gap-0.5">
         <button

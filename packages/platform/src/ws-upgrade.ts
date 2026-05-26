@@ -61,6 +61,7 @@ export function stripWebSocketUpgradeToken(path: string): string {
     return path;
   }
   parsed.searchParams.delete("token");
+  parsed.searchParams.delete("runtime");
   const search = parsed.searchParams.toString();
   return `${parsed.pathname}${search ? `?${search}` : ""}`;
 }

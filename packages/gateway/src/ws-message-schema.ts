@@ -4,6 +4,7 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("message"),
     text: z.string().trim().min(1).max(100_000),
+    displayText: z.string().trim().min(1).max(100_000).optional(),
     sessionId: z.string().min(1).max(256).optional(),
     requestId: z.string().min(1).max(256).optional(),
   }),

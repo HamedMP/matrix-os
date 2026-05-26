@@ -10,6 +10,7 @@ const COMMANDS = [
   "profile",
   "whoami",
   "status",
+  "run",
   "doctor",
   "instance",
   "completion",

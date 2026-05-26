@@ -95,6 +95,30 @@ describe("useChatState refresh recovery", () => {
     });
   });
 
+  it("sends configured prompt text while keeping the visible user message plain", async () => {
+    let latestState: ReturnType<typeof useChatState> | null = null;
+
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      latestState?.submitMessage("Build a calendar app", undefined, {
+        displayText: "Build a calendar app",
+        promptText: "<matrix_hermes_setup>model=Hermes</matrix_hermes_setup>\n\nBuild a calendar app",
+      });
+    });
+
+    expect(sendMock).toHaveBeenCalledWith({
+      type: "message",
+      text: "<matrix_hermes_setup>model=Hermes</matrix_hermes_setup>\n\nBuild a calendar app",
+      displayText: "Build a calendar app",
+      sessionId: undefined,
+      requestId: expect.stringMatching(/^req-/),
+    });
+    await waitFor(() => {
+      expect(latestState?.messages[0]?.content).toBe("Build a calendar app");
+    });
+  });
+
   it("ignores stale restore loads when conversations change mid-restore", async () => {
     const conv1 = {
       id: "conv-1",
