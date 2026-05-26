@@ -52,7 +52,7 @@ test.describe("onboarding activation", () => {
     await openManualSetup(page);
     await expect(page.getByText("Set up Matrix around the work you want done first.")).toBeVisible();
     await page.getByRole("button", { name: /Code with Matrix/i }).click();
-    await expect(page.getByText("Required · Connect GitHub")).toBeVisible();
+    await expect(page.getByText("Connect GitHub")).toBeVisible();
     await expect(page.getByText("Hermes is available as the Matrix system agent")).toBeVisible();
   });
 
@@ -138,7 +138,6 @@ test.describe("onboarding activation", () => {
     });
 
     await openManualSetup(page);
-
     await expect(page.getByText("Coding setup")).toBeVisible();
     await expect(page.getByText("GitHub connected")).toBeVisible();
     await expect(page.getByText("Choose task source")).toBeVisible();
@@ -187,7 +186,6 @@ test.describe("onboarding activation", () => {
     });
 
     await openManualSetup(page);
-
     await expect(page.getByText("Agent setup")).toBeVisible();
     await expect(page.getByText("Hermes is the Matrix system agent")).toBeVisible();
     await expect(page.getByText("Claude is not connected")).toBeVisible();
@@ -241,8 +239,7 @@ test.describe("onboarding activation", () => {
       });
     });
 
-    await page.goto("/");
-
+    await openManualSetup(page);
     await expect(page.getByText("Assistant integrations")).toBeVisible();
     await expect(page.getByText("Calendar event")).toBeVisible();
     await expect(page.getByText("Email summaries")).toBeVisible();
@@ -298,12 +295,112 @@ test.describe("onboarding activation", () => {
       });
     });
 
-    await page.goto("/");
-
+    await openManualSetup(page);
     await expect(page.getByText("Matrix control")).toBeVisible();
-    await expect(page.getByText("Hermes")).toBeVisible();
-    await expect(page.getByText("Automations")).toBeVisible();
+    await expect(page.getByText("Hermes", { exact: true })).toBeVisible();
+    await expect(page.getByText("Automations", { exact: true })).toBeVisible();
     await expect(page.getByText("Resume setup")).toBeVisible();
     await expect(page.getByText("Readiness needs review")).toBeVisible();
+  });
+
+  test("shows company brain context sources and review flags", async ({ page }) => {
+    await page.route("**/api/onboarding/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          overallStatus: "degraded",
+          goals: [
+            { id: "company_brain", selected: true, label: "Run my company brain", description: "Use company context" },
+          ],
+          gates: [
+            { id: "company_brain.ready", category: "company_brain", criticality: "recommended", status: "pass", message: "Company context is ready", remediation: null, owner: "user", lastCheckedAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/agents/credentials/status", async (route) => {
+      await route.fulfill({ json: { systemAgent: "hermes", activeAgents: ["hermes"], routingExplanation: "Hermes remains the Matrix system agent.", agents: [] } });
+    });
+    await page.route("**/api/integrations/capabilities", async (route) => {
+      await route.fulfill({ json: { capabilities: [] } });
+    });
+    await page.route("**/api/admin/control-surface", async (route) => {
+      await route.fulfill({ json: null, status: 204 });
+    });
+    await page.route("**/api/company-brain/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          status: "needs_review",
+          guidance: "Review stale or contradictory context before agents rely on it.",
+          items: [
+            { id: "ctx_launch", type: "product_decision", title: "Launch ICP", summary: "Technical founders and developers.", source: "specs/launch-readiness", visibility: "owner_only", updatedAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          sourceLinks: ["specs/launch-readiness"],
+          reviewFlags: [{ itemId: "ctx_launch", kind: "stale", message: "Check whether this context is still current." }],
+        },
+      });
+    });
+
+    await openManualSetup(page);
+    await expect(page.getByRole("heading", { name: "Company brain" })).toBeVisible();
+    await expect(page.getByText("Launch ICP")).toBeVisible();
+    await expect(page.locator("span").filter({ hasText: "specs/launch-readiness" }).first()).toBeVisible();
+    await expect(page.getByText("Review stale or contradictory context before agents rely on it.")).toBeVisible();
+  });
+
+  test("shows support and growth drafts as approval-first", async ({ page }) => {
+    await page.route("**/api/onboarding/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          overallStatus: "degraded",
+          goals: [],
+          gates: [
+            { id: "support_growth.ready", category: "support_growth", criticality: "optional", status: "fail", message: "Drafts need review", remediation: "Review support and growth drafts", owner: "user", lastCheckedAt: "2026-05-23T00:00:00.000Z" },
+          ],
+          systemAgent: "hermes",
+          activeAgents: ["hermes"],
+          agents: [],
+        },
+      });
+    });
+    await page.route("**/api/agents/credentials/status", async (route) => {
+      await route.fulfill({ json: { systemAgent: "hermes", activeAgents: ["hermes"], routingExplanation: "Hermes remains the Matrix system agent.", agents: [] } });
+    });
+    await page.route("**/api/integrations/capabilities", async (route) => {
+      await route.fulfill({ json: { capabilities: [] } });
+    });
+    await page.route("**/api/company-brain/readiness", async (route) => {
+      await route.fulfill({ json: { status: "needs_context", guidance: "Add context.", items: [], sourceLinks: [], reviewFlags: [] } });
+    });
+    await page.route("**/api/support-growth/readiness", async (route) => {
+      await route.fulfill({
+        json: {
+          status: "needs_review",
+          pendingReview: 1,
+          approved: 0,
+          guidance: "Review drafts before any external send or publish action.",
+          drafts: [
+            {
+              id: "draft.launch",
+              type: "support_reply",
+              status: "needs_review",
+              content: "We may support this workflow next week.",
+              destination: "Customer ticket #42",
+              uncertainties: [{ kind: "uncertainty", message: "Confirm timing before sending." }],
+              createdByAgent: "hermes",
+              createdAt: "2026-05-23T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+    });
+
+    await openManualSetup(page);
+    await expect(page.getByRole("heading", { name: "Support and growth" })).toBeVisible();
+    await expect(page.getByText("Customer ticket #42")).toBeVisible();
+    await expect(page.getByText("Confirm timing before sending.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve draft", exact: true })).toBeVisible();
   });
 });

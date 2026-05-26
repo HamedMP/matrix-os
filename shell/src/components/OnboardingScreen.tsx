@@ -16,6 +16,8 @@ import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
 import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
 import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
 import { AdminControlPanel, type AdminControlSurface } from "./onboarding/AdminControlPanel";
+import { CompanyBrainPanel, type CompanyBrainReadiness } from "./onboarding/CompanyBrainPanel";
+import { SupportGrowthPanel, type DraftActionReadiness } from "./onboarding/SupportGrowthPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -45,12 +47,15 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const [entranceStage, setEntranceStage] = useState<"hidden" | "center" | "settled">("hidden");
   const [logoMediaAvailable, setLogoMediaAvailable] = useState(true);
   const [adminSurface, setAdminSurface] = useState<AdminControlSurface | null>(null);
+  const [companyBrain, setCompanyBrain] = useState<CompanyBrainReadiness | null>(null);
+  const [supportGrowth, setSupportGrowth] = useState<DraftActionReadiness | null>(null);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const continueTimerRef = useRef<number | null>(null);
   const continueFrameRef = useRef<number | null>(null);
   const adminActionControllerRef = useRef<AbortController | null>(null);
+  const supportActionControllerRef = useRef<AbortController | null>(null);
 
   // Live subtitle — accumulated AI transcript fragments, synced with voice
   const subtitle = ob.currentSubtitle;
@@ -107,6 +112,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         window.cancelAnimationFrame(continueFrameRef.current);
       }
       adminActionControllerRef.current?.abort();
+      supportActionControllerRef.current?.abort();
       ambientRef.current?.pause();
       audioCtxRef.current?.close();
     };
@@ -162,6 +168,80 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       });
   }, [refreshAdminSurface]);
 
+  const refreshSupportGrowth = useCallback((signal?: AbortSignal) => {
+    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+    void fetch("/api/support-growth/readiness", {
+      headers: { Accept: "application/json" },
+      signal: requestSignal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("support growth request failed");
+        return await res.json() as DraftActionReadiness;
+      })
+      .then(setSupportGrowth)
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[onboarding] support growth load failed:", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    refreshSupportGrowth(controller.signal);
+    return () => controller.abort();
+  }, [refreshSupportGrowth]);
+
+  const approveDraft = useCallback((draftId: string) => {
+    supportActionControllerRef.current?.abort();
+    const controller = new AbortController();
+    supportActionControllerRef.current = controller;
+    const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+    void fetch(`/api/support-growth/drafts/${encodeURIComponent(draftId)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ approved: true }),
+      signal: requestSignal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          refreshSupportGrowth(controller.signal);
+          throw new Error("draft approval failed");
+        }
+        return await res.json();
+      })
+      .then(() => refreshSupportGrowth(controller.signal))
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[onboarding] draft approval failed:", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (supportActionControllerRef.current === controller) supportActionControllerRef.current = null;
+      });
+  }, [refreshSupportGrowth]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/company-brain/readiness", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("company brain request failed");
+        return await res.json() as CompanyBrainReadiness;
+      })
+      .then((readiness) => {
+        if (!cancelled) setCompanyBrain(readiness);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.warn("[onboarding] company brain load failed:", err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function startAmbientAudio() {
     const audio = new Audio("/onboarding-ambient.wav");
     audio.loop = true;
@@ -183,7 +263,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     });
   }
 
-  function handleStart(useVoice: boolean) {
+  const handleStart = useCallback((useVoice: boolean) => {
     // Phase 1: dim into light (text glows and screen fades to white/black)
     setPhase("dimming");
     setTimeout(() => {
@@ -197,7 +277,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         setPhase("revealing");
       }, 400);
     }, 1200);
-  }
+  }, [ob.start]);
 
   const handleTalkToMe = useCallback(async () => {
     if (mic.state === "granted") {
@@ -212,7 +292,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     const granted = await mic.requestAccess();
     if (granted) handleStart(true);
     else setShowMicDialog(true);
-  }, [mic.state, mic.requestAccess]);
+  }, [handleStart, mic.state, mic.requestAccess]);
 
   const handleMicAllow = useCallback(async () => {
     const granted = await mic.requestAccess();
@@ -220,7 +300,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     if (granted) {
       handleStart(true);
     }
-  }, [mic.requestAccess]);
+  }, [handleStart, mic.requestAccess]);
 
   const handleContinue = useCallback(() => {
     setContinueExiting(true);
@@ -243,6 +323,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
   const codingSelected = ob.selectedGoalIds.includes("coding");
   const assistantSelected = ob.selectedGoalIds.includes("assistant");
+  const companyBrainSelected = ob.selectedGoalIds.includes("company_brain");
 
   // Render nothing for the one frame between "alreadyComplete" becoming
   // true and the parent unmounting us via the effect above. Placing this
@@ -318,6 +399,12 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               )}
 
               <AdminControlPanel surface={adminSurface} onResumeSetup={resumeAdminSetup} />
+
+              {companyBrainSelected && <CompanyBrainPanel readiness={companyBrain} />}
+
+              {supportGrowth && supportGrowth.drafts.length > 0 && (
+                <SupportGrowthPanel readiness={supportGrowth} onApprove={approveDraft} />
+              )}
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
