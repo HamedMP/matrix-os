@@ -153,6 +153,34 @@ describe("activation readiness routes", () => {
     });
   });
 
+  it("keeps readiness available when assistant capability storage cannot be read", async () => {
+    const { service } = createTestReadinessService(undefined, {
+      integrationCapabilityService: {
+        listCapabilities: async () => {
+          throw new Error("corrupted storage json");
+        },
+        getCapabilityApproval: async () => null,
+        setApproval: async () => ({
+          capabilityId: "calendar.create_event",
+          agent: "hermes",
+          status: "connect_required",
+        }),
+      },
+    });
+    const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });
+
+    await app.request(jsonRequest("/goals", { goalIds: ["assistant"] }));
+    const res = await app.request("/readiness");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const gatesById = new Map(body.gates.map((gate: { id: string }) => [gate.id, gate]));
+    expect(gatesById.get("integrations.capabilities")).toMatchObject({
+      status: "unknown",
+      message: "Assistant capabilities have not been approved",
+    });
+  });
+
   it("rejects invalid goals with a generic client-safe error", async () => {
     const { service } = createTestReadinessService();
     const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });

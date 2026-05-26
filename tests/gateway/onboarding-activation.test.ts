@@ -7,6 +7,7 @@ import {
 import { stepsForGoals } from "../../packages/gateway/src/onboarding/readiness-service.js";
 import { mapActivationError, safeClientMessage } from "../../packages/gateway/src/onboarding/activation-errors.js";
 import { ReadinessStatusCache } from "../../packages/gateway/src/onboarding/readiness-cache.js";
+import { createAgentActionAuditService } from "../../packages/gateway/src/onboarding/agent-action-audit.js";
 import { createTestReadinessService, testPrincipal } from "../helpers/activation-readiness.js";
 
 describe("activation readiness contracts", () => {
@@ -100,6 +101,22 @@ describe("activation readiness contracts", () => {
     });
   });
 
+  it("keeps assistant integration gate unknown when no capabilities are connected yet", async () => {
+    const integrations = {
+      listCapabilities: async () => ({ capabilities: [] }),
+      getCapabilityApproval: async () => null,
+      setApproval: async () => ({ capabilityId: "calendar.create_event" as const, agent: "hermes" as const, status: "unavailable" as const }),
+    };
+    const { service } = createTestReadinessService(undefined, { integrationCapabilityService: integrations });
+
+    await service.selectGoals(testPrincipal.userId, ["assistant"]);
+    const readiness = await service.getReadiness(testPrincipal.userId);
+
+    expect(readiness.gates.find((gate) => gate.id === "integrations.capabilities")).toMatchObject({
+      status: "unknown",
+    });
+  });
+
   it("sanitizes unsafe error strings before sending them to clients", () => {
     expect(safeClientMessage("postgres constraint failed at /home/matrix/secret")).toBe("Request failed");
     expect(safeClientMessage("Connect GitHub to continue")).toBe("Connect GitHub to continue");
@@ -124,5 +141,30 @@ describe("activation readiness contracts", () => {
     expect(cache.get("a")).toEqual({ value: "A" });
     now = 1100;
     expect(cache.get("a")).toBeNull();
+  });
+
+  it("records safe agent action summaries without raw provider details", async () => {
+    const audit = createAgentActionAuditService({
+      now: () => new Date("2026-05-23T00:00:00.000Z"),
+    });
+
+    const action = await audit.recordAction(testPrincipal.userId, {
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      summary: "Created launch rehearsal event; raw provider token sk_live at /home/matrix/secret failed before retry",
+      target: "Primary calendar",
+    });
+
+    expect(action).toMatchObject({
+      agent: "hermes",
+      capability: "calendar.create_event",
+      status: "completed",
+      target: "Primary calendar",
+      createdAt: "2026-05-23T00:00:00.000Z",
+      completedAt: "2026-05-23T00:00:00.000Z",
+    });
+    expect(action.summary).toBe("Agent action completed");
+    expect(JSON.stringify(action)).not.toMatch(/sk_live|\/home|token/i);
   });
 });

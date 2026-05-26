@@ -16,6 +16,7 @@ import { ReadinessStatusCache } from "./readiness-cache.js";
 import { ActivationRouteError } from "./activation-errors.js";
 import type { CodingSetupProvider, CodingSetupStatus } from "./coding-setup.js";
 import type { AgentCredentialStatusService } from "./agent-credential-status.js";
+import type { IntegrationCapabilityService } from "./integration-capabilities.js";
 
 const GOALS: Record<OnboardingGoalId, Omit<OnboardingGoalSummary, "selected">> = {
   coding: {
@@ -140,6 +141,7 @@ export function createReadinessService(options: {
   cache?: ReadinessStatusCache<ReadinessResponse>;
   codingSetup?: CodingSetupProvider;
   agentCredentials?: AgentCredentialStatusService;
+  integrationCapabilities?: IntegrationCapabilityService;
   now?: () => Date;
 }): ReadinessService {
   const now = options.now ?? (() => new Date());
@@ -190,12 +192,21 @@ export function createReadinessService(options: {
     }
   }
 
-  function deriveGates(record: OnboardingReadinessRecord, codingSetup: CodingSetupStatus | null): ReadinessGateSummary[] {
+  function deriveGates(
+    record: OnboardingReadinessRecord,
+    codingSetup: CodingSetupStatus | null,
+    integrationApproved: boolean | null,
+  ): ReadinessGateSummary[] {
     const checkedAt = now().toISOString();
     return BASE_GATES.map((gate) => {
       const codingPatch = codingGatePatch(gate, codingSetup, checkedAt);
+      const integrationPatch = gate.id === "integrations.capabilities" && integrationApproved !== null
+        ? integrationApproved
+          ? { status: "pass" as const, message: "Hermes has approved integration capabilities", remediation: null, lastCheckedAt: checkedAt }
+          : { status: "fail" as const, message: "Approve one assistant capability for Hermes", remediation: "Approve calendar, email, or summary capabilities", lastCheckedAt: checkedAt }
+        : null;
       const override = record.gateOverrides[gate.id];
-      const base = { ...gate, ...codingPatch };
+      const base = { ...gate, ...codingPatch, ...integrationPatch };
       if (!override) return base;
       return {
         ...base,
@@ -218,17 +229,37 @@ export function createReadinessService(options: {
     return "degraded" as const;
   }
 
+  async function getIntegrationCapabilityStatus(ownerId: string, record: OnboardingReadinessRecord) {
+    if (!record.selectedGoalIds.includes("assistant") || !options.integrationCapabilities) return null;
+    try {
+      return await options.integrationCapabilities.listCapabilities(ownerId);
+    } catch (err: unknown) {
+      console.warn("[onboarding] integration capability readiness lookup failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
   async function getReadiness(ownerId: string): Promise<ReadinessResponse> {
     const cached = cache.get(ownerId);
     if (cached) return cached;
     const record = await ensureRecord(ownerId);
-    const [codingSetup, credentialStatus] = await Promise.all([
+    const [codingSetup, credentialStatus, integrationStatus] = await Promise.all([
       record.selectedGoalIds.includes("coding") && options.codingSetup
         ? options.codingSetup.getCodingSetup(ownerId)
         : Promise.resolve(null),
       options.agentCredentials ? options.agentCredentials.getStatus(ownerId) : Promise.resolve(null),
+      getIntegrationCapabilityStatus(ownerId, record),
     ]);
-    const gates = deriveGates(record, codingSetup);
+    const integrationApproved = integrationStatus && integrationStatus.capabilities.length > 0
+      ? integrationStatus.capabilities.some((capability) =>
+        capability.status === "connected" || capability.status === "approved"
+      )
+        ? integrationStatus.capabilities.some((capability) =>
+          capability.status === "approved" && capability.approvedAgents.includes("hermes")
+        )
+        : null
+      : null;
+    const gates = deriveGates(record, codingSetup, integrationApproved);
     const goals = Object.values(GOALS).map((goal) => ({
       ...goal,
       selected: record.selectedGoalIds.includes(goal.id),

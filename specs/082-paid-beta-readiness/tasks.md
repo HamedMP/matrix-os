@@ -143,20 +143,20 @@
 
 ### Tests First
 
-- [ ] T052 [P] [US4] Write failing integration capability approval tests in `tests/gateway/integrations-routes.test.ts`
-- [ ] T053 [P] [US4] Write failing safe action audit tests in `tests/gateway/onboarding-activation.test.ts`
-- [ ] T054 [P] [US4] Write failing assistant integration e2e path in `tests/e2e/onboarding-activation.spec.ts`
+- [X] T052 [P] [US4] Write failing integration capability approval tests in `tests/gateway/integrations-routes.test.ts`
+- [X] T053 [P] [US4] Write failing safe action audit tests in `tests/gateway/onboarding-activation.test.ts`
+- [X] T054 [P] [US4] Write failing assistant integration e2e path in `tests/e2e/onboarding-activation.spec.ts`
 
 ### Implementation
 
-- [ ] T055 [US4] Implement integration capability service in `packages/gateway/src/onboarding/integration-capabilities.ts`
-- [ ] T056 [US4] Add capability approval routes in `packages/gateway/src/onboarding/integration-capability-routes.ts`
-- [ ] T057 [US4] Wire capability routes in `packages/gateway/src/server.ts`
-- [ ] T058 [US4] Implement safe agent action audit summaries in `packages/gateway/src/onboarding/agent-action-audit.ts`
-- [ ] T059 [US4] Connect capability status to existing integrations registry in `packages/gateway/src/integrations/registry.ts`
-- [ ] T060 [P] [US4] Create assistant integration setup panel in `shell/src/components/onboarding/AssistantSetupPanel.tsx`
-- [ ] T061 [US4] Add integration capabilities hook in `shell/src/hooks/useIntegrationCapabilities.ts`
-- [ ] T062 [US4] Wire assistant setup panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
+- [X] T055 [US4] Implement integration capability service in `packages/gateway/src/onboarding/integration-capabilities.ts`
+- [X] T056 [US4] Add capability approval routes in `packages/gateway/src/onboarding/integration-capability-routes.ts`
+- [X] T057 [US4] Wire capability routes in `packages/gateway/src/server.ts`
+- [X] T058 [US4] Implement safe agent action audit summaries in `packages/gateway/src/onboarding/agent-action-audit.ts`
+- [X] T059 [US4] Connect capability status to existing integrations registry in `packages/gateway/src/integrations/registry.ts`
+- [X] T060 [P] [US4] Create assistant integration setup panel in `shell/src/components/onboarding/AssistantSetupPanel.tsx`
+- [X] T061 [US4] Add integration capabilities hook in `shell/src/hooks/useIntegrationCapabilities.ts`
+- [X] T062 [US4] Wire assistant setup panel into onboarding goal flow in `shell/src/components/OnboardingScreen.tsx`
 
 **Checkpoint**: US4 works with mocked or connected capabilities and safe summaries.
 

@@ -84,6 +84,9 @@ import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
 import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
+import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -447,9 +450,70 @@ export async function createGateway(config: GatewayConfig) {
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
+  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
+  const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalHandle = process.env.MATRIX_HANDLE;
   let platformDb: PlatformDb | null = null;
   const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
   let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
+  let internalIntegrationBaseUrl: string | null = null;
+  const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
+  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+  async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
+    if (platformDb) {
+      try {
+        const dbForLookup = platformDb;
+        const services = await withCapabilityLookupTimeout(async () => {
+          const user = await dbForLookup.getUserByClerkId(ownerId);
+          const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
+          if (!platformUserId) return [];
+          return dbForLookup.listConnectedServices(platformUserId);
+        });
+        return capabilityIdsForConnectedServices(services.map((service) => service.service));
+      } catch (err: unknown) {
+        console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));
+        return [];
+      }
+    }
+    if (!internalIntegrationBaseUrl) return [];
+    try {
+      const headers = new Headers({ Accept: "application/json" });
+      if (internalPlatformToken) headers.set("authorization", `Bearer ${internalPlatformToken}`);
+      const response = await fetch(internalIntegrationBaseUrl, {
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return [];
+      const body = await response.json() as unknown;
+      const connections = Array.isArray(body)
+        ? body
+        : body && typeof body === "object" && Array.isArray((body as { connections?: unknown }).connections)
+          ? (body as { connections: unknown[] }).connections
+          : [];
+      return capabilityIdsForConnectedServices(connections.flatMap((connection) =>
+        connection && typeof connection === "object" && typeof (connection as { service?: unknown }).service === "string"
+          ? [(connection as { service: string }).service]
+          : [],
+      ));
+    } catch (err: unknown) {
+      console.warn("[integrations] capability connection lookup failed:", err instanceof Error ? err.message : String(err));
+      return [];
+    }
+  }
   const agentCredentialService = createAgentCredentialStatusService({
     onChange: (ownerId) => readinessCache.delete(ownerId),
     probeAgent: async (_ownerId, agent) => {
@@ -464,6 +528,12 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
+  const integrationCapabilityService = createIntegrationCapabilityService({
+    getConnectedCapabilityIds,
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    storagePath: join(homePath, "system", "integration-capabilities.json"),
+  });
+  const agentActionAuditService = createAgentActionAuditService();
   let codingSetupProvider: ReturnType<typeof createCodingSetupProvider> | null = null;
   const unavailableCodingSetup: CodingSetupStatus = {
     githubConnected: false,
@@ -478,6 +548,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: readinessRepository,
     cache: readinessCache,
     agentCredentials: agentCredentialService,
+    integrationCapabilities: integrationCapabilityService,
     codingSetup: {
       getCodingSetup: async (ownerId) => codingSetupProvider?.getCodingSetup(ownerId) ?? unavailableCodingSetup,
     },
@@ -621,9 +692,6 @@ export async function createGateway(config: GatewayConfig) {
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
-  const internalPlatformToken = process.env.UPGRADE_TOKEN;
-  const internalHandle = process.env.MATRIX_HANDLE;
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle
       ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
@@ -743,7 +811,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
-  const internalIntegrationBaseUrl =
+  internalIntegrationBaseUrl =
     internalPlatformUrl && internalHandle
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
@@ -1372,6 +1440,10 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/integrations", createIntegrationCapabilityRoutes({
+    service: integrationCapabilityService,
+    audit: agentActionAuditService,
+  }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,

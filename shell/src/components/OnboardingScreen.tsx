@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { useAgentCredentialStatus } from "@/hooks/useAgentCredentialStatus";
+import { useIntegrationCapabilities } from "@/hooks/useIntegrationCapabilities";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
@@ -13,6 +14,7 @@ import { ReadinessChecklist } from "./onboarding/ReadinessChecklist";
 import { CodingSetupPanel } from "./onboarding/CodingSetupPanel";
 import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
 import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
+import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -30,6 +32,7 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const agentCredentials = useAgentCredentialStatus();
+  const integrationCapabilities = useIntegrationCapabilities();
   const mic = useMicPermission();
   const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
@@ -185,6 +188,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   // ── Voice conversation screen (editorial style) ─────────────
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
   const codingSelected = ob.selectedGoalIds.includes("coding");
+  const assistantSelected = ob.selectedGoalIds.includes("assistant");
 
   // Render nothing for the one frame between "alreadyComplete" becoming
   // true and the parent unmounting us via the effect above. Placing this
@@ -250,6 +254,14 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               )}
 
               <AgentCredentialPanel status={agentCredentials.status} error={agentCredentials.error} onVerify={agentCredentials.verify} />
+
+              {assistantSelected && (
+                <AssistantSetupPanel
+                  capabilities={integrationCapabilities.capabilities}
+                  error={integrationCapabilities.error}
+                  onApprove={integrationCapabilities.approveForHermes}
+                />
+              )}
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
