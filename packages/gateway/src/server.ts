@@ -24,23 +24,9 @@ import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
-import { createProjectManager } from "./project-manager.js";
-import { createSymphonyRoutes } from "./symphony-routes.js";
+import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
-import { createAgentSessionManager } from "./agent-session-manager.js";
-import { createWorktreeManager } from "./worktree-manager.js";
-import { createCompositeSymphonyCredentialStore, createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
-import {
-  createIntegrationAwareLinearGraphql,
-  createInternalProxyLinearGraphql,
-  hasConnectedLinearIntegration,
-  hasConnectedLinearIntegrationViaInternalProxy,
-} from "./symphony/linear-integration.js";
-import { createLinearSource } from "./symphony/linear-source.js";
-import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
-import { KyselySymphonyRepository } from "./symphony/repository.js";
-import { createSymphonyStatusHub } from "./symphony/status-hub.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -86,7 +72,7 @@ import { createReadinessService } from "./onboarding/readiness-service.js";
 import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
 import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
-import { createCodingSetupProvider, type CodingSetupStatus } from "./onboarding/coding-setup.js";
+import type { createCodingSetupProvider, CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
@@ -419,12 +405,9 @@ export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
-  const symphonyRunner = createSymphonyRunner({ homePath });
-  const symphonyPort = await readInitialSymphonyPort(symphonyRunner);
   const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
     proxyOrigin: process.env.PROXY_ORIGIN,
-    symphonyPort,
   });
 
   const app = new Hono();
@@ -2533,153 +2516,7 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
-  let matrixSymphonyOrchestrator: ReturnType<typeof createMatrixSymphonyOrchestrator> | null = null;
-  let matrixSymphonyStatusHub: ReturnType<typeof createSymphonyStatusHub> | null = null;
-  if (kyselyInstance) {
-    const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
-    await repository.bootstrap();
-    const fileCredentialStore = createFileSymphonyCredentialStore({ homePath });
-    const internalLinearProxy = internalIntegrationBaseUrl && internalPlatformToken
-      ? { baseUrl: internalIntegrationBaseUrl, token: internalPlatformToken }
-      : null;
-    const credentialStore = platformDb && pipedreamClient
-      ? createCompositeSymphonyCredentialStore({
-        primary: fileCredentialStore,
-        hasLinearIntegration: (ownerId) => hasConnectedLinearIntegration(platformDb!, ownerId),
-      })
-      : internalLinearProxy
-        ? createCompositeSymphonyCredentialStore({
-          primary: fileCredentialStore,
-          hasLinearIntegration: () => hasConnectedLinearIntegrationViaInternalProxy(internalLinearProxy),
-        })
-      : fileCredentialStore;
-    const linearSource = platformDb && pipedreamClient
-      ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
-      : internalLinearProxy
-        ? createLinearSource({ graphql: createInternalProxyLinearGraphql(internalLinearProxy) })
-      : createLinearSource();
-    const projectManager = createProjectManager({ homePath });
-    const listAllMatrixProjectOptions = async (ownerId: string) => {
-      const result = await projectManager.listManagedProjects();
-      return result.projects
-        .filter((project) => project.ownerScope.type === "user" && project.ownerScope.id === ownerId)
-        .map((project) => ({
-          slug: project.slug,
-          name: project.name,
-          repositoryUrl: project.github?.htmlUrl ?? project.remote,
-          updatedAt: project.updatedAt,
-        }));
-    };
-    const codingSnapshotReads = new Map<string, Promise<Awaited<ReturnType<typeof repository.getSnapshot>>>>();
-    const getCodingSnapshot = async (ownerId: string) => {
-      const existing = codingSnapshotReads.get(ownerId);
-      if (existing) return await existing;
-      if (codingSnapshotReads.size >= 128) {
-        const oldestKey = codingSnapshotReads.keys().next().value as string | undefined;
-        if (oldestKey) codingSnapshotReads.delete(oldestKey);
-      }
-      const read = repository.getSnapshot(ownerId).finally(() => {
-        if (codingSnapshotReads.get(ownerId) === read) codingSnapshotReads.delete(ownerId);
-      });
-      codingSnapshotReads.set(ownerId, read);
-      return await read;
-    };
-    const listSelectedMatrixProjectOptions = async (ownerId: string) => {
-      const snapshot = await getCodingSnapshot(ownerId);
-      const selectedSlug = snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
-      if (!selectedSlug) return [];
-      const projects = await listAllMatrixProjectOptions(ownerId);
-      const selectedProject = selectedSlug ? projects.find((project) => project.slug === selectedSlug) : null;
-      return selectedProject ? [selectedProject] : [];
-    };
-    const isGitHubRepositoryUrl = (repositoryUrl: string | null | undefined): boolean => {
-      if (!repositoryUrl) return false;
-      try {
-        const parsed = new URL(repositoryUrl);
-        return parsed.hostname === "github.com" || parsed.hostname.endsWith(".github.com");
-      } catch (_err) {
-        return /^git@github\.com:/i.test(repositoryUrl);
-      }
-    };
-    const isWithinPath = (parent: string, child: string): boolean => {
-      const relativePath = normalize(relative(resolve(parent), resolve(child)));
-      return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
-    };
-    const worktreeManager = createWorktreeManager({ homePath });
-    const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
-    const agentSessionManager = createAgentSessionManager({
-      homePath,
-      worktreeManager,
-      agentLauncher,
-      zellijRuntime: workspaceZellijRuntime,
-    });
-    matrixSymphonyStatusHub = createSymphonyStatusHub();
-    matrixSymphonyOrchestrator = createMatrixSymphonyOrchestrator({
-      homePath,
-      repository,
-      credentialStore,
-      linearSource,
-      worktreeManager,
-      agentSessionManager,
-      agentStatusProvider: agentLauncher,
-      statusHub: matrixSymphonyStatusHub,
-    });
-    codingSetupProvider = createCodingSetupProvider({
-      hasGitHubConnection: async (_ownerId, selectedProject) => {
-        return isGitHubRepositoryUrl(selectedProject?.repositoryUrl);
-      },
-      listMatrixProjects: async (ownerId) => listSelectedMatrixProjectOptions(ownerId),
-      getSelectedProjectSlug: async (ownerId) => {
-        const snapshot = await getCodingSnapshot(ownerId);
-        return snapshot.installation?.projectSlug ?? snapshot.rule?.projectSlug ?? null;
-      },
-      hasIssueSource: async (ownerId) => {
-        if (platformDb && await hasConnectedLinearIntegration(platformDb, ownerId)) return true;
-        const snapshot = await getCodingSnapshot(ownerId);
-        return Boolean(snapshot.rule);
-      },
-      getSymphonyStatus: async (ownerId) => {
-        const snapshot = await getCodingSnapshot(ownerId);
-        const activeStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff", "completed"]);
-        const handoffActiveStatuses = new Set(["queued", "running", "retrying", "blocked", "handoff"]);
-        const activeHandoffRuns = snapshot.runs.filter((run) => handoffActiveStatuses.has(run.status));
-        const handoffRuns = activeHandoffRuns.length > 0 ? activeHandoffRuns : snapshot.runs.slice(0, 1);
-        const activeAgents = Array.from(new Set(snapshot.runs
-          .filter((run) => activeStatuses.has(run.status))
-          .map((run) => run.agent)
-          .filter((agent) => agent === "claude" || agent === "codex")));
-        return {
-          ready: Boolean(snapshot.installation?.enabled && snapshot.installation.credentialConfigured && snapshot.rule),
-          runStatuses: handoffRuns.map((run) => run.status),
-          activeAgents,
-        };
-      },
-      hasTerminalContext: async (ownerId, projectSlug) => {
-        if (!projectSlug) return false;
-        const localOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
-        if (!localOwnerId || ownerId !== localOwnerId) return false;
-        const projectRoot = join(homePath, "projects", projectSlug);
-        const repoRoot = join(projectRoot, "repo");
-        return sessionRegistry.list().some((session) =>
-          isWithinPath(projectRoot, session.cwd) || isWithinPath(repoRoot, session.cwd)
-        );
-      },
-    });
-    await matrixSymphonyOrchestrator.resumeEnabledInstallations();
-    app.route("/api/symphony", createSymphonyRoutes({
-      repository,
-      credentialStore,
-      linearSource,
-      orchestrator: matrixSymphonyOrchestrator,
-      statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: (ownerId) => listAllMatrixProjectOptions(ownerId),
-    }));
-  } else {
-    console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");
-    const unavailable = new Hono();
-    unavailable.all("*", (c) => c.json({ error: { code: "symphony_unavailable", message: "Symphony is unavailable" } }, 503));
-    app.route("/api/symphony", unavailable);
-  }
+  app.route("/api/symphony", createElixirSymphonyProxyRoutes());
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
@@ -4061,7 +3898,6 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
-      await symphonyRunner.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();
