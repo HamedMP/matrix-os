@@ -31,7 +31,12 @@ import { createAgentLauncher } from "./agent-launcher.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createCompositeSymphonyCredentialStore, createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
-import { createIntegrationAwareLinearGraphql, hasConnectedLinearIntegration } from "./symphony/linear-integration.js";
+import {
+  createIntegrationAwareLinearGraphql,
+  createInternalProxyLinearGraphql,
+  hasConnectedLinearIntegration,
+  hasConnectedLinearIntegrationViaInternalProxy,
+} from "./symphony/linear-integration.js";
 import { createLinearSource } from "./symphony/linear-source.js";
 import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
 import { KyselySymphonyRepository } from "./symphony/repository.js";
@@ -158,6 +163,7 @@ import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-cl
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
@@ -799,20 +805,24 @@ export async function createGateway(config: GatewayConfig) {
       // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
       // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
       // identity is plumbed through.
-      const userId =
+      const baseUserId =
         process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
       if (!process.env.MATRIX_USER_ID) {
         console.warn(
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
+      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+        baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       homeMirror = createHomeMirror({
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId,
-        peerId: `gateway-${userId}`,
+        userId: syncUserId,
+        peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
         // commit. Without this the mirror is push-only (container -> R2)
@@ -1975,7 +1985,7 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "message") {
             clearConversationRunAttachment();
-            pendingText = parsed.text;
+            pendingText = parsed.displayText ?? parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
 
@@ -2529,14 +2539,24 @@ export async function createGateway(config: GatewayConfig) {
     const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
     await repository.bootstrap();
     const fileCredentialStore = createFileSymphonyCredentialStore({ homePath });
+    const internalLinearProxy = internalIntegrationBaseUrl && internalPlatformToken
+      ? { baseUrl: internalIntegrationBaseUrl, token: internalPlatformToken }
+      : null;
     const credentialStore = platformDb && pipedreamClient
       ? createCompositeSymphonyCredentialStore({
         primary: fileCredentialStore,
         hasLinearIntegration: (ownerId) => hasConnectedLinearIntegration(platformDb!, ownerId),
       })
+      : internalLinearProxy
+        ? createCompositeSymphonyCredentialStore({
+          primary: fileCredentialStore,
+          hasLinearIntegration: () => hasConnectedLinearIntegrationViaInternalProxy(internalLinearProxy),
+        })
       : fileCredentialStore;
     const linearSource = platformDb && pipedreamClient
       ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
+      : internalLinearProxy
+        ? createLinearSource({ graphql: createInternalProxyLinearGraphql(internalLinearProxy) })
       : createLinearSource();
     const projectManager = createProjectManager({ homePath });
     const listAllMatrixProjectOptions = async (ownerId: string) => {

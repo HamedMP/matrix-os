@@ -17,6 +17,10 @@ CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_
 ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.1}"
 ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
 ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
+GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"
+GH_DIST="gh_${GH_VERSION}_linux_amd64"
+GH_ARCHIVE="${GH_DIST}.tar.gz"
+GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 
 rm -rf "$DIST_DIR"
@@ -61,6 +65,9 @@ mv "$STAGE_DIR/runtime/$CODE_SERVER_DIST" "$STAGE_DIR/runtime/code-server"
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
 chmod 0755 "$STAGE_DIR/bin/zellij"
+curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
+tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
+install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
 cat > "$STAGE_DIR/runtime/node/bin/code-server" <<'EOS'
 #!/usr/bin/env sh
 exec /opt/matrix/runtime/code-server/bin/code-server "$@"
@@ -82,9 +89,10 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij"
+chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
+install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"

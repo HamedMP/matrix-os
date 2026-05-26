@@ -2,22 +2,9 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
-import { useAgentCredentialStatus } from "@/hooks/useAgentCredentialStatus";
-import { useIntegrationCapabilities } from "@/hooks/useIntegrationCapabilities";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
-import { BrandFrame } from "./onboarding/BrandFrame";
-import { CapabilityIntro } from "./onboarding/CapabilityIntro";
-import { GoalSelector } from "./onboarding/GoalSelector";
-import { ReadinessChecklist } from "./onboarding/ReadinessChecklist";
-import { CodingSetupPanel } from "./onboarding/CodingSetupPanel";
-import { CodingHandoffSummary } from "./onboarding/CodingHandoffSummary";
-import { AgentCredentialPanel } from "./onboarding/AgentCredentialPanel";
-import { AssistantSetupPanel } from "./onboarding/AssistantSetupPanel";
-import { AdminControlPanel, type AdminControlSurface } from "./onboarding/AdminControlPanel";
-import { CompanyBrainPanel, type CompanyBrainReadiness } from "./onboarding/CompanyBrainPanel";
-import { SupportGrowthPanel, type DraftActionReadiness } from "./onboarding/SupportGrowthPanel";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -29,33 +16,24 @@ const SHIMMER_ANIMATION =
 
 interface OnboardingScreenProps {
   onComplete: () => void;
-  onOpenTerminal: (path?: string) => void;
+  onOpenManualSetup: () => void;
 }
 
-export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
+export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingScreenProps) {
   const ob = useOnboarding();
-  const agentCredentials = useAgentCredentialStatus();
-  const integrationCapabilities = useIntegrationCapabilities();
   const mic = useMicPermission();
   const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
-  const [showSetupDetails, setShowSetupDetails] = useState(false);
   const [showModePicker, setShowModePicker] = useState(false);
   const [splitVisible, setSplitVisible] = useState(false);
   const [continueExiting, setContinueExiting] = useState(false);
   const [entranceStage, setEntranceStage] = useState<"hidden" | "center" | "settled">("hidden");
-  const [logoMediaAvailable, setLogoMediaAvailable] = useState(true);
-  const [adminSurface, setAdminSurface] = useState<AdminControlSurface | null>(null);
-  const [companyBrain, setCompanyBrain] = useState<CompanyBrainReadiness | null>(null);
-  const [supportGrowth, setSupportGrowth] = useState<DraftActionReadiness | null>(null);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const continueTimerRef = useRef<number | null>(null);
   const continueFrameRef = useRef<number | null>(null);
-  const adminActionControllerRef = useRef<AbortController | null>(null);
-  const supportActionControllerRef = useRef<AbortController | null>(null);
 
   // Live subtitle — accumulated AI transcript fragments, synced with voice
   const subtitle = ob.currentSubtitle;
@@ -66,17 +44,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     return () => {
       window.clearTimeout(centerTimer);
       window.clearTimeout(settleTimer);
-    };
-  }, []);
-
-  useEffect(() => {
-    const image = new Image();
-    image.onload = () => setLogoMediaAvailable(true);
-    image.onerror = () => setLogoMediaAvailable(false);
-    image.src = "/matrix-logo.svg";
-    return () => {
-      image.onload = null;
-      image.onerror = null;
     };
   }, []);
 
@@ -111,134 +78,8 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
       if (continueFrameRef.current !== null) {
         window.cancelAnimationFrame(continueFrameRef.current);
       }
-      adminActionControllerRef.current?.abort();
-      supportActionControllerRef.current?.abort();
       ambientRef.current?.pause();
       audioCtxRef.current?.close();
-    };
-  }, []);
-
-  const refreshAdminSurface = useCallback((signal?: AbortSignal) => {
-    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
-    void fetch("/api/admin/control-surface", {
-      headers: { Accept: "application/json" },
-      signal: requestSignal,
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("admin control request failed");
-        return await res.json() as AdminControlSurface;
-      })
-      .then((surface) => {
-        setAdminSurface(surface);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[onboarding] admin control load failed:", err instanceof Error ? err.message : String(err));
-      });
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    refreshAdminSurface(controller.signal);
-    return () => controller.abort();
-  }, [refreshAdminSurface]);
-
-  const resumeAdminSetup = useCallback((target: string) => {
-    adminActionControllerRef.current?.abort();
-    const controller = new AbortController();
-    adminActionControllerRef.current = controller;
-    const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
-    void fetch("/api/admin/control-surface/setup-session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ target, intent: "resume" }),
-      signal: requestSignal,
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("admin setup request failed");
-        return await res.json();
-      })
-      .then(() => refreshAdminSurface(controller.signal))
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[onboarding] admin setup failed:", err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (adminActionControllerRef.current === controller) adminActionControllerRef.current = null;
-      });
-  }, [refreshAdminSurface]);
-
-  const refreshSupportGrowth = useCallback((signal?: AbortSignal) => {
-    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
-    void fetch("/api/support-growth/readiness", {
-      headers: { Accept: "application/json" },
-      signal: requestSignal,
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("support growth request failed");
-        return await res.json() as DraftActionReadiness;
-      })
-      .then(setSupportGrowth)
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[onboarding] support growth load failed:", err instanceof Error ? err.message : String(err));
-      });
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    refreshSupportGrowth(controller.signal);
-    return () => controller.abort();
-  }, [refreshSupportGrowth]);
-
-  const approveDraft = useCallback((draftId: string) => {
-    supportActionControllerRef.current?.abort();
-    const controller = new AbortController();
-    supportActionControllerRef.current = controller;
-    const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
-    void fetch(`/api/support-growth/drafts/${encodeURIComponent(draftId)}/approval`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ approved: true }),
-      signal: requestSignal,
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          refreshSupportGrowth(controller.signal);
-          throw new Error("draft approval failed");
-        }
-        return await res.json();
-      })
-      .then(() => refreshSupportGrowth(controller.signal))
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[onboarding] draft approval failed:", err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (supportActionControllerRef.current === controller) supportActionControllerRef.current = null;
-      });
-  }, [refreshSupportGrowth]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/company-brain/readiness", {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("company brain request failed");
-        return await res.json() as CompanyBrainReadiness;
-      })
-      .then((readiness) => {
-        if (!cancelled) setCompanyBrain(readiness);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          console.warn("[onboarding] company brain load failed:", err instanceof Error ? err.message : String(err));
-        }
-      });
-    return () => {
-      cancelled = true;
     };
   }, []);
 
@@ -321,9 +162,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
   // ── Voice conversation screen (editorial style) ─────────────
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
-  const codingSelected = ob.selectedGoalIds.includes("coding");
-  const assistantSelected = ob.selectedGoalIds.includes("assistant");
-  const companyBrainSelected = ob.selectedGoalIds.includes("company_brain");
 
   // Render nothing for the one frame between "alreadyComplete" becoming
   // true and the parent unmounting us via the effect above. Placing this
@@ -344,89 +182,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        {showSetupDetails ? (
-          <BrandFrame mediaAvailable={logoMediaAvailable}>
-            <div className="space-y-5">
-              <CapabilityIntro />
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-[#111612]">Choose your first goal</h2>
-                    <span className="text-xs text-[#17281f]/55">You can change this later</span>
-                  </div>
-                  <GoalSelector selectedGoalIds={ob.selectedGoalIds} onSelect={ob.selectGoal} />
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-[#111612]">Readiness</h2>
-                    <span className="text-xs capitalize text-[#17281f]/55">{ob.readiness?.overallStatus ?? "checking"}</span>
-                  </div>
-                  <ReadinessChecklist gates={ob.readiness?.gates ?? []} />
-                </div>
-              </div>
-
-              {ob.onboardingSteps.length > 0 && (
-                <div className="rounded-md border border-[#17281f]/10 bg-[#17281f]/5 p-3">
-                  <h2 className="text-sm font-semibold text-[#111612]">Setup path</h2>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {ob.onboardingSteps.map((step) => (
-                      <span key={step.id} className="rounded-full border border-[#17281f]/10 bg-white/55 px-3 py-1 text-xs text-[#17281f]/70">
-                        {step.required ? "Required" : "Optional"} · {step.title}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {codingSelected && (
-                <div className="grid gap-3">
-                  <CodingSetupPanel gates={ob.readiness?.gates ?? []} onOpenTerminal={onOpenTerminal} />
-                  <CodingHandoffSummary
-                    activeAgents={ob.readiness?.activeAgents ?? ["hermes"]}
-                    status={ob.readiness?.codingHandoffStatus ?? null}
-                  />
-                </div>
-              )}
-
-              <AgentCredentialPanel status={agentCredentials.status} error={agentCredentials.error} onVerify={agentCredentials.verify} />
-
-              {assistantSelected && (
-                <AssistantSetupPanel
-                  capabilities={integrationCapabilities.capabilities}
-                  error={integrationCapabilities.error}
-                  onApprove={integrationCapabilities.approveForHermes}
-                />
-              )}
-
-              <AdminControlPanel surface={adminSurface} onResumeSetup={resumeAdminSetup} />
-
-              {companyBrainSelected && <CompanyBrainPanel readiness={companyBrain} />}
-
-              {supportGrowth && supportGrowth.drafts.length > 0 && (
-                <SupportGrowthPanel readiness={supportGrowth} onApprove={approveDraft} />
-              )}
-
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <button
-                  onClick={() => setShowSetupDetails(false)}
-                  disabled={phase !== "idle" || started}
-                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md border border-[#17281f]/15 bg-white/55 px-4 text-sm font-medium text-[#17281f] transition hover:border-[#17281f]/30 disabled:opacity-55"
-                >
-                  Back to choices
-                </button>
-                <button
-                  onClick={() => handleStart(false)}
-                  disabled={phase !== "idle" || started}
-                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md bg-[#17281f] px-4 text-sm font-medium text-[#f4f0e8] transition hover:bg-[#23382c] disabled:opacity-55"
-                >
-                  <KeyboardIcon className="h-4 w-4" aria-hidden="true" />
-                  Continue with text
-                </button>
-              </div>
-            </div>
-          </BrandFrame>
-        ) : (
-          <section
+        <section
             data-onboarding-brand={MATRIX_ONBOARDING_BRAND_VERSION}
             className="relative flex min-h-full flex-1 flex-col overflow-hidden bg-[#fffdf6] text-[#2f392c]"
           >
@@ -528,18 +284,15 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                     },
                     {
                       label: "Set up manually",
-                      description: "Choose the first outcome, connect tools, and review every step.",
+                      description: "Place setup notes on your desktop and connect tools only when you need them.",
                       icon: SparklesIcon,
-                      onClick: () => setShowSetupDetails(true),
+                      onClick: onOpenManualSetup,
                     },
                     {
                       label: "Enter workspace",
                       description: "Open Matrix now. Hermes stays active and optional setup remains available.",
                       icon: KeyboardIcon,
-                      onClick: () => {
-                        onOpenTerminal();
-                        onComplete();
-                      },
+                      onClick: onComplete,
                     },
                   ].map((item, index) => {
                     const Icon = item.icon;
@@ -574,17 +327,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
             <button
               type="button"
-              onClick={() => {
-                onOpenTerminal();
-                onComplete();
-              }}
+              onClick={onComplete}
               className="relative z-10 mx-auto mb-7 text-xs text-[#2f392c]/40 transition hover:text-[#2f392c]/70"
               style={{ opacity: phase === "idle" ? 1 : 0 }}
             >
               Skip first-time setup
             </button>
           </section>
-        )}
 
         {/* Dimming overlay */}
         <div
@@ -666,7 +415,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           <button
             onClick={() => {
               ob.chooseClaudeCode();
-              onOpenTerminal();
               onComplete();
             }}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-2"
@@ -684,7 +432,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             result={ob.apiKeyResult}
             onSkip={() => {
               ob.chooseClaudeCode();
-              onOpenTerminal();
               onComplete();
             }}
           />

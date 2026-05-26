@@ -92,7 +92,6 @@ const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
 const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
-const RUNTIME_SLOT_COOKIE = 'matrix_runtime_slot';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -400,14 +399,14 @@ function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
-type RuntimeSlotSource = 'query' | 'cookie' | 'default';
+type RuntimeSlotSource = 'query' | 'default';
 
 interface RuntimeSlotSelection {
   slot: string;
   source: RuntimeSlotSource;
 }
 
-function readRuntimeSlotSelection(cookieHeader: string | undefined, rawUrl: string): RuntimeSlotSelection {
+function readRuntimeSlotSelection(rawUrl: string): RuntimeSlotSelection {
   try {
     const querySlot = new URL(rawUrl, 'https://app.matrix-os.com').searchParams.get('runtime');
     if (querySlot && RuntimeSlotSchema.safeParse(querySlot).success) {
@@ -416,15 +415,11 @@ function readRuntimeSlotSelection(cookieHeader: string | undefined, rawUrl: stri
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse runtime slot URL:', err instanceof Error ? err.message : String(err));
   }
-  const cookieSlot = readCookie(cookieHeader, RUNTIME_SLOT_COOKIE);
-  if (cookieSlot && RuntimeSlotSchema.safeParse(cookieSlot).success) {
-    return { slot: cookieSlot, source: 'cookie' };
-  }
   return { slot: 'primary', source: 'default' };
 }
 
-function readRuntimeSlot(cookieHeader: string | undefined, rawUrl: string): string {
-  return readRuntimeSlotSelection(cookieHeader, rawUrl).slot;
+function readRuntimeSlot(rawUrl: string): string {
+  return readRuntimeSlotSelection(rawUrl).slot;
 }
 
 function buildForwardedQueryString(rawUrl: string): string {
@@ -449,17 +444,6 @@ function buildForwardedQueryString(rawUrl: string): string {
   return forwarded ? `?${forwarded}` : '';
 }
 
-function buildRuntimeSlotCookie(runtimeSlot: string): string {
-  return [
-    `${RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
-    'Path=/',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax',
-    'Max-Age=86400',
-  ].join('; ');
-}
-
 export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
@@ -474,6 +458,41 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
     console.warn('[platform] Failed to build post-auth redirect:', err instanceof Error ? err.message : String(err));
     return '/';
   }
+}
+
+function isAppDomainGatewayPath(path: string): boolean {
+  return (
+    path.startsWith('/api/') ||
+    path.startsWith('/ws') ||
+    path.startsWith('/files/') ||
+    path.startsWith('/modules/') ||
+    path === '/health'
+  );
+}
+
+interface ExplicitVmRoute {
+  handle: string;
+  upstreamPath: string;
+}
+
+function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
+  const match = path.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/(.*))?$/);
+  if (!match?.[1]) return null;
+  const rest = match[2];
+  return {
+    handle: match[1],
+    upstreamPath: rest ? `/${rest}` : '/',
+  };
+}
+
+function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!isAppDomainGatewayPath(path)) return null;
+  const handle = readCookie(cookieHeader, SHELL_ROUTE_COOKIE);
+  return handle && HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function readAppDomainRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  return readGatewayRouteCookie(path, cookieHeader) ?? readShellRouteCookie(path, cookieHeader);
 }
 
 function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): EntitlementAccessDecision {
@@ -749,6 +768,8 @@ async function resolveAppDomainIdentity(opts: {
   clerkAuth?: ClerkAuth;
   db: PlatformDB;
   platformJwtSecret: string;
+  allowUnroutedClerkIdentity?: boolean;
+  requestedHandle?: string | null;
   runtimeSlot: string;
   wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
@@ -802,6 +823,17 @@ async function resolveAppDomainIdentity(opts: {
     return null;
   }
 
+  if (opts.requestedHandle) {
+    const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    if (requestedMachine && requestedMachine.clerkUserId === result.userId) {
+      return {
+        handle: requestedMachine.handle,
+        userId: result.userId,
+        runtimeSlot: requestedMachine.runtimeSlot,
+      };
+    }
+  }
+
   const record = await getContainerByClerkId(opts.db, result.userId);
   if (record) {
     return {
@@ -816,6 +848,12 @@ async function resolveAppDomainIdentity(opts: {
     machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
   }
   if (!machine) {
+    if (opts.allowUnroutedClerkIdentity) {
+      return {
+        handle: '',
+        userId: result.userId,
+      };
+    }
     return null;
   }
 
@@ -1246,12 +1284,13 @@ async function buildRuntimePickerMachines(
 
 function getRuntimePickerPage(input: {
   machines: RuntimePickerMachine[];
-  selectedSlot: string;
+  selectedHandle: string | null;
 }): string {
   const rows = input.machines.map((machine) => {
     const strength = machineStrength(machine);
-    const isSelected = machine.runtimeSlot === input.selectedSlot;
+    const isSelected = machine.handle === input.selectedHandle;
     const version = machine.displayVersion;
+    const title = machine.runtimeSlot === 'primary' ? 'Main Computer' : `${machine.runtimeSlot} Computer`;
     const started = new Date(machine.provisionedAt).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -1259,10 +1298,10 @@ function getRuntimePickerPage(input: {
       timeZone: 'UTC',
     });
     const statusClass = machine.status === 'running' ? 'good' : machine.status === 'failed' ? 'bad' : 'wait';
-    return `<a class="machine ${isSelected ? 'selected' : ''}" href="/?runtime=${encodeURIComponent(machine.runtimeSlot)}">
+    return `<a class="machine ${isSelected ? 'selected' : ''}" href="/vm/${encodeURIComponent(machine.handle)}">
       <div class="topline">
         <div>
-          <strong>${escapeHtml(machine.runtimeSlot)}</strong>
+          <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(machine.handle)}</span>
         </div>
         <em class="${statusClass}">${escapeHtml(machine.status)}</em>
@@ -1383,9 +1422,9 @@ function getRuntimePickerPage(input: {
 <body>
   <main>
     <header>
-      <div class="eyebrow">Matrix OS runtime</div>
-      <h1>Choose a Matrix OS machine</h1>
-      <p>Select where this browser session should land. Primary stays untouched while staging can run breaking features and new bundles.</p>
+      <div class="eyebrow">Switch Computer</div>
+      <h1>Choose your Matrix OS computer</h1>
+      <p>Use your main computer for daily work, or jump into a named test VM when validating a risky feature.</p>
     </header>
     <section class="list" aria-label="Available Matrix OS machines">
       ${rows}
@@ -2054,20 +2093,18 @@ export function createApp(deps: {
 
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
-    const runtimeSelection = readRuntimeSlotSelection(cookieHeader, c.req.url);
+    const path = c.req.path;
+    const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
+    const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const requestRuntimeSlot = runtimeSelection.slot;
     let singleMachineRuntimeSlot: string | null = null;
 
-    const path = c.req.path;
-    const isGatewayPath = isAppDomain && (
-      path.startsWith('/api/') ||
-      path.startsWith('/ws') ||
-      path.startsWith('/files/') ||
-      path.startsWith('/modules/') ||
-      path === '/health'
-    );
+    const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
+    const requestedRouteHandle = !explicitVmRoute && isAppDomain
+      ? readAppDomainRouteCookie(path, cookieHeader)
+      : null;
 
     let identity = await resolveAppDomainIdentity({
       authHeader,
@@ -2075,6 +2112,8 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
+      allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
+      requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
     });
     if (!identity && isAppDomain) {
@@ -2099,6 +2138,13 @@ export function createApp(deps: {
         };
       }
     }
+    const isCookieRoutedShellAsset = Boolean(
+      identity &&
+      requestedRouteHandle &&
+      identity.handle === requestedRouteHandle &&
+      isAppDomain &&
+      isAppDomainStaticAssetPath(path),
+    );
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
@@ -2111,6 +2157,10 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
+      if (isGatewayPath && requestedRouteHandle) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Matrix computer unavailable', code: 'machine_unavailable' }, 410);
+      }
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
@@ -2119,13 +2169,95 @@ export function createApp(deps: {
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce);
-      if (runtimeSelection.source === 'query') {
-        c.header('set-cookie', buildRuntimeSlotCookie(requestRuntimeSlot));
-      }
       return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url)));
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
+    if (isAppDomain && path === '/vm') {
+      return c.redirect('/runtime');
+    }
+    if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
+      return c.text('Invalid Matrix OS computer', 400);
+    }
+    if (isAppDomain && explicitVmRoute) {
+      if (!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
+      const machine = await getActiveUserMachineByHandle(db, explicitVmRoute.handle);
+      if (!machine || machine.clerkUserId !== identity.userId) {
+        applyNoStoreHeaders(c);
+        return c.text('Matrix OS computer unavailable', 404);
+      }
+      const entitlement = getRuntimeEntitlementDecision(appEnv);
+      if (!entitlement.runtimeProxyAllowed) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Paid beta access required' }, 402);
+      }
+      if (machine.status !== 'running') {
+        if (isGatewayPath) {
+          applyNoStoreHeaders(c);
+          return c.json({
+            error: 'VPS provisioning',
+            status: machine.status,
+          }, 503);
+        }
+        applyNoStoreHeaders(c);
+        return c.html(getVpsBootPage({ status: machine.status }), 503);
+      }
+      const qs = buildForwardedQueryString(c.req.url);
+      const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
+      }
+      const rawCookie = c.req.header('cookie');
+      if (rawCookie) {
+        const forwarded = rawCookie
+          .split(';')
+          .map((p) => p.trim())
+          .filter((p) => p.startsWith('matrix_app_session__'))
+          .join('; ');
+        if (forwarded) headers.set('cookie', forwarded);
+      }
+      headers.set('host', `${machine.handle}.matrix-os.com`);
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
+      headers.set('connection', 'close');
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
+        headers.set('x-platform-user-id', identity.userId);
+        headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
+      }
+
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: responseHeaders,
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain explicit vps proxy', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
+
     if (isAppDomain && isIntegrationPath) {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', identity.handle);
@@ -2155,7 +2287,7 @@ export function createApp(deps: {
       identity.userId &&
       identity.source !== 'mobile-session' &&
       identity.source !== 'static-route' &&
-      (path === '/runtime' || (path === '/' && runtimeSelection.source === 'default'));
+      path === '/runtime';
     if (shouldOfferRuntimePicker) {
       const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
       if (machines.length === 0 && path === '/runtime') {
@@ -2166,7 +2298,7 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         c.header('X-Frame-Options', 'DENY');
         c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
-        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedSlot: requestRuntimeSlot }));
+        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedHandle: identity.handle }));
       }
       if (machines.length === 1 && runtimeSelection.source === 'default') {
         singleMachineRuntimeSlot = machines[0]!.runtimeSlot;
@@ -2253,7 +2385,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        if (identity.source === 'static-route' && isAppDomainStaticAssetPath(path)) {
+        if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
         if (identity.source === 'mobile-session') {
@@ -2262,7 +2394,6 @@ export function createApp(deps: {
         }
         if (isAppDomain && identity.source !== 'static-route') {
           responseHeaders.append('set-cookie', buildShellRouteCookie(runningMachine.handle));
-          responseHeaders.append('set-cookie', buildRuntimeSlotCookie(runtimeSlot));
         }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({
@@ -2296,7 +2427,6 @@ export function createApp(deps: {
           applyNoStoreHeaders(c);
           return c.json({ error: 'Paid beta access required' }, 402);
         }
-        c.header('set-cookie', buildRuntimeSlotCookie(runtimeSlot), { append: true });
         if (isCodeDomain || isGatewayPath) {
           applyNoStoreHeaders(c);
           return c.json({
@@ -2396,7 +2526,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        if (identity.source === 'static-route' && isAppDomainStaticAssetPath(path)) {
+        if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
         if (identity.source === 'mobile-session') {
@@ -3332,7 +3462,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const isCodeDomain = isCodeDomainHost(host);
 
     const path = req.url ?? '/';
-    const requestRuntimeSlot = readRuntimeSlot(req.headers.cookie, path);
+    const requestRuntimeSlot = readRuntimeSlot(path);
     const wsToken = getWebSocketUpgradeToken(path);
     let identity: AppDomainIdentity | null;
     try {

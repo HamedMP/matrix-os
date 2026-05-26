@@ -81,6 +81,27 @@ describe("Settings: desktop + theme + wallpapers", () => {
     });
   });
 
+  describe("onboarding completion controls", () => {
+    it("marks onboarding complete and resets it", async () => {
+      const completePath = join(homePath, "system", "onboarding-complete.json");
+
+      let status = await app.request("/api/settings/onboarding-status");
+      await expect(status.json()).resolves.toEqual({ complete: false });
+
+      const complete = await app.request("/api/settings/onboarding-complete", { method: "POST" });
+      expect(complete.status).toBe(200);
+      expect(existsSync(completePath)).toBe(true);
+      status = await app.request("/api/settings/onboarding-status");
+      await expect(status.json()).resolves.toEqual({ complete: true });
+
+      const reset = await app.request("/api/settings/onboarding-reset", { method: "POST" });
+      expect(reset.status).toBe(200);
+      expect(existsSync(completePath)).toBe(false);
+      status = await app.request("/api/settings/onboarding-status");
+      await expect(status.json()).resolves.toEqual({ complete: false });
+    });
+  });
+
   // --- PUT /api/settings/desktop ---
 
   describe("PUT /desktop", () => {

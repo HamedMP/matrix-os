@@ -437,11 +437,21 @@ curl https://api.matrix-os.com/health
 `/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `(clerk_user_id, runtime_slot)`, so repeated onboarding calls reuse the same active VPS for that user and slot.
 
 **Routing modes:**
-- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's active VPS by `clerkUserId` and runtime slot. No handle in URL. Redirects to `/login` if no session.
+- `app.matrix-os.com` -- session-based default computer. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's primary active VPS. Plain `/` must not depend on a sticky staging/runtime cookie.
+- `app.matrix-os.com/runtime` -- switch-computer picker. It lists the signed-in user's active VPSes with handle, slot, bundle version, status, CPU, RAM, and disk strength.
+- `app.matrix-os.com/vm/<handle>` -- explicit computer route. Use this for test VMs and bookmarks. The platform verifies that `<handle>` belongs to the signed-in Clerk user, proxies the named VPS, and keeps API/WebSocket calls on that computer without changing where plain `/` lands.
 - `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway. No handle, SSH, or server IP is exposed.
 
-For breaking-feature rehearsals, provision a separate runtime slot for the same
-Clerk user and use the same login to switch:
+### Feature Test VMs
+
+For breaking features, onboarding changes, shell routing changes, migrations, or
+anything that might corrupt a user's working desktop, prefer a disposable test
+VM over testing on the user's primary VPS. Ask before creating a billable VPS
+unless the user has explicitly requested it, name the VM clearly, and always
+offer to delete it after validation to avoid extra Hetzner charges.
+
+Provision a separate runtime slot for the same Clerk user and use the same login
+to switch:
 
 ```bash
 curl --fail --silent --show-error \
@@ -451,10 +461,31 @@ curl --fail --silent --show-error \
   -d '{"clerkUserId":"user_xxx","handle":"alice-staging","runtimeSlot":"staging"}'
 ```
 
-Open `https://app.matrix-os.com/?runtime=staging` to route that session to the
-staging VPS. Open `https://app.matrix-os.com/?runtime=primary` to return to the
-primary VPS. Deploy branch host bundles to the staging VPS by exact version; do
-not use `/vps/deploy` unless you intend to fan out to every running VPS.
+Open `https://app.matrix-os.com/runtime` to switch computers, or go directly to
+`https://app.matrix-os.com/vm/alice-staging`. Open
+`https://app.matrix-os.com/` to return to the default primary computer. Do not
+use `?runtime=staging` as the durable test link; it is request-scoped only and
+must not make staging sticky on plain `/`.
+
+Deploy branch host bundles to the test VM by exact version; do not use
+`/vps/deploy` unless you intend to fan out to every running VPS. Verify the VM
+before handing it to a tester:
+
+```bash
+curl --fail --silent --show-error \
+  "$PLATFORM_PUBLIC_URL/vps/<machineId>/status" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+When testing is done, ask the user whether to delete the test VM. If they
+approve, delete it through the platform so provider cleanup and deletion
+metadata stay consistent:
+
+```bash
+curl --fail --silent --show-error \
+  -X DELETE "$PLATFORM_PUBLIC_URL/vps/<machineId>" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
 
 If the staging VPS needs to be replaced, recover the same slot explicitly so the
 primary runtime remains untouched:

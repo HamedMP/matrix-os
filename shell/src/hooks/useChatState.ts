@@ -11,6 +11,7 @@ const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 
 interface QueuedMessage {
   text: string;
+  displayText?: string;
   requestId: string;
 }
 
@@ -24,7 +25,11 @@ export interface ChatState {
   connected: boolean;
   queue: QueuedMessage[];
   conversations: ReturnType<typeof useConversation>["conversations"];
-  submitMessage: (text: string) => void;
+  submitMessage: (
+    text: string,
+    files?: Array<{ name: string; type: string; data: string }>,
+    options?: { displayText?: string; promptText?: string },
+  ) => void;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
@@ -125,6 +130,7 @@ export function useChatState(): ChatState {
             send({
               type: "message",
               text: next.text,
+              displayText: next.displayText,
               sessionId: sessionRef.current,
               requestId: next.requestId,
             });
@@ -145,26 +151,32 @@ export function useChatState(): ChatState {
   }, [subscribe, send]);
 
   const submitMessage = useCallback(
-    (text: string) => {
+    (
+      text: string,
+      _files?: Array<{ name: string; type: string; data: string }>,
+      options?: { displayText?: string; promptText?: string },
+    ) => {
       if (!text) return;
 
       const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const outboundText = options?.promptText?.trim() || text;
+      const displayText = options?.displayText?.trim() || text;
 
       setMessages((prev) => [
         ...prev,
         {
           id: `user-${Date.now()}`,
           role: "user",
-          content: text,
+          content: displayText,
           timestamp: Date.now(),
           requestId,
         },
       ]);
 
       if (busy) {
-        setQueue((prev) => [...prev, { text, requestId }]);
+        setQueue((prev) => [...prev, { text: outboundText, displayText, requestId }]);
       } else {
-        send({ type: "message", text, sessionId, requestId });
+        send({ type: "message", text: outboundText, displayText, sessionId, requestId });
         currentRequestIdRef.current = requestId;
         setBusy(true);
       }

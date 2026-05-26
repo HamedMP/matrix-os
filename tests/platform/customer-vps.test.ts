@@ -827,6 +827,47 @@ describe('platform/customer-vps', () => {
     }
   });
 
+  it('only deploys to the requested VPS handle when provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff113',
+    ];
+    const { service } = createService({
+      machineIdFactory: () => machineIds.shift() ?? '9f05824c-8d0a-4d83-9cb4-b312d43ff114',
+    });
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: primary.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'stable',
+    });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    await service.register('registration-token', {
+      machineId: staging.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'stable',
+    });
+
+    try {
+      await expect(service.deploy({ version: 'v082-onboarding-test', handle: 'alice-staging' }))
+        .resolves.toMatchObject({ triggered: 1, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://203.0.113.11:443/api/internal/upgrade',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ version: 'v082-onboarding-test' }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('queues failed delete cleanup and retries it during reconciliation', async () => {
     const deleteServer = vi.fn()
       .mockRejectedValueOnce(new Error('hetzner timeout'))
