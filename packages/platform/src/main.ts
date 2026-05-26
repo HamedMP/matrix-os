@@ -73,6 +73,7 @@ import {
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -128,7 +129,7 @@ const customerVpsProxyDispatcher = new Agent({
   keepAliveMaxTimeout: 1,
   connections: 64,
   connect: {
-    rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'true',
+    rejectUnauthorized: shouldVerifyCustomerVpsTls(),
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
@@ -3596,7 +3597,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         host: runningMachine.publicIPv4,
         port: 443,
         servername: upstreamServerName,
-        rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'true',
+        rejectUnauthorized: shouldVerifyCustomerVpsTls(),
       }, () => {
         activeUpstream = upstream;
         writeUpgradeRequest(upstream, upstreamHostHeader, headers);
