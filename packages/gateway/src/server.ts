@@ -17,7 +17,12 @@ import { createConversationStore, type ConversationStore } from "./conversations
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
-import { resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  resolveExistingFileApiPath,
+  resolveWithinHome,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
@@ -2670,27 +2675,29 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   function resolveServedFilePath(filePath: string): string | null {
-    const fullPath = resolveWithinHome(homePath, filePath);
-    if (!fullPath) {
+    const lexicalPath = resolveWithinHome(homePath, filePath);
+    if (!lexicalPath || isDeniedFileApiPath(homePath, filePath)) {
       return null;
     }
-    if (existsSync(fullPath)) {
-      return fullPath;
+
+    if (existsSync(lexicalPath)) {
+      return resolveExistingFileApiPath(homePath, filePath);
     }
 
     if (!filePath.endsWith("/manifest.json")) {
-      return fullPath;
+      return lexicalPath;
     }
 
-    const dirPath = dirname(fullPath);
+    const dirPath = dirname(lexicalPath);
     const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
     for (const candidate of fallbackCandidates) {
       if (existsSync(candidate)) {
-        return candidate;
+        const relativeCandidate = relative(homePath, candidate);
+        return resolveExistingFileApiPath(homePath, relativeCandidate);
       }
     }
 
-    return fullPath;
+    return lexicalPath;
   }
 
   app.on("HEAD", "/files/*", (c) => {
@@ -2761,7 +2768,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.put("/files/*", fileBodyLimit, async (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveWritableFileApiPath(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
     const content = await c.req.text();
     const dir = dirname(fullPath);
