@@ -140,6 +140,13 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_R2_BUCKET={{r2Bucket}}',
   '      MATRIX_R2_PREFIX={{r2Prefix}}',
+  '      POSTHOG_TOKEN={{posthogToken}}',
+  '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
+  '      POSTHOG_HOST={{posthogHost}}',
+  '      NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}',
+  '      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
+  '      NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}',
+  '      NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}',
   '      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix',
   '  - path: /opt/matrix/env/r2.env',
   '    permissions: "0640"',
@@ -223,6 +230,10 @@ function buildHostConfig(
     r2Bucket: config.r2Bucket,
     r2Prefix: `${config.r2PrefixRoot}/${input.clerkUserId}/` as `matrixos-sync/${string}/`,
     postgresPassword,
+    posthogToken: config.posthogToken,
+    posthogProjectToken: config.posthogProjectToken,
+    posthogHost: config.posthogHost,
+    posthogApiHost: config.posthogApiHost,
   };
 }
 

@@ -103,6 +103,15 @@ const HOST_BUNDLE_FILES = new Set([
 ]);
 const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev|beta)$/;
 const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev|beta)\.json$/;
+const TENANT_PUBLIC_TELEMETRY_ENV_KEYS = [
+  'POSTHOG_TOKEN',
+  'POSTHOG_PROJECT_TOKEN',
+  'POSTHOG_HOST',
+  'NEXT_PUBLIC_POSTHOG_KEY',
+  'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN',
+  'NEXT_PUBLIC_POSTHOG_HOST',
+  'NEXT_PUBLIC_POSTHOG_API_HOST',
+] as const;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -168,6 +177,21 @@ function sanitizeProxyResponseHeaders(headers: Headers): Headers {
     sanitized.delete(header);
   }
   return sanitized;
+}
+
+function collectTenantPublicTelemetryEnv(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  return TENANT_PUBLIC_TELEMETRY_ENV_KEYS
+    .map((key) => {
+      const value = env[key];
+      if (!value) return null;
+      if (/[\r\n\0]/.test(value)) {
+        throw new Error(`Invalid public telemetry env value for ${key}`);
+      }
+      return `${key}=${value}`;
+    })
+    .filter((value): value is string => value !== null);
 }
 
 const ProvisionBodySchema = z.object({
@@ -3116,22 +3140,6 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const db = platformDatabaseUrl ? createPlatformDb(platformDatabaseUrl) : createPlatformDb();
   await db.ready;
   const docker = new Dockerode();
-  const extraEnv: string[] = [];
-  if (process.env.CLERK_SECRET_KEY) {
-    extraEnv.push(`CLERK_SECRET_KEY=${process.env.CLERK_SECRET_KEY}`);
-  }
-  for (const key of [
-    'MATRIX_HOME_MIRROR',
-    'POSTHOG_TOKEN',
-    'POSTHOG_PROJECT_TOKEN',
-    'POSTHOG_HOST',
-    'NEXT_PUBLIC_POSTHOG_KEY',
-    'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN',
-    'NEXT_PUBLIC_POSTHOG_HOST',
-    'NEXT_PUBLIC_POSTHOG_API_HOST',
-  ]) {
-    if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
-  }
 
   checkHomeMirrorS3Env();
 
@@ -3145,7 +3153,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     image: process.env.PLATFORM_IMAGE,
     dataDir: process.env.PLATFORM_DATA_DIR,
     platformSecret: PLATFORM_SECRET,
-    extraEnv,
+    publicTelemetryEnv: collectTenantPublicTelemetryEnv(),
     postgresUrl: process.env.POSTGRES_URL,
   });
 
