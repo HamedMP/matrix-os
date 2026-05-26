@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
@@ -6,25 +5,46 @@ import {
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
 
-class FakeStream extends EventEmitter {
+class FakePty {
   writes: string[] = [];
-
-  write(data: string): boolean {
-    this.writes.push(data);
-    return true;
-  }
-}
-
-class FakeChild extends EventEmitter {
-  stdout = new FakeStream();
-  stderr = new FakeStream();
-  stdin = new FakeStream();
+  resizes: Array<{ cols: number; rows: number }> = [];
   killed = false;
+  private dataListeners = new Set<(data: string) => void>();
+  private exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
 
-  kill(): boolean {
+  write(data: string): void {
+    this.writes.push(data);
+  }
+
+  resize(cols: number, rows: number): void {
+    this.resizes.push({ cols, rows });
+  }
+
+  kill(): void {
     this.killed = true;
-    this.emit("close", 0);
-    return true;
+    this.emitExit({ exitCode: 0 });
+  }
+
+  onData(listener: (data: string) => void) {
+    this.dataListeners.add(listener);
+    return { dispose: () => this.dataListeners.delete(listener) };
+  }
+
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
+    this.exitListeners.add(listener);
+    return { dispose: () => this.exitListeners.delete(listener) };
+  }
+
+  emitData(data: string): void {
+    for (const listener of this.dataListeners) {
+      listener(data);
+    }
+  }
+
+  emitExit(event: { exitCode: number; signal?: number }): void {
+    for (const listener of this.exitListeners) {
+      listener(event);
+    }
   }
 }
 
@@ -43,14 +63,14 @@ function socket(): ShellWsSocket & { sent: unknown[]; closed: boolean } {
 
 describe("zellij terminal WebSocket", () => {
   it("attaches to a named session, replays from seq, forwards input, and cleans up", async () => {
-    const child = new FakeChild();
+    const pty = new FakePty();
     const ws = socket();
     const handler = createShellWsHandler({
       registry: {
         list: vi.fn(async () => [{ name: "main", status: "active" }]),
       },
       adapter: {
-        attachSession: vi.fn(() => child as never),
+        attachSession: vi.fn(() => pty),
       },
       maxReplayBytes: 4096,
     });
@@ -61,15 +81,56 @@ describe("zellij terminal WebSocket", () => {
       fromSeq: 0,
     });
 
-    child.stdout.emit("data", Buffer.from("hello"));
+    pty.emitData("hello");
     await new Promise((resolve) => setTimeout(resolve, 0));
     session.onMessage(JSON.stringify({ type: "input", data: "pwd\r" }));
+    session.onMessage(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
     session.onClose();
 
     expect(ws.sent).toContainEqual({ type: "attached", session: "main", state: "running", fromSeq: 0 });
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "hello" });
-    expect(child.stdin.writes).toEqual(["pwd\r"]);
-    expect(child.killed).toBe(true);
+    expect(pty.writes).toEqual(["pwd\r"]);
+    expect(pty.resizes).toEqual([{ cols: 100, rows: 30 }]);
+    expect(pty.killed).toBe(true);
+  });
+
+  it("sends the existing exit frame when the PTY exits", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitExit({ exitCode: 101 });
+
+    expect(ws.sent).toContainEqual({ type: "exit", code: 101 });
+  });
+
+  it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => {
+          throw new Error("spawn failed");
+        }),
+      },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(ws.sent).toEqual([
+      { type: "error", code: "attach_failed", message: "Shell attach failed" },
+    ]);
+    expect(ws.closed).toBe(true);
   });
 
   it("rejects missing sessions with a stable error", async () => {
