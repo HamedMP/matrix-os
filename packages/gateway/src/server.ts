@@ -2207,6 +2207,8 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     geminiConnection: geminiLiveConnection,
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+    readinessService,
+    ownerId: process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
   });
 
   app.get(

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
+import { Inter, JetBrains_Mono, Cormorant_Garamond, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -22,6 +22,12 @@ const cormorant = Cormorant_Garamond({
   variable: "--font-serif",
   subsets: ["latin"],
   weight: ["300", "400", "500"],
+});
+
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
@@ -89,7 +95,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable}`}>
+        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
         </body>
       </html>
