@@ -964,6 +964,18 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @spec stop_issue(String.t()) :: {:ok, map()} | {:error, :issue_not_found} | :unavailable
+  def stop_issue(issue_identifier), do: stop_issue(__MODULE__, issue_identifier)
+
+  @spec stop_issue(GenServer.server(), String.t()) :: {:ok, map()} | {:error, :issue_not_found} | :unavailable
+  def stop_issue(server, issue_identifier) when is_binary(issue_identifier) do
+    if Process.whereis(server) do
+      GenServer.call(server, {:stop_issue, issue_identifier})
+    else
+      :unavailable
+    end
+  end
+
   @spec snapshot() :: map() | :timeout | :unavailable
   def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -1048,6 +1060,69 @@ defmodule SymphonyElixir.Orchestrator do
        requested_at: DateTime.utc_now(),
        operations: ["poll", "reconcile"]
      }, state}
+  end
+
+  def handle_call({:stop_issue, issue_identifier}, _from, state) when is_binary(issue_identifier) do
+    case stop_issue_in_state(state, issue_identifier) do
+      {:ok, stopped, state} ->
+        notify_dashboard()
+        {:reply, {:ok, stopped}, state}
+
+      {:error, :issue_not_found} ->
+        {:reply, {:error, :issue_not_found}, state}
+    end
+  end
+
+  defp stop_issue_in_state(%State{} = state, issue_identifier) do
+    cond do
+      match = find_running_issue_match(state.running, issue_identifier) ->
+        {issue_id, running_entry} = match
+        stopped = stop_payload(issue_identifier, issue_id, Map.get(running_entry, :identifier), "running")
+        {:ok, stopped, terminate_running_issue(state, issue_id, false)}
+
+      match = find_retry_issue_match(state.retry_attempts, issue_identifier) ->
+        {issue_id, retry_entry} = match
+        stopped = stop_payload(issue_identifier, issue_id, Map.get(retry_entry, :identifier), "retrying")
+        {:ok, stopped, cancel_retry_issue(state, issue_id, retry_entry)}
+
+      true ->
+        {:error, :issue_not_found}
+    end
+  end
+
+  defp find_running_issue_match(running, issue_identifier) when is_map(running) do
+    Enum.find(running, fn {issue_id, running_entry} ->
+      issue_id == issue_identifier || Map.get(running_entry, :identifier) == issue_identifier
+    end)
+  end
+
+  defp find_retry_issue_match(retry_attempts, issue_identifier) when is_map(retry_attempts) do
+    Enum.find(retry_attempts, fn {issue_id, retry_entry} ->
+      issue_id == issue_identifier || Map.get(retry_entry, :identifier) == issue_identifier
+    end)
+  end
+
+  defp cancel_retry_issue(%State{} = state, issue_id, retry_entry) when is_map(retry_entry) do
+    case Map.get(retry_entry, :timer_ref) do
+      timer_ref when is_reference(timer_ref) -> Process.cancel_timer(timer_ref)
+      _ -> :ok
+    end
+
+    %{
+      state
+      | claimed: MapSet.delete(state.claimed, issue_id),
+        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+    }
+  end
+
+  defp stop_payload(requested_identifier, issue_id, known_identifier, previous_status) do
+    %{
+      stopped: true,
+      issue_id: issue_id,
+      issue_identifier: known_identifier || requested_identifier,
+      previous_status: previous_status,
+      stopped_at: DateTime.utc_now()
+    }
   end
 
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do

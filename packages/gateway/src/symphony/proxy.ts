@@ -6,6 +6,7 @@ import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrinci
 import {
   ElixirIssueSchema,
   ElixirRefreshSchema,
+  ElixirStopSchema,
   ElixirStateSchema,
   EmptyProxyBodySchema,
   genericProxyError,
@@ -149,7 +150,7 @@ function normalizeRunning(entry: Record<string, unknown>) {
     latestMessage: scrubText(entry.last_message),
     startedAt: safeText(entry.started_at),
     updatedAt: safeText(entry.last_event_at),
-    allowedActions: ["refresh", "open_workspace"],
+    allowedActions: ["refresh", "open_workspace", "stop"],
   };
 }
 
@@ -161,7 +162,7 @@ function normalizeRetry(entry: Record<string, unknown>) {
     attempt: typeof entry.attempt === "number" ? entry.attempt : 0,
     dueAt: safeText(entry.due_at),
     latestEvent: "retrying",
-    allowedActions: ["refresh"],
+    allowedActions: ["refresh", "stop"],
   };
 }
 
@@ -196,7 +197,7 @@ function normalizeIssue(body: unknown) {
     logs: normalizeLogs(parsed.logs),
     recentEvents: normalizeRecentEvents(parsed.recent_events),
     retry: parsed.retry ? { attempt: parsed.retry.attempt ?? 0, dueAt: parsed.retry.due_at ?? null } : null,
-    allowedActions: ["refresh", "open_workspace"],
+    allowedActions: ["refresh", "open_workspace", "stop"],
   };
 }
 
@@ -256,7 +257,13 @@ export function createElixirSymphonyProxyRoutes(deps: ElixirSymphonyProxyDeps = 
     if (!parsed.ok) return parsed.response;
     const upstream = await fetchJson(proxyDeps, upstreamUrl(origin, `/api/v1/runs/${encodeURIComponent(parsedRunId.data)}/stop`), { method: "POST" });
     if (!upstream.ok) return c.json(upstream.body, status(upstream.status));
-    return c.json({ stopped: true });
+    try {
+      const body = ElixirStopSchema.parse(upstream.body);
+      return c.json({ stopped: body.stopped ?? true, stoppedAt: body.stopped_at ?? null });
+    } catch (err: unknown) {
+      console.warn("[symphony] Failed to normalize Elixir stop:", err instanceof Error ? err.message : String(err));
+      return c.json(genericProxyError("invalid_response", "Symphony returned an invalid response"), status(502));
+    }
   }));
 
   return app;

@@ -64,6 +64,21 @@ defmodule SymphonyElixirWeb.Presenter do
     end
   end
 
+  @spec stop_payload(String.t(), GenServer.name()) ::
+          {:ok, map()} | {:error, :issue_not_found | :unavailable}
+  def stop_payload(issue_identifier, orchestrator) when is_binary(issue_identifier) do
+    case Orchestrator.stop_issue(orchestrator, issue_identifier) do
+      {:ok, payload} ->
+        {:ok, Map.update!(payload, :stopped_at, &DateTime.to_iso8601/1)}
+
+      {:error, :issue_not_found} ->
+        {:error, :issue_not_found}
+
+      :unavailable ->
+        {:error, :unavailable}
+    end
+  end
+
   defp issue_payload_body(issue_identifier, running, retry) do
     %{
       issue_identifier: issue_identifier,

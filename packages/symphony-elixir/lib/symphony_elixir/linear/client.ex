@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, Linear.Issue}
+  alias SymphonyElixir.{Config, Linear.Bridge, Linear.Issue}
 
   @issue_page_size 50
   @max_pages 200
@@ -165,7 +165,7 @@ defmodule SymphonyElixir.Linear.Client do
   def graphql(query, variables \\ %{}, opts \\ [])
       when is_binary(query) and is_map(variables) and is_list(opts) do
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
-    request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/2)
+    request_fun = Keyword.get(opts, :request_fun) || graphql_request_fun()
 
     with {:ok, headers} <- graphql_headers(),
          {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
@@ -391,12 +391,25 @@ defmodule SymphonyElixir.Linear.Client do
       nil ->
         {:error, :missing_linear_api_token}
 
+      token when token == Bridge.credential() ->
+        {:ok,
+         [
+           {"Content-Type", "application/json"}
+         ]}
+
       token ->
         {:ok,
          [
            {"Authorization", token},
            {"Content-Type", "application/json"}
          ]}
+    end
+  end
+
+  defp graphql_request_fun do
+    case Config.settings!().tracker.api_key do
+      token when token == Bridge.credential() -> &post_matrix_linear_bridge_request/2
+      _ -> &post_graphql_request/2
     end
   end
 
@@ -408,6 +421,59 @@ defmodule SymphonyElixir.Linear.Client do
       receive_timeout: 30_000
     )
   end
+
+  defp post_matrix_linear_bridge_request(payload, _headers) do
+    with {:ok, url} <- matrix_linear_bridge_url(),
+         {:ok, token} <- matrix_linear_bridge_token() do
+      Req.post(url,
+        headers: [
+          {"Authorization", "Bearer " <> token},
+          {"Content-Type", "application/json"}
+        ],
+        json: %{
+          service: "linear",
+          action: "graphql",
+          params: %{
+            query: payload["query"],
+            variables: payload["variables"] || %{}
+          }
+        },
+        connect_options: [timeout: 30_000],
+        receive_timeout: 30_000
+      )
+      |> unwrap_matrix_linear_bridge_response()
+    end
+  end
+
+  defp matrix_linear_bridge_url do
+    with {:ok, base_url} <- required_env("PLATFORM_INTERNAL_URL", :missing_platform_internal_url),
+         {:ok, handle} <- required_env("MATRIX_HANDLE", :missing_matrix_handle) do
+      encoded_handle = URI.encode(handle, &URI.char_unreserved?/1)
+      {:ok, String.trim_trailing(base_url, "/") <> "/internal/containers/" <> encoded_handle <> "/integrations/call"}
+    end
+  end
+
+  defp matrix_linear_bridge_token do
+    required_env("UPGRADE_TOKEN", :missing_upgrade_token)
+  end
+
+  defp required_env(name, reason) do
+    case System.get_env(name) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _ -> {:error, reason}
+    end
+  end
+
+  defp unwrap_matrix_linear_bridge_response({:ok, %{body: %{"data" => data}} = response}) when is_map(data) do
+    {:ok, %{response | body: data}}
+  end
+
+  defp unwrap_matrix_linear_bridge_response({:ok, %{body: %{"error" => _error}}}) do
+    Logger.warning("Matrix Linear bridge returned an error response")
+    {:error, :matrix_linear_bridge_error}
+  end
+
+  defp unwrap_matrix_linear_bridge_response(other), do: other
 
   defp decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
     issues =
