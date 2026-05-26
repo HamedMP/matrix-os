@@ -254,10 +254,15 @@ bun run test                # unit tests
 - **> 3000 additions or > 50 files**: split the PR
 - Split along: gateway, platform, sync-client, shell, docs/deploy
 - For multi-slice features, prefer Graphite stacked PRs over one oversized PR.
-  Follow `docs/dev/stacked-prs.md`: create each layer with `gt create`, update
-  layers with `gt modify`, restack with `gt restack`, and publish with
-  `gt submit --stack` or `gt ss -np`. Do not flatten a stack unless explicitly
-  asked.
+  Follow `docs/dev/stacked-prs.md`: initialize with `gt init`, create each
+  layer with `gt create --all --message "<conventional commit>"`, update
+  layers with `gt modify --all` or `gt modify --commit --all --message`,
+  restack with `gt restack`, sync with `gt sync`, publish with
+  `gt submit --stack` or `gt ss -np`, and open the stack with `gt pr`.
+  Prefer Graphite commands over raw git/gh equivalents for stack operations.
+  If `gt` is missing or unauthenticated, treat that as an environment blocker
+  for stack work instead of silently falling back. Do not flatten a stack unless
+  explicitly asked.
 
 ### PR Body: Mandatory Invariants
 
