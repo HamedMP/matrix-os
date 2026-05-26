@@ -28,6 +28,7 @@ describe("Elixir Symphony proxy routes", () => {
   it("normalizes loopback Elixir state without exposing raw upstream errors", async () => {
     const fetchImpl = vi.fn(async () => json({
       generated_at: "2026-05-25T00:00:00Z",
+      credential_status: "connected",
       counts: { running: 1, retrying: 1 },
       running: [{
         issue_identifier: "MAT-32",
@@ -53,7 +54,7 @@ describe("Elixir Symphony proxy routes", () => {
     }));
     const body = await res.json();
     expect(body).toMatchObject({
-      service: { status: "ready", generatedAt: "2026-05-25T00:00:00Z" },
+      service: { status: "ready", generatedAt: "2026-05-25T00:00:00Z", credentialStatus: "connected" },
       groups: {
         running: [{ issueIdentifier: "MAT-32", sessionId: "thread-1-turn-2", turnCount: 2, latestEvent: "[redacted]", latestMessage: "session completed with [redacted] [redacted]" }],
         needsAttention: [{ issueIdentifier: "MAT-33", attempt: 2 }],
