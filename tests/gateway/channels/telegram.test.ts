@@ -42,14 +42,14 @@ describe("createTelegramAdapter", () => {
 
   it("creates bot with the provided token", async () => {
     const adapter = createTelegramAdapter(factory);
-    await adapter.start({ enabled: true, token: "test-token" });
+    await adapter.start({ enabled: true, token: "test-token", allowFrom: ["123"] });
 
     expect(factory).toHaveBeenCalledWith("test-token", { polling: true });
   });
 
   it("registers message handler on start", async () => {
     const adapter = createTelegramAdapter(factory);
-    await adapter.start({ enabled: true, token: "test-token" });
+    await adapter.start({ enabled: true, token: "test-token", allowFrom: ["123"] });
 
     expect(mockBot.on).toHaveBeenCalledWith("message", expect.any(Function));
   });
@@ -59,7 +59,7 @@ describe("createTelegramAdapter", () => {
     const messages: ChannelMessage[] = [];
     adapter.onMessage = (msg) => messages.push(msg);
 
-    await adapter.start({ enabled: true, token: "test-token" });
+    await adapter.start({ enabled: true, token: "test-token", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       text: "Hello",
@@ -97,7 +97,7 @@ describe("createTelegramAdapter", () => {
     expect(messages).toHaveLength(0);
   });
 
-  it("allows messages when allowFrom is empty (open mode)", async () => {
+  it("drops messages when allowFrom is empty", async () => {
     const adapter = createTelegramAdapter(factory);
     const messages: ChannelMessage[] = [];
     adapter.onMessage = (msg) => messages.push(msg);
@@ -114,12 +114,38 @@ describe("createTelegramAdapter", () => {
       chat: { id: 456 },
     });
 
+    expect(messages).toHaveLength(0);
+  });
+
+  it("treats comma-separated allowFrom strings as exact sender ids", async () => {
+    const adapter = createTelegramAdapter(factory);
+    const messages: ChannelMessage[] = [];
+    adapter.onMessage = (msg) => messages.push(msg);
+
+    await adapter.start({
+      enabled: true,
+      token: "test-token",
+      allowFrom: "123,456" as unknown as string[],
+    });
+
+    mockBot.triggerMessage({
+      text: "No substring auth",
+      from: { id: 23, first_name: "Substring" },
+      chat: { id: 456 },
+    });
+    mockBot.triggerMessage({
+      text: "Exact auth",
+      from: { id: 123, first_name: "Exact" },
+      chat: { id: 456 },
+    });
+
     expect(messages).toHaveLength(1);
+    expect(messages[0]?.senderId).toBe("123");
   });
 
   it("sends reply via bot.sendMessage with MarkdownV2", async () => {
     const adapter = createTelegramAdapter(factory);
-    await adapter.start({ enabled: true, token: "test-token" });
+    await adapter.start({ enabled: true, token: "test-token", allowFrom: ["123"] });
 
     await adapter.send({
       channelId: "telegram",
@@ -134,7 +160,7 @@ describe("createTelegramAdapter", () => {
 
   it("stops polling on stop", async () => {
     const adapter = createTelegramAdapter(factory);
-    await adapter.start({ enabled: true, token: "test-token" });
+    await adapter.start({ enabled: true, token: "test-token", allowFrom: ["123"] });
     await adapter.stop();
 
     expect(mockBot.stopPolling).toHaveBeenCalled();
