@@ -2,6 +2,8 @@
 
 Matrix OS production releases are VPS-native host bundles. R2 stores immutable tarball bytes, and platform Postgres is the source of truth for release metadata and channel pointers. Customer VPSes update by downloading a registered bundle and atomically replacing `/opt/matrix/app`; user data stays in `/home/matrix/home` and local Postgres.
 
+For installable CLI releases, use [CLI Release Process](cli-release.md). CLI versions publish `@finnaai/matrix` and use `cli-v<version>` tags; they are intentionally separate from host-bundle versions.
+
 ## Engineer Summary
 
 - `main` is the source of truth. A push to `main` runs `.github/workflows/host-bundle-release.yml`.
@@ -11,6 +13,7 @@ Matrix OS production releases are VPS-native host bundles. R2 stores immutable t
 - A customer VPS sync agent fetches DB-backed release metadata, verifies SHA-256, extracts to staging, moves the old app to `/opt/matrix/app.rollback`, moves the new app into `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts Matrix services.
 - Host-bundle updates must never overwrite owner data. Do not delete or replace `/home/matrix/home`, `/opt/matrix/env`, or the local Postgres data directory during deploys or rollbacks.
 - `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` and CI/release paths use `pnpm install --frozen-lockfile`; do not bypass either during releases.
+- CLI releases are manual through `.github/workflows/release.yml`; bump `packages/sync-client/package.json`, run the sync-client checks, and dispatch the workflow with the same semver.
 
 ## Version Scheme
 
