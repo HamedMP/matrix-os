@@ -5,6 +5,7 @@ export interface CustomerHostConfig {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   imageVersion: string;
   updateChannel: string;
   hostBundleUrl: string;
