@@ -47,6 +47,25 @@ describe("gateway shell routes", () => {
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
   });
 
+  it("allows digit-leading session names consistently across create and route params", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "1" })),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "1" }),
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ name: "1", created: true });
+    expect(registry.create).toHaveBeenCalledWith({ name: "1" });
+  });
+
   it("deletes sessions with force query support", async () => {
     const registry = {
       list: vi.fn(async () => []),

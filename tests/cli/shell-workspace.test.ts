@@ -26,7 +26,9 @@ describe("shell workspace CLI commands", () => {
   it("registers tab, pane, and layout namespaces", () => {
     expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
       "attach",
+      "connect",
       "layout",
+      "list",
       "ls",
       "new",
       "pane",

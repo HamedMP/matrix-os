@@ -7,12 +7,16 @@ import {
 
 class ControlledWebSocket {
   static last: ControlledWebSocket | null = null;
+  static lastUrl: string | null = null;
+  static lastOptions: unknown = null;
   closed = false;
   listeners = new Map<string, (...args: unknown[]) => void>();
   sent: string[] = [];
 
-  constructor() {
+  constructor(url: string, options?: unknown) {
     ControlledWebSocket.last = this;
+    ControlledWebSocket.lastUrl = url;
+    ControlledWebSocket.lastOptions = options;
   }
 
   send(data: string) {
@@ -93,7 +97,7 @@ describe("shell REST client", () => {
     });
   });
 
-  it("builds authenticated terminal websocket URLs for attach", () => {
+  it("builds terminal websocket URLs without leaking bearer auth by default", () => {
     const client = createShellClient({
       gatewayUrl: "https://gateway.example",
       token: "tok",
@@ -101,6 +105,17 @@ describe("shell REST client", () => {
 
     expect(client.createAttachUrl("main", { fromSeq: 7 })).toBe(
       "wss://gateway.example/ws/terminal?session=main&fromSeq=7",
+    );
+  });
+
+  it("supports explicit terminal websocket query tokens for browser clients", () => {
+    const client = createShellClient({
+      gatewayUrl: "https://gateway.example",
+      token: "bearer-token",
+    });
+
+    expect(client.createAttachUrl("main", { token: "query-token" })).toBe(
+      "wss://gateway.example/ws/terminal?session=main&token=query-token",
     );
   });
 
@@ -143,7 +158,7 @@ describe("shell REST client", () => {
   });
 
   it("clears the attach timeout after the websocket opens", async () => {
-    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 5 });
+    const client = createShellClient({ gatewayUrl: "http://gateway", token: "tok", timeoutMs: 5 });
     const input = new EventEmitter() as NodeJS.ReadStream;
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
@@ -159,6 +174,10 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal?session=main");
+    expect(ControlledWebSocket.lastOptions).toEqual({
+      headers: { Authorization: "Bearer tok" },
+    });
   });
 
   it("queues stdin frames until the websocket is open", async () => {
