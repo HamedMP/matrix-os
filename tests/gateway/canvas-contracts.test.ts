@@ -78,6 +78,39 @@ describe("canvas contracts", () => {
     ).toThrow();
   });
 
+  it("accepts image nodes with safe canvas asset file references", () => {
+    const parsed = CanvasNodeSchema.parse({
+      ...node("node_image", "image"),
+      sourceRef: { kind: "file", id: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png" },
+      metadata: {
+        mimeType: "image/png",
+        sizeBytes: 1024,
+        originalName: "Screenshot.png",
+        width: 1280,
+        height: 720,
+      },
+    });
+
+    expect(parsed.type).toBe("image");
+    expect(parsed.sourceRef?.kind).toBe("file");
+  });
+
+  it("rejects image nodes without a safe file source reference", () => {
+    expect(() =>
+      CanvasNodeSchema.parse({
+        ...node("node_image", "image"),
+        sourceRef: null,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      CanvasNodeSchema.parse({
+        ...node("node_image", "image"),
+        sourceRef: { kind: "file", id: "../system/canvas-assets/cnv_0123456789abcdef/asset.png" },
+      }),
+    ).toThrow();
+  });
+
   it("rejects stale revisions before repository writes", () => {
     expect(ReplaceCanvasRequestSchema.parse({
       baseRevision: 1,

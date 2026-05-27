@@ -155,6 +155,38 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().focusedNodeId).toBe("node_note");
   });
 
+  it("updates and deletes image nodes while keeping canvas coordinates in world units", async () => {
+    useWorkspaceCanvasStore.setState({
+      document: {
+        ...document,
+        nodes: [
+          {
+            id: "node_image",
+            type: "image",
+            position: { x: 100, y: 200 },
+            size: { width: 640, height: 360 },
+            zIndex: 0,
+            displayState: "normal",
+            sourceRef: { kind: "file", id: "system/canvas-assets/cnv_0123456789abcdef/asset.png" },
+            metadata: { originalName: "Screenshot.png" },
+          },
+        ],
+      } as any,
+    });
+
+    await useWorkspaceCanvasStore.getState().updateNode("node_image", {
+      position: { x: 150, y: 225 },
+      size: { width: 800, height: 450 },
+    });
+    expect(useWorkspaceCanvasStore.getState().document?.nodes[0]).toMatchObject({
+      position: { x: 150, y: 225 },
+      size: { width: 800, height: 450 },
+    });
+
+    await useWorkspaceCanvasStore.getState().deleteNode("node_image");
+    expect(useWorkspaceCanvasStore.getState().document?.nodes).toEqual([]);
+  });
+
   it("does not switch back to a stale canvas after a save conflict", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas conflict" }) });

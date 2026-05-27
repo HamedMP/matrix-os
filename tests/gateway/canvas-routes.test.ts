@@ -34,6 +34,13 @@ const service: CanvasRouteService = {
   deleteCanvas: vi.fn().mockResolvedValue({ ok: true }),
   exportCanvas: vi.fn().mockResolvedValue({ canvas: {}, linkedSummaries: {}, exportedAt: "2026-04-27T00:00:00.000Z" }),
   executeAction: vi.fn().mockResolvedValue({ ok: true, result: { kind: "noop" } }),
+  uploadCanvasAsset: vi.fn().mockResolvedValue({
+    assetId: "asset_0123456789abcdef",
+    path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+    mimeType: "image/png",
+    sizeBytes: 8,
+    originalName: "screenshot.png",
+  }),
 };
 
 describe("canvas routes", () => {
@@ -206,5 +213,84 @@ describe("canvas routes", () => {
     expect(broadcastCanvasUpdate).toHaveBeenNthCalledWith(3, "cnv_0123456789abcdef", {
       type: "canvas:deleted",
     });
+  });
+
+  it("uploads a canvas image asset after authentication and canvas validation", async () => {
+    const uploadCanvasAsset = vi.fn().mockResolvedValue({
+      assetId: "asset_0123456789abcdef",
+      path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+      mimeType: "image/png",
+      sizeBytes: 8,
+      originalName: "screenshot.png",
+    });
+    const app = createApp({ ...service, uploadCanvasAsset });
+    const form = new FormData();
+    form.append("file", new Blob([Buffer.from("fake-png")], { type: "image/png" }), "screenshot.png");
+
+    const res = await app.request("/api/canvases/cnv_0123456789abcdef/assets", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+      mimeType: "image/png",
+    });
+    expect(uploadCanvasAsset).toHaveBeenCalledWith("user_a", "cnv_0123456789abcdef", expect.any(File));
+  });
+
+  it("rejects unauthenticated canvas image uploads", async () => {
+    const uploadCanvasAsset = vi.fn();
+    const app = createApp({ ...service, uploadCanvasAsset }, null);
+    const form = new FormData();
+    form.append("file", new Blob([Buffer.from("fake-png")], { type: "image/png" }), "screenshot.png");
+
+    const res = await app.request("/api/canvases/cnv_0123456789abcdef/assets", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(uploadCanvasAsset).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid canvas image upload requests before service calls", async () => {
+    const uploadCanvasAsset = vi.fn();
+    const app = createApp({ ...service, uploadCanvasAsset });
+
+    const missingFile = await app.request("/api/canvases/cnv_0123456789abcdef/assets", {
+      method: "POST",
+      body: new FormData(),
+    });
+    expect(missingFile.status).toBe(400);
+    expect(await missingFile.json()).toEqual({ error: "Invalid request" });
+
+    const badType = new FormData();
+    badType.append("file", new Blob([Buffer.from("<svg/>")], { type: "image/svg+xml" }), "bad.svg");
+    const badTypeRes = await app.request("/api/canvases/cnv_0123456789abcdef/assets", {
+      method: "POST",
+      body: badType,
+    });
+    expect(badTypeRes.status).toBe(400);
+    expect(await badTypeRes.json()).toEqual({ error: "Invalid request" });
+
+    expect(uploadCanvasAsset).not.toHaveBeenCalled();
+  });
+
+  it("applies upload body limits before canvas image upload handling", async () => {
+    const uploadCanvasAsset = vi.fn();
+    const app = createApp({ ...service, uploadCanvasAsset });
+    const form = new FormData();
+    form.append("file", new Blob([Buffer.alloc(11 * 1024 * 1024)], { type: "image/png" }), "large.png");
+
+    const res = await app.request("/api/canvases/cnv_0123456789abcdef/assets", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(res.status).toBe(413);
+    expect(uploadCanvasAsset).not.toHaveBeenCalled();
   });
 });

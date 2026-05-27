@@ -76,6 +76,7 @@ export const CanvasNodeTypeSchema = z.enum([
   "task",
   "file",
   "preview",
+  "image",
   "note",
   "app_window",
   "issue",

@@ -1,5 +1,8 @@
 import { lookup } from "node:dns/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
+import { dirname } from "node:path";
 import { resolveWithinHome } from "../path-security.js";
 import {
   CanvasNodeSchema,
@@ -48,6 +51,14 @@ export interface CanvasSafeError {
   latestRevision?: number;
 }
 
+export interface CanvasAssetUploadResult {
+  assetId: string;
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  originalName: string;
+}
+
 export class CanvasConfigurationError extends Error {
   constructor(message = "Canvas service is not configured") {
     super(message);
@@ -67,6 +78,15 @@ export interface CanvasServiceOptions {
   fetchImpl?: typeof fetch;
   resolvePreviewHost?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 }
+
+const CANVAS_ASSET_FILE_LIMIT = 10 * 1024 * 1024;
+const CANVAS_ASSET_EXTENSIONS = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"],
+  ["image/avif", "avif"],
+]);
 
 export function mapCanvasError(err: unknown): CanvasSafeError {
   if (err instanceof CanvasConflictError) {
@@ -108,6 +128,14 @@ function nodeCounts(record: CanvasRecord) {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function safeOriginalAssetName(name: string, extension: string): string {
+  const fallback = `clipboard-image.${extension}`;
+  if (!name || name.length > 160 || name.includes("/") || name.includes("\\") || name.includes("\0")) {
+    return fallback;
+  }
+  return name;
 }
 
 function baseNode(id: string, type: CanvasNode["type"], x: number, y: number, metadata: Record<string, unknown>, sourceRef: CanvasNode["sourceRef"]): CanvasNode {
@@ -295,6 +323,50 @@ export class CanvasService {
       canvas: record,
       linkedSummaries: this.resolveLinkedState(record),
       exportedAt: nowIso(),
+    };
+  }
+
+  async uploadCanvasAsset(userId: string, canvasId: string, file: File): Promise<CanvasAssetUploadResult> {
+    if (!this.homePath) {
+      throw new CanvasConfigurationError("homePath is required for canvas assets");
+    }
+    const record = await this.repository.get(ownerFromUser(userId), canvasId);
+    if (!record) throw new CanvasNotFoundError(canvasId);
+
+    const extension = CANVAS_ASSET_EXTENSIONS.get(file.type);
+    if (!extension || file.size <= 0 || file.size > CANVAS_ASSET_FILE_LIMIT) {
+      throw new SyntaxError("Invalid request");
+    }
+
+    const assetId = `asset_${randomBytes(12).toString("hex")}`;
+    const relativePath = `system/canvas-assets/${canvasId}/${assetId}.${extension}`;
+    const finalPath = resolveWithinHome(this.homePath, relativePath);
+    if (!finalPath) {
+      throw new CanvasConfigurationError("Invalid canvas asset path");
+    }
+    const tempPath = `${finalPath}.${process.pid}.${Date.now()}.tmp`;
+    await mkdir(dirname(finalPath), { recursive: true });
+
+    try {
+      await writeFile(tempPath, Buffer.from(await file.arrayBuffer()), { flag: "wx" });
+      await rename(tempPath, finalPath);
+    } catch (err: unknown) {
+      try {
+        await unlink(tempPath);
+      } catch (cleanupErr: unknown) {
+        if (!(cleanupErr instanceof Error && (cleanupErr as NodeJS.ErrnoException).code === "ENOENT")) {
+          console.warn("[canvas] Failed to clean up temp asset:", cleanupErr);
+        }
+      }
+      throw err;
+    }
+
+    return {
+      assetId,
+      path: relativePath,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      originalName: safeOriginalAssetName(file.name, extension),
     };
   }
 

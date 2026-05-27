@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { readFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -129,6 +129,32 @@ describe("CanvasService", () => {
       updates: { sourceRef: { kind: "file", id: "projects/app/README.md" } },
     })).rejects.toBeInstanceOf(CanvasConfigurationError);
     expect(repo.patchNode).not.toHaveBeenCalled();
+  });
+
+  it("stores canvas image assets under the owner home after confirming canvas access", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "canvas-home-"));
+    const repo = repository([record()]);
+    const service = new CanvasService(repo, { homePath });
+    const file = new File([Buffer.from("fake-png")], "Screenshot.png", { type: "image/png" });
+
+    const result = await service.uploadCanvasAsset("user_a", "cnv_0123456789abcdef", file);
+
+    expect(repo.get).toHaveBeenCalledWith({ ownerScope: "personal", ownerId: "user_a" }, "cnv_0123456789abcdef");
+    expect(result).toMatchObject({
+      mimeType: "image/png",
+      sizeBytes: 8,
+      originalName: "Screenshot.png",
+    });
+    expect(result.path).toMatch(/^system\/canvas-assets\/cnv_0123456789abcdef\/asset_[a-f0-9]{24}\.png$/);
+    await expect(readFile(join(homePath, result.path), "utf-8")).resolves.toBe("fake-png");
+  });
+
+  it("does not store canvas image assets for inaccessible canvases", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "canvas-home-"));
+    const service = new CanvasService(repository([]), { homePath });
+    const file = new File([Buffer.from("fake-png")], "Screenshot.png", { type: "image/png" });
+
+    await expect(service.uploadCanvasAsset("user_a", "cnv_0123456789abcdef", file)).rejects.toBeInstanceOf(CanvasNotFoundError);
   });
 
   it("marks stale terminal refs recoverable on the main canvas read path", async () => {

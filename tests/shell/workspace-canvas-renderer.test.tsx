@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CanvasRenderer } from "../../shell/src/components/canvas/CanvasRenderer.js";
 import { useWorkspaceCanvasStore } from "../../shell/src/stores/workspace-canvas-store.js";
+import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { WorkspaceCanvas } from "../../shell/src/components/canvas/WorkspaceCanvas.js";
 import { WorkspaceCanvasNode } from "../../shell/src/components/canvas/WorkspaceCanvasNode.js";
 
@@ -15,6 +17,12 @@ vi.mock("../../shell/src/components/terminal/TerminalPane.js", () => ({
 vi.mock("../../shell/src/hooks/useTheme.js", () => ({
   useTheme: () => ({ colors: { background: "#000", foreground: "#fff" } }),
 }));
+
+class ResizeObserverMock {
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
 
 function node(type: any, metadata: Record<string, unknown> = {}) {
   return {
@@ -30,6 +38,66 @@ function node(type: any, metadata: Record<string, unknown> = {}) {
 }
 
 describe("workspace canvas renderer", () => {
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ width: 1600, height: 900, close: vi.fn() }));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/assets")) {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () => Promise.resolve({
+            assetId: "asset_0123456789abcdef",
+            path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+            mimeType: "image/png",
+            sizeBytes: 8,
+            originalName: "screenshot.png",
+          }),
+        });
+      }
+      if (url.includes("/api/canvases/cnv_0123456789abcdef")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ revision: 2, updatedAt: "2026-05-27T00:00:00.000Z" }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ canvases: [] }) });
+    }));
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 1000,
+      height: 800,
+      right: 1000,
+      bottom: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    useCanvasTransform.setState({ zoom: 1, panX: 10, panY: 20, containerRect: { left: 0, top: 0, width: 1000, height: 800 }, isAnimating: false, isScrolling: false });
+    useWorkspaceCanvasStore.setState({
+      summaries: [],
+      activeCanvasId: "cnv_0123456789abcdef",
+      document: {
+        id: "cnv_0123456789abcdef",
+        title: "Global Canvas",
+        revision: 1,
+        schemaVersion: 1,
+        scopeType: "global",
+        scopeRef: null,
+        nodes: [],
+        edges: [],
+        viewStates: [],
+        displayOptions: {},
+      } as any,
+      linkedState: null,
+      selectedNodeId: null,
+      focusedNodeId: null,
+      query: "",
+      filters: [],
+      saveStatus: "idle",
+      error: null,
+    });
+  });
+
   it("renders PR, task, review, finding, terminal, custom, and fallback nodes", () => {
     for (const item of [
       node("pr", { number: 57, owner: "acme", repo: "app" }),
@@ -93,5 +161,76 @@ describe("workspace canvas renderer", () => {
     render(<WorkspaceCanvas />);
 
     expect(screen.getByTestId("mock-tldraw")).toBeTruthy();
+  });
+
+  it("renders image nodes from canvas asset file references", () => {
+    render(
+      <WorkspaceCanvasNode
+        node={{
+          ...node("image", { originalName: "Screenshot.png", width: 1280, height: 720 }),
+          sourceRef: { kind: "file", id: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png" },
+        } as any}
+      />,
+    );
+
+    const image = screen.getByAltText("Screenshot.png") as HTMLImageElement;
+    expect(image.src).toContain("/files/system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png");
+  });
+
+  it("pastes clipboard images into the current viewport center as persisted image nodes", async () => {
+    render(<CanvasRenderer />);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => new File([Buffer.from("fake-png")], "screenshot.png", { type: "image/png" }),
+          },
+        ],
+        files: [],
+      },
+    });
+
+    window.dispatchEvent(event);
+
+    await waitFor(() => {
+      const imageNode = useWorkspaceCanvasStore.getState().document?.nodes.find((item) => item.type === "image");
+      expect(imageNode).toBeTruthy();
+      expect(imageNode?.position).toEqual({ x: 170, y: 200 });
+      expect(imageNode?.size).toEqual({ width: 640, height: 360 });
+      expect(imageNode?.sourceRef).toEqual({
+        kind: "file",
+        id: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+      });
+    });
+  });
+
+  it("does not paste canvas images while an editable element owns focus", async () => {
+    render(
+      <>
+        <textarea aria-label="Editor" />
+        <CanvasRenderer />
+      </>,
+    );
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => new File([Buffer.from("fake-png")], "screenshot.png", { type: "image/png" }),
+          },
+        ],
+        files: [],
+      },
+    });
+
+    fireEvent(screen.getByLabelText("Editor"), event);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useWorkspaceCanvasStore.getState().document?.nodes).toEqual([]);
   });
 });

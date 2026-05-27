@@ -34,6 +34,7 @@ export type WorkspaceCanvasNodeType =
   | "task"
   | "file"
   | "preview"
+  | "image"
   | "note"
   | "app_window"
   | "issue"
@@ -88,6 +89,14 @@ export interface WorkspaceCanvasSummary {
 
 type SaveStatus = "idle" | "saving" | "saved" | "conflict" | "error";
 
+export interface CanvasAssetUpload {
+  assetId: string;
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  originalName: string;
+}
+
 interface WorkspaceCanvasStore {
   summaries: WorkspaceCanvasSummary[];
   activeCanvasId: string | null;
@@ -109,6 +118,9 @@ interface WorkspaceCanvasStore {
   exportCanvas: () => Promise<unknown | null>;
   executeAction: (nodeId: string, type: string, payload?: Record<string, unknown>) => Promise<unknown | null>;
   addNode: (type: WorkspaceCanvasNodeType, metadata?: Record<string, unknown>) => Promise<void>;
+  addImageNode: (asset: CanvasAssetUpload, dimensions: { width: number; height: number }, center: { x: number; y: number }) => Promise<void>;
+  uploadCanvasAsset: (file: File) => Promise<CanvasAssetUpload | null>;
+  deleteNode: (nodeId: string) => Promise<void>;
   addEdge: (fromNodeId: string, toNodeId: string, type?: WorkspaceCanvasEdge["type"]) => Promise<void>;
   setSelectedNode: (nodeId: string | null) => void;
   setFocusedNode: (nodeId: string | null) => void;
@@ -191,6 +203,34 @@ function createNode(type: WorkspaceCanvasNodeType, metadata: Record<string, unkn
 function createEdgeId(index: number): string {
   const entropy = Math.random().toString(36).slice(2, 10);
   return `edge_${Date.now().toString(36)}_${index}_${entropy}`;
+}
+
+function createImageNode(
+  asset: CanvasAssetUpload,
+  dimensions: { width: number; height: number },
+  center: { x: number; y: number },
+  index: number,
+): WorkspaceCanvasNode {
+  const id = `node_image_${Date.now().toString(36)}_${index}`;
+  const now = new Date().toISOString();
+  return {
+    id,
+    type: "image",
+    position: { x: Math.round(center.x - dimensions.width / 2), y: Math.round(center.y - dimensions.height / 2) },
+    size: { width: Math.round(dimensions.width), height: Math.round(dimensions.height) },
+    zIndex: index,
+    displayState: "normal",
+    sourceRef: { kind: "file", id: asset.path },
+    metadata: {
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes,
+      originalName: asset.originalName,
+      width: Math.round(dimensions.width),
+      height: Math.round(dimensions.height),
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) => {
@@ -354,6 +394,61 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
     const nextNode = createNode(type, metadata, document.nodes.length);
     const next = { ...document, nodes: [...document.nodes, nextNode] };
     set({ document: next, selectedNodeId: nextNode.id });
+    get().scheduleSave(next);
+  },
+
+  async addImageNode(asset, dimensions, center) {
+    const document = get().document;
+    if (!document) return;
+    const nextNode = createImageNode(asset, dimensions, center, document.nodes.length);
+    const next = { ...document, nodes: [...document.nodes, nextNode] };
+    set({ document: next, selectedNodeId: nextNode.id });
+    get().scheduleSave(next);
+  },
+
+  async uploadCanvasAsset(file) {
+    const document = get().document;
+    if (!document) return null;
+    const formData = new FormData();
+    formData.append("file", file, file.name || "clipboard-image");
+    try {
+      const response = await fetch(`${getGatewayUrl()}/api/canvases/${encodeURIComponent(document.id)}/assets`, {
+        method: "POST",
+        body: formData,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      let body: unknown = {};
+      try {
+        body = await response.json();
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) {
+          console.warn("[workspace-canvas] Failed to parse asset upload response:", err);
+        }
+      }
+      if (!response.ok) {
+        throw new Error(safeCanvasErrorMessage((body as { error?: unknown }).error));
+      }
+      set({ error: null });
+      return body as CanvasAssetUpload;
+    } catch (err: unknown) {
+      set({ error: err instanceof Error ? err.message : "Canvas request failed" });
+      return null;
+    }
+  },
+
+  async deleteNode(nodeId) {
+    const document = get().document;
+    if (!document) return;
+    const next = {
+      ...document,
+      nodes: document.nodes.filter((node) => node.id !== nodeId),
+      edges: document.edges.filter((edge) => edge.fromNodeId !== nodeId && edge.toNodeId !== nodeId),
+    };
+    set({
+      document: next,
+      selectedNodeId: get().selectedNodeId === nodeId ? null : get().selectedNodeId,
+      focusedNodeId: get().focusedNodeId === nodeId ? null : get().focusedNodeId,
+    });
     get().scheduleSave(next);
   },
 
