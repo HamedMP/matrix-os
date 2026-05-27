@@ -22,6 +22,18 @@ function getPort(): number {
   return nextPort++;
 }
 
+function releaseInsecureDevAuth(): void {
+  insecureDevGatewayCount = Math.max(0, insecureDevGatewayCount - 1);
+  if (insecureDevGatewayCount === 0) {
+    if (previousInsecureDevValue !== undefined) {
+      process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = previousInsecureDevValue;
+    } else {
+      delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+    }
+    previousInsecureDevValue = undefined;
+  }
+}
+
 export interface TestGatewayOptions {
   authToken?: string;
   config?: Record<string, unknown>;
@@ -75,7 +87,20 @@ export async function startTestGateway(
     insecureDevGatewayCount += 1;
   }
 
-  const gateway = await createGateway({ homePath, port, spawnFn: options.spawnFn });
+  let gateway: Awaited<ReturnType<typeof createGateway>>;
+  try {
+    gateway = await createGateway({ homePath, port, spawnFn: options.spawnFn });
+  } catch (error) {
+    if (usesInsecureDevAuth) {
+      releaseInsecureDevAuth();
+    }
+    if (prevToken !== undefined) {
+      process.env.MATRIX_AUTH_TOKEN = prevToken;
+    } else {
+      delete process.env.MATRIX_AUTH_TOKEN;
+    }
+    throw error;
+  }
 
   // Restore env
   if (prevToken !== undefined) {
@@ -95,15 +120,7 @@ export async function startTestGateway(
         await gateway.close();
       } finally {
         if (usesInsecureDevAuth) {
-          insecureDevGatewayCount = Math.max(0, insecureDevGatewayCount - 1);
-          if (insecureDevGatewayCount === 0) {
-            if (previousInsecureDevValue !== undefined) {
-              process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = previousInsecureDevValue;
-            } else {
-              delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
-            }
-            previousInsecureDevValue = undefined;
-          }
+          releaseInsecureDevAuth();
         }
       }
     },

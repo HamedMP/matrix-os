@@ -52,27 +52,13 @@ describe("E2E: Channel status + Message API", () => {
   });
 
   it("POST /api/message dispatches through the gateway", async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    try {
-      const res = await gw.request("/api/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "hello" }),
-        signal: controller.signal,
-      });
-      expect(res.status).toBe(200);
-    } catch (e: unknown) {
-      // AbortError is acceptable - means the request was accepted but SDK is slow to fail
-      if (e instanceof Error && e.name === "AbortError") {
-        expect(true).toBe(true);
-      } else {
-        throw e;
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-  }, 5_000);
+    const res = await gw.request("/api/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello" }),
+    });
+    expect(res.status).toBe(200);
+  });
 
   it("POST /api/message rejects malformed JSON before dispatch", async () => {
     const res = await fetch(`${gw.url}/api/message`, {
@@ -104,54 +90,28 @@ describe("E2E: Channel status + Message API", () => {
   });
 
   it("POST /api/message with sessionId is accepted", async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    try {
-      const res = await gw.request("/api/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: "with session",
-          sessionId: "test-session-456",
-        }),
-        signal: controller.signal,
-      });
-      expect(res.status).toBe(200);
-    } catch (e: unknown) {
-      if (e instanceof Error && e.name === "AbortError") {
-        expect(true).toBe(true);
-      } else {
-        throw e;
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-  }, 5_000);
+    const res = await gw.request("/api/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "with session",
+        sessionId: "test-session-456",
+      }),
+    });
+    expect(res.status).toBe(200);
+  });
 
   it("POST /api/message with from field is accepted", async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    try {
-      const res = await gw.request("/api/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: "from external",
-          from: { handle: "@test:matrix.org", displayName: "Test User" },
-        }),
-        signal: controller.signal,
-      });
-      expect(res.status).toBe(200);
-    } catch (e: unknown) {
-      if (e instanceof Error && e.name === "AbortError") {
-        expect(true).toBe(true);
-      } else {
-        throw e;
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-  }, 5_000);
+    const res = await gw.request("/api/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "from external",
+        from: { handle: "@test:matrix.org", displayName: "Test User" },
+      }),
+    });
+    expect(res.status).toBe(200);
+  });
 
   it("GET /health returns channel status in response", async () => {
     const res = await fetch(`${gw.url}/health`);
