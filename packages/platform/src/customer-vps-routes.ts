@@ -41,6 +41,7 @@ export interface CustomerVpsRoutesDeps {
   probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
   probeMachineRuntime?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<{
     healthy: boolean;
+    runtimeVersion?: string | null;
     probeLatencyMs?: number;
     load1?: number | null;
     cpuCount?: number | null;

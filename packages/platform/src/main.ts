@@ -943,6 +943,7 @@ async function probeCustomerVpsRuntime(
   platformSecret: string,
 ): Promise<{
   healthy: boolean;
+  runtimeVersion?: string | null;
   probeLatencyMs?: number;
   load1?: number | null;
   cpuCount?: number | null;
@@ -970,6 +971,9 @@ async function probeCustomerVpsRuntime(
     if (!res.ok) return { healthy: false, probeLatencyMs };
 
     const info = await res.json() as {
+      release?: {
+        version?: unknown;
+      };
       resources?: {
         cpuCount?: number;
         loadAverage?: unknown;
@@ -983,6 +987,7 @@ async function probeCustomerVpsRuntime(
     const load1 = typeof loadAverage[0] === 'number' ? loadAverage[0] : null;
     return {
       healthy: true,
+      runtimeVersion: typeof info.release?.version === 'string' ? info.release.version : null,
       probeLatencyMs,
       load1,
       cpuCount: typeof info.resources?.cpuCount === 'number' ? info.resources.cpuCount : null,

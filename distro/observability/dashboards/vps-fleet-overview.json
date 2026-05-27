@@ -36,7 +36,7 @@
       "id": 2,
       "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count(matrix_vps_healthy == 1)", "refId": "A" }],
-      "title": "Healthy",
+      "title": "Control Reachable",
       "type": "stat"
     },
     {
@@ -75,8 +75,8 @@
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
       "id": 6,
       "options": { "legend": { "displayMode": "table", "placement": "right" }, "pieType": "pie", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count by (version) (matrix_vps_info)", "legendFormat": "{{version}}", "refId": "A" }],
-      "title": "Version Distribution",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count by (version) (matrix_vps_runtime_info)", "legendFormat": "{{version}}", "refId": "A" }],
+      "title": "Runtime Release Distribution",
       "type": "piechart"
     },
     {
@@ -99,11 +99,11 @@
           }
         ]
       },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
       "id": 7,
       "options": { "showHeader": true, "sortBy": [{ "displayName": "handle" }] },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_info", "format": "table", "instant": true, "refId": "A" }],
-      "title": "VPS Inventory",
+      "title": "Provisioned VPS Inventory",
       "transformations": [
         {
           "id": "organize",
@@ -118,8 +118,27 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 12 },
+      "id": 10,
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "handle" }] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_runtime_info", "format": "table", "instant": true, "refId": "A" }],
+      "title": "Runtime Releases Reported by Reachable VPSes",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Value": true, "__name__": true, "instance": true, "job": true },
+            "indexByName": { "handle": 0, "version": 1 }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": false, "stacking": { "mode": "none" } } }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "id": 8,
       "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_load1{handle=\"$handle\"}", "legendFormat": "$handle", "refId": "A" }],
@@ -129,7 +148,7 @@
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": false, "stacking": { "mode": "none" } }, "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "id": 9,
       "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_probe_latency_seconds{handle=\"$handle\"}", "legendFormat": "$handle", "refId": "A" }],
@@ -164,5 +183,5 @@
   "timezone": "browser",
   "title": "VPS Fleet Overview",
   "uid": "matrix-vps-fleet",
-  "version": 5
+  "version": 6
 }
