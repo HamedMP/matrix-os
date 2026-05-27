@@ -42,7 +42,7 @@ import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
-  getWebSocketUpgradeHost,
+  getSessionRoutedWebSocketHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
   isCodeDomainHost,
@@ -3463,14 +3463,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    const host = getWebSocketUpgradeHost(req.headers.host, req.headers['x-forwarded-host']);
+    const path = req.url ?? '/';
+    const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
 
-    const path = req.url ?? '/';
     const requestRuntimeSlot = readRuntimeSlot(path);
     const wsToken = getWebSocketUpgradeToken(path);
     let identity: AppDomainIdentity | null;
@@ -3590,7 +3590,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         socket.destroy();
         return;
       }
-      const upstreamHostHeader = isCodeDomain ? host : `${runningMachine.handle}.matrix-os.com`;
+      const upstreamHostHeader = isCodeDomain ? host : 'app.matrix-os.com';
       const headers = buildUpgradeHeaders(runningMachine.handle, true);
       const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
       const upstream = createTlsConnection({

@@ -39,6 +39,25 @@ export function isSessionRoutedHost(host: string): boolean {
   return isAppDomainHost(host) || isCodeDomainHost(host);
 }
 
+export function isInternalWebSocketOriginHost(host: string): boolean {
+  return /^(platform|distro-platform-1|matrixos-platform|localhost|127\.0\.0\.1)(?::\d+)?$/i.test(host);
+}
+
+export function getSessionRoutedWebSocketHost(
+  hostHeader: string | string[] | undefined,
+  forwardedHostHeader: string | string[] | undefined,
+  path: string,
+): string {
+  const host = getWebSocketUpgradeHost(hostHeader, forwardedHostHeader);
+  if (isSessionRoutedHost(host)) {
+    return host;
+  }
+  if (isInternalWebSocketOriginHost(host) && getWebSocketUpgradeToken(path)) {
+    return "app.matrix-os.com";
+  }
+  return host;
+}
+
 function parseWebSocketUpgradeUrl(path: string): URL | null {
   try {
     return new URL(path, "http://platform.invalid");
