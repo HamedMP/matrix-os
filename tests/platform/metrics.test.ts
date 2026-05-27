@@ -130,6 +130,7 @@ describe('platform/metrics', () => {
       {
         handle: 'alice',
         healthy: true,
+        runtimeVersion: 'v2026.05.27-133',
         probeLatencyMs: 125,
         load1: 0.42,
         cpuCount: 2,
@@ -142,6 +143,7 @@ describe('platform/metrics', () => {
 
     const output = await metricsRegistry.metrics();
     expect(output).toContain('matrix_vps_healthy{handle="alice"} 1');
+    expect(output).toContain('matrix_vps_runtime_info{handle="alice",version="v2026.05.27-133"} 1');
     expect(output).toContain('matrix_vps_probe_latency_seconds{handle="alice"} 0.125');
     expect(output).toContain('matrix_vps_load1{handle="alice"} 0.42');
     expect(output).toContain('matrix_vps_cpu_count{handle="alice"} 2');
@@ -149,6 +151,19 @@ describe('platform/metrics', () => {
     expect(output).toContain('matrix_vps_memory_free_bytes{handle="alice"} 1073741824');
     expect(output).toContain('matrix_vps_disk_total_bytes{handle="alice"} 42949672960');
     expect(output).toContain('matrix_vps_disk_free_bytes{handle="alice"} 32212254720');
+  });
+
+  it('suppresses runtime release info for unhealthy or unversioned VPS probes', async () => {
+    refreshVpsRuntimeMetrics([
+      { handle: 'alice', healthy: false, runtimeVersion: 'v2026.05.27-133' },
+      { handle: 'bob', healthy: true, runtimeVersion: null },
+    ]);
+
+    const output = await metricsRegistry.metrics();
+    expect(output).toContain('matrix_vps_healthy{handle="alice"} 0');
+    expect(output).toContain('matrix_vps_healthy{handle="bob"} 1');
+    expect(output).not.toContain('matrix_vps_runtime_info{handle="alice"');
+    expect(output).not.toContain('matrix_vps_runtime_info{handle="bob"');
   });
 
   it('refreshes platform user and user-to-VPS link metrics', async () => {
