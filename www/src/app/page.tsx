@@ -432,36 +432,30 @@ export default function LandingPage() {
         <div className="mx-auto max-w-[1100px] px-8">
           <div className="grid gap-10 md:grid-cols-[0.9fr_1.1fr] md:items-center">
             <div>
-              <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>For developers</p>
+              <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>For coding agents</p>
               <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-6" style={{ color: c.forest }}>
-                A compound-engineering workspace for you and your agents.
+                Give your agent the setup file.
               </h2>
-              <p className="text-[15px] leading-[1.9] mb-4" style={{ color: c.mutedFg }}>
-                Matrix is built developer-first. One CLI, one cloud VPS per engineer, shared zellij sessions you and your coding agent both attach to, Linear-driven Symphony orchestration, and a slash-command workflow (plan → work → review → compound) that captures what worked so the next change is easier.
-              </p>
               <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-                Read the <a href="/docs/handbook" className="underline" style={{ color: c.forest }}>engineering handbook</a> for the full workflow, or browse <a href="/skills.md" className="underline" style={{ color: c.forest }}>skills.md</a> if you want your coding agent to set everything up for you.
+                Matrix publishes an agent-readable skill at <code>matrix-os.com/skills.md</code>. Claude, Codex, Cursor, Cline, or another coding agent can read it, install the CLI, help you sign up with <code>matrix login</code>, and start working on your cloud computer with <code>matrix run</code>.
               </p>
             </div>
             <div className="rounded-[16px] p-6 md:p-8" style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
               <pre className="overflow-x-auto text-left text-[12px] leading-[1.8]" style={{ color: c.forest }}>
-                <code>{`# Install + claim your cloud VPS
-npm i -g @finnaai/matrix
-matrix login
+                <code>{`Read https://matrix-os.com/skills.md
 
-# Open a shared zellij session you and your agent both attach to
-matrix shell new setup
-matrix run -it --session setup -- claude
-matrix shell connect setup`}</code>
+npx skills add HamedMP/matrix-os --skill matrix-os
+matrix login
+matrix run -it -- claude`}</code>
               </pre>
               <div className="mt-6 flex flex-wrap gap-3">
-                <a href="/docs/handbook" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-                  style={{ backgroundColor: c.forest, color: c.pageBg }}>
-                  Engineering handbook <ArrowRightIcon className="size-3.5" />
-                </a>
                 <a href="/skills.md" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+                  style={{ backgroundColor: c.forest, color: c.pageBg }}>
+                  Open skills.md <ArrowRightIcon className="size-3.5" />
+                </a>
+                <a href="/docs/guide/developer-workflow" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
                   style={{ border: `1px solid ${c.border}`, color: c.forest }}>
-                  skills.md for agents
+                  Developer workflow
                 </a>
               </div>
             </div>
