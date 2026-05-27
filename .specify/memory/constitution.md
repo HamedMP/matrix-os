@@ -169,6 +169,17 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 - **Coverage target**: 99-100% for kernel and gateway packages. Measure with `vitest --coverage`.
 - **No implementation without a failing test**: If a test can't be written for it, question whether it's needed
 
+### X. Worktree, PR, and Greptile 5/5 (NON-NEGOTIABLE)
+
+Every change to Matrix OS — code, docs, specs, configuration — ships via pull request from a **manual git worktree**. Direct commits to `main` are prohibited.
+
+- **Manual worktree, always**: start with `git worktree add -b <kebab-branch> ../<dir-name> origin/main`. Do all work in the worktree. This is distinct from the banned Agent-tool `isolation: "worktree"` parameter, which discards uncommitted changes; manual worktrees are persistent and safe.
+- **PR required**: open via `gh pr create` with a Conventional Commit title and the mandatory invariants section (source of truth, lock/transaction scope, acceptable orphan states, auth source of truth, deferred scope).
+- **Greptile 5/5 before merge**: every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. No exceptions, including docs-only PRs. The only acceptable bypass is when CI is itself broken in a way that prevents Greptile from running — in which case flag it to the human owner and do not merge.
+- **Constitution re-read every session**: re-read this file at the start of every session and after compaction. The CLAUDE.md / AGENTS.md files point here as the source of truth; do not rely on memory.
+
+This principle exists because PR review discipline plus an automated quality floor (Greptile) is the only scalable way to keep ~317-PR-review-comment defect classes from re-entering the codebase as the team scales. It also makes the same workflow available to every external developer using Matrix OS once we expose it.
+
 ### Other Workflow Rules
 
 - Verify every SDK assumption against actual docs before implementing
@@ -181,7 +192,7 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 2.0.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-04-03
+**Version**: 2.2.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-05-27
 
 ### Amendment Log
 
@@ -201,3 +212,4 @@ This constitution supersedes all other development practices for Matrix OS. Amen
   - **Principle IX** (was VIII): TDD renumbered.
   - **Tech constraints**: AI kernel marked model-agnostic, container-per-user flagged as current implementation (not principle), Postgres selected as the standard persistence layer.
 - **2.1.0** (2026-04-27): Database standard hardened. PostgreSQL via Kysely is the required persistence layer for platform, kernel durable state, per-user, app, social, and control-plane data. SQLite, Drizzle ORM, and better-sqlite3 are no longer accepted for new Matrix OS persistence.
+- **2.2.0** (2026-05-27): Added Principle X — Worktree, PR, and Greptile 5/5 (NON-NEGOTIABLE). Codifies the canonical compound-engineering loop: manual `git worktree` + PR + Greptile 5/5 gate. Constitution must be re-read at the start of every session. Distinguished required manual `git worktree` from the banned Agent-tool `isolation: "worktree"` parameter. Motivated by positioning developers as the first ICP and the need for a scalable review discipline as the team and external developer community grow.
