@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
+  classifyZellijFailure,
   createZellijAdapter,
   sanitizeZellijError,
 } from "../../packages/gateway/src/shell/zellij.js";
@@ -11,6 +12,33 @@ function childProcess() {
     stdout: new EventEmitter(),
     stderr: new EventEmitter(),
   });
+}
+
+function ptyProcess() {
+  const dataListeners = new Set<(data: string) => void>();
+  const exitListeners = new Set<(event: { exitCode: number }) => void>();
+  return {
+    writes: [] as string[],
+    resize: vi.fn(),
+    kill: vi.fn(),
+    write(data: string) {
+      this.writes.push(data);
+    },
+    onData(listener: (data: string) => void) {
+      dataListeners.add(listener);
+      return { dispose: () => dataListeners.delete(listener) };
+    },
+    onExit(listener: (event: { exitCode: number }) => void) {
+      exitListeners.add(listener);
+      return { dispose: () => exitListeners.delete(listener) };
+    },
+    emitData(data: string) {
+      for (const listener of dataListeners) listener(data);
+    },
+    emitExit(exitCode: number) {
+      for (const listener of exitListeners) listener({ exitCode });
+    },
+  };
 }
 
 describe("zellij adapter", () => {
@@ -31,6 +59,16 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("treats zellij's no-active-sessions response as an empty session list", async () => {
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(Object.assign(new Error("zellij exited"), { code: 1 }), "", "NO ACTIVE ZELLIJ SESSIONS FOUND\n");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.listSessions()).resolves.toEqual([]);
+  });
+
   it("sanitizes stderr before surfacing errors", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(new Error("boom"), "", "failed in /home/alice/.ssh with zellij internals");
@@ -44,21 +82,143 @@ describe("zellij adapter", () => {
     });
   });
 
-  it("kills attach processes when the caller aborts", () => {
-    const child = childProcess();
-    const spawn = vi.fn(() => child);
+  it("classifies a missing zellij binary for server diagnostics", async () => {
+    const missing = Object.assign(new Error("spawn zellij ENOENT"), {
+      code: "ENOENT",
+      syscall: "spawn zellij",
+    });
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(missing, "", "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.createSession({ name: "main" })).rejects.toMatchObject({
+      code: "zellij_failed",
+      diagnostic: {
+        binary: "zellij",
+        kind: "binary_not_found",
+      },
+    });
+  });
+
+  it("classifies zellij timeouts without exposing stderr", () => {
+    const timedOut = Object.assign(new Error("Command timed out"), {
+      code: null,
+      killed: true,
+      signal: "SIGTERM",
+    });
+
+    expect(classifyZellijFailure(timedOut, "details from /home/alice/project")).toEqual({
+      binary: "zellij",
+      kind: "timeout",
+      signal: "SIGTERM",
+      stderr: "details from [path]",
+    });
+  });
+
+  it("keeps errno strings separate from process exit codes", () => {
+    const missing = Object.assign(new Error("spawn zellij ENOENT"), {
+      code: "ENOENT",
+    });
+    const failed = Object.assign(new Error("zellij exited"), {
+      code: 1,
+    });
+
+    expect(classifyZellijFailure(missing, "")).toEqual({
+      binary: "zellij",
+      errorCode: "ENOENT",
+      kind: "binary_not_found",
+    });
+    expect(classifyZellijFailure(failed, "")).toEqual({
+      binary: "zellij",
+      exitCode: 1,
+      kind: "process_failed",
+    });
+  });
+
+  it("starts attach through a PTY with a scrubbed zellij environment", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
     const controller = new AbortController();
-    const adapter = createZellijAdapter({ execFile: vi.fn(), spawn, timeoutMs: 25 });
+    const adapter = createZellijAdapter({
+      execFile: vi.fn(),
+      spawnPty,
+      timeoutMs: 25,
+      env: {
+        HOME: "/home/matrix",
+        PATH: "/opt/matrix/bin",
+        TERM: "screen-256color",
+        XDG_RUNTIME_DIR: "/run/user/999",
+        ZELLIJ: "0",
+        ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
+        ZELLIJ_CONFIG_FILE: "/home/matrix/.config/zellij/config.kdl",
+        ZELLIJ_SESSION_NAME: "main",
+        ZELLIJ_PANE_ID: "1",
+        ZELLIJ_SOCKET_DIR: "/run/user/999/zellij",
+        SECRET_TOKEN: "nope",
+      },
+      cwd: "/opt/matrix/app",
+    });
+
+    adapter.attachSession("main", { signal: controller.signal });
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["attach", "main"],
+      expect.objectContaining({
+        cols: 120,
+        rows: 40,
+        name: "xterm-256color",
+        cwd: "/opt/matrix/app",
+        env: expect.objectContaining({
+          HOME: "/home/matrix",
+          PATH: "/opt/matrix/bin",
+          TERM: "xterm-256color",
+          XDG_RUNTIME_DIR: "/run/user/999",
+          ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
+          ZELLIJ_CONFIG_FILE: "/home/matrix/.config/zellij/config.kdl",
+          ZELLIJ_SOCKET_DIR: "/run/user/999/zellij",
+        }),
+      }),
+    );
+    const env = spawnPty.mock.calls[0]?.[2].env;
+    expect(env).not.toHaveProperty("ZELLIJ");
+    expect(env).not.toHaveProperty("ZELLIJ_SESSION_NAME");
+    expect(env).not.toHaveProperty("ZELLIJ_PANE_ID");
+    expect(env).not.toHaveProperty("SECRET_TOKEN");
+  });
+
+  it("kills attach PTYs when the caller aborts", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const controller = new AbortController();
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
 
     adapter.attachSession("main", { signal: controller.signal });
     controller.abort();
 
-    expect(spawn).toHaveBeenCalledWith(
+    expect(pty.kill).toHaveBeenCalled();
+  });
+
+  it("attaches through a PTY so input, output, exit, and resize behave like a real terminal", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
+
+    const attached = adapter.attachSession("setup");
+    attached.write("claude\r");
+    attached.resize(140, 50);
+    pty.emitData("ready");
+    pty.emitExit(0);
+
+    expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "main"],
-      expect.objectContaining({ stdio: "pipe" }),
+      ["attach", "setup"],
+      expect.objectContaining({ name: "xterm-256color", cols: 120, rows: 40 }),
     );
-    expect(child.kill).toHaveBeenCalled();
+    expect(pty.writes).toEqual(["claude\r"]);
+    expect(pty.resize).toHaveBeenCalledWith(140, 50);
   });
 
   it("creates sessions in the requested cwd using headless attach", async () => {

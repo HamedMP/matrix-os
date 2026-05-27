@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export function resolveWithinHome(
   homePath: string,
@@ -13,4 +14,63 @@ export function resolveWithinHome(
   }
 
   return null;
+}
+
+const DENIED_FILE_API_PREFIXES = ["data/browser-profiles"];
+
+export function isDeniedFileApiPath(homePath: string, requestedPath: string): boolean {
+  const resolved = resolveWithinHome(homePath, requestedPath);
+  if (!resolved) return true;
+  const rel = relative(resolve(homePath), resolved).split(sep).join("/");
+  return DENIED_FILE_API_PREFIXES.some((prefix) => rel === prefix || rel.startsWith(`${prefix}/`));
+}
+
+function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
+  return candidateReal === baseReal || candidateReal.startsWith(`${baseReal}${sep}`);
+}
+
+export function resolveExistingFileApiPath(
+  homePath: string,
+  requestedPath: string,
+): string | null {
+  if (isDeniedFileApiPath(homePath, requestedPath)) return null;
+  const resolved = resolveWithinHome(homePath, requestedPath);
+  if (!resolved || !existsSync(resolved)) return null;
+  const entry = lstatSync(resolved);
+  if (entry.isSymbolicLink()) return null;
+  const baseReal = realpathSync(resolve(homePath));
+  const targetReal = realpathSync(resolved);
+  return isWithinRealPath(baseReal, targetReal) ? resolved : null;
+}
+
+export function resolveWritableFileApiPath(
+  homePath: string,
+  requestedPath: string,
+): string | null {
+  if (isDeniedFileApiPath(homePath, requestedPath)) return null;
+  const resolved = resolveWithinHome(homePath, requestedPath);
+  if (!resolved) return null;
+
+  const base = resolve(homePath);
+  const baseReal = realpathSync(base);
+  const rel = relative(base, resolved);
+  const segments = rel.split(sep).filter(Boolean);
+  let current = base;
+  for (const segment of segments.slice(0, -1)) {
+    current = resolve(current, segment);
+    if (!existsSync(current)) break;
+    const stats = lstatSync(current);
+    if (stats.isSymbolicLink()) return null;
+    if (!stats.isDirectory()) return null;
+    if (!isWithinRealPath(baseReal, realpathSync(current))) return null;
+  }
+
+  const parent = dirname(resolved);
+  if (existsSync(parent)) {
+    const parentStats = lstatSync(parent);
+    if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) return null;
+    if (!isWithinRealPath(baseReal, realpathSync(parent))) return null;
+  }
+  if (existsSync(resolved) && lstatSync(resolved).isSymbolicLink()) return null;
+  return resolved;
 }

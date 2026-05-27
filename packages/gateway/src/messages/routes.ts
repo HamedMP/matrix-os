@@ -279,14 +279,17 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
     try {
       const roomId = MatrixRoomIdSchema.parse(c.req.param("roomId"));
       const parsed = ReplyRequestSchema.parse(await c.req.json());
+      const hermesCapabilityHeader = c.req.header("X-Matrix-OS-Hermes-Capability") ?? c.req.header("x-matrix-os-hermes-capability") ?? "";
       let ownerId: string;
       if (parsed.source === "user") {
+        if (hermesCapabilityHeader) {
+          throw new MessagingError("forbidden", "mixed reply authentication mode", 403);
+        }
         ownerId = getOwnerIdOrThrow(deps, c);
       } else {
-        const token = c.req.header("X-Matrix-OS-Hermes-Capability") ?? c.req.header("x-matrix-os-hermes-capability") ?? "";
         const secret = deps.hermesCapabilitySecret;
         const claims = secret ? verifyHermesCapabilityToken({
-          token,
+          token: hermesCapabilityHeader,
           secret,
           roomId,
           scope: HERMES_REPLY_SCOPE,

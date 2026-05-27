@@ -5,7 +5,9 @@ export interface CustomerHostConfig {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   imageVersion: string;
+  updateChannel: string;
   hostBundleUrl: string;
   platformRegisterUrl: string;
   platformInternalUrl: string;
@@ -18,6 +20,10 @@ export interface CustomerHostConfig {
   r2Bucket: string;
   r2Prefix: `matrixos-sync/${string}/`;
   postgresPassword: string;
+  posthogToken: string;
+  posthogProjectToken: string;
+  posthogHost: string;
+  posthogApiHost: string;
 }
 
 const SECRET_KEYS = [

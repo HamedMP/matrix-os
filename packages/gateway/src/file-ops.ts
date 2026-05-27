@@ -9,7 +9,12 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { existsSync } from "node:fs";
-import { resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  resolveExistingFileApiPath,
+  resolveWithinHome,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
 
 type ErrnoException = NodeJS.ErrnoException;
@@ -29,7 +34,7 @@ export async function fileStat(
   requestedPath: string,
 ): Promise<FileStatResult | null> {
   const resolved = resolveWithinHome(homePath, requestedPath);
-  if (!resolved) return null;
+  if (!resolved || isDeniedFileApiPath(homePath, requestedPath)) return null;
 
   try {
     const stats = await fsStat(resolved);
@@ -55,7 +60,7 @@ export async function fileMkdir(
   homePath: string,
   requestedPath: string,
 ): Promise<{ ok: boolean; path?: string; error?: string }> {
-  const resolved = resolveWithinHome(homePath, requestedPath);
+  const resolved = resolveWritableFileApiPath(homePath, requestedPath);
   if (!resolved) return { ok: false, error: "Invalid path" };
 
   try {
@@ -72,7 +77,7 @@ export async function fileTouch(
   requestedPath: string,
   content = "",
 ): Promise<{ ok: boolean; path?: string; error?: string; status?: number }> {
-  const resolved = resolveWithinHome(homePath, requestedPath);
+  const resolved = resolveWritableFileApiPath(homePath, requestedPath);
   if (!resolved) return { ok: false, error: "Invalid path" };
 
   try {
@@ -93,13 +98,17 @@ export async function fileRename(
   from: string,
   to: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
-  const resolvedFrom = resolveWithinHome(homePath, from);
-  const resolvedTo = resolveWithinHome(homePath, to);
-  if (!resolvedFrom || !resolvedTo) return { ok: false, error: "Invalid path" };
+  const lexicalFrom = resolveWithinHome(homePath, from);
+  const resolvedTo = resolveWritableFileApiPath(homePath, to);
+  if (!lexicalFrom || !resolvedTo || isDeniedFileApiPath(homePath, from)) return { ok: false, error: "Invalid path" };
 
-  if (!existsSync(resolvedFrom)) {
+  if (!existsSync(lexicalFrom)) {
     return { ok: false, error: "Source not found", status: 404 };
   }
+
+  const resolvedFrom = resolveExistingFileApiPath(homePath, from);
+  if (!resolvedFrom || !resolvedTo || isDeniedFileApiPath(homePath, from) || isDeniedFileApiPath(homePath, to)) return { ok: false, error: "Invalid path" };
+
   if (existsSync(resolvedTo)) {
     return { ok: false, error: "Destination already exists", status: 409 };
   }
@@ -120,13 +129,17 @@ export async function fileCopy(
   from: string,
   to: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
-  const resolvedFrom = resolveWithinHome(homePath, from);
-  const resolvedTo = resolveWithinHome(homePath, to);
-  if (!resolvedFrom || !resolvedTo) return { ok: false, error: "Invalid path" };
+  const lexicalFrom = resolveWithinHome(homePath, from);
+  const resolvedTo = resolveWritableFileApiPath(homePath, to);
+  if (!lexicalFrom || !resolvedTo || isDeniedFileApiPath(homePath, from)) return { ok: false, error: "Invalid path" };
 
-  if (!existsSync(resolvedFrom)) {
+  if (!existsSync(lexicalFrom)) {
     return { ok: false, error: "Source not found", status: 404 };
   }
+
+  const resolvedFrom = resolveExistingFileApiPath(homePath, from);
+  if (!resolvedFrom || !resolvedTo || isDeniedFileApiPath(homePath, from) || isDeniedFileApiPath(homePath, to)) return { ok: false, error: "Invalid path" };
+
   if (existsSync(resolvedTo)) {
     return { ok: false, error: "Destination already exists", status: 409 };
   }
@@ -146,12 +159,15 @@ export async function fileDuplicate(
   homePath: string,
   requestedPath: string,
 ): Promise<{ ok: boolean; newPath?: string; error?: string; status?: number }> {
-  const resolved = resolveWithinHome(homePath, requestedPath);
-  if (!resolved) return { ok: false, error: "Invalid path" };
+  const lexicalSource = resolveWithinHome(homePath, requestedPath);
+  if (!lexicalSource || isDeniedFileApiPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
-  if (!existsSync(resolved)) {
+  if (!existsSync(lexicalSource)) {
     return { ok: false, error: "Source not found", status: 404 };
   }
+
+  const resolved = resolveExistingFileApiPath(homePath, requestedPath);
+  if (!resolved) return { ok: false, error: "Invalid path" };
 
   const stats = await fsStat(resolved);
   const dir = dirname(requestedPath);
@@ -179,7 +195,8 @@ export async function fileDuplicate(
     if (counter > MAX_COPIES) return { ok: false, error: "Too many copies exist" };
   }
 
-  const resolvedNew = join(dirname(resolved), newName);
+  const resolvedNew = resolveWritableFileApiPath(homePath, join(dir, newName));
+  if (!resolvedNew) return { ok: false, error: "Invalid path" };
   const newPath = relative(homePath, resolvedNew);
 
   try {

@@ -140,13 +140,9 @@ border: 1px solid rgba(214, 211, 200, 0.35);
 
 ## Icons
 
-Load via Iconify CDN — one script tag for every icon set:
+Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-```html
-<script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>
-```
-
-Usage: `<iconify-icon icon="lucide:settings" width="20"></iconify-icon>`
+Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 
 | Purpose          | Set            | Prefix           | Examples                             |
 |------------------|----------------|------------------|--------------------------------------|
@@ -158,9 +154,9 @@ Usage: `<iconify-icon icon="lucide:settings" width="20"></iconify-icon>`
 | Flags            | Circle Flags   | `circle-flags:`  | `circle-flags:se`                    |
 | Decorative       | Fluent Emoji   | `fluent-emoji:`  | `fluent-emoji:waving-hand`           |
 
-Default to `lucide:` for all UI. Only use specialist sets when the context is obvious.
+Default to simple line-style SVGs for all UI. Only use specialist bundled assets when the context is obvious.
 
-**NEVER use text characters as icons.** No `+`, `×`, `→`, `✓`. Always use Iconify — text characters have unpredictable baselines and never center properly.
+**NEVER use text characters as icons.** No `+`, `×`, `→`, `✓`. Use inline SVG or a bundled local asset; text characters have unpredictable baselines and never center properly.
 
 ## Animations
 
@@ -251,7 +247,7 @@ of inventing one-off controls.
 
 ## Common Pitfalls (non-negotiable)
 
-**Never use text characters as icons.** `+`, `×`, `→`, `✓` will never center. Always `<iconify-icon icon="lucide:plus">`.
+**Never use text characters as icons.** `+`, `×`, `→`, `✓` will never center. Use inline SVG or bundled local assets.
 
 **Always center icon buttons with flexbox.** `display:flex; align-items:center; justify-content:center`.
 

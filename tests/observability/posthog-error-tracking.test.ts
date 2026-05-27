@@ -507,11 +507,13 @@ describe("PostHog error tracking", () => {
     }
   });
 
-  it("forwards both server PostHog token aliases to provisioned containers", async () => {
+  it("allows only explicit public PostHog telemetry aliases to provisioned containers", async () => {
     const platformMain = await readFile("packages/platform/src/main.ts", "utf8");
 
+    expect(platformMain).toContain("TENANT_PUBLIC_TELEMETRY_ENV_KEYS");
     expect(platformMain).toContain("'POSTHOG_TOKEN'");
     expect(platformMain).toContain("'POSTHOG_PROJECT_TOKEN'");
+    expect(platformMain).not.toContain("'CLERK_SECRET_KEY'");
   });
 
   it("bakes public PostHog env into full-image compose shell builds", async () => {

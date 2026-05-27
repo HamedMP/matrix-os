@@ -29,7 +29,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__workspace__", "Workspace"],
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
-  ["__chat__", "Chat"],
+  ["__chat__", "Hermes"],
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {

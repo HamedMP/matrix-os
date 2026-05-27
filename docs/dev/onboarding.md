@@ -302,7 +302,8 @@ Never run `docker compose down -v` unless you want to destroy all data.
 
 - [Docker Development Guide](docker-development.md) -- volumes, HMR, troubleshooting, branch isolation
 - [Engineering Practices](engineering-practices.md) -- ticket types, Spec Kit, Graphite, dev VPS, Symphony, review loops
-- [Release Process](releases.md) -- versioning and tagging
+- [Release Process](releases.md) -- host-bundle versioning and tagging
+- [CLI Release Process](cli-release.md) -- npm, Homebrew, and MatrixSync installer releases
 - [Stacked PR Workflow](stacked-prs.md) -- Graphite stacks for multi-slice features
 - [Dev VPS](dev-vps.md) -- shared/personal VPS preview workflow
 - [Matrix Symphony](symphony.md) -- Linear-connected coding-agent runner

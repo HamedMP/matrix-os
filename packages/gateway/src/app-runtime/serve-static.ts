@@ -6,6 +6,17 @@ import { Readable } from "node:stream";
 import { resolveWithinHome } from "../path-security.js";
 
 const MAX_STATIC_ASSET_BYTES = 25 * 1024 * 1024;
+const APP_STATIC_CSP = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'self'",
+].join("; ");
 
 const TEXT_MIME_TYPES: Record<string, string> = {
   html: "text/html",
@@ -90,6 +101,7 @@ function serveFile(
   const headers: Record<string, string> = {
     "Content-Type": contentType,
     ETag: etag,
+    "Content-Security-Policy": APP_STATIC_CSP,
   };
   if (BINARY_MIME_TYPES[ext]) {
     headers["Cache-Control"] = "public, max-age=86400, immutable";

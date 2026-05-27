@@ -9,8 +9,8 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
+import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { WorkspaceApp } from "./workspace/WorkspaceApp";
@@ -40,21 +40,24 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, ExternalLinkIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
-import { OnboardingScreen } from "./OnboardingScreen";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
+import { OnboardingScreen } from "./OnboardingScreen";
+import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
+import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
-import { openAppInStandaloneTab } from "@/lib/open-app-tab";
+import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
+import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
@@ -65,10 +68,74 @@ import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const MATRIX_SHIMMER =
+  "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
 
 function iconUrlForSlug(slug: string | undefined): string | undefined {
   if (!slug) return undefined;
   return `/icons/${encodeURIComponent(slug)}.png`;
+}
+
+function MatrixFirstRunLoading() {
+  return (
+    <div
+      data-onboarding-brand={MATRIX_ONBOARDING_BRAND_VERSION}
+      className="fixed inset-0 z-[70] grid place-items-center overflow-hidden bg-[#fffdf6] px-6 text-[#2f392c]"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(196,162,101,0.14),transparent_31%),linear-gradient(180deg,#fffdf6_0%,#f5efe2_100%)]" />
+      <main className="relative grid w-full max-w-[620px] justify-items-center gap-7 text-center">
+        <div
+          aria-label="Matrix OS logo"
+          className="h-[132px] w-[124px] sm:h-[156px] sm:w-[148px]"
+          style={{
+            WebkitMaskImage: "url('/matrix-logo.svg')",
+            WebkitMaskRepeat: "no-repeat",
+            WebkitMaskSize: "contain",
+            WebkitMaskPosition: "center",
+            maskImage: "url('/matrix-logo.svg')",
+            maskRepeat: "no-repeat",
+            maskSize: "contain",
+            maskPosition: "center",
+            backgroundImage: MATRIX_SHIMMER,
+            backgroundSize: "300% 100%",
+            animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
+          }}
+        />
+        <div className="grid max-w-[520px] gap-3">
+          <h1
+            className="m-0 text-[2.1rem] font-medium uppercase leading-[0.96] sm:text-[3.4rem] lg:text-[4.25rem]"
+            style={{
+              fontFamily: "var(--font-orbitron), var(--font-sans), system-ui, sans-serif",
+              backgroundClip: "text",
+              WebkitBackgroundClip: "text",
+              color: "transparent",
+              backgroundImage: MATRIX_SHIMMER,
+              backgroundSize: "300% 100%",
+              animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
+            }}
+          >
+            Matrix OS
+          </h1>
+          <p className="m-0 text-base leading-7 text-[#2f392c]/65">
+            Checking your workspace and preparing the right Matrix surface.
+          </p>
+        </div>
+        <p className="inline-flex min-h-9 items-center justify-center rounded-full border border-[#2f392c]/10 bg-white/50 px-4 text-[13px] text-[#2f392c]/70 shadow-[0_12px_40px_rgba(47,57,44,0.08)]">
+          Loading Matrix
+        </p>
+      </main>
+    </div>
+  );
+}
+
+async function markOnboardingComplete() {
+  const res = await fetch("/api/settings/onboarding-complete", {
+    method: "POST",
+    signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("onboarding complete request failed");
+  }
 }
 
 // Forgiving app-name lookup used by vocal mode's `open_app` tool and the
@@ -489,29 +556,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   // busy because the popup auto-opens then resists close.
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
-  // Default to true so the dock / chat / canvas don't flash onto screen
-  // during the ~200ms API-key status fetch. If the user HAS a key, the
-  // check resolves quickly and we drop into the normal desktop. If they
-  // don't, they stay on the onboarding screen -- no transition needed.
-  const [showSetup, setShowSetup] = useState(true);
-  const setupChecked = useRef(false);
-
-  useEffect(() => {
-    if (setupChecked.current) return;
-    setupChecked.current = true;
-    fetch(`${GATEWAY_URL}/api/settings/onboarding-status`, {
-      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => r.json())
-      .then((data: { complete: boolean }) => {
-        if (data.complete) setShowSetup(false);
-      })
-      .catch((err: unknown) => {
-        console.warn("[desktop] failed to check setup status:", err instanceof Error ? err.message : String(err));
-        // Fetch failure: stay on onboarding (safer than exposing a half-
-        // configured desktop).
-      });
-  }, []);
+  const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
+  const [showOnboarding, setShowOnboarding] = useState(true);
+  const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
@@ -534,6 +581,57 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       for (const timer of timers.values()) clearTimeout(timer);
     };
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const timeout = window.setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
+    void fetch("/api/settings/onboarding-status", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("onboarding status unavailable");
+        return await res.json() as { complete?: unknown };
+      })
+      .then((status) => {
+        if (!cancelled) {
+          setShowOnboarding(status.complete !== true);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn("[desktop] first-run status check failed:", err);
+        }
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (!cancelled) {
+          setFirstRunStatus("ready");
+        }
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, []);
+
+  const onboardingActive = firstRunStatus === "ready" && showOnboarding;
+  const completeOnboarding = useCallback(() => {
+    setShowOnboarding(false);
+    void markOnboardingComplete().catch((err: unknown) => {
+      console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
+    });
+    void saveDesktopConfig({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock,
+      pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
+      dockOrder,
+    }).catch((err: unknown) => {
+      console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
+    });
+  }, [dock, dockOrder, pinnedApps]);
 
   const animateMinimize = useCallback((id: string) => {
     if (minimizeTimers.current.has(id)) return;
@@ -742,6 +840,41 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
+  const openSetupTerminal = useCallback((launchPath: string) => {
+    const windows = useWindowManager.getState().windows;
+    const focusedId = useWindowManager.getState().focusedWindowId;
+    const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
+    const setupTerminal = windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH);
+    const existingTerminal = focusedTerminal ?? setupTerminal ?? windows
+      .filter((w) => w.path.startsWith("__terminal__"))
+      .sort((a, b) => b.zIndex - a.zIndex)[0];
+    if (existingTerminal) {
+      wmRestoreAndFocusWindow(existingTerminal.id);
+    } else {
+      wmOpenWindow("Terminal", TERMINAL_SETUP_WINDOW_PATH, dockXOffset);
+    }
+    const resolveTargetTerminal = () => (
+      existingTerminal
+        ? useWindowManager.getState().getWindow(existingTerminal.id)
+        : useWindowManager.getState().windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH)
+    );
+
+    requestAnimationFrame(() => {
+      const win = resolveTargetTerminal();
+      if (useDesktopMode.getState().mode === "canvas") {
+        if (win) {
+          const cRect = useCanvasTransform.getState().containerRect;
+          useCanvasTransform.getState().focusOnWindow(
+            win,
+            cRect?.width ?? window.innerWidth,
+            cRect?.height ?? window.innerHeight,
+          );
+        }
+      }
+      enqueueTerminalLaunch(launchPath, win?.id);
+    });
+  }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
+
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses
   // (or opens) the best match. Returns the result so the caller can
@@ -799,7 +932,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       addApp("Terminal", "__terminal__", "terminal");
       addApp("Workspace", "__workspace__", "code");
       addApp("Files", "__file-browser__", "folder");
-      addApp("Chat", "__chat__", "chat");
+      addApp("Hermes", "__chat__", "chat");
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -1002,6 +1135,26 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const hydrated = useDesktopMode((s) => s._hydrated);
   const modeConfig = getModeConfig(hydrated ? desktopMode : "canvas");
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
+
+  const openManualSetup = useCallback(() => {
+    setShowOnboarding(false);
+    setManualSetupVisible(true);
+    setDesktopMode("canvas");
+    setTaskBoardOpen(false);
+    setSettingsOpen(false);
+    setChatOpen(false);
+    void markOnboardingComplete().catch((err: unknown) => {
+      console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
+    });
+    void saveDesktopConfig({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock,
+      pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
+      dockOrder,
+    }).catch((err: unknown) => {
+      console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
+    });
+  }, [dock, dockOrder, pinnedApps, setDesktopMode]);
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
@@ -1263,37 +1416,37 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
+  if (firstRunStatus === "checking") {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <RuntimeIdentityBanner />
+        <MatrixFirstRunLoading />
+      </TooltipProvider>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
-      {!showSetup && (
+      <RuntimeIdentityBanner />
+      {onboardingActive ? (
+        <OnboardingScreen
+          onComplete={completeOnboarding}
+          onOpenManualSetup={openManualSetup}
+        />
+      ) : null}
+      {onboardingActive ? null : (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
           {desktopMode === "canvas" ? (
-            <CanvasToolbar />
+            <CanvasToolbar
+              guideVisible={manualSetupVisible}
+              onOpenGuide={() => setManualSetupVisible(true)}
+            />
           ) : null}
         </MenuBar>
       )}
-      {showSetup && (
-        <OnboardingScreen
-          onComplete={() => {
-            // Whether the user finished onboarding or skipped it, land them
-            // on the moraine-lake wallpaper. Best-effort persist to the
-            // gateway; the local default already matches so the visual is
-            // correct even if the gateway is unreachable.
-            saveDesktopConfig({
-              background: { type: "wallpaper", name: "moraine-lake.jpg" },
-              dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-              pinnedApps: [...DEFAULT_PINNED_APPS],
-            }).catch((err: unknown) => {
-              console.warn("[desktop] failed to persist onboarding completion desktop config:", err instanceof Error ? err.message : String(err));
-            });
-            setShowSetup(false);
-          }}
-          onOpenTerminal={() => openWindow("Terminal", "__terminal__")}
-        />
-      )}
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
-        {/* Desktop dock -- hidden in ambient/conversational modes and during setup */}
-        {modeConfig.showDock && !showSetup && <div
+        {/* Desktop dock -- hidden in ambient/conversational modes and during onboarding. */}
+        {modeConfig.showDock && !onboardingActive && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",
@@ -1512,7 +1665,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                           : "bg-card border-border/60"
                       }`}
                       style={{ width: dock.iconSize, height: dock.iconSize }}
-                      aria-label={chatOpen ? "Close chat" : "Open chat"}
+                      aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
                     >
                       <MessageSquareIcon className="size-4" />
                       {chat?.busy && (
@@ -1523,7 +1676,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                       )}
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>Chat</TooltipContent>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
                 <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
                 <Tooltip>
@@ -1576,7 +1729,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         </div>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && (
+        {modeConfig.showDock && !onboardingActive && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               data-testid="dock-chat-mobile"
@@ -1586,7 +1739,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   ? "bg-primary text-primary-foreground border-primary"
                   : "bg-card border-border/60"
               }`}
-              aria-label={chatOpen ? "Close chat" : "Open chat"}
+              aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
             >
               <MessageSquareIcon className="size-4" />
               {chat?.busy && (
@@ -1679,9 +1832,23 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             </div>
           )}
 
-          {modeConfig.showWindows && desktopMode === "canvas" && !showSetup && <CanvasRenderer />}
+          {!onboardingActive && modeConfig.showWindows && desktopMode === "canvas" && (
+            <CanvasRenderer>
+              {manualSetupVisible && (
+                <ManualSetupStickers
+                  onOpenTerminal={openSetupTerminal}
+                  onAskHermes={() => {
+                    focusOrOpen("Hermes", "__chat__");
+                    setTaskBoardOpen(false);
+                    setSettingsOpen(false);
+                  }}
+                  onClose={() => setManualSetupVisible(false)}
+                />
+              )}
+            </CanvasRenderer>
+          )}
 
-          {vocalMounted && !showSetup && (
+          {!onboardingActive && vocalMounted && (
             <VocalPanel
               active={vocalActive}
               chat={chat}
@@ -1777,21 +1944,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                     {win.title}
                   </CardTitle>
                   <div className="w-[78px] flex items-center justify-end gap-1">
-                    {!win.path.startsWith("__") && (
-                      <button
-                        type="button"
-                        className="size-7 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openAppInStandaloneTab(win.path);
-                        }}
-                        aria-label="Open in new tab"
-                        title="Open in new tab"
-                      >
-                        <ExternalLinkIcon className="size-3.5" />
-                      </button>
-                    )}
                     <AIButton
                       appName={win.title}
                       appPath={win.path}
@@ -1802,7 +1954,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
-                    <TerminalApp />
+                    <TerminalApp
+                      launchTargetId={win.id}
+                    />
                   ) : win.path === "__workspace__" ? (
                     <WorkspaceApp />
                   ) : win.path === "__file-browser__" ? (

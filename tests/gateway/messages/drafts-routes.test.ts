@@ -36,7 +36,7 @@ describe("messaging draft and reply routes", () => {
       status: "approval_required",
     });
     const repository = createRepositoryMock({ createReplyAfterPermissionCheck });
-    const app = createMessagingTestApp(repository, null, { hermesCapabilitySecret: "test-secret" });
+    const app = createMessagingTestApp(repository, ownerId, { hermesCapabilitySecret: "test-secret" });
     const replyPath = `/api/messages/conversations/${encodeURIComponent(roomId)}/reply`;
 
     const rejected = await app.request(replyPath, {
@@ -73,6 +73,33 @@ describe("messaging draft and reply routes", () => {
       body: JSON.stringify({ source: "hermes", body: "I can make that time.", mode: "draft_if_not_allowed" }),
     });
     expect(replayed.status).toBe(403);
+  });
+
+  it("does not let Hermes capability headers downgrade to user-authenticated replies", async () => {
+    const createReplyAfterPermissionCheck = vi.fn().mockResolvedValue({
+      replyId,
+      status: "approval_required",
+    });
+    const repository = createRepositoryMock({ createReplyAfterPermissionCheck });
+    const app = createMessagingTestApp(repository, ownerId, { hermesCapabilitySecret: "test-secret" });
+    const token = createHermesCapabilityToken({
+      secret: "test-secret",
+      ownerId,
+      roomId,
+      scope: "messages.reply.request",
+    });
+
+    const res = await app.request(`/api/messages/conversations/${encodeURIComponent(roomId)}/reply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Matrix-OS-Hermes-Capability": token,
+      },
+      body: JSON.stringify({ source: "user", body: "I should not be accepted.", mode: "draft_if_not_allowed" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(createReplyAfterPermissionCheck).not.toHaveBeenCalled();
   });
 
   it("lists, approves, and cancels pending drafts owner-scoped", async () => {

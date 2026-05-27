@@ -6,10 +6,15 @@ import {
   writeFile,
   rm,
 } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  resolveExistingFileApiPath,
+  resolveWithinHome,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
 
 interface TrashManifestEntry {
   name: string;
@@ -72,17 +77,20 @@ export async function fileDelete(
   homePath: string,
   requestedPath: string,
 ): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
-  const resolved = resolveWithinHome(homePath, requestedPath);
-  if (!resolved) return { ok: false, error: "Invalid path" };
+  const lexicalPath = resolveWithinHome(homePath, requestedPath);
+  if (!lexicalPath || isDeniedFileApiPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
   const normalized = requestedPath.replace(/^\/+/, "");
   if (PROTECTED_PATHS.has(normalized) || [...PROTECTED_PATHS].some((p) => normalized.startsWith(p + "/"))) {
     return { ok: false, error: "Protected path cannot be deleted", status: 403 };
   }
 
-  if (!existsSync(resolved)) {
+  if (!existsSync(lexicalPath)) {
     return { ok: false, error: "Not found", status: 404 };
   }
+
+  const resolved = resolveExistingFileApiPath(homePath, requestedPath);
+  if (!resolved) return { ok: false, error: "Invalid path" };
 
   const trashDir = join(homePath, ".trash");
 
@@ -166,10 +174,14 @@ export async function trashRestore(
 
     const entry = manifest[entryIndex];
     const normalizedRestore = entry.originalPath.replace(/^\/+/, "");
-    if (PROTECTED_PATHS.has(normalizedRestore) || [...PROTECTED_PATHS].some((p) => normalizedRestore.startsWith(p + "/"))) {
+    if (
+      isDeniedFileApiPath(homePath, entry.originalPath) ||
+      PROTECTED_PATHS.has(normalizedRestore) ||
+      [...PROTECTED_PATHS].some((p) => normalizedRestore.startsWith(p + "/"))
+    ) {
       return { ok: false, error: "Cannot restore to a protected path", status: 403 };
     }
-    const resolvedRestore = resolveWithinHome(homePath, entry.originalPath);
+    const resolvedRestore = resolveWritableFileApiPath(homePath, entry.originalPath);
     if (!resolvedRestore) {
       return { ok: false, error: "Invalid restore path" };
     }
@@ -180,7 +192,7 @@ export async function trashRestore(
     }
 
     // Ensure parent directory exists
-    const parentDir = join(restorePath, "..");
+    const parentDir = dirname(restorePath);
     await mkdir(parentDir, { recursive: true });
 
     await rename(resolvedTrash, restorePath);

@@ -30,6 +30,7 @@ function mockPlatformDb(rows: { container?: unknown; machine?: unknown }): Platf
         const builder = {
           selectAll: () => builder,
           where: () => builder,
+          orderBy: () => builder,
           executeTakeFirst: async () => (table === "containers" ? rows.container : rows.machine),
         };
         return builder;

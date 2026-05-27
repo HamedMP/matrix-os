@@ -9,10 +9,19 @@ fi
 snapshot_dir="/var/lib/matrix/db/snapshots"
 mkdir -p "$snapshot_dir"
 
+runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
+case "$runtime_slot" in
+  ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-db-backup: invalid runtime slot" >&2; exit 1 ;;
+esac
+
 ts="$(date -u +%Y-%m-%dT%H%MZ)"
 snapshot_name="${ts}.dump"
 snapshot_path="${snapshot_dir}/${snapshot_name}"
-snapshot_key="system/db/snapshots/${snapshot_name}"
+if [ "$runtime_slot" = "primary" ]; then
+  snapshot_key="system/db/snapshots/${snapshot_name}"
+else
+  snapshot_key="system/runtime-slots/${runtime_slot}/db/snapshots/${snapshot_name}"
+fi
 
 export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
 

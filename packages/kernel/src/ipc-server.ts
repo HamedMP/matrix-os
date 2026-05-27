@@ -35,6 +35,32 @@ import {
 } from "./tools/integrations.js";
 const execAsync = promisify(execFile);
 
+const SAFE_GIT_REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const SAFE_SCP_LIKE_GIT_REMOTE_URL =
+  /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+(?:\.git)?$/;
+
+export function isSafeGitRemoteName(remoteName: string): boolean {
+  return SAFE_GIT_REMOTE_NAME.test(remoteName);
+}
+
+export function isSafeGitRemoteUrl(remoteUrl: string): boolean {
+  if (remoteUrl === "" || remoteUrl.startsWith("-") || /[\0\r\n]/.test(remoteUrl)) {
+    return false;
+  }
+  if (SAFE_SCP_LIKE_GIT_REMOTE_URL.test(remoteUrl)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(remoteUrl);
+    return parsed.protocol === "https:" || parsed.protocol === "ssh:";
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("[ipc] Failed to parse git remote URL:", err instanceof Error ? err.message : String(err));
+    }
+    return false;
+  }
+}
+
 export async function createIpcServer(db: MatrixDB, homePath?: string) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   return createSdkMcpServer({
@@ -304,6 +330,13 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
             const { stdout } = await execAsync("git", args, { cwd: homePath! });
             return stdout.trim();
           }
+          function readSafeRemoteName(): string | null {
+            const remote = remote_name ?? "origin";
+            if (!isSafeGitRemoteName(remote)) {
+              return null;
+            }
+            return remote;
+          }
           try {
             switch (action) {
               case "status": {
@@ -328,29 +361,44 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
                 return { content: [{ type: "text" as const, text: `Committed: ${message ?? "sync"}` }] };
               }
               case "push": {
-                const remote = remote_name ?? "origin";
+                const remote = readSafeRemoteName();
+                if (!remote) {
+                  return { content: [{ type: "text" as const, text: "Invalid git remote name" }] };
+                }
                 const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
-                await git("push", "-u", remote, branch);
+                await git("push", "-u", "--", remote, branch);
                 return { content: [{ type: "text" as const, text: `Pushed to ${remote}/${branch}` }] };
               }
               case "pull": {
-                const remote = remote_name ?? "origin";
+                const remote = readSafeRemoteName();
+                if (!remote) {
+                  return { content: [{ type: "text" as const, text: "Invalid git remote name" }] };
+                }
                 const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
-                await git("pull", remote, branch);
+                await git("pull", "--", remote, branch);
                 return { content: [{ type: "text" as const, text: `Pulled from ${remote}/${branch}` }] };
               }
               case "add_remote": {
                 if (!remote_name || !remote_url) {
                   return { content: [{ type: "text" as const, text: "add_remote requires remote_name and remote_url" }] };
                 }
-                await git("remote", "add", remote_name, remote_url);
+                if (!isSafeGitRemoteName(remote_name)) {
+                  return { content: [{ type: "text" as const, text: "Invalid git remote name" }] };
+                }
+                if (!isSafeGitRemoteUrl(remote_url)) {
+                  return { content: [{ type: "text" as const, text: "Invalid git remote URL" }] };
+                }
+                await git("remote", "add", "--", remote_name, remote_url);
                 return { content: [{ type: "text" as const, text: `Added remote: ${remote_name} -> ${remote_url}` }] };
               }
               case "remove_remote": {
                 if (!remote_name) {
                   return { content: [{ type: "text" as const, text: "remove_remote requires remote_name" }] };
                 }
-                await git("remote", "remove", remote_name);
+                if (!isSafeGitRemoteName(remote_name)) {
+                  return { content: [{ type: "text" as const, text: "Invalid git remote name" }] };
+                }
+                await git("remote", "remove", "--", remote_name);
                 return { content: [{ type: "text" as const, text: `Removed remote: ${remote_name}` }] };
               }
             }

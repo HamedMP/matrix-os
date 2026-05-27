@@ -23,7 +23,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -65,10 +65,36 @@ jobs:
             ./scripts/review/check-patterns.sh --diff "$BEFORE"
           fi
 
+  sync-client:
+    name: Sync Client Package
+    needs: [typecheck, patterns]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build sync client
+        run: pnpm --filter @finnaai/matrix build
+
+      - name: Test sync client
+        run: pnpm --filter @finnaai/matrix test
+
+      - name: Verify publish shape
+        run: pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
+
   # ── Gate 2: Tests ──
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
-    needs: [typecheck, patterns]
+    needs: [typecheck, patterns, sync-client]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -80,7 +106,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -106,7 +132,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:

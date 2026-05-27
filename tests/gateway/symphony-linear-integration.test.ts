@@ -3,8 +3,10 @@ import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import { encodeLinearIntegrationCredential } from "../../packages/gateway/src/symphony/credential-store.js";
 import {
+  createInternalProxyLinearGraphql,
   createIntegrationAwareLinearGraphql,
   hasConnectedLinearIntegration,
+  hasConnectedLinearIntegrationViaInternalProxy,
 } from "../../packages/gateway/src/symphony/linear-integration.js";
 
 const linearConnection = {
@@ -89,5 +91,65 @@ describe("Symphony Linear integration transport", () => {
       timeoutMs: 10_000,
     })).rejects.toThrow("linear_integration_unavailable");
     expect(db.touchServiceUsage).not.toHaveBeenCalled();
+  });
+
+  it("detects connected Linear through the customer VPS integration proxy", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+      { service: "gmail" },
+      { service: "linear" },
+    ]), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await expect(hasConnectedLinearIntegrationViaInternalProxy({
+      baseUrl: "https://platform.example/internal/containers/alice/integrations",
+      token: "upgrade-token",
+      fetch: fetchMock as unknown as typeof fetch,
+    })).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://platform.example/internal/containers/alice/integrations",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.any(Headers),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("executes integration credentials through the customer VPS integration proxy", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: { data: { viewer: { id: "viewer_1" } } },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const transport = createInternalProxyLinearGraphql({
+      baseUrl: "https://platform.example/internal/containers/alice/integrations",
+      token: "upgrade-token",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await transport({
+      credential: encodeLinearIntegrationCredential("user_123"),
+      query: "query Test($first: Int!) { viewer { id } }",
+      variables: { first: 1 },
+      endpoint: "https://api.linear.app/graphql",
+      fetch: vi.fn() as unknown as typeof fetch,
+      timeoutMs: 10_000,
+    });
+
+    expect(result).toEqual({ data: { viewer: { id: "viewer_1" } } });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://platform.example/internal/containers/alice/integrations/call",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.any(Headers),
+        body: JSON.stringify({
+          service: "linear",
+          action: "graphql",
+          params: {
+            query: "query Test($first: Int!) { viewer { id } }",
+            variables: { first: 1 },
+          },
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 });

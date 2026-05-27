@@ -46,11 +46,29 @@ function createTestApp() {
 }
 
 describe("T133: Auth token middleware", () => {
-  it("allows all requests when no token configured", async () => {
+  it("rejects protected requests when no token is configured", async () => {
     const mw = authMiddleware(undefined);
     let nextCalled = false;
-    await mw(mockContext("/api/message"), async () => { nextCalled = true; });
-    expect(nextCalled).toBe(true);
+    const result = await mw(mockContext("/api/message"), async () => { nextCalled = true; });
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
+  it("allows explicit local insecure mode when no token is configured", async () => {
+    const original = process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+    process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = "1";
+    const mw = authMiddleware(undefined);
+    let nextCalled = false;
+    try {
+      await mw(mockContext("/api/message"), async () => { nextCalled = true; });
+      expect(nextCalled).toBe(true);
+    } finally {
+      if (original === undefined) {
+        delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+      } else {
+        process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = original;
+      }
+    }
   });
 
   it("allows health endpoint without token", async () => {

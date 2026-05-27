@@ -32,7 +32,7 @@ function isPrivateIpv4(ip: string): boolean {
 }
 
 function isPrivateIpv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
 
   if (lower === "::1") return true;
   if (lower.startsWith("fe80:") || lower.startsWith("fe80::")) return true;
@@ -50,8 +50,9 @@ function isPrivateIpv6(ip: string): boolean {
 }
 
 export function isPrivateIp(ip: string): boolean {
-  if (ip.includes(":")) return isPrivateIpv6(ip);
-  return isPrivateIpv4(ip);
+  const normalized = ip.replace(/^\[|\]$/g, "");
+  if (normalized.includes(":")) return isPrivateIpv6(normalized);
+  return isPrivateIpv4(normalized);
 }
 
 const BLOCKED_HOSTNAMES = [

@@ -10,10 +10,6 @@ vi.mock("@/components/ui/button", () => ({
   Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
 }));
 
-vi.mock("@/components/ui/input", () => ({
-  Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
-}));
-
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, className }: { children: React.ReactNode; className?: string }) => <span className={className}>{children}</span>,
 }));
@@ -25,130 +21,72 @@ function json(body: unknown, init?: ResponseInit): Response {
   });
 }
 
+function symphonyState() {
+  return {
+    service: { status: "ready", credentialStatus: "connected", generatedAt: "2026-05-25T00:00:00Z" },
+    groups: {
+      queue: [{ issueIdentifier: "MAT-31", status: "queued", latestEvent: "Queued" }],
+      running: [{ issueIdentifier: "MAT-32", status: "running", sessionId: "thread-1-turn-2", turnCount: 2, latestEvent: "session_started" }],
+      needsAttention: [{ issueIdentifier: "MAT-33", status: "needs_attention", attempt: 2, latestEvent: "retrying" }],
+      done: [{ issueIdentifier: "MAT-34", status: "done", latestEvent: "handoff" }],
+    },
+  };
+}
+
 describe("Symphony app", () => {
   let calls: Array<{ url: string; init?: RequestInit }> = [];
-  let eventListeners: Record<string, Array<() => void>> = {};
 
   beforeEach(() => {
     calls = [];
-    eventListeners = {};
     vi.stubGlobal("open", vi.fn());
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, init });
-      if (url === "/api/symphony/status") {
+      if (url === "/api/symphony/state") {
+        return json(symphonyState());
+      }
+      if (url === "/api/symphony/issues/MAT-32") {
         return json({
-          running: false,
-          installationId: "sym_user_123",
-          credentialConfigured: false,
-          pollIntervalMs: 30000,
-          maxConcurrentAgents: 3,
-          counts: { queued: 1, running: 1, needsAttention: 1, handoff: 1 },
-          lastPollAt: null,
+          issueIdentifier: "MAT-32",
+          issueId: "issue_32",
+          status: "running",
+          sessionId: "thread-1-turn-2",
+          turnCount: 2,
+          latestEvent: "session_started",
+          latestMessage: "Agent session started",
+          workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32",
+          workpadUrl: "https://linear.app/acme/issue/MAT-32#comment",
+          logs: { codexSessionLogs: ["session started", "tool call"] },
+          recentEvents: [{ event: "session_started", message: "Agent session started" }],
+          retry: null,
+          allowedActions: ["refresh", "open_workspace", "stop"],
         });
       }
-      if (url === "/api/symphony/config") {
+      if (url === "/api/symphony/issues/MAT-33") {
         return json({
-          installation: {
-            projectSlug: "matrix-os",
-            enabled: false,
-            credentialConfigured: false,
-            pollIntervalMs: 120000,
-            maxConcurrentAgents: 3,
-            defaultAgent: "codex",
-            authorizedOperators: ["user_456"],
-          },
-          rule: {
-            teamId: "team_1",
-            teamKey: "MAT",
-            projectId: "linear_project_1",
-            projectSlug: "matrix-os",
-            requiredLabels: ["symphony"],
-            activeStates: ["Todo"],
-            terminalStates: ["Done"],
-            assigneeIds: ["linear_user"],
-          },
+          issueIdentifier: "MAT-33",
+          issueId: "issue_33",
+          status: "needs_attention",
+          sessionId: null,
+          turnCount: 0,
+          latestEvent: "retrying",
+          latestMessage: "Retry detail",
+          workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-33",
+          workpadUrl: null,
+          logs: { codexSessionLogs: ["retry detail"] },
+          recentEvents: [{ event: "retrying", message: "Retry detail" }],
+          retry: { attempt: 2, dueAt: null },
+          allowedActions: ["refresh", "open_workspace"],
         });
       }
-      if (url === "/api/symphony/runs") {
-        return json({
-          runs: [
-            {
-              id: "run_1",
-              status: "running",
-              ticketIdentifier: "MAT-1",
-              ticketTitle: "Build Symphony",
-              ticketUrl: "https://linear.app/acme/issue/MAT-1",
-              agent: "codex",
-              projectSlug: "matrix-os",
-              worktreeId: "wt_abc123def456",
-              sessionId: "sess_run_1",
-              lastEvent: "Agent session started",
-              updatedAt: "2026-05-13T00:00:00.000Z",
-            },
-            {
-              id: "run_2",
-              status: "blocked",
-              ticketIdentifier: "MAT-2",
-              ticketTitle: "Needs workflow",
-              agent: "codex",
-              projectSlug: "matrix-os",
-              lastEvent: "Workflow missing",
-              updatedAt: "2026-05-13T00:00:00.000Z",
-            },
-          ],
-        });
+      if (url === "/api/symphony/refresh") {
+        return json({ requested: true, requestedAt: "2026-05-25T00:00:01Z" }, { status: 202 });
       }
-      if (url === "/api/symphony/setup-options") {
-        return json({
-          credentialConfigured: true,
-          matrixProjects: [{ slug: "matrix-os", name: "Matrix OS", repositoryUrl: "https://github.com/hamedmp/matrix-os" }],
-          linear: {
-            teams: [{ id: "team_1", key: "MAT", name: "Matrix" }],
-            projects: [{ id: "linear_project_1", name: "Matrix OS", slug: "matrix-os", teamIds: ["team_1"] }],
-            users: [
-              { id: "linear_user", name: "Hamed", displayName: "Hamed", active: true },
-              { id: "inactive_user", name: "Former teammate", displayName: "Former teammate", active: false },
-            ],
-          },
-        });
-      }
-      if (url === "/api/symphony/credentials/linear" && init?.method === "POST") {
-        return json({ credentialConfigured: true, accountLabel: "Linear" });
-      }
-      if (url === "/api/symphony/config" && init?.method === "POST") {
-        return json({ ok: true });
-      }
-      if (url.startsWith("/api/symphony/tickets/preview")) {
-        return json({ tickets: [{ externalId: "issue_1", identifier: "MAT-1", title: "Build Symphony", stateName: "Todo", labels: ["symphony"] }] });
-      }
-      if (url === "/api/symphony/start" && init?.method === "POST") {
-        return json({ running: true, installationId: "sym_user_123" });
-      }
-      if (url === "/api/symphony/runs/run_1/actions" && init?.method === "POST") {
-        return json({ run: { id: "run_1", status: "stopped" } });
+      if (url === "/api/symphony/runs/MAT-32/stop") {
+        return json({ stopped: true });
       }
       return json({ ok: true });
     }));
-    vi.stubGlobal("EventSource", class {
-      url: string;
-
-      onerror: (() => void) | null = null;
-
-      constructor(url: string) {
-        this.url = url;
-      }
-
-      addEventListener(type: string, listener: () => void) {
-        eventListeners[type] = [...(eventListeners[type] ?? []), listener];
-      }
-
-      removeEventListener(type: string, listener: () => void) {
-        eventListeners[type] = (eventListeners[type] ?? []).filter((entry) => entry !== listener);
-      }
-
-      close() {}
-    });
   });
 
   afterEach(() => {
@@ -161,131 +99,202 @@ describe("Symphony app", () => {
     expect(entrypoint).toMatch(/import ['"]\.\/index\.css['"]/);
   });
 
-  it("shows the dashboard groups as the default Symphony surface", async () => {
+  it("shows Elixir state groups and active Codex app-server details", async () => {
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("MAT-32").length).toBeGreaterThan(0));
 
     expect(screen.getAllByText("Queue").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Needs Attention").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Done / Handoff").length).toBeGreaterThan(0);
-    expect(screen.getByText("Linear account")).toBeTruthy();
+    expect(screen.getAllByText("thread-1-turn-2").length).toBeGreaterThan(0);
+    expect(screen.getByText("Linear: connected")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getAllByText("session_started").length).toBeGreaterThan(0);
+    expect(screen.getByText("/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32")).toBeTruthy();
+    expect(screen.getByText("session started")).toBeTruthy();
+    expect(screen.getByText("Workpad")).toBeTruthy();
+    expect(screen.queryByText("Open Workpad")).toBeNull();
   });
 
-  it("saves a server-side Linear secret and non-secret rule set", async () => {
+  it("does not reload the full state when selecting an issue", async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("MAT-32").length).toBeGreaterThan(0));
+    const stateCallsBeforeClick = calls.filter((call) => call.url === "/api/symphony/state").length;
 
-    fireEvent.click(screen.getAllByText("Setup")[0]);
-    fireEvent.change(screen.getByLabelText("Linear API key"), { target: { value: "lin_api_secret" } });
-    fireEvent.click(screen.getByText("Save Linear Key"));
-    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/setup-options")).toBe(true));
-    fireEvent.change(screen.getByLabelText("Linear team"), { target: { value: "team_1" } });
-    fireEvent.change(screen.getByLabelText("Linear project"), { target: { value: "linear_project_1" } });
-    fireEvent.click(screen.getByText("Save and Preview Tickets"));
+    fireEvent.click(screen.getByText("MAT-33"));
 
-    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/credentials/linear")).toBe(true));
-    const configCall = calls.find((call) => call.url === "/api/symphony/config" && call.init?.method === "POST");
-    expect(configCall).toBeTruthy();
-    expect(String(configCall?.init?.body)).not.toContain("lin_api_secret");
-    expect(JSON.parse(String(configCall?.init?.body))).toMatchObject({
-      installation: { authorizedOperators: ["user_456"], pollIntervalMs: 120000 },
-      rule: { teamId: "team_1", teamKey: "MAT", projectId: "linear_project_1", projectSlug: "matrix-os", assigneeIds: [] },
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/issues/MAT-33")).toBe(true));
+    await waitFor(() => expect(screen.getAllByText("retry detail").length).toBeGreaterThan(0));
+    expect(calls.filter((call) => call.url === "/api/symphony/state").length).toBe(stateCallsBeforeClick);
+  });
+
+  it("disables issue selection while refresh state is in flight", async () => {
+    let stateCalls = 0;
+    let resolveRefreshState: ((response: Response) => void) | null = null;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url === "/api/symphony/state") {
+        stateCalls += 1;
+        if (stateCalls === 1) return json(symphonyState());
+        return await new Promise<Response>((resolve) => {
+          resolveRefreshState = resolve;
+        });
+      }
+      if (url === "/api/symphony/refresh") return json({ requested: true }, { status: 202 });
+      if (url === "/api/symphony/issues/MAT-32") {
+        return json({
+          issueIdentifier: "MAT-32",
+          issueId: "issue_32",
+          status: "running",
+          sessionId: "thread-1-turn-2",
+          turnCount: 2,
+          latestEvent: "session_started",
+          latestMessage: "Agent session started",
+          workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32",
+          workpadUrl: null,
+          logs: { codexSessionLogs: ["session started"] },
+          recentEvents: [],
+          retry: null,
+          allowedActions: ["refresh", "open_workspace", "stop"],
+        });
+      }
+      if (url === "/api/symphony/issues/MAT-33") {
+        return json({
+          issueIdentifier: "MAT-33",
+          issueId: "issue_33",
+          status: "needs_attention",
+          sessionId: null,
+          turnCount: 0,
+          latestEvent: "retrying",
+          latestMessage: "Retry detail",
+          workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-33",
+          workpadUrl: null,
+          logs: { codexSessionLogs: ["retry detail"] },
+          recentEvents: [],
+          retry: { attempt: 2, dueAt: null },
+          allowedActions: ["refresh", "open_workspace"],
+        });
+      }
+      return json({ ok: true });
     });
-  });
-
-  it("hides inactive Linear users from the assignee selector", async () => {
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
-
-    fireEvent.click(screen.getAllByText("Setup")[0]);
-    await waitFor(() => expect(screen.getByLabelText("Hamed")).toBeTruthy());
-
-    expect(screen.queryByLabelText("Former teammate")).toBeNull();
-  });
-
-  it("clears stale Linear selections when the credential changes", async () => {
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
-
-    fireEvent.click(screen.getAllByText("Setup")[0]);
-    await waitFor(() => expect(screen.getByLabelText("Linear team")).toBeTruthy());
-    expect((screen.getByLabelText("Linear team") as HTMLSelectElement).value).toBe("team_1");
-
-    fireEvent.change(screen.getByLabelText("Linear API key"), { target: { value: "lin_api_new_secret" } });
-    fireEvent.click(screen.getByText("Save Linear Key"));
-
-    await waitFor(() => expect((screen.getByLabelText("Linear team") as HTMLSelectElement).value).toBe(""));
-    expect((screen.getByLabelText("Linear project") as HTMLSelectElement).value).toBe("");
-    expect((screen.getByLabelText("Hamed") as HTMLInputElement).checked).toBe(false);
-  });
-
-  it("does not save config from stale selections when setup includes a new credential", async () => {
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
-
-    fireEvent.click(screen.getAllByText("Setup")[0]);
-    await waitFor(() => expect(screen.getByLabelText("Linear team")).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Linear API key"), { target: { value: "lin_api_new_secret" } });
-    fireEvent.click(screen.getByText("Save and Preview Tickets"));
-
-    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/credentials/linear" && call.init?.method === "POST")).toBe(true));
-    expect(calls.some((call) => call.url === "/api/symphony/config" && call.init?.method === "POST")).toBe(false);
-    expect((screen.getByLabelText("Linear team") as HTMLSelectElement).value).toBe("");
-  });
-
-  it("runs dashboard actions without shell commands or raw GraphQL", async () => {
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
-
-    fireEvent.click(screen.getAllByText("Stop")[0]);
-
-    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/runs/run_1/actions")).toBe(true));
-    const actionCall = calls.find((call) => call.url === "/api/symphony/runs/run_1/actions");
-    expect(actionCall?.init?.body).toBe(JSON.stringify({ type: "stop" }));
-    expect(calls.some((call) => call.url.includes("/api/integrations/call"))).toBe(false);
-  });
-
-  it("opens Workspace through the Matrix shell bridge", async () => {
-    const openApp = vi.fn();
-    vi.stubGlobal("MatrixOS", { openApp });
 
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("MAT-32").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("session started").length).toBeGreaterThan(0));
 
-    fireEvent.click(screen.getAllByText("Workspace")[0]);
+    fireEvent.click(screen.getByText("Refresh"));
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/refresh")).toBe(true));
+    const attentionButton = screen.getByText("MAT-33").closest("button");
+    expect(attentionButton?.disabled).toBe(true);
 
-    expect(openApp).toHaveBeenCalledWith("Workspace", "__workspace__");
-    expect(window.open).not.toHaveBeenCalledWith(expect.stringContaining("/workspace/"), expect.anything(), expect.anything());
+    fireEvent.click(screen.getByText("MAT-33"));
+    expect(calls.some((call) => call.url === "/api/symphony/issues/MAT-33")).toBe(false);
+    resolveRefreshState?.(json(symphonyState()));
+
+    await waitFor(() => expect(screen.getAllByText("session started").length).toBeGreaterThan(0));
+    expect(calls.some((call) => call.url === "/api/symphony/issues/MAT-33")).toBe(false);
   });
 
-  it("refreshes dashboard data when Symphony events arrive", async () => {
+  it("refreshes and stops through the Elixir proxy endpoints", async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
-    const initialStatusCalls = calls.filter((call) => call.url === "/api/symphony/status").length;
+    await waitFor(() => expect(screen.getAllByText("MAT-32").length).toBeGreaterThan(0));
 
-    eventListeners["symphony.run.updated"]?.forEach((listener) => listener());
+    fireEvent.click(screen.getByText("Refresh"));
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/refresh" && call.init?.method === "POST")).toBe(true));
+
+    fireEvent.click(screen.getByText("Stop"));
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/runs/MAT-32/stop" && call.init?.method === "POST")).toBe(true));
+    expect(calls.every((call) => call.init?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("keeps rendered state when the active issue detail endpoint fails", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url === "/api/symphony/state") return json(symphonyState());
+      if (url === "/api/symphony/issues/MAT-32") return json({ error: "temporarily unavailable" }, { status: 503 });
+      return json({ ok: true });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getAllByText("Queue").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Symphony is unavailable.")).toBeNull();
+    expect(screen.getByText("Issue detail could not be loaded.")).toBeTruthy();
+  });
+
+  it("clears initial loading once state is ready before issue detail resolves", async () => {
+    let resolveDetail: (response: Response) => void = () => {};
+    const detailResponse = new Promise<Response>((resolve) => {
+      resolveDetail = resolve;
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/symphony/state") {
+        return json({
+          service: { status: "ready", credentialStatus: "setup_required", generatedAt: "2026-05-25T00:00:00Z" },
+          groups: {
+            queue: [],
+            running: [{ issueIdentifier: "MAT-32", status: "running" }],
+            needsAttention: [],
+            done: [],
+          },
+        });
+      }
+      if (url === "/api/symphony/issues/MAT-32") {
+        return detailResponse;
+      }
+      return json({ ok: true });
+    }));
+
+    render(<App />);
 
     await waitFor(() => {
-      expect(calls.filter((call) => call.url === "/api/symphony/status").length).toBeGreaterThan(initialStatusCalls);
+      expect(screen.getByText("Connect Linear in Matrix Integrations to let Symphony poll assigned work.")).toBeTruthy();
     });
+    expect(screen.queryByText("Loading Symphony state...")).toBeNull();
+
+    resolveDetail(json({
+      issueIdentifier: "MAT-32",
+      status: "running",
+      allowedActions: ["refresh"],
+      logs: { codexSessionLogs: [] },
+      recentEvents: [],
+    }));
   });
 
-  it("preserves unsaved setup drafts during background Symphony refreshes", async () => {
+  it("keeps long session and workspace text visible for mobile-friendly layouts", async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Build Symphony")).toBeTruthy());
 
-    fireEvent.click(screen.getAllByText("Setup")[0]);
-    const secretInput = screen.getByLabelText("Linear API key") as HTMLInputElement;
-    fireEvent.change(secretInput, { target: { value: "lin_api_secret_draft" } });
-    const initialStatusCalls = calls.filter((call) => call.url === "/api/symphony/status").length;
+    await waitFor(() => expect(screen.getByText("/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32")).toBeTruthy());
 
-    eventListeners["symphony.poll.completed"]?.forEach((listener) => listener());
-
-    await waitFor(() => {
-      expect(calls.filter((call) => call.url === "/api/symphony/status").length).toBeGreaterThan(initialStatusCalls);
-    });
-    expect((screen.getByLabelText("Linear API key") as HTMLInputElement).value).toBe("lin_api_secret_draft");
+    const appSource = readFileSync("home/apps/symphony/src/App.tsx", "utf8");
+    expect(appSource).toContain("break-words");
+    expect(appSource).toContain("minmax(0,1fr)");
+    expect(appSource).toContain('const RUN_GROUPS: RunGroup[] = ["queue", "running", "needsAttention", "done"]');
+    expect(appSource).toContain("AbortSignal.timeout(10_000)");
+    expect(appSource).toContain("withTimeoutSignal(controller.signal, 10_000)");
+    expect(appSource).toContain("AbortSignal.any([signal, timeoutSignal])");
+    expect(appSource).toContain("if (controller.signal.aborted) return;");
+    expect(appSource).not.toContain("controller.signal.aborted || isAbortError(err)");
+    expect(appSource).toContain('setError("Issue detail could not be loaded.")');
+    expect(appSource).toContain("detailAbortRef.current?.abort()");
+    expect(appSource).toContain("selectedIssueRef.current");
+    expect(appSource).toContain("chooseActiveIssue(next, selectedIssueRef.current, preferredIssue)");
+    expect(appSource).toContain("const thisRequestId = detailRequestRef.current");
+    expect(appSource).toContain("if (detailRequestRef.current === thisRequestId) setBusy(null);");
+    expect(appSource).toContain("detailRequestRef.current === requestId");
+    expect(appSource).toContain("}).slice(0, 100)");
+    expect(appSource).toContain("disabled={Boolean(busy)}");
+    expect(appSource).toContain("disabled:opacity-50");
+    expect(appSource).toContain("run.issueIdentifier ?? run.issueId ?? run.sessionId ?? String(index)");
+    expect(appSource).not.toContain("}, [selectedIssue]);");
+    expect(appSource).not.toContain("Object.keys(state.groups)");
+    expect(appSource).not.toContain('}, "*")');
+    expect(appSource).toContain("window.location.origin");
   });
 });

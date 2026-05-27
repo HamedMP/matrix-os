@@ -79,6 +79,16 @@ describe("fileDelete", () => {
     const result = await fileDelete(testDir, "../../etc/passwd");
     expect(result).toEqual({ ok: false, error: "Invalid path" });
   });
+
+  it("rejects deleting browser profile files", async () => {
+    mkdirSync(join(testDir, "data", "browser-profiles"), { recursive: true });
+    writeFileSync(join(testDir, "data", "browser-profiles", "session.json"), "{}");
+
+    const result = await fileDelete(testDir, "data/browser-profiles/session.json");
+
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(testDir, "data", "browser-profiles", "session.json"))).toBe(true);
+  });
 });
 
 describe("trashList", () => {
@@ -177,6 +187,32 @@ describe("trashRestore", () => {
   it("rejects trashPath outside .trash directory", async () => {
     const result = await trashRestore(testDir, "agents/builder.md");
     expect(result).toEqual({ ok: false, error: "Invalid trash path" });
+  });
+
+  it("rejects restoring browser profile files", async () => {
+    mkdirSync(join(testDir, ".trash"), { recursive: true });
+    writeFileSync(join(testDir, ".trash", "session.json"), "{}");
+    writeFileSync(
+      join(testDir, ".trash", ".manifest.json"),
+      JSON.stringify([
+        {
+          name: "session.json",
+          originalPath: "data/browser-profiles/session.json",
+          deletedAt: new Date().toISOString(),
+          trashPath: ".trash/session.json",
+        },
+      ]),
+    );
+
+    const result = await trashRestore(testDir, ".trash/session.json");
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Cannot restore to a protected path",
+      status: 403,
+    });
+    expect(existsSync(join(testDir, ".trash", "session.json"))).toBe(true);
+    expect(existsSync(join(testDir, "data", "browser-profiles", "session.json"))).toBe(false);
   });
 });
 

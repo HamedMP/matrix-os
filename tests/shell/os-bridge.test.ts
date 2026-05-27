@@ -160,6 +160,46 @@ describe("OS Bridge", () => {
       expect(handler.sendToKernel).not.toHaveBeenCalled();
       expect(handler.fetchData).not.toHaveBeenCalled();
     });
+
+    it("rejects bridge messages from unexpected windows when a source is required", () => {
+      const handler: BridgeHandler = {
+        sendToKernel: vi.fn(),
+        fetchData: vi.fn(),
+      };
+      const expectedSource = {} as Window;
+      const event = makeMessageEvent({
+        type: "os:generate",
+        app: "expense-tracker",
+        payload: { context: "run hidden command" },
+      });
+
+      handleBridgeMessage(event, handler, {
+        expectedSource,
+        expectedOrigins: new Set(["null"]),
+        expectedApp: "expense-tracker",
+      });
+
+      expect(handler.sendToKernel).not.toHaveBeenCalled();
+    });
+
+    it("rejects bridge messages whose app name does not match the iframe app", () => {
+      const handler: BridgeHandler = {
+        sendToKernel: vi.fn(),
+        fetchData: vi.fn(),
+      };
+      const event = makeMessageEvent({
+        type: "os:generate",
+        app: "other-app",
+        payload: { context: "run hidden command" },
+      });
+
+      handleBridgeMessage(event, handler, {
+        expectedOrigins: new Set(["null"]),
+        expectedApp: "expense-tracker",
+      });
+
+      expect(handler.sendToKernel).not.toHaveBeenCalled();
+    });
   });
 
   describe("buildBridgeScript", () => {
@@ -196,10 +236,11 @@ describe("OS Bridge", () => {
       expect(script).toContain("label: label");
     });
 
-    it("includes timeouts for bridge integration fetches", () => {
+    it("routes integration fetches through the parent bridge with timeouts", () => {
       const script = buildBridgeScript("test-app");
-      expect(script).toContain('fetch("/api/bridge/service", { signal: AbortSignal.timeout(10000) })');
-      expect(script).toContain("signal: AbortSignal.timeout(35000)");
+      expect(script).toContain('parentFetch("/api/bridge/service", {}, 10000)');
+      expect(script).toContain("}, 35000).then");
+      expect(script).toContain("MatrixOS bridge fetch timed out");
     });
   });
 });

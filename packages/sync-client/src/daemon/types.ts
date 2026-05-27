@@ -1,7 +1,9 @@
 import { z } from "zod/v4";
 
+const Sha256HashSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
 export const ManifestEntrySchema = z.object({
-  hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  hash: Sha256HashSchema,
   size: z.int().nonnegative(),
   mtime: z.int().nonnegative(),
   peerId: z.string().min(1).max(128),
@@ -24,17 +26,31 @@ export const RemoteManifestEnvelopeSchema = z.object({
 export type RemoteManifestEnvelope = z.infer<typeof RemoteManifestEnvelopeSchema>;
 
 export const LocalFileStateSchema = z.object({
-  hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  hash: Sha256HashSchema,
   mtime: z.int().nonnegative(),
   size: z.int().nonnegative(),
-  lastSyncedHash: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+  lastSyncedHash: Sha256HashSchema.optional(),
+  localOnly: z.boolean().optional(),
 });
 export type LocalFileState = z.infer<typeof LocalFileStateSchema>;
+
+export const ConflictRecordSchema = z.object({
+  path: z.string().min(1).max(1024),
+  conflictPath: z.string().min(1).optional(),
+  localHash: Sha256HashSchema,
+  remoteHash: Sha256HashSchema,
+  remotePeerId: z.string(),
+  detectedAt: z.int().nonnegative(),
+  resolved: z.boolean().default(false),
+  resolvedAt: z.int().nonnegative().optional(),
+});
+export type ConflictRecord = z.infer<typeof ConflictRecordSchema>;
 
 export const SyncStateSchema = z.object({
   manifestVersion: z.int().nonnegative(),
   lastSyncAt: z.int().nonnegative(),
   files: z.record(z.string(), LocalFileStateSchema),
+  conflicts: z.record(z.string(), ConflictRecordSchema).optional(),
 });
 export type SyncState = z.infer<typeof SyncStateSchema>;
 
@@ -48,24 +64,18 @@ export const PeerInfoSchema = z.object({
 });
 export type PeerInfo = z.infer<typeof PeerInfoSchema>;
 
-export const ConflictRecordSchema = z.object({
-  path: z.string().min(1).max(1024),
-  conflictPath: z.string().min(1),
-  localHash: z.string(),
-  remoteHash: z.string(),
-  remotePeerId: z.string(),
-  detectedAt: z.int().nonnegative(),
-  resolved: z.boolean().default(false),
-  resolvedAt: z.int().nonnegative().optional(),
-});
-export type ConflictRecord = z.infer<typeof ConflictRecordSchema>;
+export type SyncChangeFile = {
+  path: string;
+  hash: string;
+  size: number;
+  action: "add" | "create" | "update" | "delete";
+};
 
 export type SyncChangeEvent = {
   type: "sync:change";
-  path: string;
-  hash: string;
+  files: SyncChangeFile[];
   peerId: string;
-  action: "create" | "update" | "delete";
+  manifestVersion?: number;
 };
 
 export type SyncConflictEvent = {

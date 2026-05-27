@@ -207,7 +207,7 @@ export function ChatPopover({
           }}
           aria-describedby={undefined}
         >
-          <DialogPrimitive.Title className="sr-only">Chat</DialogPrimitive.Title>
+          <DialogPrimitive.Title className="sr-only">Hermes</DialogPrimitive.Title>
 
           <SessionsSidebar
             open={sidebarOpen}

@@ -40,6 +40,25 @@ describe("agent-launcher", () => {
     expect(JSON.stringify(result)).not.toContain("sk-secret");
   });
 
+  it("checks auth with the Matrix runtime home so terminal logins are reused", async () => {
+    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    const launcher = createAgentLauncher({
+      runCommand,
+      cwd: "/home/matrix/home",
+      runtimeHome: "/home/matrix/home",
+    });
+
+    await launcher.detectAgents();
+
+    expect(runCommand).toHaveBeenCalledWith("codex", ["login", "status"], expect.objectContaining({
+      cwd: "/home/matrix/home",
+      env: expect.objectContaining({
+        HOME: "/home/matrix/home",
+        MATRIX_HOME: "/home/matrix/home",
+      }),
+    }));
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
@@ -64,6 +83,22 @@ describe("agent-launcher", () => {
       ],
       cwd: "/home/matrixos/home/projects/repo/worktrees/wt_123",
       env: {},
+    });
+  });
+
+  it("launches agents with the Matrix runtime home so CLI auth files are visible", () => {
+    const launcher = createAgentLauncher({ runtimeHome: "/home/matrix/home" });
+
+    const launch = launcher.buildLaunch({
+      agent: "codex",
+      cwd: "/home/matrix/home/projects/repo/worktrees/wt_123",
+      prompt: "fix tests",
+      sandbox: { enabled: true, writableRoots: ["/home/matrix/home/projects/repo/worktrees/wt_123"] },
+    });
+
+    expect(launch.env).toMatchObject({
+      HOME: "/home/matrix/home",
+      MATRIX_HOME: "/home/matrix/home",
     });
   });
 

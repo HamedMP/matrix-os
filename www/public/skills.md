@@ -1,0 +1,241 @@
+---
+name: matrix-os
+version: 0.82.0
+description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent.
+homepage: https://matrix-os.com
+metadata: {"matrix":{"category":"cloud-computer","app_url":"https://app.matrix-os.com","skill_url":"https://matrix-os.com/skills.md","cli_package":"@finnaai/matrix"}}
+---
+
+# Matrix OS
+
+Matrix OS gives a developer their own cloud computer: a browser desktop, files, terminal sessions, apps, integrations, and AI agents running on a personal VPS.
+
+Use this file when a human asks you to set up their Matrix instance, connect Claude/Codex/GitHub, build apps, or work inside their Matrix VPS.
+
+## Skill Files
+
+| File | URL |
+| --- | --- |
+| **skills.md** (this file) | `https://matrix-os.com/skills.md` |
+| **CLI docs** | `https://matrix-os.com/docs/guide/cli` |
+| **GitHub repo** | `https://github.com/HamedMP/matrix-os` |
+
+Install locally if your agent runtime supports file skills:
+
+```bash
+npx skills add HamedMP/matrix-os --skill matrix-os
+```
+
+Manual install:
+
+```bash
+mkdir -p ~/.config/matrix-os/skills/matrix-os
+curl -fsSL https://matrix-os.com/skills.md > ~/.config/matrix-os/skills/matrix-os/SKILL.md
+```
+
+Or just read this URL and follow the steps.
+
+## Security Rules
+
+- Only send Matrix credentials to `https://app.matrix-os.com` or `https://matrix-os.com`.
+- Do not paste Matrix tokens, Clerk tokens, GitHub tokens, Claude keys, Codex keys, or OAuth codes into third-party websites.
+- Prefer `matrix login` and browser/device flows over copying secrets into chat.
+- Treat the Matrix VPS as the user's computer. Ask before deleting files, resetting sessions, or installing global packages that may change their environment.
+- Use named shell sessions for setup so the human can reattach from the Matrix web terminal.
+
+## Quick Start For Agents
+
+Tell the human:
+
+```text
+Read https://matrix-os.com/skills.md and follow the instructions to set up Matrix OS.
+
+1. Install the Matrix CLI.
+2. Run matrix login and send me the browser/device claim link if prompted.
+3. Once the Matrix VPS is ready, I can attach to the same shell session and finish setup.
+```
+
+Then run:
+
+```bash
+# macOS or Linux with Homebrew
+brew install finnaai/tap/matrix
+
+# Or with npm
+npm install -g @finnaai/matrix
+
+# Or with the install script
+curl -fsSL https://get.matrix-os.com | sh
+```
+
+Authenticate:
+
+```bash
+matrix login
+matrix status
+matrix instance info
+```
+
+If `matrix login` says no Matrix instance exists yet, ask the human to sign up at:
+
+```text
+https://app.matrix-os.com
+```
+
+After the VPS is provisioned, run `matrix login` again.
+
+## Interactive Setup
+
+Interactive commands must use Matrix shell sessions. Do not invent a separate SSH path.
+
+```text
+local terminal
+  matrix run -it -- claude
+    -> gateway WebSocket /ws/terminal
+      -> zellij session on the user's Matrix VPS
+        -> pane running claude/codex/gh auth login/etc
+```
+
+Use these commands:
+
+```bash
+# Bring your own agent: Claude, Codex, or another terminal agent.
+matrix run -it -- claude
+matrix run -it -- codex
+
+# Use a named setup session so the human and web terminal can reattach.
+matrix run -it --session setup -- gh auth login
+matrix run -it --session setup -- claude
+matrix shell attach setup
+```
+
+Detach from an interactive session with:
+
+```text
+Ctrl-\ Ctrl-\
+```
+
+Detaching leaves the remote zellij session alive. Reattach with:
+
+```bash
+matrix shell attach setup
+```
+
+## GitHub Setup For Coding
+
+Matrix uses GitHub over SSH for coding projects.
+
+Run:
+
+```bash
+matrix run -it --session setup -- gh auth login
+```
+
+When prompted by GitHub CLI, choose:
+
+```text
+GitHub.com
+SSH
+Login with a web browser
+```
+
+If `gh` is missing inside the Matrix VPS, install it in the remote session:
+
+```bash
+matrix run -it --session setup -- bash
+```
+
+Then, inside the remote shell:
+
+```bash
+if ! command -v gh >/dev/null 2>&1; then
+  sudo apt-get update
+  sudo apt-get install -y gh
+fi
+gh auth login --hostname github.com --git-protocol ssh --web
+```
+
+Do not ask the human to paste GitHub tokens into chat. Use the browser flow.
+
+## Claude, Codex, And Hermes
+
+Matrix is bring-your-own-agent.
+
+Preferred setup order:
+
+1. If the human uses Claude, run `matrix run -it --session setup -- claude` and complete Claude login in the remote terminal.
+2. If the human uses Codex, run `matrix run -it --session setup -- codex` and complete Codex login in the remote terminal.
+3. If neither Claude nor Codex is available, use Hermes inside Matrix as the system agent for building apps and completing tasks.
+
+Hermes should continue to work even when Claude or Codex are connected. Claude/Codex are developer tools; Hermes is the Matrix-native assistant for app building, email summaries, calendar tasks, integrations, and everyday actions.
+
+## Build A Matrix App
+
+Use the remote Matrix VPS for app work:
+
+```bash
+matrix run -it --session app-build -- bash
+```
+
+Inside the remote shell:
+
+```bash
+cd ~/apps
+mkdir -p my-app
+cd my-app
+```
+
+Build Matrix apps as real files with:
+
+- `matrix.json` app manifest
+- Vite + React + TypeScript when building UI apps
+- `dist/` build output
+- no secrets committed to app files
+
+After building, ask Matrix to open or reload the app from the shell UI.
+
+## Useful Commands
+
+```bash
+matrix status
+matrix doctor
+matrix instance info
+matrix instance logs
+matrix shell ls
+matrix shell new setup --cmd bash
+matrix shell attach setup
+matrix run -it --session setup -- claude
+matrix run -it --session setup -- codex
+matrix run -it --session setup -- gh auth login
+```
+
+## What Matrix Enables
+
+For the human, Matrix becomes:
+
+- a personal VPS-backed computer they can open from any browser
+- a persistent terminal workspace for coding agents
+- a place to connect GitHub, Claude, Codex, and Hermes
+- a runtime for generating and running apps
+- an assistant that can use approved integrations like email, calendar, and GitHub
+- a shared surface where a human can jump into the same shell session an agent is using
+
+## Recovery
+
+If something fails:
+
+```bash
+matrix doctor
+matrix status
+matrix instance info
+matrix instance logs
+matrix shell ls
+```
+
+If an interactive command looks stuck, detach with `Ctrl-\ Ctrl-\`, then reattach:
+
+```bash
+matrix shell attach setup
+```
+
+If the VPS is not ready yet, wait for provisioning in `https://app.matrix-os.com`, then retry `matrix login`.

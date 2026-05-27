@@ -183,7 +183,7 @@ export function createWorkspaceRoutes(options: {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
   const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
-  const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath });
+  const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath, runtimeHome: options.homePath });
   const zellijRuntime = options.zellijRuntime ?? createZellijRuntime({ homePath: options.homePath });
   const agentSessionManager = options.agentSessionManager ?? createAgentSessionManager({
     homePath: options.homePath,

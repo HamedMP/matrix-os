@@ -6,8 +6,15 @@ import { CanvasTransform } from "../../shell/src/components/canvas/CanvasTransfo
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
 
+class ResizeObserverMock {
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
+
 describe("CanvasTransform app focus interactions", () => {
   beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useCanvasSettings.setState({ navMode: "scroll", showTitles: true });
   });
@@ -68,6 +75,51 @@ describe("CanvasTransform app focus interactions", () => {
 
     expect(preventDefault).not.toHaveBeenCalled();
     expect(useCanvasTransform.getState().panY).toBe(0);
+  });
+
+  it("pans wheel input from the iframe interaction shield", () => {
+    const { container } = render(
+      <CanvasTransform panEnabled>
+        <div data-canvas-interaction-overlay />
+      </CanvasTransform>,
+    );
+    const shield = container.querySelector("[data-canvas-interaction-overlay]")!;
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 80,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+
+    shield.dispatchEvent(event);
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(useCanvasTransform.getState().panY).toBe(-80);
+  });
+
+  it("does not treat built-in app window content as canvas background for grab panning", () => {
+    useCanvasSettings.setState({ navMode: "grab", showTitles: true });
+    const clearFocus = vi.fn();
+    const { getByText } = render(
+      <CanvasTransform panEnabled onBackgroundPointerDown={clearFocus}>
+        <div data-canvas-window>
+          <button type="button">Terminal sidebar item</button>
+        </div>
+      </CanvasTransform>,
+    );
+    const button = getByText("Terminal sidebar item");
+    const event = new PointerEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      pointerId: 1,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+
+    button.dispatchEvent(event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(clearFocus).not.toHaveBeenCalled();
   });
 
   it("ignores iframe-forwarded zoom while app focus owns input", () => {

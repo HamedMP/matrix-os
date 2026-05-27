@@ -1,0 +1,90 @@
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import {
+  ApproveCapabilityRequestSchema,
+  CapabilityParamsSchema,
+  RecordAgentActionRequestSchema,
+} from "./activation-contracts.js";
+import { ActivationRouteError, mapActivationError } from "./activation-errors.js";
+import type { AgentActionAuditService } from "./agent-action-audit.js";
+import type { IntegrationCapabilityService } from "./integration-capabilities.js";
+import {
+  requireRequestPrincipal,
+  type RequestPrincipal,
+} from "../request-principal.js";
+
+const INTEGRATION_CAPABILITY_BODY_LIMIT = 2048;
+
+export interface IntegrationCapabilityRouteDeps {
+  service: IntegrationCapabilityService;
+  audit?: AgentActionAuditService;
+  getPrincipal?: (c: Context) => RequestPrincipal;
+}
+
+function jsonError(c: Context, err: unknown) {
+  const mapped = mapActivationError(err);
+  return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+}
+
+export function createIntegrationCapabilityRoutes(deps: IntegrationCapabilityRouteDeps): Hono {
+  const app = new Hono();
+  const limited = bodyLimit({ maxSize: INTEGRATION_CAPABILITY_BODY_LIMIT });
+  const principalFor = (c: Context) => deps.getPrincipal?.(c) ?? requireRequestPrincipal(c);
+
+  app.get("/capabilities", async (c) => {
+    try {
+      const principal = principalFor(c);
+      return c.json(await deps.service.listCapabilities(principal.userId));
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  app.get("/actions", async (c) => {
+    try {
+      const principal = principalFor(c);
+      return c.json({ actions: await deps.audit?.listActions(principal.userId) ?? [] });
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  app.post("/actions", limited, async (c) => {
+    try {
+      const principal = principalFor(c);
+      if (!deps.audit) {
+        return c.json({ error: "audit_unavailable", message: "Request failed", retryable: true }, 503);
+      }
+      const body = RecordAgentActionRequestSchema.parse(await c.req.json());
+      const capabilityApproval = await deps.service.getCapabilityApproval(principal.userId, body.capability);
+      if (!capabilityApproval) {
+        throw new ActivationRouteError("capability_not_found", "Integration capability was not found", {
+          status: 422,
+        });
+      }
+      if (!capabilityApproval.approvedAgents.includes(body.agent)) {
+        throw new ActivationRouteError("capability_not_approved", "Approve the capability before recording agent actions", {
+          status: 403,
+        });
+      }
+      const action = await deps.audit.recordAction(principal.userId, body);
+      return c.json({ action }, 201);
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  app.post("/capabilities/:capabilityId/approval", limited, async (c) => {
+    try {
+      const principal = principalFor(c);
+      const { capabilityId } = CapabilityParamsSchema.parse({ capabilityId: c.req.param("capabilityId") });
+      const body = ApproveCapabilityRequestSchema.parse(await c.req.json());
+      return c.json(await deps.service.setApproval(principal.userId, capabilityId, body.agent, body.approved));
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  return app;
+}

@@ -77,6 +77,8 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const SECURE_TOKEN_TRANSPORT_ERROR =
+  "Gateway tokens require HTTPS/WSS unless connecting to localhost.";
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -94,6 +96,9 @@ export class GatewayClient {
 
   constructor(baseUrl: string, token?: TokenSource, wsToken?: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    if (token || wsToken) {
+      assertSecureTokenTransport(this.baseUrl);
+    }
     if (typeof token === "function") {
       this.tokenProvider = token;
     } else {
@@ -122,6 +127,9 @@ export class GatewayClient {
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
     const previous = this.wsToken;
+    if (token) {
+      assertSecureTokenTransport(this.baseUrl);
+    }
     this.wsToken = token ?? undefined;
     if (!token) {
       this.wsTokenExpiresAt = 0;
@@ -301,6 +309,9 @@ export class GatewayClient {
   }
 
   openTerminalWebSocket(token?: string | null): WebSocket {
+    if (token || this.token) {
+      assertSecureTokenTransport(this.baseUrl);
+    }
     const wsUrl = token
       ? `${this.terminalWsUrl}?token=${encodeURIComponent(token)}`
       : this.terminalWsUrl;
@@ -543,4 +554,40 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), timeoutMs);
   return controller.signal;
+}
+
+export function assertSecureTokenTransport(baseUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error("Gateway URL is invalid.");
+  }
+
+  if (parsed.protocol === "https:" || parsed.protocol === "wss:") {
+    return;
+  }
+
+  if ((parsed.protocol === "http:" || parsed.protocol === "ws:") && isLoopbackHost(parsed.hostname)) {
+    return;
+  }
+
+  throw new Error(SECURE_TOKEN_TRANSPORT_ERROR);
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+
+  const ipv4Match = /^(\d{1,3})(?:\.(\d{1,3})){3}$/.exec(host);
+  if (!ipv4Match) {
+    return false;
+  }
+
+  const octets = host.split(".").map((part) => Number(part));
+  return octets.length === 4
+    && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
+    && octets[0] === 127;
 }

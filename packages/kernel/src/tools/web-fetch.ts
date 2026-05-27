@@ -38,6 +38,7 @@ export interface WebFetchToolOptions {
 }
 
 const DEFAULT_MAX_CHARS = 50_000;
+const MAX_REDIRECTS = 5;
 
 function validateWebUrl(url: string): void {
   let parsed: URL;
@@ -71,13 +72,7 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
     const cached = cache.get<WebFetchResult>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetcher(url, {
-      headers: {
-        Accept: "text/markdown, text/html;q=0.9, */*;q=0.8",
-        "User-Agent": "MatrixOS/1.0 (web-fetch)",
-      },
-      redirect: "follow",
-    });
+    const response = await fetchWithValidatedRedirects(fetcher, url);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} fetching ${url}`);
@@ -142,6 +137,35 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
   }
 
   return { execute };
+}
+
+async function fetchWithValidatedRedirects(fetcher: Fetcher, initialUrl: string): Promise<FetchResponse> {
+  let currentUrl = initialUrl;
+  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+    const response = await fetcher(currentUrl, {
+      headers: {
+        Accept: "text/markdown, text/html;q=0.9, */*;q=0.8",
+        "User-Agent": "MatrixOS/1.0 (web-fetch)",
+      },
+      redirect: "manual",
+    });
+
+    if (response.status < 300 || response.status >= 400) {
+      return response;
+    }
+
+    const location = response.headers.get("location") ?? response.headers.get("Location");
+    if (!location) {
+      throw new Error(`HTTP ${response.status} redirect missing Location for ${currentUrl}`);
+    }
+
+    const nextUrl = new URL(location, currentUrl).toString();
+    validateWebUrl(nextUrl);
+    await validateUrl(nextUrl);
+    currentUrl = nextUrl;
+  }
+
+  throw new Error(`Too many redirects fetching ${initialUrl}`);
 }
 
 async function fetchWithFirecrawl(

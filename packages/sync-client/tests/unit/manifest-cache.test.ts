@@ -52,6 +52,32 @@ describe("loadSyncState", () => {
     expect(state.files["src/index.ts"]?.hash).toBe(data.files["src/index.ts"]!.hash);
   });
 
+  it("preserves optional conflict metadata in a valid sync state file", async () => {
+    const localHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const remoteHash = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const data: SyncState = {
+      manifestVersion: 5,
+      lastSyncAt: 1700000000000,
+      files: {},
+      conflicts: {
+        "src/index.ts": {
+          path: "src/index.ts",
+          conflictPath: "src/index (conflict - peer-2 - 2026-05-20).ts",
+          localHash,
+          remoteHash,
+          remotePeerId: "peer-2",
+          detectedAt: 1700000000000,
+          resolved: false,
+        },
+      },
+    };
+    await writeFile(STATE_PATH, JSON.stringify(data));
+
+    const state = await loadSyncState(STATE_PATH);
+
+    expect(state.conflicts?.["src/index.ts"]).toEqual(data.conflicts!["src/index.ts"]);
+  });
+
   it("recovers from malformed JSON by backing it up and returning default state", async () => {
     const corrupt = "not valid json {{{";
     await writeFile(STATE_PATH, corrupt);

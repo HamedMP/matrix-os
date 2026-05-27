@@ -1,17 +1,53 @@
 import {
   execFile as nodeExecFile,
-  spawn as nodeSpawn,
-  type ChildProcess,
 } from "node:child_process";
+import { createRequire } from "node:module";
 import { shellError, type ShellSafeError } from "./errors.js";
 
 type ExecFile = typeof nodeExecFile;
-type Spawn = typeof nodeSpawn;
+type Disposable = { dispose(): void };
+type PtyExitEvent = { exitCode: number; signal?: number };
+export interface ShellAttachProcess {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  onData(listener: (data: string) => void): Disposable;
+  onExit(listener: (event: PtyExitEvent) => void): Disposable;
+}
+type PtySpawn = (
+  command: string,
+  args: string[],
+  options: {
+    name: string;
+    cols: number;
+    rows: number;
+    cwd: string;
+    env: Record<string, string>;
+  },
+) => ShellAttachProcess;
+
+const esmRequire = createRequire(import.meta.url);
+
+function defaultPtySpawn(): PtySpawn {
+  return (esmRequire("node-pty") as { spawn: PtySpawn }).spawn;
+}
+
+export interface ZellijFailureDiagnostic {
+  binary: "zellij";
+  kind: "binary_not_found" | "timeout" | "process_failed";
+  stderr?: string;
+  errorCode?: string;
+  exitCode?: number;
+  signal?: string;
+}
 
 export interface ZellijAdapterDeps {
   execFile?: ExecFile;
-  spawn?: Spawn;
+  spawn?: unknown;
+  spawnPty?: PtySpawn;
   timeoutMs?: number;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface CreateSessionOptions {
@@ -30,7 +66,7 @@ export interface ZellijAdapter {
   createSession(options: CreateSessionOptions): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   validateLayout(path: string): Promise<void>;
-  attachSession(name: string, options?: AttachOptions): ChildProcess;
+  attachSession(name: string, options?: AttachOptions): ShellAttachProcess;
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
@@ -41,6 +77,40 @@ export interface ZellijAdapter {
   dumpLayout(name: string): Promise<unknown>;
 }
 
+const SAFE_ATTACH_ENV_KEYS = new Set([
+  "COLORTERM",
+  "DISPLAY",
+  "HOME",
+  "LANG",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TMPDIR",
+  "USER",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "XDG_RUNTIME_DIR",
+]);
+
+const ZELLIJ_CONTEXT_ENV_KEYS = new Set([
+  "ZELLIJ",
+  "ZELLIJ_SESSION_NAME",
+  "ZELLIJ_PANE_ID",
+]);
+
+function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value !== "string") continue;
+    if (ZELLIJ_CONTEXT_ENV_KEYS.has(key)) continue;
+    if (SAFE_ATTACH_ENV_KEYS.has(key) || key.startsWith("LC_") || key.startsWith("ZELLIJ_")) {
+      env[key] = value;
+    }
+  }
+  env.TERM = "xterm-256color";
+  return env;
+}
+
 export function sanitizeZellijError(stderr: string): string {
   return stderr
     .replace(/\/(?:home|tmp|var|app|workspace|Users)\/[^\s)]+/g, "[path]")
@@ -48,18 +118,58 @@ export function sanitizeZellijError(stderr: string): string {
     .trim();
 }
 
+export function classifyZellijFailure(err: unknown, stderr: string): ZellijFailureDiagnostic {
+  const safeStderr = sanitizeZellijError(stderr);
+  const diagnostic: ZellijFailureDiagnostic = {
+    binary: "zellij",
+    kind: "process_failed",
+  };
+
+  if (err instanceof Error) {
+    const code = (err as NodeJS.ErrnoException & { code?: string | number | null }).code;
+    const signal = (err as { signal?: unknown }).signal;
+    const killed = (err as { killed?: unknown }).killed === true;
+    if (code === "ENOENT") {
+      diagnostic.kind = "binary_not_found";
+    } else if (code === "ETIMEDOUT" || (code == null && killed && signal === "SIGTERM")) {
+      diagnostic.kind = "timeout";
+    }
+    if (typeof code === "number") {
+      diagnostic.exitCode = code;
+    } else if (typeof code === "string") {
+      diagnostic.errorCode = code;
+    }
+    if (typeof signal === "string") {
+      diagnostic.signal = signal;
+    }
+  }
+  if (safeStderr) {
+    diagnostic.stderr = safeStderr;
+  }
+  return diagnostic;
+}
+
+function isNoActiveSessionsFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const stderr = (err as { stderr?: unknown }).stderr;
+  return typeof stderr === "string" && /no active zellij sessions found/i.test(stderr);
+}
+
 export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter {
   const execFile = deps.execFile ?? nodeExecFile;
-  const spawn = deps.spawn ?? nodeSpawn;
   const timeoutMs = deps.timeoutMs ?? 10_000;
+  const cwd = deps.cwd ?? process.cwd();
+  const spawnPty = deps.spawnPty ?? defaultPtySpawn();
 
-  function run(args: string[], timeout = timeoutMs, cwd?: string): Promise<string> {
+  function run(args: string[], timeout = timeoutMs, runCwd?: string): Promise<string> {
     const controller = new AbortController();
     return new Promise((resolve, reject) => {
       const child = execFile(
         "zellij",
         args,
-        { timeout, signal: controller.signal, cwd },
+        { timeout, signal: controller.signal, cwd: runCwd },
         (err, stdout, stderr) => {
           if (err) {
             const safe = shellError("zellij_failed", "Shell operation failed", 500);
@@ -67,6 +177,8 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
             (safe as ShellSafeError & { stderr?: string }).stderr = sanitizeZellijError(
               typeof stderr === "string" ? stderr : String(stderr ?? ""),
             );
+            (safe as ShellSafeError & { diagnostic?: ZellijFailureDiagnostic }).diagnostic =
+              classifyZellijFailure(err, typeof stderr === "string" ? stderr : String(stderr ?? ""));
             reject(safe);
             return;
           }
@@ -79,7 +191,15 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
 
   return {
     async listSessions() {
-      const stdout = await run(["list-sessions", "--no-formatting"]);
+      let stdout: string;
+      try {
+        stdout = await run(["list-sessions", "--no-formatting"]);
+      } catch (err) {
+        if (isNoActiveSessionsFailure(err)) {
+          return [];
+        }
+        throw err;
+      }
       return stdout
         .split(/\r?\n/)
         .map((line) => line.trim().split(/\s+/)[0])
@@ -106,18 +226,26 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       await run(["setup", "--check", "--layout", path], 5_000);
     },
     attachSession(name, options = {}) {
-      const child = spawn("zellij", ["attach", name], { stdio: "pipe" });
+      const pty = spawnPty("zellij", ["attach", name], {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd,
+        env: attachEnv(deps.env),
+      });
       const abort = () => {
-        child.kill();
+        pty.kill();
       };
+      const exitDisposable = pty.onExit(() => {
+        options.signal?.removeEventListener("abort", abort);
+        exitDisposable.dispose();
+      });
       if (options.signal?.aborted) {
         abort();
       } else {
         options.signal?.addEventListener("abort", abort, { once: true });
       }
-      child.once?.("close", () => options.signal?.removeEventListener("abort", abort));
-      child.once?.("error", () => options.signal?.removeEventListener("abort", abort));
-      return child;
+      return pty;
     },
     async listTabs(name) {
       const stdout = await run(["--session", name, "action", "query-tab-names"]);

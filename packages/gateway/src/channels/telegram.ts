@@ -44,6 +44,23 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
   let token: string | null = null;
   let voiceCtx: VoiceContext | null = null;
 
+  function normalizeAllowFrom(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      const nonStrings = value.filter((entry) => typeof entry !== "string");
+      if (nonStrings.length > 0) {
+        console.warn("[telegram] normalizeAllowFrom: dropping non-string entries from allowFrom array:", nonStrings);
+      }
+      return value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+    }
+    return [];
+  }
+
   const adapter: TelegramAdapter = {
     id: "telegram",
 
@@ -61,7 +78,7 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
       if (!config.token) throw new Error("Telegram token required");
 
       token = config.token;
-      allowFrom = config.allowFrom ?? [];
+      allowFrom = normalizeAllowFrom(config.allowFrom);
 
       if (botFactory) {
         bot = botFactory(config.token, { polling: true });
@@ -76,7 +93,7 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
 
         const senderId = String(msg.from.id);
 
-        if (allowFrom.length > 0 && !allowFrom.includes(senderId)) {
+        if (allowFrom.length === 0 || !allowFrom.includes(senderId)) {
           return;
         }
 

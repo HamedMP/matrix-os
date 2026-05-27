@@ -16,6 +16,16 @@ import type { SymphonyStatusHub } from "./status-hub.js";
 
 type WorktreeManager = Pick<ReturnType<typeof createWorktreeManager>, "createWorktree">;
 type AgentSessionManager = Pick<ReturnType<typeof createAgentSessionManager>, "startSession" | "killSession">;
+type AgentStatusProvider = {
+  detectAgents(): Promise<{
+    agents: Array<{
+      id: SymphonyInstallation["defaultAgent"];
+      installed: boolean;
+      authState: "unknown" | "ok" | "required" | "error";
+      errorCode: string | null;
+    }>;
+  }>;
+};
 
 const RETRYABLE_RUN_STATUSES: SymphonyRun["status"][] = ["queued", "running", "retrying", "blocked", "failed", "stopped"];
 const RETRYABLE_RUN_STATUSES_WITHOUT_RUNNING: SymphonyRun["status"][] = RETRYABLE_RUN_STATUSES.filter((status) => status !== "running");
@@ -125,6 +135,7 @@ export function createMatrixSymphonyOrchestrator(options: {
   linearSource: LinearSource;
   worktreeManager: WorktreeManager;
   agentSessionManager: AgentSessionManager;
+  agentStatusProvider?: AgentStatusProvider;
   statusHub?: SymphonyStatusHub;
 }) {
   const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -162,6 +173,21 @@ export function createMatrixSymphonyOrchestrator(options: {
       actorId,
     });
     return updated;
+  }
+
+  async function agentReadinessFailure(agent: SymphonyInstallation["defaultAgent"]): Promise<{ code: string; message: string } | null> {
+    if (!options.agentStatusProvider) return null;
+    try {
+      const status = (await options.agentStatusProvider.detectAgents()).agents.find((candidate) => candidate.id === agent);
+      if (!status) return { code: "agent_missing", message: "Agent is not installed" };
+      if (!status.installed) return { code: status.errorCode ?? "agent_missing", message: "Agent is not installed" };
+      if (status.authState === "required") return { code: status.errorCode ?? "agent_auth_required", message: "Agent authentication required" };
+      if (status.authState === "error") return { code: status.errorCode ?? "agent_auth_error", message: "Agent authentication could not be checked" };
+      return null;
+    } catch (err: unknown) {
+      console.warn("[symphony] Agent readiness check failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
   }
 
   async function reconcileIneligibleRunningRuns(
@@ -202,6 +228,7 @@ export function createMatrixSymphonyOrchestrator(options: {
     rule: TicketSourceRule,
     ticket: TrackedTicket,
     existing?: SymphonyRun | null,
+    readinessFailure?: { code: string; message: string } | null,
   ): Promise<SymphonyRun> {
     const id = runIdFor(ownerId, ticket);
     const active = existing ?? await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
@@ -225,8 +252,52 @@ export function createMatrixSymphonyOrchestrator(options: {
       lastEvent: "Queued for Matrix agent dispatch",
       updatedAt: timestamp,
     };
-    if (!active) await options.repository.upsertRun(ownerId, run);
+    if (!active) {
+      try {
+        await options.repository.upsertRun(ownerId, run);
+      } catch (err: unknown) {
+        console.warn("[symphony] run upsert failed; checking for an existing active claim:", err instanceof Error ? err.message : String(err));
+        let duplicate;
+        try {
+          duplicate = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
+        } catch (lookupErr: unknown) {
+          console.warn("[symphony] active-claim lookup failed after run upsert failure:", lookupErr instanceof Error ? lookupErr.message : String(lookupErr));
+          throw err;
+        }
+        if (duplicate) {
+          try {
+            await append(ownerId, {
+              installationId: duplicate.installationId,
+              runId: duplicate.id,
+              type: "symphony.run.reused",
+              message: "Existing active coding run reused",
+              severity: "info",
+            });
+          } catch (appendErr: unknown) {
+            console.warn("[symphony] reuse-event append failed:", appendErr instanceof Error ? appendErr.message : String(appendErr));
+          }
+          return duplicate;
+        }
+        throw err;
+      }
+    }
     try {
+      if (readinessFailure) {
+        const updated = await options.repository.updateRun(ownerId, run.id, {
+          status: "blocked",
+          lastErrorCode: readinessFailure.code,
+          lastEvent: readinessFailure.message,
+          nextRetryAt: undefined,
+        }, { allowedStatuses: ["queued", "retrying"] }) ?? run;
+        await append(ownerId, {
+          installationId: installation.id,
+          runId: run.id,
+          type: "symphony.run.updated",
+          message: readinessFailure.message,
+          severity: "warning",
+        });
+        return updated;
+      }
       const workflow = await loadWorkflowContract({ homePath: options.homePath, projectSlug: installation.projectSlug });
       const worktreeResult = await options.worktreeManager.createWorktree({
         projectSlug: installation.projectSlug,
@@ -350,13 +421,16 @@ export function createMatrixSymphonyOrchestrator(options: {
       ? activeRuns.length
       : activeRuns.filter((run) => eligibleClaimKeys.has(run.claimKey)).length;
     const capacity = Math.max(0, (snapshot.installation.maxConcurrentAgents ?? DEFAULT_MAX_CONCURRENT_AGENTS) - countedRunning - blockedLiveRuns.length);
+    const readinessFailure = capacity > 0 && eligibleTickets.length > 0
+      ? await agentReadinessFailure(installation.defaultAgent)
+      : null;
     let dispatched = 0;
     for (const ticket of eligibleTickets) {
       if (dispatched >= capacity) break;
       const existing = await options.repository.findActiveRunByClaim(ownerId, claimKey(ticket));
       if (existing && isRetryBackoffActive(existing)) continue;
       if (existing && existing.status !== "queued" && existing.status !== "retrying") continue;
-      const run = await dispatchTicket(ownerId, installation, rule, ticket, existing);
+      const run = await dispatchTicket(ownerId, installation, rule, ticket, existing, readinessFailure);
       if (run.status === "running" || run.status === "queued" || run.status === "retrying") dispatched += 1;
     }
     const at = nowIso();

@@ -17,7 +17,7 @@ Incremental rollout of the three-way file sync system (Phase 9 OAuth + Phase 10 
                         |
                    matrix-os.com
                    app.matrix-os.com
-                   <handle>.matrix-os.com   (legacy; still routed)
+                   code.matrix-os.com
                         |
                         v
              +-------------------------+
@@ -416,7 +416,7 @@ Once PRs 1–3 are shipped, the next highest-value work lives in `specs/066-file
 ### Architecture-level
 
 - **PR 4 — Signup from CLI** (above).
-- **Clerk cookie cross-subdomain config** (referenced as TODO in `main.ts:290-306`). Unblocks the previously-disabled `<handle>.matrix-os.com` auth check. Only needed if the handle-subdomain routing is kept alive for backwards compat; can be deleted if not.
+- **Shared router session hardening**. Keep CLI, shell, and code access on `app.matrix-os.com` / `code.matrix-os.com`; do not reintroduce username subdomain routing.
 - **Gateway HA**. Currently one container = one gateway = one daemon. A restart drops WS connections. Moving to a per-user queue (NATS, Redis Streams) between home-mirror and the WS fan-out decouples availability from daemon liveness.
 
 ---

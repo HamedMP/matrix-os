@@ -139,7 +139,7 @@ const sync = defineCommand({
 
 const main = defineCommand({
   meta: { name: "matrixos", description: "Matrix OS CLI" },
-  subCommands: { sync, login, logout, share, peers, ssh, keys },
+  subCommands: { sync, login, logout, share, peers, shell, profile, whoami, status, doctor, instance },
 });
 
 runMain(main);

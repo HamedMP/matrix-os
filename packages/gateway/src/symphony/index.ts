@@ -1,4 +1,6 @@
 export * from "./contracts.js";
+export * from "./proxy.js";
+export * from "./proxy-contracts.js";
 export * from "./auth.js";
 export * from "./credential-store.js";
 export * from "./linear-source.js";

@@ -12,8 +12,7 @@ import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { useChatContext } from "@/stores/chat-context";
-import { Minus, Maximize2, ExternalLink } from "lucide-react";
-import { openAppInStandaloneTab } from "@/lib/open-app-tab";
+import { Minus, Maximize2 } from "lucide-react";
 
 function useThemeStyle() {
   const [style, setStyle] = useState<string>("flat");
@@ -73,11 +72,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const stopTitleBarPointer = useCallback((e: React.PointerEvent) => {
     e.stopPropagation();
   }, []);
-
-  const openStandaloneTab = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    openAppInStandaloneTab(win.path);
-  }, [win.path]);
 
   const [interacting, setInteracting] = useState(false);
   const isInteractive = zoom >= INTERACTION_THRESHOLD;
@@ -314,19 +308,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             {win.title}
           </span>
         </div>
-        <div className="w-[42px] shrink-0 flex justify-end">
-          {isIframeWindow && (
-            <button
-              className="size-6 rounded-md flex items-center justify-center text-foreground/60 hover:text-foreground hover:bg-background/70 transition-colors"
-              onPointerDown={stopTitleBarPointer}
-              onClick={openStandaloneTab}
-              aria-label="Open in new tab"
-              title="Open in new tab"
-            >
-              <ExternalLink className="size-3.5" />
-            </button>
-          )}
-        </div>
+        <div className="w-[42px] shrink-0" />
       </div>
     </div>
   );
@@ -376,22 +358,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         </div>
         {/* Right: Win98 window buttons */}
         <div className="flex items-center gap-0.5 shrink-0">
-          {isIframeWindow && (
-            <button
-              className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-              style={{
-                ...win98Bevel,
-                fontSize: "10px",
-                lineHeight: 1,
-              }}
-              onPointerDown={stopTitleBarPointer}
-              onClick={openStandaloneTab}
-              aria-label="Open in new tab"
-              title="Open in new tab"
-            >
-              <ExternalLink className="size-2.5" />
-            </button>
-          )}
           <button
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
             style={{
@@ -484,7 +450,10 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const appContent = (
     <>
       {win.path.startsWith("__terminal__") ? (
-        <TerminalApp mobile={isMobile} />
+        <TerminalApp
+          mobile={isMobile}
+          launchTargetId={win.id}
+        />
       ) : win.path === "__workspace__" ? (
         <WorkspaceApp />
       ) : win.path === "__file-browser__" ? (
@@ -549,8 +518,9 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
           <>
             {appContent}
             {!isFullscreen && interacting && <div className="absolute inset-0 z-10" />}
-            {!isFullscreen && !contentFocused && !interacting && (
+            {!isFullscreen && isIframeWindow && !contentFocused && !interacting && (
               <div
+                data-canvas-interaction-overlay
                 className="absolute inset-0 z-10"
                 onPointerDown={(e) => {
                   e.stopPropagation();

@@ -8,6 +8,19 @@ Format:
 - Commit hashes point at the source of truth.
 - Large features may also have feature-specific changelogs under `specs/<NNN>-<feature>/`.
 
+## 2026-05-26
+
+### CLI 0.3.0 Release Prep
+
+Prepared the installable `@finnaai/matrix` CLI for the `0.3.0` release after the onboarding/signup PR set.
+
+Highlights:
+
+- Stamped the sync-client package as `0.3.0`.
+- Documented the dedicated CLI release process for npm, Homebrew, GitHub `cli-v*` releases, and the macOS MatrixSync installer.
+- Added CI coverage for sync-client build/test/publish-shape checks.
+- Hardened the manual release workflow so it rejects mismatched package versions, existing npm versions, and existing `cli-v<version>` tags before publishing.
+
 ## 2026-04-28
 
 ### VPS-per-User Customer Host Completion

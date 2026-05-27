@@ -13,6 +13,7 @@ function baseConfig(): SyncConfig {
     gatewayUrl: "https://app.example.com",
     syncPath: join(homedir(), "matrixos"),
     gatewayFolder: "",
+    profile: "local",
     peerId: "host-abcd1234",
     pauseSync: false,
   };
@@ -23,8 +24,19 @@ function baseState(): SyncState {
     manifestVersion: 4,
     lastSyncAt: 1234,
     files: {
-      "a.md": { hash: "sha256:aa", mtime: 1, size: 1 },
-      "b.md": { hash: "sha256:bb", mtime: 2, size: 2 },
+      "a.md": { hash: `sha256:${"a".repeat(64)}`, mtime: 1, size: 1 },
+      "b.md": { hash: `sha256:${"b".repeat(64)}`, mtime: 2, size: 2 },
+    },
+    conflicts: {
+      "a.md": {
+        path: "a.md",
+        conflictPath: "a (conflict - peer-2 - 2026-05-20).md",
+        localHash: `sha256:${"a".repeat(64)}`,
+        remoteHash: `sha256:${"b".repeat(64)}`,
+        remotePeerId: "peer-2",
+        detectedAt: 1234,
+        resolved: false,
+      },
     },
   };
 }
@@ -71,10 +83,12 @@ describe("createIpcHandler", () => {
         manifestVersion: 4,
         lastSyncAt: 1234,
         fileCount: 2,
+        conflictCount: 1,
         syncPath: deps.config.syncPath,
         gatewayFolder: "",
         gatewayUrl: deps.config.gatewayUrl,
         platformUrl: deps.config.platformUrl,
+        profile: "local",
         peerId: deps.config.peerId,
       });
     });
@@ -87,6 +101,17 @@ describe("createIpcHandler", () => {
       const res = await handler("status", {});
 
       expect(res.syncing).toBe(false);
+    });
+
+    it("reports zero conflicts when the state has no conflict registry", async () => {
+      const { deps } = createDeps({
+        syncState: { ...baseState(), conflicts: undefined },
+      });
+      const handler = createIpcHandler(deps);
+
+      const res = await handler("sync.status", {});
+
+      expect(res.conflictCount).toBe(0);
     });
   });
 
@@ -125,6 +150,7 @@ describe("createIpcHandler", () => {
         gatewayFolder: "",
         gatewayUrl: deps.config.gatewayUrl,
         platformUrl: deps.config.platformUrl,
+        profile: "local",
         peerId: deps.config.peerId,
         pauseSync: false,
       });
