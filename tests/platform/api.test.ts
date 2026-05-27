@@ -93,7 +93,7 @@ describe('platform/api', () => {
     }
 
     const output = await metricsRegistry.metrics();
-    expect(output).toContain('platform_http_requests_total{method="GET",path="/boom",status="500"} 1');
+    expect(output).toContain('platform_http_requests_total{method="GET",path="/:path",status="500"} 1');
   });
 
   it('POST /containers/provision creates a container', async () => {
