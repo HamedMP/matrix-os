@@ -28,6 +28,8 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
+import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
+import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 
 interface MobileApp {
   id: string;
@@ -337,6 +339,12 @@ function MobileAppFrame({
   if (app.path === "__file-browser__") {
     return <FileBrowser windowId={openId} mobile />;
   }
+  if (app.path === "__workspace__") {
+    return <WorkspaceApp />;
+  }
+  if (app.path === "__preview-window__") {
+    return <PreviewWindow />;
+  }
   if (app.path === "__chat__") {
     if (!chat) {
       return (
@@ -357,6 +365,16 @@ function MobileAppFrame({
         onSwitchConversation={chat.switchConversation}
         onSubmit={chat.submitMessage}
       />
+    );
+  }
+  if (app.path.startsWith("__")) {
+    // Unknown built-in path: render a clear message instead of falling through
+    // to AppViewer, which would resolve "__foo__" to /files/__foo__ → 404.
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+        <div style={{ fontSize: 14, fontWeight: 600 }}>This app isn&apos;t available on mobile yet</div>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Path: {app.path}</div>
+      </div>
     );
   }
   return <AppViewer path={app.path} onOpenApp={() => {}} />;

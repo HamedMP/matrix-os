@@ -2,6 +2,14 @@
 
 import { useEffect } from "react";
 
+/**
+ * Registers the PWA service worker. New SW versions are *not* activated
+ * mid-session: forcing `skipWaiting` while the page is open lets the new SW
+ * `clients.claim()` and prune old caches, breaking static chunk lookups for
+ * code the running page still needs. Instead, an installed-and-waiting SW
+ * stays in `waiting` state and activates on the next full page load, which
+ * is the standard safe pattern.
+ */
 export function PwaRegister() {
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -10,20 +18,9 @@ export function PwaRegister() {
 
     const register = async () => {
       try {
-        const reg = await navigator.serviceWorker.register("/service-worker.js", {
+        await navigator.serviceWorker.register("/service-worker.js", {
           scope: "/",
           updateViaCache: "none",
-        });
-
-        if (reg.waiting) reg.waiting.postMessage("skipWaiting");
-        reg.addEventListener("updatefound", () => {
-          const installing = reg.installing;
-          if (!installing) return;
-          installing.addEventListener("statechange", () => {
-            if (installing.state === "installed" && navigator.serviceWorker.controller) {
-              installing.postMessage("skipWaiting");
-            }
-          });
         });
       } catch (err) {
         console.warn("[pwa] service worker registration failed:", err instanceof Error ? err.message : err);

@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 const __dirname0 = dirname(fileURLToPath(import.meta.url));
 const candidateRoots = [
   resolve(__dirname0, ".."),
-  "/home/deploy/matrix-os",
+  ...(process.env.MATRIX_REPO_ROOT ? [process.env.MATRIX_REPO_ROOT] : []),
 ];
 let sharp;
 for (const root of candidateRoots) {
@@ -26,7 +26,9 @@ for (const root of candidateRoots) {
   }
 }
 if (!sharp) {
-  throw new Error("sharp not installed; run pnpm install in repo root or worktree");
+  throw new Error(
+    "sharp not installed in this worktree. Either `pnpm install` here, or set MATRIX_REPO_ROOT to a checkout that has it.",
+  );
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

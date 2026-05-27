@@ -26,7 +26,10 @@ self.addEventListener("install", (event) => {
         PRECACHE.map((url) =>
           fetch(url, { credentials: "same-origin" })
             .then((res) => (res.ok ? cache.put(url, res.clone()) : null))
-            .catch(() => null),
+            .catch((err) => {
+              console.warn("[sw] precache failed for", url, err?.message ?? err);
+              return null;
+            }),
         ),
       ),
     ).then(() => self.skipWaiting()),
@@ -95,7 +98,11 @@ async function networkFirstHtml(req) {
     const timer = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(req, { signal: controller.signal });
     clearTimeout(timer);
-    if (res.ok) cache.put(req, res.clone()).catch(() => {});
+    if (res.ok) {
+      cache.put(req, res.clone()).catch((err) => {
+        console.warn("[sw] html cache put failed:", err?.message ?? err);
+      });
+    }
     return res;
   } catch {
     const cached = await cache.match(req);
@@ -112,7 +119,9 @@ async function cacheFirst(req) {
   if (cached) return cached;
   const res = await fetch(req);
   if (res.ok && res.type === "basic") {
-    cache.put(req, res.clone()).catch(() => {});
+    cache.put(req, res.clone()).catch((err) => {
+      console.warn("[sw] static cache put failed:", err?.message ?? err);
+    });
   }
   return res;
 }

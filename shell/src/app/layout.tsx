@@ -65,7 +65,9 @@ export async function generateMetadata(): Promise<Metadata> {
       capable: true,
       statusBarStyle: "black-translucent",
       title: "Matrix OS",
-      startupImage: ["/apple-icon.png"],
+      // `startupImage` requires per-device {url, media} entries matching real
+      // iPhone/iPad pixel dimensions; iOS ignores a single PNG. Omit until
+      // proper per-device splash images are generated.
     },
     formatDetection: { telephone: false, email: false, address: false },
     openGraph: {
