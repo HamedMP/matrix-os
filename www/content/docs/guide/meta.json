@@ -3,5 +3,5 @@
   "title": "Guide",
   "description": "Learn how to use Matrix OS",
   "icon": "BookOpen",
-  "pages": ["index", "getting-started", "mobile", "integrations", "apps", "app-store", "channels", "social", "storage", "agents", "file-system", "cloud-coding"]
+  "pages": ["index", "getting-started", "cli", "mobile", "integrations", "apps", "app-store", "channels", "social", "storage", "agents", "file-system", "cloud-coding"]
 }
