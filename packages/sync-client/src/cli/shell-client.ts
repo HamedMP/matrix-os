@@ -26,7 +26,7 @@ export interface ShellClient {
   deleteLayout(name: string): Promise<Record<string, unknown>>;
   applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
   dumpLayout(session: string): Promise<Record<string, unknown>>;
-  createAttachUrl(name: string, options?: { fromSeq?: number }): string;
+  createAttachUrl(name: string, options?: { fromSeq?: number; token?: string }): string;
   attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
 
@@ -83,12 +83,15 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
   const timeoutMs = options.timeoutMs ?? 10_000;
   const base = options.gatewayUrl.replace(/\/+$/, "");
 
-  function createAttachUrl(name: string, attachOptions: { fromSeq?: number } = {}): string {
+  function createAttachUrl(name: string, attachOptions: { fromSeq?: number; token?: string } = {}): string {
     const url = new URL(`${base}/ws/terminal`);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("session", name);
     if (typeof attachOptions.fromSeq === "number") {
       url.searchParams.set("fromSeq", String(attachOptions.fromSeq));
+    }
+    if (attachOptions.token) {
+      url.searchParams.set("token", attachOptions.token);
     }
     return url.toString();
   }

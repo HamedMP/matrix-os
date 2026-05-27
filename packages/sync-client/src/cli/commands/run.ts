@@ -169,7 +169,7 @@ export const runCommand = defineCommand({
       console.log(
         json
           ? formatCliSuccess({ detached: result.detached, session: name })
-          : `Detached. Reattach: matrix shell attach ${name}`,
+          : `Detached. Reattach: matrix shell connect ${name}`,
       );
     } catch (err) {
       writeError(err, json);
