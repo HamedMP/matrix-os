@@ -11,7 +11,7 @@ import {
   stripWebSocketUpgradeToken,
 } from "../../packages/platform/src/ws-upgrade.js";
 
-describe("isSafeWebSocketUpgradePath", () => {
+describe("websocket upgrade path helpers", () => {
   it("accepts normal websocket paths", () => {
     expect(isSafeWebSocketUpgradePath("/ws")).toBe(true);
     expect(isSafeWebSocketUpgradePath("/ws?token=abc")).toBe(true);
@@ -57,9 +57,12 @@ describe("isSafeWebSocketUpgradePath", () => {
     expect(isSessionRoutedHost("legacy.matrix-os.com")).toBe(false);
   });
 
-  it("recognizes internal tunnel origin hosts", () => {
+});
+
+describe("session-routed websocket hosts", () => {
+  it("recognizes internal tunnel origin hosts without depending on container names", () => {
     expect(isInternalWebSocketOriginHost("platform:9000")).toBe(true);
-    expect(isInternalWebSocketOriginHost("distro-platform-1:9000")).toBe(true);
+    expect(isInternalWebSocketOriginHost("matrix-router:9000")).toBe(true);
     expect(isInternalWebSocketOriginHost("127.0.0.1:9000")).toBe(true);
     expect(isInternalWebSocketOriginHost("evil.matrix-os.com")).toBe(false);
   });

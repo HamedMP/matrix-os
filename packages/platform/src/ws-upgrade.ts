@@ -40,7 +40,12 @@ export function isSessionRoutedHost(host: string): boolean {
 }
 
 export function isInternalWebSocketOriginHost(host: string): boolean {
-  return /^(platform|distro-platform-1|matrixos-platform|localhost|127\.0\.0\.1)(?::\d+)?$/i.test(host);
+  const normalized = host.toLowerCase().replace(/:\d+$/, "");
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    /^[a-z0-9][a-z0-9-]*$/.test(normalized)
+  );
 }
 
 export function getSessionRoutedWebSocketHost(
