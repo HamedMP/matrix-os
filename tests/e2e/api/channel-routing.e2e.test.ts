@@ -5,7 +5,14 @@ describe("E2E: Channel status + Message API", () => {
   let gw: TestGateway;
 
   beforeAll(async () => {
-    gw = await startTestGateway();
+    gw = await startTestGateway({
+      spawnFn: async function* () {
+        yield {
+          type: "result",
+          data: { sessionId: "test-session", cost: 0, tokensIn: 0, tokensOut: 0 },
+        };
+      },
+    });
   });
 
   afterAll(async () => {
@@ -44,18 +51,17 @@ describe("E2E: Channel status + Message API", () => {
     }
   });
 
-  it("POST /api/message dispatches and returns error without API key", async () => {
+  it("POST /api/message dispatches through the gateway", async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(`${gw.url}/api/message`, {
+      const res = await gw.request("/api/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: "hello" }),
         signal: controller.signal,
       });
-      // Without ANTHROPIC_API_KEY the SDK throws, Hono returns 500
-      expect([200, 500]).toContain(res.status);
+      expect(res.status).toBe(200);
     } catch (e: unknown) {
       // AbortError is acceptable - means the request was accepted but SDK is slow to fail
       if (e instanceof Error && e.name === "AbortError") {
@@ -101,7 +107,7 @@ describe("E2E: Channel status + Message API", () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(`${gw.url}/api/message`, {
+      const res = await gw.request("/api/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -110,7 +116,7 @@ describe("E2E: Channel status + Message API", () => {
         }),
         signal: controller.signal,
       });
-      expect([200, 500]).toContain(res.status);
+      expect(res.status).toBe(200);
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") {
         expect(true).toBe(true);
@@ -126,7 +132,7 @@ describe("E2E: Channel status + Message API", () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(`${gw.url}/api/message`, {
+      const res = await gw.request("/api/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -135,7 +141,7 @@ describe("E2E: Channel status + Message API", () => {
         }),
         signal: controller.signal,
       });
-      expect([200, 500]).toContain(res.status);
+      expect(res.status).toBe(200);
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") {
         expect(true).toBe(true);

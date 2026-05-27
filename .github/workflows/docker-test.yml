@@ -74,6 +74,7 @@ jobs:
               build: null
               environment:
                 MATRIX_DOCKER_CHOWN_SOURCE: "true"
+                MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
           EOF
 
       - name: Create external volumes

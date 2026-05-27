@@ -9,7 +9,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
@@ -286,6 +286,7 @@ export interface GatewayConfig {
   port?: number;
   model?: string;
   maxTurns?: number;
+  spawnFn?: SpawnFn;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
@@ -451,6 +452,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     model: config.model,
     maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
   });
 
   const watcher: Watcher = createWatcher(homePath);
