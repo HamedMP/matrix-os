@@ -296,6 +296,22 @@ export function TerminalPane({
     }
   }, [initialSessionId]);
 
+  // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
+  // window event with the target paneId; we forward to this pane's PTY if it
+  // matches.
+  useEffect(() => {
+    const onKey = (e: Event) => {
+      const detail = (e as CustomEvent<{ paneId: string; data: string }>).detail;
+      if (!detail || detail.paneId !== paneId) return;
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data: detail.data }));
+      }
+    };
+    window.addEventListener("matrix-os:terminal-input", onKey as EventListener);
+    return () => window.removeEventListener("matrix-os:terminal-input", onKey as EventListener);
+  }, [paneId]);
+
   useEffect(() => {
     let disposed = false;
 

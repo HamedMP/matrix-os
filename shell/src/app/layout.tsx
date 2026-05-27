@@ -7,6 +7,8 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/fira-code/400.css";
 import "@fontsource/fira-code/500.css";
 import "./globals.css";
+import { PwaRegister } from "@/components/pwa/PwaRegister";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -61,9 +63,11 @@ export async function generateMetadata(): Promise<Metadata> {
     manifest: "/manifest.json",
     appleWebApp: {
       capable: true,
-      statusBarStyle: "default",
+      statusBarStyle: "black-translucent",
       title: "Matrix OS",
+      startupImage: ["/apple-icon.png"],
     },
+    formatDetection: { telephone: false, email: false, address: false },
     openGraph: {
       title,
       description,
@@ -85,6 +89,11 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f4ede0" },
+    { media: "(prefers-color-scheme: dark)", color: "#3f4a3a" },
+  ],
 };
 
 export default function RootLayout({
@@ -97,6 +106,8 @@ export default function RootLayout({
       <html lang="en">
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
+          <PwaRegister />
+          <InstallPrompt />
         </body>
       </html>
     </ClerkProvider>

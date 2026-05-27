@@ -10,6 +10,24 @@ import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
+import { TerminalKeyBar } from "./TerminalKeyBar";
+
+export const TERMINAL_INPUT_EVENT = "matrix-os:terminal-input";
+
+export interface TerminalInputEventDetail {
+  paneId: string;
+  data: string;
+}
+
+function dispatchPaneInput(paneId: string | null, data: string): void {
+  if (!paneId) return;
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<TerminalInputEventDetail>(TERMINAL_INPUT_EVENT, {
+      detail: { paneId, data },
+    }),
+  );
+}
 
 // Map xterm theme ids onto zellij's built-in theme names. Zellij ships with
 // these themes in 0.44, so referencing them by name "just works".
@@ -589,15 +607,22 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               className="flex-1 min-w-0 min-h-0 flex"
               style={{ padding: mobile ? "6px" : "8px 10px 8px 12px", background: terminalBackground }}
             >
-              <PaneGrid
-                paneTree={activeTab.paneTree}
-                theme={theme}
-                focusedPaneId={focusedPaneId}
-                onFocusPane={setFocusedPaneId}
-                onSessionAttached={handleSessionAttached}
-                shouldCachePane={shouldCachePane}
-                shouldDestroyPane={shouldDestroyPane}
-              />
+              <div className="flex flex-1 min-h-0 min-w-0 flex-col">
+                <PaneGrid
+                  paneTree={activeTab.paneTree}
+                  theme={theme}
+                  focusedPaneId={focusedPaneId}
+                  onFocusPane={setFocusedPaneId}
+                  onSessionAttached={handleSessionAttached}
+                  shouldCachePane={shouldCachePane}
+                  shouldDestroyPane={shouldDestroyPane}
+                />
+                {mobile && (
+                  <TerminalKeyBar
+                    onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
+                  />
+                )}
+              </div>
             </div>
           ) : !initialized ? (
             <div className="flex-1" style={{ background: "var(--background)" }} />

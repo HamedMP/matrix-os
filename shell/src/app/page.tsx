@@ -9,6 +9,8 @@ import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
 
 import { Desktop } from "@/components/Desktop";
+import { MobileShell } from "@/components/mobile/MobileShell";
+import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 
@@ -22,6 +24,7 @@ export default function Home() {
 
   const chat = useChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const isMobile = useMobileViewport();
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
 
@@ -47,10 +50,14 @@ export default function Home() {
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
-          <Desktop
-            onOpenCommandPalette={() => setPaletteOpen(true)}
-            chat={chat}
-          />
+          {isMobile ? (
+            <MobileShell onOpenCommandPalette={() => setPaletteOpen(true)} />
+          ) : (
+            <Desktop
+              onOpenCommandPalette={() => setPaletteOpen(true)}
+              chat={chat}
+            />
+          )}
         </div>
       </div>
 
