@@ -9,6 +9,8 @@ import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon } from "lucide-r
 
 const GATEWAY = getGatewayUrl();
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
+const UPDATE_INSTALL_POLL_MS = 5_000;
+const UPDATE_INSTALL_TIMEOUT_MS = 5 * 60_000;
 
 interface SystemInfo {
   version?: string;
@@ -105,7 +107,19 @@ export function SystemSection() {
   const [upgrading, setUpgrading] = useState(false);
   const [installingTarget, setInstallingTarget] = useState<string | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
   const releaseRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (reloadTimeoutRef.current) {
+        clearTimeout(reloadTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const refreshReleaseData = useCallback(async (channel: ReleaseChannel) => {
     const requestId = releaseRequestIdRef.current + 1;
@@ -161,11 +175,67 @@ export function SystemSection() {
 
   }, [refreshReleaseData]);
 
+  const resolvedUpdate = resolveSystemUpdateState({
+    installedVersion: info.release?.version ?? info.version,
+    latestVersion: updateStatus?.latest?.version ?? null,
+    updateAvailable: updateStatus?.updateAvailable,
+    severity: updateStatus?.latest?.severity,
+    changelog: updateStatus?.latest?.changelog,
+    updateType: updateStatus?.latest?.updateType,
+  });
+  const currentVersion = resolvedUpdate.currentVersion;
+  const latestVersion = resolvedUpdate.latestVersion;
+  const updateAvailable = resolvedUpdate.updateAvailable;
+  const installedChannel = coerceReleaseChannel(info.release?.channel);
+  const releaseRows = releaseList?.releases ?? [];
+  const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
+
+  const waitForInstalledUpdate = useCallback(async (
+    target: { channel?: ReleaseChannel; version?: string },
+  ) => {
+    const deadline = Date.now() + UPDATE_INSTALL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, UPDATE_INSTALL_POLL_MS));
+      if (!mountedRef.current) return false;
+      try {
+        const res = await fetch(`${GATEWAY}/api/system/info`, {
+          signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+        });
+        if (!res.ok) continue;
+        const nextInfo = await res.json() as SystemInfo;
+        const installedVersion = nextInfo.release?.version ?? nextInfo.version;
+        const polledChannel = coerceReleaseChannel(nextInfo.release?.channel);
+        const channelInstalled = target.channel ? polledChannel === target.channel : true;
+        const installed = target.version
+          ? installedVersion === target.version && channelInstalled
+          : target.channel
+            ? channelInstalled && (installedVersion !== currentVersion || target.channel !== installedChannel)
+            : installedVersion !== currentVersion;
+        if (!mountedRef.current) return false;
+        if (installed) {
+          setInfo(nextInfo);
+          setUpgradeMessage("Installed. Reloading...");
+          setUpgrading(false);
+          setInstallingTarget(null);
+          if (reloadTimeoutRef.current) {
+            clearTimeout(reloadTimeoutRef.current);
+          }
+          reloadTimeoutRef.current = setTimeout(() => window.location.reload(), 2_000);
+          return true;
+        }
+      } catch (err: unknown) {
+        console.warn("[system-settings] waiting for update install:", err instanceof Error ? err.message : String(err));
+      }
+    }
+    return false;
+  }, [currentVersion, installedChannel]);
+
   const startUpdate = useCallback(async (target: { channel?: ReleaseChannel; version?: string }) => {
     const targetKey = target.version ?? target.channel ?? "stable";
     setUpgrading(true);
     setInstallingTarget(targetKey);
     setUpgradeError(null);
+    setUpgradeMessage(`Installing ${targetKey}. This can take a few minutes...`);
 
     try {
       const res = await fetch(`${GATEWAY}/api/system/update`, {
@@ -186,6 +256,7 @@ export function SystemSection() {
           console.warn("[system-settings] failed to parse upgrade error:", err instanceof Error ? err.message : String(err));
         }
         setUpgradeError(message);
+        setUpgradeMessage(null);
         setUpgrading(false);
         setInstallingTarget(null);
         return;
@@ -193,11 +264,18 @@ export function SystemSection() {
     } catch (err: unknown) {
       // Connection drop is expected while the container is being replaced.
       console.warn("[system-settings] upgrade request interrupted:", err instanceof Error ? err.message : String(err));
+      setUpgradeMessage("Upgrade started. Waiting for services to come back...");
     }
 
-    // Container will restart; reload after 15s
-    setTimeout(() => window.location.reload(), 15000);
-  }, []);
+    const installed = await waitForInstalledUpdate(target);
+    if (!mountedRef.current) return;
+    if (!installed) {
+      setUpgradeMessage(null);
+      setUpgradeError("Upgrade is still running. Check again in a minute.");
+      setUpgrading(false);
+      setInstallingTarget(null);
+    }
+  }, [waitForInstalledUpdate]);
 
   const handleChannelChange = useCallback((value: string) => {
     const channel = coerceReleaseChannel(value);
@@ -208,21 +286,6 @@ export function SystemSection() {
   const handleUpgrade = useCallback(async () => {
     await startUpdate({ channel: selectedChannel });
   }, [selectedChannel, startUpdate]);
-
-  const resolvedUpdate = resolveSystemUpdateState({
-    installedVersion: info.release?.version ?? info.version,
-    latestVersion: updateStatus?.latest?.version ?? null,
-    updateAvailable: updateStatus?.updateAvailable,
-    severity: updateStatus?.latest?.severity,
-    changelog: updateStatus?.latest?.changelog,
-    updateType: updateStatus?.latest?.updateType,
-  });
-  const currentVersion = resolvedUpdate.currentVersion;
-  const latestVersion = resolvedUpdate.latestVersion;
-  const updateAvailable = resolvedUpdate.updateAvailable;
-  const installedChannel = coerceReleaseChannel(info.release?.channel);
-  const releaseRows = releaseList?.releases ?? [];
-  const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -347,22 +410,25 @@ export function SystemSection() {
               This is a security update scheduled for automatic installation. Use the button below if it hasn't taken effect.
             </p>
           )}
+          {upgradeError && (
+            <p className="text-xs text-red-500">{upgradeError}</p>
+          )}
+          {upgradeMessage && (
+            <p className="text-xs text-muted-foreground">{upgradeMessage}</p>
+          )}
           {canInstallSelectedChannel && (
-            <div className="pt-1 space-y-2">
+            <div className="pt-1">
               <button
                 onClick={handleUpgrade}
                 disabled={upgrading}
                 className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 {upgrading
-                  ? "Installing... reloading in 15s"
+                  ? "Installing... checking status"
                   : selectedChannel !== installedChannel
                     ? `Switch to ${selectedChannel}`
                     : resolvedUpdate.autoApplying ? "Retry Update" : "Upgrade Now"}
               </button>
-              {upgradeError && (
-                <p className="text-xs text-red-500">{upgradeError}</p>
-              )}
             </div>
           )}
           {latestVersion && !canInstallSelectedChannel && (

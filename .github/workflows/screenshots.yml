@@ -3,8 +3,11 @@ name: Screenshots
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "shell/**"
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+concurrency:
+  group: screenshots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -13,6 +16,7 @@ permissions:
 jobs:
   screenshots:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -20,31 +24,91 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
+      - name: Decide whether screenshots are needed
+        id: screenshots
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map((label) => label.name.toLowerCase());
+            const forced = labels.some((label) => ["screenshots", "visual"].includes(label));
+            const skipped = labels.some((label) => ["skip-screenshots", "no-screenshots"].includes(label));
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const visualPatterns = [
+              /^shell\/e2e\//,
+              /^shell\/public\//,
+              /^shell\/src\/app\/.*\.(css|tsx)$/,
+              /^shell\/src\/components\/.*\.tsx$/,
+              /^shell\/src\/stores\/(desktop-config|desktop-mode|mobile-shell-store|preferences|terminal-settings)\.ts$/,
+              /^shell\/src\/lib\/(dock-sections|icon-url|theme-presets|ui-blocks)\.ts$/,
+              /^shell\/playwright\.config\.ts$/,
+              /^shell\/package\.json$/,
+              /^shell\/pnpm-lock\.yaml$/,
+            ];
+            const changedVisualFiles = files
+              .map((file) => file.filename)
+              .filter((filename) => visualPatterns.some((pattern) => pattern.test(filename)));
+            const shouldRun = !skipped && (forced || changedVisualFiles.length > 0);
+            const reason = skipped
+              ? "skipped by label"
+              : forced
+                ? "forced by label"
+                : changedVisualFiles.length > 0
+                  ? `visual files changed: ${changedVisualFiles.join(", ")}`
+                  : "no visual shell files changed";
+            core.setOutput("should_run", shouldRun ? "true" : "false");
+            core.setOutput("reason", reason);
+            await core.summary
+              .addHeading("Screenshot decision")
+              .addRaw(`Run screenshots: ${shouldRun ? "yes" : "no"}\n`)
+              .addRaw(`Reason: ${reason}\n`)
+              .write();
+
       - uses: oven-sh/setup-bun@v2
+        if: steps.screenshots.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
+        if: steps.screenshots.outputs.should_run == 'true'
 
       - uses: actions/setup-node@v6
+        if: steps.screenshots.outputs.should_run == 'true'
         with:
           node-version: 24
           cache: pnpm
 
+      - name: Cache Playwright Chromium
+        if: steps.screenshots.outputs.should_run == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'shell/pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
+        if: steps.screenshots.outputs.should_run == 'true'
 
       - name: Build shell
+        if: steps.screenshots.outputs.should_run == 'true'
         run: cd shell && pnpm build
         env:
           E2E_TEST_BYPASS: "1"
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
 
       - name: Install Playwright Chromium
+        if: steps.screenshots.outputs.should_run == 'true'
         run: cd shell && pnpm exec playwright install chromium
 
       - name: Run Playwright tests
+        if: steps.screenshots.outputs.should_run == 'true'
         run: cd shell && pnpm exec playwright test --update-snapshots
 
       - name: Upload test artifacts
-        if: failure()
+        if: failure() && steps.screenshots.outputs.should_run == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: playwright-results
@@ -55,13 +119,14 @@ jobs:
 
       - name: Check for snapshot changes
         id: snapshots
+        if: steps.screenshots.outputs.should_run == 'true'
         run: |
           git add -A
           CHANGED=$(git diff --cached --name-only -- '*.png' '*.jpg' '*.jpeg' | wc -l | tr -d ' ')
           echo "count=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit updated snapshots
-        if: steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.screenshots.outputs.should_run == 'true' && steps.snapshots.conclusion == 'success' && steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -69,7 +134,7 @@ jobs:
           git push
 
       - name: Comment on PR
-        if: steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.screenshots.outputs.should_run == 'true' && steps.snapshots.conclusion == 'success' && steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v9
         with:
           script: |
@@ -82,7 +147,7 @@ jobs:
             });
 
       - name: Upload updated snapshots for fork PRs
-        if: steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name != github.repository
+        if: steps.screenshots.outputs.should_run == 'true' && steps.snapshots.conclusion == 'success' && steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name != github.repository
         uses: actions/upload-artifact@v7
         with:
           name: updated-screenshots

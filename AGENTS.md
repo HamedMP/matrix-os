@@ -286,6 +286,7 @@ Do not request review while still pushing commits. Either declare a review commi
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
+- **Do not spam Greptile re-review comments** -- Greptile is configured to review every new commit. If the score/footer is stale after a push, it means the review is still running; wait and poll instead of repeatedly mentioning it.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`

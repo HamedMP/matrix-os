@@ -7,7 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserIcon } from "lucide-react";
+import { ServerIcon, UserIcon } from "lucide-react";
 
 function Placeholder() {
   return (
@@ -54,6 +54,14 @@ function MountedUserButton() {
         },
       }}
       afterSignOutUrl="https://app.matrix-os.com/sign-in"
-    />
+    >
+      <ClerkUserButton.MenuItems>
+        <ClerkUserButton.Link
+          label="Switch computer"
+          labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
+          href="/runtime"
+        />
+      </ClerkUserButton.MenuItems>
+    </ClerkUserButton>
   );
 }
