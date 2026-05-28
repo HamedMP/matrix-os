@@ -34,6 +34,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "CI relevant changes: true (workflow_dispatch always runs)"
+            exit 0
+          fi
+
           should_run_trigger=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             should_run_trigger=false
