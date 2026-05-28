@@ -9,12 +9,11 @@ type LegalSection = {
 type LegalPageProps = {
   title: string;
   description: string;
+  lastUpdated: string;
   sections: readonly LegalSection[];
 };
 
-export const legalLastUpdated = "May 28, 2026";
-
-export function LegalPage({ title, description, sections }: LegalPageProps) {
+export function LegalPage({ title, description, lastUpdated, sections }: LegalPageProps) {
   return (
     <div className="min-h-screen bg-[#E2E2CF] text-[#32352E]">
       <nav className="border-b border-[#D6D3C8]/80 bg-[#E2E2CF]/90 backdrop-blur-sm">
@@ -57,7 +56,7 @@ export function LegalPage({ title, description, sections }: LegalPageProps) {
               </div>
               <div>
                 <dt className="mb-1 font-medium text-[#434E3F]">Last updated</dt>
-                <dd className="text-[#5C5A4F]">{legalLastUpdated}</dd>
+                <dd className="text-[#5C5A4F]">{lastUpdated}</dd>
               </div>
             </dl>
           </aside>

@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const root = process.cwd();
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 async function readRepoFile(path: string) {
-  return readFile(join(root, path), "utf8");
+  return readFile(resolve(root, path), "utf8");
 }
 
 describe("www legal pages", () => {

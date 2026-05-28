@@ -15,6 +15,8 @@ export const metadata: Metadata = {
   },
 };
 
+const lastUpdated = "May 28, 2026";
+
 const sections = [
   {
     title: "Scope",
@@ -239,6 +241,7 @@ export default function PrivacyPage() {
     <LegalPage
       title="Privacy Policy"
       description="How Matrix OS handles account data, owner-controlled workspace data, analytics, integrations, AI providers, retention, and privacy requests."
+      lastUpdated={lastUpdated}
       sections={sections}
     />
   );

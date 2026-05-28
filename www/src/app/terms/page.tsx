@@ -15,6 +15,8 @@ export const metadata: Metadata = {
   },
 };
 
+const lastUpdated = "May 28, 2026";
+
 const sections = [
   {
     title: "Agreement",
@@ -220,6 +222,7 @@ export default function TermsPage() {
     <LegalPage
       title="Terms of Service"
       description="The rules for using Matrix OS, including hosted workspaces, AI-generated output, integrations, and the AGPL-licensed open-source code."
+      lastUpdated={lastUpdated}
       sections={sections}
     />
   );
