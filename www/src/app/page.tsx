@@ -44,11 +44,13 @@ const navLinks = [
   { label: "about", href: "#about" },
   { label: "features", href: "#features" },
   { label: "developers", href: "#developers" },
+  { label: "releases", href: "/releases" },
   { label: "agents", href: "/skills.md" },
 ] as const;
 
 const communityLinks = [
   { label: "Docs", href: "/docs" },
+  { label: "Releases", href: "/releases" },
   { label: "Agent Skill", href: "/skills.md" },
   { label: "Whitepaper", href: "/whitepaper" },
   { label: "Join Discord", href: "https://discord.gg/cSBBQWtPwV" },
