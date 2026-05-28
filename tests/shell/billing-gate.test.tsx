@@ -1,0 +1,89 @@
+// @vitest-environment jsdom
+
+import React from "react";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+const clerkState = vi.hoisted(() => ({
+  isLoaded: true,
+  isSignedIn: true,
+  hasPlan: false,
+}));
+
+vi.mock("@clerk/nextjs", () => ({
+  PricingTable: (props: { for?: string; newSubscriptionRedirectUrl?: string }) => (
+    <div
+      data-for={props.for}
+      data-redirect={props.newSubscriptionRedirectUrl}
+      data-testid="pricing-table"
+    />
+  ),
+  useAuth: () => ({
+    isLoaded: clerkState.isLoaded,
+    isSignedIn: clerkState.isSignedIn,
+    has: ({ plan }: { plan: string }) => plan === "early_adopter" && clerkState.hasPlan,
+  }),
+}));
+
+describe("BillingGate", () => {
+  it("bypasses billing only for explicit test screenshot runs", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = false;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.getByText("Matrix workspace")).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("renders Matrix OS when the signed-in user has the early adopter plan", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = true;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.getByText("Matrix workspace")).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("shows Clerk checkout when the user has not subscribed to early adopter", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = false;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.queryByText("Matrix workspace")).toBeNull();
+    expect(screen.getByText("Choose the early adopter plan to continue")).toBeTruthy();
+    expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
+    expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe("/");
+  });
+});

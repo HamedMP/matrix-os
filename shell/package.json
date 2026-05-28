@@ -10,7 +10,7 @@
     "test:screenshots": "playwright test"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.12.0",
+    "@clerk/nextjs": "6.39.0",
     "@matrix-os/observability": "workspace:*",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-css": "^6.3.1",

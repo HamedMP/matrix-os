@@ -10,6 +10,7 @@ import {
   ClockIcon,
   PuzzleIcon,
   MonitorIcon,
+  CreditCardIcon,
 } from "lucide-react";
 
 const sections = [
@@ -17,6 +18,7 @@ const sections = [
   { id: "channels", label: "Channels", icon: MessageSquareIcon, href: "/settings/channels" },
   { id: "skills", label: "Skills", icon: SparklesIcon, href: "/settings/skills" },
   { id: "security", label: "Security", icon: ShieldIcon, href: "/settings/security" },
+  { id: "billing", label: "Billing", icon: CreditCardIcon, href: "/settings/billing" },
   { id: "cron", label: "Cron", icon: ClockIcon, href: "/settings/cron" },
   { id: "plugins", label: "Plugins", icon: PuzzleIcon, href: "/settings/plugins" },
   { id: "system", label: "System", icon: MonitorIcon, href: "/settings/system" },
