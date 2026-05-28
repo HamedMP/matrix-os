@@ -1146,7 +1146,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
-    void saveDesktopConfig({
+    void saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
       dock,
       pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
