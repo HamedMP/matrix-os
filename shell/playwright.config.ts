@@ -27,7 +27,6 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       E2E_TEST_BYPASS: "1",
-      NEXT_PUBLIC_E2E_TEST_BYPASS: "1",
       NODE_ENV: "test",
     },
   },
