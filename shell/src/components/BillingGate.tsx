@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { PricingTable, SignInButton, useAuth } from "@clerk/nextjs";
 import { useSearchParams } from "next/navigation";
 import { CreditCardIcon, Loader2Icon, LogInIcon } from "lucide-react";
@@ -160,8 +160,13 @@ function SubscriptionConfirmationPending() {
 export function BillingGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, has } = useAuth();
   const searchParams = useSearchParams();
-  const checkoutJustCompleted =
-    searchParams.get("checkout") === "success" && hasRecentBillingCheckoutAttempt();
+  const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
+
+  useEffect(() => {
+    setCheckoutJustCompleted(
+      searchParams.get("checkout") === "success" && hasRecentBillingCheckoutAttempt(),
+    );
+  }, [searchParams]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
