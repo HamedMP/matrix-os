@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -35,6 +35,7 @@ vi.mock("next/navigation", () => ({
 describe("BillingGate", () => {
   afterEach(() => {
     window.history.replaceState({}, "", "/");
+    window.sessionStorage.clear();
   });
 
   it("bypasses billing only for explicit test screenshot runs", async () => {
@@ -103,6 +104,7 @@ describe("BillingGate", () => {
   it("shows confirmation feedback after a completed checkout redirect", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");
+    window.sessionStorage.setItem("matrix.billing.checkoutAttemptAt", String(Date.now()));
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
     clerkState.hasPlan = false;
@@ -118,6 +120,48 @@ describe("BillingGate", () => {
 
     expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("keeps direct checkout success navigation on the pricing table", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?checkout=success");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = false;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
+    expect(screen.getByTestId("pricing-table")).toBeTruthy();
+  });
+
+  it("records a checkout attempt before interacting with the pricing table", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = false;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    fireEvent.pointerDown(screen.getByTestId("pricing-table"));
+
+    expect(
+      Number(window.sessionStorage.getItem("matrix.billing.checkoutAttemptAt")),
+    ).toBeGreaterThan(0);
   });
 
   it("prompts unauthenticated visitors to sign in before checkout", async () => {
