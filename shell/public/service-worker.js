@@ -104,7 +104,8 @@ async function networkFirstHtml(req) {
       });
     }
     return res;
-  } catch {
+  } catch (err) {
+    console.warn("[sw] network-first fetch failed, trying cache:", err?.message ?? err);
     const cached = await cache.match(req);
     if (cached) return cached;
     const fallback = await cache.match("/");

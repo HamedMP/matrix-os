@@ -11,13 +11,10 @@ import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-set
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
 import { TerminalKeyBar } from "./TerminalKeyBar";
+import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
-export const TERMINAL_INPUT_EVENT = "matrix-os:terminal-input";
-
-export interface TerminalInputEventDetail {
-  paneId: string;
-  data: string;
-}
+export { TERMINAL_INPUT_EVENT };
+export type { TerminalInputEventDetail };
 
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;

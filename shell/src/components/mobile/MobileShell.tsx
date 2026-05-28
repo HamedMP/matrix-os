@@ -676,6 +676,15 @@ function DockButton({
 function AppIcon({ slug, size }: { slug: string; size: number }) {
   const [src, setSrc] = useState(() => iconUrl(slug));
   const triedSvg = useRef(false);
+  const prevSlug = useRef(slug);
+
+  useEffect(() => {
+    if (prevSlug.current === slug) return;
+    prevSlug.current = slug;
+    triedSvg.current = false;
+    setSrc(iconUrl(slug));
+  }, [slug]);
+
   return (
     <img
       src={src}

@@ -16,6 +16,7 @@ import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
+import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -301,15 +302,15 @@ export function TerminalPane({
   // matches.
   useEffect(() => {
     const onKey = (e: Event) => {
-      const detail = (e as CustomEvent<{ paneId: string; data: string }>).detail;
+      const detail = (e as CustomEvent<TerminalInputEventDetail>).detail;
       if (!detail || detail.paneId !== paneId) return;
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "input", data: detail.data }));
       }
     };
-    window.addEventListener("matrix-os:terminal-input", onKey as EventListener);
-    return () => window.removeEventListener("matrix-os:terminal-input", onKey as EventListener);
+    window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
+    return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
   }, [paneId]);
 
   useEffect(() => {
