@@ -8,6 +8,8 @@ import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js"
 import { WorkspaceCanvas, WorkspaceCanvasLayer } from "../../shell/src/components/canvas/WorkspaceCanvas.js";
 import { WorkspaceCanvasNode } from "../../shell/src/components/canvas/WorkspaceCanvasNode.js";
 
+const originalUpdateNode = useWorkspaceCanvasStore.getState().updateNode;
+
 vi.mock("@tldraw/tldraw", () => ({
   Tldraw: () => <div data-testid="mock-tldraw" />,
 }));
@@ -95,6 +97,7 @@ describe("workspace canvas renderer", () => {
       filters: [],
       saveStatus: "idle",
       error: null,
+      updateNode: originalUpdateNode,
     });
   });
 
@@ -314,6 +317,46 @@ describe("workspace canvas renderer", () => {
 
     expect(updateNode).toHaveBeenCalledTimes(1);
     expect(updateNode).toHaveBeenCalledWith("node_image", { position: { x: 120, y: 210 } });
+  });
+
+  it("reverts image drag previews when the pointer is cancelled", () => {
+    const updateNode = vi.fn(useWorkspaceCanvasStore.getState().updateNode);
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", { configurable: true, value: vi.fn() });
+    useCanvasTransform.setState({ zoom: 2 });
+    useWorkspaceCanvasStore.setState({
+      updateNode: updateNode as any,
+      document: {
+        id: "cnv_0123456789abcdef",
+        title: "Global Canvas",
+        revision: 1,
+        schemaVersion: 1,
+        scopeType: "global",
+        scopeRef: null,
+        nodes: [{
+          id: "node_image",
+          type: "image",
+          position: { x: 100, y: 200 },
+          size: { width: 640, height: 360 },
+          zIndex: 0,
+          displayState: "normal",
+          sourceRef: { kind: "file", id: "system/canvas-assets/cnv_0123456789abcdef/asset.png" },
+          metadata: { originalName: "Screenshot.png" },
+        }],
+        edges: [],
+        viewStates: [],
+        displayOptions: {},
+      } as any,
+    });
+
+    render(<WorkspaceCanvasLayer />);
+    const wrapper = screen.getByAltText("Screenshot.png").closest(".pointer-events-auto") as HTMLElement;
+
+    fireEvent.pointerDown(wrapper, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(wrapper, { pointerId: 1, clientX: 140, clientY: 120 });
+    fireEvent.pointerCancel(wrapper, { pointerId: 1 });
+
+    expect(updateNode).toHaveBeenCalledTimes(1);
+    expect(updateNode).toHaveBeenCalledWith("node_image", { position: { x: 100, y: 200 } });
   });
 
   it("does not paste canvas images while an editable element owns focus", async () => {

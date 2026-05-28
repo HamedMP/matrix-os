@@ -122,9 +122,9 @@ export function WorkspaceCanvasLayer() {
             if (!drag || drag.nodeId !== node.id || drag.pointerId !== event.pointerId) return;
             dragRef.current = null;
             if (drag.mode === "move") {
-              void updateNode(node.id, { position: { x: drag.nextX, y: drag.nextY } });
+              void updateNode(node.id, { position: { x: drag.origX, y: drag.origY } });
             } else {
-              void updateNode(node.id, { size: { width: drag.nextW, height: drag.nextH } });
+              void updateNode(node.id, { size: { width: drag.origW, height: drag.origH } });
             }
             clearImageDragPreview(event.currentTarget);
           }}
