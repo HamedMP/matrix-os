@@ -1111,6 +1111,8 @@ function LocalTerminalSidebar() {
   const [shells, setShells] = useState<ShellSessionSummary[]>([]);
   const [shellsLoading, setShellsLoading] = useState(false);
   const [shellsError, setShellsError] = useState<string | null>(null);
+  const creatingShellRef = useRef(false);
+  const [creatingShell, setCreatingShell] = useState(false);
   const deletingShellsRef = useRef<Set<string>>(new Set());
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
@@ -1273,12 +1275,20 @@ function LocalTerminalSidebar() {
     : sessions;
 
   const createManagedShell = async () => {
+    if (creatingShellRef.current) return;
+    creatingShellRef.current = true;
+    setCreatingShell(true);
     setShellsError(null);
-    const name = await ctx.createShellSessionTab("Zellij", ctx.sidebarSelectedPath ?? DEFAULT_CWD);
-    if (name) {
-      await fetchShells();
-    } else {
-      setShellsError("Failed to create shell");
+    try {
+      const name = await ctx.createShellSessionTab("Zellij", ctx.sidebarSelectedPath ?? DEFAULT_CWD);
+      if (name) {
+        await fetchShells();
+      } else {
+        setShellsError("Failed to create shell");
+      }
+    } finally {
+      creatingShellRef.current = false;
+      setCreatingShell(false);
     }
   };
 
@@ -1450,6 +1460,7 @@ function LocalTerminalSidebar() {
             {tab === "shells" ? (
               <button
                 onClick={() => void createManagedShell()}
+                disabled={creatingShell}
                 className="flex items-center gap-1.5 cursor-pointer"
                 style={{
                   height: 28,
@@ -1461,6 +1472,8 @@ function LocalTerminalSidebar() {
                   fontSize: 12,
                   fontWeight: 600,
                   whiteSpace: "nowrap",
+                  cursor: creatingShell ? "not-allowed" : "pointer",
+                  opacity: creatingShell ? 0.75 : 1,
                 }}
               >
                 <PlusIcon size={13} strokeWidth={2} />

@@ -673,13 +673,15 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New" }));
+      const newButton = screen.getByRole("button", { name: "New" });
+      fireEvent.click(newButton);
+      fireEvent.click(newButton);
       await Promise.resolve();
     });
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions"),
-      expect.objectContaining({ method: "POST" }),
-    );
+    const createCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") && init?.method === "POST"
+    ));
+    expect(createCalls).toHaveLength(1);
 
     await act(async () => {
       const deleteButton = screen.getByRole("button", { name: /delete main/i });
