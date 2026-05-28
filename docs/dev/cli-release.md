@@ -33,14 +33,13 @@ git tag -l 'cli-v*'
 
 ## Release
 
-Use the manual GitHub Actions workflow named `Release` with `version=0.3.0`. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.1`. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
-2. Runs root typecheck and tests.
-3. Builds and notarises the macOS `.pkg` when `ENABLE_MACOS_PKG=true`.
-4. Publishes `@finnaai/matrix` to npm with provenance.
-5. Creates GitHub release `cli-v<version>`.
-6. Updates `FinnaAI/homebrew-tap` with the npm tarball URL and SHA-256.
+2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
+3. Publishes `@finnaai/matrix` to npm with provenance.
+4. Creates GitHub release `cli-v<version>`.
+5. Updates `FinnaAI/homebrew-tap` with the npm tarball URL and SHA-256 when `update_homebrew` is enabled.
 
 ## Post-Release Verification
 
