@@ -323,7 +323,7 @@ describe("shell REST client", () => {
     ]);
   });
 
-  it("forwards focus reporting sequences while still dropping mouse input when unfocused", async () => {
+  it("drops focus reporting sequences while still dropping mouse input when unfocused", async () => {
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
     const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
@@ -342,8 +342,36 @@ describe("shell REST client", () => {
     await expect(attached).resolves.toEqual({ detached: true });
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
-      { type: "input", data: "\u001b[Ia\u001b[O" },
+      { type: "input", data: "a" },
     ]);
+  });
+
+  it("resets stale local mouse modes and drops immediate mouse bytes after focus returns", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(0);
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
+    nowSpy.mockReturnValue(6_000);
+    input.emit("data", "\u001b[I\u001b[<0;10;20M\u001b[Mabcx");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(output.write).toHaveBeenCalledWith("\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l");
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "x" },
+    ]);
+    nowSpy.mockRestore();
   });
 
   it("buffers fragmented SGR mouse sequences instead of forwarding partial escape bytes", async () => {

@@ -54,6 +54,8 @@ export interface ShellAttachOptions {
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l";
 const MAX_PENDING_MOUSE_SEQUENCE_CHARS = 128;
+const STALE_MOUSE_FOCUS_GUARD_MS = 5_000;
+const FOCUS_MOUSE_SUPPRESS_MS = 1_000;
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -81,11 +83,23 @@ function terminalSize(input: MaybeTtyStream, output: NodeJS.WriteStream): {
   return { cols, rows };
 }
 
-function createTerminalInputFilter(options: { dropMouse: boolean }) {
+function createTerminalInputFilter(options: {
+  dropMouse: boolean;
+  resetLocalInputModes?: () => void;
+  now?: () => number;
+}) {
   let focused = true;
   let pendingMouseSequence = "";
+  let lastRemoteOutputAt = options.now?.() ?? Date.now();
+  let suppressMouseUntil = 0;
+
+  const now = () => options.now?.() ?? Date.now();
+  const shouldForwardMouse = () => !options.dropMouse && focused && now() >= suppressMouseUntil;
 
   return {
+    noteRemoteOutput() {
+      lastRemoteOutputAt = now();
+    },
     filter(chunk: string): string {
       const input = pendingMouseSequence + chunk;
       pendingMouseSequence = "";
@@ -104,9 +118,11 @@ function createTerminalInputFilter(options: { dropMouse: boolean }) {
         }
 
         if (third === "I" || third === "O") {
-          focused = third === "I";
-          if (!options.dropMouse) {
-            output += input.slice(i, i + 3);
+          const nextFocused = third === "I";
+          focused = nextFocused;
+          if (nextFocused && now() - lastRemoteOutputAt >= STALE_MOUSE_FOCUS_GUARD_MS) {
+            suppressMouseUntil = now() + FOCUS_MOUSE_SUPPRESS_MS;
+            options.resetLocalInputModes?.();
           }
           i += 3;
           continue;
@@ -121,7 +137,7 @@ function createTerminalInputFilter(options: { dropMouse: boolean }) {
             pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
             break;
           }
-          if (!options.dropMouse && focused) {
+          if (shouldForwardMouse()) {
             output += input.slice(i, end + 1);
           }
           i = end + 1;
@@ -133,7 +149,7 @@ function createTerminalInputFilter(options: { dropMouse: boolean }) {
             pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
             break;
           }
-          if (!options.dropMouse && focused) {
+          if (shouldForwardMouse()) {
             output += input.slice(i, i + 6);
           }
           i += 6;
@@ -148,6 +164,7 @@ function createTerminalInputFilter(options: { dropMouse: boolean }) {
     reset() {
       focused = true;
       pendingMouseSequence = "";
+      suppressMouseUntil = 0;
     },
   };
 }
@@ -314,7 +331,13 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
       const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
       const dropMouse = attachOptions.mouse === false;
-      const inputFilter = createTerminalInputFilter({ dropMouse });
+      const resetLocalInputModes = () => {
+        output.write(LOCAL_TERMINAL_INPUT_RESET);
+      };
+      const inputFilter = createTerminalInputFilter({
+        dropMouse,
+        resetLocalInputModes,
+      });
       let pendingInput = "";
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
@@ -341,7 +364,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           ws.off?.("error", onError);
           pendingInput = "";
           inputFilter.reset();
-          output.write(LOCAL_TERMINAL_INPUT_RESET);
+          resetLocalInputModes();
           if (rawModeEnabled) {
             input.setRawMode?.(false);
             rawModeEnabled = false;
@@ -465,6 +488,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (msg.type === "attached") {
             markOpen();
           } else if (msg.type === "output" && typeof msg.data === "string") {
+            inputFilter.noteRemoteOutput();
             output.write(msg.data);
           } else if (msg.type === "error") {
             const code = typeof msg.code === "string" ? msg.code : "attach_failed";
@@ -488,6 +512,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         ws.on("close", onClose);
         ws.on("error", onError);
         if (input.isTTY && typeof input.setRawMode === "function") {
+          resetLocalInputModes();
           input.setRawMode(true);
           rawModeEnabled = true;
           input.resume?.();
