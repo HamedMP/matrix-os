@@ -571,7 +571,7 @@ describe("TerminalApp", () => {
     expect(screen.getByText("running health")).toBeTruthy();
     expect(screen.getByText("zellij attach matrix-sess_abc123")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "task_abc123" } });
+    fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "task_abc123" } });
     expect(screen.getByText("sess_abc123")).toBeTruthy();
 
     await act(async () => {
@@ -653,12 +653,15 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "does-not-carry-over" } });
+
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Shells" }));
       await Promise.resolve();
       await Promise.resolve();
     });
 
+    expect(screen.getByLabelText("Search shells")).toHaveProperty("value", "");
     expect(screen.getByText("active · 1 zellij tab")).toBeTruthy();
     expect(screen.getByText("0: dev")).toBeTruthy();
 

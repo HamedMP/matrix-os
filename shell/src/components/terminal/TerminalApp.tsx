@@ -1118,6 +1118,11 @@ function LocalTerminalSidebar() {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
 
+  const selectSidebarTab = useCallback((nextTab: SidebarTab) => {
+    setTab(nextTab);
+    setFilter("");
+  }, []);
+
   const fetchProjects = useCallback(async () => {
     setProjectsLoading(true);
     setProjectsError(null);
@@ -1374,10 +1379,10 @@ function LocalTerminalSidebar() {
           background: "color-mix(in srgb, var(--background) 62%, var(--card))",
         }}
       >
-        <SidebarRailButton label="Projects" icon={<FolderIcon size={16} strokeWidth={1.8} />} active={tab === "projects"} onClick={() => setTab("projects")} />
-        <SidebarRailButton label="Shells" icon={<TerminalIcon size={16} strokeWidth={1.8} />} active={tab === "shells"} onClick={() => setTab("shells")} />
-        <SidebarRailButton label="Agents" icon={<BotIcon size={16} strokeWidth={1.8} />} active={tab === "sessions"} onClick={() => setTab("sessions")} />
-        <SidebarRailButton label="Files" icon={<FilesIcon size={16} strokeWidth={1.8} />} active={tab === "files"} onClick={() => setTab("files")} />
+        <SidebarRailButton label="Projects" icon={<FolderIcon size={16} strokeWidth={1.8} />} active={tab === "projects"} onClick={() => selectSidebarTab("projects")} />
+        <SidebarRailButton label="Shells" icon={<TerminalIcon size={16} strokeWidth={1.8} />} active={tab === "shells"} onClick={() => selectSidebarTab("shells")} />
+        <SidebarRailButton label="Agents" icon={<BotIcon size={16} strokeWidth={1.8} />} active={tab === "sessions"} onClick={() => selectSidebarTab("sessions")} />
+        <SidebarRailButton label="Files" icon={<FilesIcon size={16} strokeWidth={1.8} />} active={tab === "files"} onClick={() => selectSidebarTab("files")} />
         <div style={{ flex: 1 }} />
         <button
           className="flex items-center justify-center cursor-pointer transition-colors"
@@ -1453,7 +1458,7 @@ function LocalTerminalSidebar() {
           </div>
           <div className="flex items-center gap-1.5">
             <input
-              aria-label={`Search ${tab}`}
+              aria-label={`Search ${tab === "sessions" ? "agents" : tab}`}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder={tab === "shells" ? "Find shell..." : tab === "sessions" ? "Find agent..." : tab === "files" ? "Find file..." : "Find project..."}
