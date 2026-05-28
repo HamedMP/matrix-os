@@ -205,6 +205,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const initialMobileRef = useRef(mobile);
   const sidebarOpenRef = useRef(sidebarOpen);
   sidebarOpenRef.current = sidebarOpen;
+  const mountedRef = useRef(false);
   const pendingPaneSessionsRef = useRef<Map<string, string>>(new Map());
   const closingPaneIdsRef = useRef<Set<string>>(new Set());
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -281,6 +282,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }, 0);
   }, []);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const addTab = useCallback(
     (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
       const id = genId();
@@ -342,6 +350,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           console.warn(`Failed to create shell session "${name}": ${res.status}`);
           return null;
         }
+        if (!mountedRef.current) {
+          destroyTerminalSessions([name]);
+          return null;
+        }
         addSessionTab(label, name, cwd);
         return name;
       } catch (err: unknown) {
@@ -354,7 +366,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }
     console.warn("Failed to create shell session: name collision");
     return null;
-  }, [addSessionTab]);
+  }, [addSessionTab, destroyTerminalSessions]);
 
   useEffect(() => {
     let cancelled = false;

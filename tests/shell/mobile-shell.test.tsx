@@ -1,12 +1,29 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MobileShell } from "../../shell/src/components/mobile/MobileShell.js";
 import { MobileAppSurface } from "../../shell/src/components/mobile/MobileAppSurface.js";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
+
+vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
+  TerminalApp: () => null,
+}));
+
+vi.mock("@/hooks/useTheme", () => ({
+  DEFAULT_THEME: {
+    name: "test",
+    mode: "dark",
+    colors: { background: "#111111", foreground: "#ffffff" },
+    fonts: {},
+    radius: "8px",
+  },
+  useTheme: () => ({ mode: "dark", colors: {}, fonts: {} }),
+}));
 
 function ViewportProbe() {
   const mobile = useMobileViewport();
@@ -18,8 +35,22 @@ describe("mobile shell", () => {
     setDesktopViewport();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("uses launcher-first mode on phone-sized browser viewports", async () => {
     setPhoneViewport();
+
+    render(<ViewportProbe />);
+
+    await waitFor(() => expect(screen.getByTestId("viewport-mode").textContent).toBe("mobile"));
+  });
+
+  it("starts from the server-safe desktop value before switching to phone mode", async () => {
+    setPhoneViewport();
+
+    expect(renderToString(<ViewportProbe />)).toContain("desktop");
 
     render(<ViewportProbe />);
 
@@ -108,5 +139,28 @@ describe("mobile shell", () => {
 
     expect(screen.getByText("App unavailable")).toBeTruthy();
     expect(screen.getByText("Open the app from the launcher again.")).toBeTruthy();
+  });
+
+  it("caps live terminal instances opened from the mobile dock", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+
+    render(<MobileShell />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      for (let i = 0; i < 7; i += 1) {
+        fireEvent.click(screen.getByLabelText("Terminal"));
+      }
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Open"));
+    });
+
+    expect(screen.getAllByLabelText("Close Terminal")).toHaveLength(5);
   });
 });

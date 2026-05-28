@@ -429,6 +429,69 @@ describe("TerminalApp", () => {
     expect(props.paneTree.startupCommand).toBeUndefined();
   });
 
+  it("cleans up a just-created zellij shell when unmounted before the tab is attached", async () => {
+    let resolveCreate: ((value: { ok: boolean; status: number; json: () => Promise<{ name: string }> }) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST" && init?.method !== "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        return new Promise((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      if (url.includes("/api/terminal/sessions/") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    const { unmount } = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Launch Zellij (Ctrl+Shift+Z)"));
+      await Promise.resolve();
+    });
+
+    const createCall = fetchMock.mock.calls.find(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") &&
+      init?.method === "POST"
+    ));
+    expect(createCall).toBeTruthy();
+    const name = JSON.parse(createCall?.[1]?.body as string).name as string;
+
+    unmount();
+    await act(async () => {
+      resolveCreate?.({ ok: true, status: 200, json: async () => ({ name }) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/sessions/${name}?force=1`),
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("uses workspace sessions as the coding cockpit source of truth", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

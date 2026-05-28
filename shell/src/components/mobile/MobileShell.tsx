@@ -45,6 +45,7 @@ interface OpenApp {
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
+const MAX_TERMINAL_INSTANCES = 5;
 
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
@@ -124,6 +125,11 @@ export function MobileShell({ onOpenCommandPalette }: MobileShellProps) {
       // (terminals are the only deliberately-multi-instance case and we
       // special-case them).
       if (app.path === "__terminal__") {
+        const terminalInstances = prev.filter((entry) => entry.app.path === "__terminal__");
+        if (terminalInstances.length >= MAX_TERMINAL_INSTANCES) {
+          const latestTerminal = terminalInstances[terminalInstances.length - 1];
+          return [...prev.filter((entry) => entry.id !== latestTerminal.id), latestTerminal];
+        }
         const id = `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         return [...prev, { id, app, openedAt: Date.now() }];
       }
