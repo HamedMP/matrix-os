@@ -15,7 +15,7 @@ import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./CanvasToolbar";
 import { CanvasMinimap } from "./CanvasMinimap";
-import { isCanvasAssetMimeType } from "../../../../packages/gateway/src/canvas/assets.js";
+import { isCanvasAssetMimeType } from "../../../../packages/gateway/src/canvas/assets";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 const MAX_PASTED_IMAGE_WIDTH = 640;

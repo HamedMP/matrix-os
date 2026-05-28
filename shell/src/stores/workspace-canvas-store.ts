@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
-import { isCanvasAssetMimeType, isCanvasAssetPath } from "../../../packages/gateway/src/canvas/assets.js";
+import { isCanvasAssetMimeType, isCanvasAssetPath } from "../../../packages/gateway/src/canvas/assets";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const SAFE_CANVAS_ERROR_MESSAGES = new Set([
