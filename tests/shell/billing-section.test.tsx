@@ -53,7 +53,9 @@ describe("BillingSection", () => {
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("Early adopter access")).toBeTruthy();
     expect(screen.getByText("Not active")).toBeTruthy();
-    expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
+    expect((await screen.findByTestId("pricing-table")).getAttribute("data-for")).toBe(
+      "user",
+    );
     expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
       "http://localhost:3000/?checkout=success",
     );

@@ -9,6 +9,9 @@ const clerkState = vi.hoisted(() => ({
   isSignedIn: true,
   hasPlan: false,
 }));
+const navigationState = vi.hoisted(() => ({
+  replace: vi.fn(),
+}));
 
 vi.mock("@clerk/nextjs", () => ({
   PricingTable: (props: { for?: string; newSubscriptionRedirectUrl?: string }) => (
@@ -29,6 +32,9 @@ vi.mock("@clerk/nextjs", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    replace: navigationState.replace,
+  }),
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
@@ -36,6 +42,7 @@ describe("BillingGate", () => {
   afterEach(() => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
+    navigationState.replace.mockReset();
   });
 
   it("bypasses billing only for explicit test screenshot runs", async () => {
@@ -95,7 +102,9 @@ describe("BillingGate", () => {
 
     expect(screen.queryByText("Matrix workspace")).toBeNull();
     expect(screen.getByText("Choose the early adopter plan to continue")).toBeTruthy();
-    expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
+    expect((await screen.findByTestId("pricing-table")).getAttribute("data-for")).toBe(
+      "user",
+    );
     expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
       "http://localhost:3000/?checkout=success",
     );
@@ -120,6 +129,26 @@ describe("BillingGate", () => {
 
     expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("cleans the checkout success query once the plan is active", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?checkout=success");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = true;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(navigationState.replace).toHaveBeenCalledWith("/");
   });
 
   it("keeps direct checkout success navigation on the pricing table", async () => {
@@ -157,7 +186,7 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    fireEvent.pointerDown(screen.getByTestId("pricing-table"));
+    fireEvent.pointerDown(await screen.findByTestId("pricing-table"));
 
     expect(
       Number(window.sessionStorage.getItem("matrix.billing.checkoutAttemptAt")),

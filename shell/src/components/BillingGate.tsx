@@ -2,13 +2,14 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { PricingTable, SignInButton, useAuth } from "@clerk/nextjs";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CreditCardIcon, Loader2Icon, LogInIcon } from "lucide-react";
 import {
   MATRIX_BILLING_PLAN,
   getMatrixBillingSuccessRedirectUrl,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
+import { useBillingRedirectUrl } from "@/hooks/useBillingRedirectUrl";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "matrix.billing.checkoutAttemptAt";
@@ -57,6 +58,8 @@ function BillingTableFallback() {
 }
 
 function BillingRequired() {
+  const redirectUrl = useBillingRedirectUrl();
+
   return (
     <main className="min-h-screen overflow-y-auto bg-background px-4 py-10 text-foreground">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -90,11 +93,15 @@ function BillingRequired() {
             }
           }}
         >
-          <PricingTable
-            for="user"
-            newSubscriptionRedirectUrl={getMatrixBillingSuccessRedirectUrl()}
-            fallback={<BillingTableFallback />}
-          />
+          {redirectUrl ? (
+            <PricingTable
+              for="user"
+              newSubscriptionRedirectUrl={redirectUrl}
+              fallback={<BillingTableFallback />}
+            />
+          ) : (
+            <BillingTableFallback />
+          )}
         </section>
       </div>
     </main>
@@ -159,8 +166,10 @@ function SubscriptionConfirmationPending() {
 
 export function BillingGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, has } = useAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
+  const hasBillingAccess = isSignedIn ? hasMatrixBillingAccess(has) : false;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
 
@@ -174,6 +183,12 @@ export function BillingGate({ children }: { children: ReactNode }) {
     setCheckoutJustCompleted(hasRecentBillingCheckoutAttempt());
     setCheckoutAttemptChecked(true);
   }, [checkoutReturnRequested]);
+
+  useEffect(() => {
+    if (hasBillingAccess && checkoutReturnRequested) {
+      router.replace("/");
+    }
+  }, [checkoutReturnRequested, hasBillingAccess, router]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
@@ -193,8 +208,6 @@ export function BillingGate({ children }: { children: ReactNode }) {
   if (!isSignedIn) {
     return <SignInRequired />;
   }
-
-  const hasBillingAccess = hasMatrixBillingAccess(has);
 
   if (!hasBillingAccess && checkoutReturnRequested && !checkoutAttemptChecked) {
     return (

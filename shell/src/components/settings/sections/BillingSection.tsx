@@ -6,9 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { CreditCardIcon, Loader2Icon } from "lucide-react";
 import {
   MATRIX_BILLING_PLAN,
-  getMatrixBillingSuccessRedirectUrl,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
+import { useBillingRedirectUrl } from "@/hooks/useBillingRedirectUrl";
 
 function PricingFallback() {
   return (
@@ -20,6 +20,7 @@ function PricingFallback() {
 
 export function BillingSection() {
   const { isLoaded, has } = useAuth();
+  const redirectUrl = useBillingRedirectUrl();
   const active = isLoaded ? hasMatrixBillingAccess(has) : null;
 
   return (
@@ -68,11 +69,15 @@ export function BillingSection() {
         </div>
       ) : active === false ? (
         <div className="rounded-xl border border-border/60 bg-card p-4">
-          <PricingTable
-            for="user"
-            newSubscriptionRedirectUrl={getMatrixBillingSuccessRedirectUrl()}
-            fallback={<PricingFallback />}
-          />
+          {redirectUrl ? (
+            <PricingTable
+              for="user"
+              newSubscriptionRedirectUrl={redirectUrl}
+              fallback={<PricingFallback />}
+            />
+          ) : (
+            <PricingFallback />
+          )}
         </div>
       ) : (
         <div className="flex min-h-48 items-center justify-center rounded-xl border border-border/60 bg-card p-4">
