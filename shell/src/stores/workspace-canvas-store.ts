@@ -118,7 +118,7 @@ interface WorkspaceCanvasStore {
   exportCanvas: () => Promise<unknown | null>;
   executeAction: (nodeId: string, type: string, payload?: Record<string, unknown>) => Promise<unknown | null>;
   addNode: (type: WorkspaceCanvasNodeType, metadata?: Record<string, unknown>) => Promise<void>;
-  addImageNode: (asset: CanvasAssetUpload, dimensions: { width: number; height: number }, center: { x: number; y: number }) => Promise<void>;
+  addImageNode: (asset: CanvasAssetUpload, dimensions: { width: number; height: number }, center: { x: number; y: number }, options?: { canvasId?: string }) => Promise<void>;
   uploadCanvasAsset: (file: File) => Promise<CanvasAssetUpload | null>;
   deleteNode: (nodeId: string) => Promise<void>;
   addEdge: (fromNodeId: string, toNodeId: string, type?: WorkspaceCanvasEdge["type"]) => Promise<void>;
@@ -398,9 +398,9 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
     get().scheduleSave(next);
   },
 
-  async addImageNode(asset, dimensions, center) {
+  async addImageNode(asset, dimensions, center, options = {}) {
     const document = get().document;
-    if (!document) return;
+    if (!document || (options.canvasId && document.id !== options.canvasId)) return;
     const nextNode = createImageNode(asset, dimensions, center, document.nodes.length);
     const next = { ...document, nodes: [...document.nodes, nextNode] };
     set({ document: next, selectedNodeId: nextNode.id });

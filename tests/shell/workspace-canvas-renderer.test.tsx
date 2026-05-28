@@ -207,6 +207,71 @@ describe("workspace canvas renderer", () => {
     });
   });
 
+  it("does not finish a pasted image into a different active canvas", async () => {
+    let resolveUpload: (response: Response) => void = () => {};
+    const uploadPromise = new Promise<Response>((resolve) => {
+      resolveUpload = resolve;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/assets")) return uploadPromise;
+      if (url.includes("/api/canvases/cnv_0123456789abcdef")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ revision: 2, updatedAt: "2026-05-27T00:00:00.000Z" }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ canvases: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CanvasRenderer />);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => new File([Buffer.from("fake-png")], "screenshot.png", { type: "image/png" }),
+          },
+        ],
+        files: [],
+      },
+    });
+
+    window.dispatchEvent(event);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/assets"), expect.any(Object)));
+    useWorkspaceCanvasStore.setState({
+      activeCanvasId: "cnv_other123456789",
+      document: {
+        id: "cnv_other123456789",
+        title: "Other Canvas",
+        revision: 1,
+        schemaVersion: 1,
+        scopeType: "global",
+        scopeRef: null,
+        nodes: [],
+        edges: [],
+        viewStates: [],
+        displayOptions: {},
+      } as any,
+    });
+
+    resolveUpload({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({
+        assetId: "asset_0123456789abcdef",
+        path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+        mimeType: "image/png",
+        sizeBytes: 8,
+        originalName: "screenshot.png",
+      }),
+    } as Response);
+
+    await waitFor(() => {
+      expect(useWorkspaceCanvasStore.getState().document?.id).toBe("cnv_other123456789");
+      expect(useWorkspaceCanvasStore.getState().document?.nodes).toEqual([]);
+    });
+  });
+
   it("commits image drags once on pointer release instead of every pointer move", () => {
     const updateNode = vi.fn(useWorkspaceCanvasStore.getState().updateNode);
     Object.defineProperty(HTMLElement.prototype, "setPointerCapture", { configurable: true, value: vi.fn() });

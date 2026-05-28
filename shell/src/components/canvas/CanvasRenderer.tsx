@@ -193,6 +193,8 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
       const files = imageFilesFromClipboard(event.clipboardData);
       if (files.length === 0) return;
       event.preventDefault();
+      const canvasId = useWorkspaceCanvasStore.getState().activeCanvasId;
+      if (!canvasId) return;
       const rect = useCanvasTransform.getState().containerRect;
       const center = useCanvasTransform.getState().screenToCanvas(
         (rect?.left ?? 0) + (rect?.width ?? window.innerWidth) / 2,
@@ -204,7 +206,7 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
           getImageDimensions(file),
         ]);
         if (!asset) return;
-        await addImageNode(asset, fitImageDimensions(naturalSize), center);
+        await addImageNode(asset, fitImageDimensions(naturalSize), center, { canvasId });
       }));
     };
 
