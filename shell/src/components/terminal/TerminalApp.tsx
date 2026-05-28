@@ -1274,10 +1274,13 @@ function LocalTerminalSidebar() {
     const name = await ctx.createShellSessionTab("Zellij", ctx.sidebarSelectedPath ?? DEFAULT_CWD);
     if (name) {
       await fetchShells();
+    } else {
+      setShellsError("Failed to create shell");
     }
   };
 
   const deleteManagedShell = async (name: string) => {
+    setShellsError(null);
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
         method: "DELETE",

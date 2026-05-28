@@ -690,4 +690,47 @@ describe("TerminalApp", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
   });
+
+  it("surfaces shell creation failures in the Shells sidebar", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        return Promise.resolve({ ok: false, status: 503, json: async () => ({ ok: false }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main", status: "active" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Failed to create shell")).toBeTruthy();
+  });
 });
