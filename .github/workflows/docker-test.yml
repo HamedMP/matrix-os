@@ -86,6 +86,7 @@ jobs:
   docker-build:
     name: Build Docker Test Image
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -112,7 +113,7 @@ jobs:
   docker-smoke:
     name: Docker Smoke Test
     needs: [changes, docker-build]
-    if: github.event_name == 'pull_request'
+    if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
