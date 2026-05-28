@@ -42,7 +42,7 @@ import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
-  getWebSocketUpgradeHost,
+  getSessionRoutedWebSocketHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
   isCodeDomainHost,
@@ -818,13 +818,21 @@ async function resolveAppDomainIdentity(opts: {
         ? claims.runtime_slot
         : undefined;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
-      if (machine?.clerkUserId !== claims.sub) {
+      if (machine?.clerkUserId === claims.sub) {
+        return {
+          handle: machine.handle,
+          userId: machine.clerkUserId,
+          runtimeSlot: machine.runtimeSlot,
+        };
+      }
+      const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
+      if (!activeMachine || activeMachine.clerkUserId !== claims.sub) {
         return null;
       }
       return {
-        handle: machine.handle,
-        userId: machine.clerkUserId,
-        runtimeSlot: machine.runtimeSlot,
+        handle: activeMachine.handle,
+        userId: activeMachine.clerkUserId,
+        runtimeSlot: activeMachine.runtimeSlot,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -943,6 +951,7 @@ async function probeCustomerVpsRuntime(
   platformSecret: string,
 ): Promise<{
   healthy: boolean;
+  runtimeVersion?: string | null;
   probeLatencyMs?: number;
   load1?: number | null;
   cpuCount?: number | null;
@@ -970,6 +979,9 @@ async function probeCustomerVpsRuntime(
     if (!res.ok) return { healthy: false, probeLatencyMs };
 
     const info = await res.json() as {
+      release?: {
+        version?: unknown;
+      };
       resources?: {
         cpuCount?: number;
         loadAverage?: unknown;
@@ -983,6 +995,7 @@ async function probeCustomerVpsRuntime(
     const load1 = typeof loadAverage[0] === 'number' ? loadAverage[0] : null;
     return {
       healthy: true,
+      runtimeVersion: typeof info.release?.version === 'string' ? info.release.version : null,
       probeLatencyMs,
       load1,
       cpuCount: typeof info.resources?.cpuCount === 'number' ? info.resources.cpuCount : null,
@@ -3463,14 +3476,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    const host = getWebSocketUpgradeHost(req.headers.host, req.headers['x-forwarded-host']);
+    const path = req.url ?? '/';
+    const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
 
-    const path = req.url ?? '/';
     const requestRuntimeSlot = readRuntimeSlot(path);
     const wsToken = getWebSocketUpgradeToken(path);
     let identity: AppDomainIdentity | null;
@@ -3590,7 +3603,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         socket.destroy();
         return;
       }
-      const upstreamHostHeader = isCodeDomain ? host : `${runningMachine.handle}.matrix-os.com`;
+      const upstreamHostHeader = isCodeDomain ? host : 'app.matrix-os.com';
       const headers = buildUpgradeHeaders(runningMachine.handle, true);
       const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
       const upstream = createTlsConnection({

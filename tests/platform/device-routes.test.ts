@@ -478,6 +478,10 @@ describe("device routes", () => {
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
+      const html = await res.text();
+      expect(html).toContain("shell connect -c main");
+      expect(html).toContain("run -it -- claude");
+      expect(html).toContain('id="instance-line"');
     });
 
     it("submits approval with an explicit Clerk bearer token", async () => {

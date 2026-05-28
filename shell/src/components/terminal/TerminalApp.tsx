@@ -7,10 +7,11 @@ import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
-import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
+import { useTerminalSettings } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
 import { TerminalKeyBar } from "./TerminalKeyBar";
+import { isCanonicalShellSessionId } from "./TerminalPane";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 export { TERMINAL_INPUT_EVENT };
@@ -26,39 +27,8 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
   );
 }
 
-// Map xterm theme ids onto zellij's built-in theme names. Zellij ships with
-// these themes in 0.44, so referencing them by name "just works".
-const ZELLIJ_THEME_BY_TERMINAL: Record<string, string> = {
-  "one-dark": "one-half-dark",
-  "one-light": "one-half-light",
-  "catppuccin-mocha": "catppuccin-mocha",
-  "dracula": "dracula",
-  "nord": "nord",
-  "solarized-dark": "solarized-dark",
-  "solarized-light": "solarized-light",
-  "github-dark": "default",
-  "github-light": "default",
-};
-
-// Build a one-shot shell command that writes a Matrix-owned zellij config
-// honoring the user's terminal theme, then launches zellij with that config.
-function zellijLaunchCommand(themeId: TerminalThemeId, isLight: boolean): string {
-  const mapped = themeId !== "system" ? ZELLIJ_THEME_BY_TERMINAL[themeId] : undefined;
-  const fallback = isLight ? "one-half-light" : "default";
-  const theme = mapped ?? fallback;
-  return `mkdir -p ~/.config/matrix-os && printf 'theme "${theme}"\\n' > ~/.config/matrix-os/zellij.kdl && exec zellij --config ~/.config/matrix-os/zellij.kdl`;
-}
-
-function isLightTerminalTheme(themeId: TerminalThemeId, desktopThemeSlug?: string): boolean {
-  return (
-    themeId === "one-light" ||
-    themeId === "solarized-light" ||
-    themeId === "github-light" ||
-    (themeId === "system" && /light|day/i.test(desktopThemeSlug ?? ""))
-  );
-}
-
 const DEFAULT_CWD = "projects";
+const DEFAULT_SHELL_SESSION_NAME = "main";
 
 interface Tab {
   id: string;
@@ -153,8 +123,41 @@ function getSessionIds(node: PaneNode): string[] {
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
 }
 
+function layoutUsesOnlyCanonicalShellSessions(layout: TerminalLayout): boolean {
+  if (!Array.isArray(layout.tabs) || layout.tabs.length === 0) {
+    return false;
+  }
+  const sessionIds = layout.tabs.flatMap((tab) => getSessionIds(tab.paneTree));
+  return sessionIds.length > 0 && sessionIds.every((sessionId) => isCanonicalShellSessionId(sessionId));
+}
+
+async function ensureDefaultShellSession(): Promise<boolean> {
+  try {
+    const listRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (listRes.ok) {
+      const data = await listRes.json() as { sessions?: Array<{ name?: unknown }> };
+      if (Array.isArray(data.sessions) && data.sessions.some((session) => session.name === DEFAULT_SHELL_SESSION_NAME)) {
+        return true;
+      }
+    }
+
+    const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: DEFAULT_SHELL_SESSION_NAME, cwd: DEFAULT_CWD }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return createRes.ok || createRes.status === 409;
+  } catch (err: unknown) {
+    console.warn("Failed to ensure default terminal session:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 function getSafePreferencesSessionName(value: string | null): string | null {
-  return value && /^[a-z][a-z0-9-]{0,30}$/.test(value) ? value : null;
+  return value && /^[a-z0-9][a-z0-9-]{0,30}$/.test(value) ? value : null;
 }
 
 function terminalAppDebug(event: string, details: Record<string, unknown>): void {
@@ -178,7 +181,6 @@ interface TerminalAppProps {
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
-  const isLightTheme = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
 
   // Match the padding around the xterm to the active terminal theme so the
   // user never sees a colored seam between the OS theme bg and the xterm
@@ -200,8 +202,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   tabsRef.current = tabs;
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
-  const themeIdRef = useRef(themeId);
-  themeIdRef.current = themeId;
   const initialMobileRef = useRef(mobile);
   const sidebarOpenRef = useRef(sidebarOpen);
   sidebarOpenRef.current = sidebarOpen;
@@ -238,7 +238,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const destroyTerminalSessions = useCallback((sessionIds: string[]) => {
     const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
     for (const sessionId of uniqueIds) {
-      void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+      const isCanonical = isCanonicalShellSessionId(sessionId);
+      const path = isCanonical
+        ? `/api/terminal/sessions/${encodeURIComponent(sessionId)}?force=1`
+        : `/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`;
+      void fetch(`${getGatewayUrl()}${path}`, {
         method: "DELETE",
         keepalive: true,
         signal: AbortSignal.timeout(5_000),
@@ -321,6 +325,37 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return id;
   }, []);
 
+  const createShellSessionTab = useCallback(async (label: string, cwd = DEFAULT_CWD) => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const name = `zellij-${genId()}`;
+      try {
+        const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, cwd }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 409) {
+          continue;
+        }
+        if (!res.ok) {
+          console.warn(`Failed to create shell session "${name}": ${res.status}`);
+          return null;
+        }
+        addSessionTab(label, name, cwd);
+        return name;
+      } catch (err: unknown) {
+        console.warn(
+          "Failed to create shell session:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      }
+    }
+    console.warn("Failed to create shell session: name collision");
+    return null;
+  }, [addSessionTab]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -344,14 +379,23 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         if (res.ok) {
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
-            const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-            const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-            setTabs(data.tabs);
-            setActiveTabId(nextActiveTabId);
-            setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-            setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
-            setInitialized(true);
-            return;
+            if (layoutUsesOnlyCanonicalShellSessions(data)) {
+              const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+              const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+              setTabs(data.tabs);
+              setActiveTabId(nextActiveTabId);
+              setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+              setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+              setInitialized(true);
+              return;
+            }
+
+            const sessionReady = await ensureDefaultShellSession();
+            if (!cancelled && sessionReady) {
+              addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
+              setInitialized(true);
+              return;
+            }
           }
         }
       } catch (err: unknown) {
@@ -359,8 +403,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       if (!cancelled) {
-        addTab(DEFAULT_CWD);
-        setInitialized(true);
+        const sessionReady = await ensureDefaultShellSession();
+        if (!cancelled) {
+          if (sessionReady) {
+            addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
+          } else {
+            addTab(DEFAULT_CWD);
+          }
+          setInitialized(true);
+        }
       }
     }
 
@@ -574,16 +625,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       case "E": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "vertical"); break;
       case "B": e.preventDefault(); setSidebarOpen(o => !o); break;
       case "C": e.preventDefault(); addTab(getCwd(), "Claude Code", true); break;
-      case "Z": e.preventDefault(); addTab(getCwd(), "Zellij", false, zellijLaunchCommand(themeIdRef.current, isLightTheme)); break;
+      case "Z": e.preventDefault(); void createShellSessionTab("Zellij", getCwd()); break;
     }
-  }, [addTab, closePane, splitPane, focusedPaneId, getCwd, isLightTheme]);
+  }, [addTab, closePane, createShellSessionTab, splitPane, focusedPaneId, getCwd]);
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile,
-    addTab, addSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
+    addTab, addSessionTab, createShellSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
   };
@@ -596,7 +647,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       onKeyDown={handleKeyDown}
     >
       <TerminalAppContext.Provider value={storeApi}>
-        <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} isLightTheme={isLightTheme} />
+        <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} />
         <div className="flex flex-1 min-h-0">
           {!mobile && <LocalTerminalSidebar />}
           {activeTab ? (
@@ -654,6 +705,7 @@ interface TerminalAppContextType {
   mobile: boolean;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
+  createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -818,9 +870,8 @@ function ThemePickerButton() {
   );
 }
 
-function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string; isLightTheme: boolean }) {
+function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const ctx = useTerminalAppContext();
-  const themeId = useTerminalSettings((s) => s.themeId);
   const dragIndexRef = useRef<number | null>(null);
 
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
@@ -935,7 +986,7 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
               Claude
             </ToolbarBtn>
             <ToolbarBtn
-              onClick={() => ctx.addTab(getCwd(), "Zellij", false, zellijLaunchCommand(themeId, isLightTheme))}
+              onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
               title="Launch Zellij (Ctrl+Shift+Z)"
               variant="primary"
             >
@@ -998,9 +1049,6 @@ interface WorkspaceSessionSummary {
 
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
-  const theme = useTheme();
-  const themeId = useTerminalSettings((s) => s.themeId);
-  const isLightSidebar = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
   const [tab, setTab] = useState<SidebarTab>("projects");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -1303,7 +1351,7 @@ function LocalTerminalSidebar() {
                 project={p}
                 onOpenShell={() => ctx.addTab(p.path, p.name)}
                 onOpenClaude={() => ctx.addTab(p.path, `${p.name} · claude`, true)}
-                onOpenZellij={() => ctx.addTab(p.path, `${p.name} · zellij`, false, zellijLaunchCommand(themeId, isLightSidebar))}
+                onOpenZellij={() => { void ctx.createShellSessionTab(`${p.name} · zellij`, p.path); }}
                 onSelect={() => ctx.setSidebarSelectedPath(p.path)}
                 isSelected={ctx.sidebarSelectedPath === p.path}
               />

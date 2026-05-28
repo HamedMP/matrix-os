@@ -4,7 +4,7 @@ Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social +
 
 ## Constitution
 
-Read `.specify/memory/constitution.md`: the 9 core principles. Re-read after compaction.
+Read `.specify/memory/constitution.md`: the 10 core principles. **Re-read at the start of every session and after compaction** — the constitution is the source of truth for non-negotiable rules.
 
 Key principles:
 
@@ -206,6 +206,8 @@ Do not request review while still pushing commits. Either declare a review commi
 
 ### Hard Rules (never violate)
 
+- **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
+- **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
@@ -225,14 +227,14 @@ Read these on demand, not every session:
 - `docs/dev/releases.md` -- when tagging a release or managing versions
 - `specs/quality-gates.md` -- when writing a new spec or reviewing a PR
 - `specs/ux-guide.md` -- when working on shell/frontend UI
-- `.specify/memory/constitution.md` -- when making architectural decisions (re-read after compaction)
+- `.specify/memory/constitution.md` -- re-read at the start of every session and after compaction (10 core principles, source of truth for non-negotiable rules)
 
 ## Swarm / Multi-Agent Rules
 
-- **NEVER use worktree isolation** (`isolation: "worktree"` is BANNED) -- worktrees lose uncommitted changes
+- **NEVER use Agent-tool `isolation: "worktree"`** -- that parameter creates an ephemeral worktree that discards uncommitted changes. This is distinct from the required **manual `git worktree add`** workflow (see Hard Rules), which is the canonical way every change ships.
 - **Agents MUST commit progress** after each phase/feature
 - **NEVER call TeamDelete** -- team files are cheap, lost work is expensive
-- Agents work on current branch in parallel, no feature branches
+- Sub-agents spawned for parallel exploration share the parent's worktree; they must commit before exiting.
 
 ## Active Technologies
 

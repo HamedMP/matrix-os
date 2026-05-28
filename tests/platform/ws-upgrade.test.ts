@@ -2,14 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
+  getSessionRoutedWebSocketHost,
   isAppDomainHost,
   isCodeDomainHost,
+  isInternalWebSocketOriginHost,
   isSessionRoutedHost,
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from "../../packages/platform/src/ws-upgrade.js";
 
-describe("isSafeWebSocketUpgradePath", () => {
+describe("websocket upgrade path helpers", () => {
   it("accepts normal websocket paths", () => {
     expect(isSafeWebSocketUpgradePath("/ws")).toBe(true);
     expect(isSafeWebSocketUpgradePath("/ws?token=abc")).toBe(true);
@@ -53,5 +55,22 @@ describe("isSafeWebSocketUpgradePath", () => {
     expect(isSessionRoutedHost("app.matrix-os.com")).toBe(true);
     expect(isSessionRoutedHost("code.matrix-os.com")).toBe(true);
     expect(isSessionRoutedHost("legacy.matrix-os.com")).toBe(false);
+  });
+
+});
+
+describe("session-routed websocket hosts", () => {
+  it("recognizes internal tunnel origin hosts without depending on container names", () => {
+    expect(isInternalWebSocketOriginHost("platform:9000")).toBe(true);
+    expect(isInternalWebSocketOriginHost("matrix-router:9000")).toBe(true);
+    expect(isInternalWebSocketOriginHost("127.0.0.1:9000")).toBe(true);
+    expect(isInternalWebSocketOriginHost("evil.matrix-os.com")).toBe(false);
+  });
+
+  it("falls back to app domain for token-authenticated tunnel websocket upgrades", () => {
+    expect(getSessionRoutedWebSocketHost("platform:9000", undefined, "/ws?token=abc")).toBe("app.matrix-os.com");
+    expect(getSessionRoutedWebSocketHost("platform:9000", undefined, "/ws")).toBe("platform:9000");
+    expect(getSessionRoutedWebSocketHost("evil.example.com", undefined, "/ws?token=abc")).toBe("evil.example.com");
+    expect(getSessionRoutedWebSocketHost("platform:9000", "code.matrix-os.com", "/ws?token=abc")).toBe("code.matrix-os.com");
   });
 });

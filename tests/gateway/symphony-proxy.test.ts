@@ -19,7 +19,8 @@ describe("Elixir Symphony proxy routes", () => {
     const server = await readFile(resolve(repoRoot, "packages/gateway/src/server.ts"), "utf8");
 
     expect(server).toContain("createElixirSymphonyProxyRoutes");
-    expect(server).toContain('app.route("/api/symphony", createElixirSymphonyProxyRoutes())');
+    expect(server).toContain('app.route("/api/symphony", createElixirSymphonyProxyRoutes({');
+    expect(server).toContain("upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort)");
     expect(server).not.toContain("createMatrixSymphonyOrchestrator({");
     expect(server).not.toContain("KyselySymphonyRepository");
     expect(server).not.toContain("createSymphonyRoutes({");

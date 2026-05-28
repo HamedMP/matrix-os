@@ -48,6 +48,23 @@ describe("run CLI command", () => {
     expect(client.attachSession).toHaveBeenCalledWith("setup");
   });
 
+  it("passes no-mouse mode through interactive run attach", async () => {
+    const client = {
+      createSession: vi.fn(async () => ({ name: "setup" })),
+      attachSession: vi.fn(async () => ({ detached: true })),
+    };
+
+    await expect(
+      createOrAttachRunSession(client, {
+        name: "setup",
+        command: ["claude"],
+        sessionProvided: true,
+        mouse: false,
+      }),
+    ).resolves.toEqual({ detached: true });
+    expect(client.attachSession).toHaveBeenCalledWith("setup", { mouse: false });
+  });
+
   it("does not reuse an accidental ephemeral session collision", async () => {
     const client = {
       createSession: vi.fn(async () => {

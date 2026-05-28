@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 
 const TALLY_FORM_ID = "2ED9lb";
 const DISCORD_URL = "https://discord.gg/cSBBQWtPwV";
@@ -68,23 +67,23 @@ export default async function EarlyAccessPage({ searchParams }: { searchParams: 
           </div>
         </section>
 
-        <section className="flex min-h-[760px] flex-col">
+        <section className="flex h-[min(820px,calc(100vh-3rem))] min-h-[680px] flex-col overflow-hidden md:sticky md:top-10 md:h-[calc(100vh-5rem)] md:min-h-[760px]">
           <iframe
-            data-tally-src={tallyUrl}
+            src={tallyUrl}
             loading="lazy"
             width="100%"
-            height="760"
+            height="100%"
             frameBorder="0"
             marginHeight={0}
             marginWidth={0}
+            scrolling="yes"
             sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
             referrerPolicy="strict-origin-when-cross-origin"
             title="Matrix Early Access Request"
-            className="min-h-[760px] w-full flex-1"
+            className="h-full w-full flex-1"
           />
         </section>
       </div>
-      <Script src="https://tally.so/widgets/embed.js" strategy="afterInteractive" />
     </main>
   );
 }
@@ -94,7 +93,6 @@ function buildTallyEmbedUrl(searchParams: Awaited<SearchParams>) {
     alignLeft: "1",
     hideTitle: "1",
     transparentBackground: "1",
-    dynamicHeight: "1",
   });
 
   for (const key of TALLY_QUERY_KEYS) {

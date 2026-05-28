@@ -148,8 +148,16 @@ function approvalPage(
       var button = document.getElementById('confirm-button');
       if (button) {
         button.disabled = isBusy;
-        button.textContent = isBusy ? 'Authorizing...' : 'Confirm';
+        button.textContent = isBusy ? 'authorizing...' : 'approve login';
       }
+    }
+
+    function updateSignedInInstance() {
+      var instance = document.getElementById('instance-line');
+      if (!instance || !window.Clerk || !window.Clerk.user) return;
+      var user = window.Clerk.user;
+      var handle = user.username || user.primaryEmailAddress?.emailAddress || user.id;
+      instance.textContent = 'signed in: @' + handle + ' on app.matrix-os.com';
     }
 
     async function submitApproval(event) {
@@ -225,6 +233,7 @@ function approvalPage(
 
     function initClerk() {
       window.Clerk.load().then(function() {
+        updateSignedInInstance();
         if (window.Clerk.user && window.Clerk.session) {
           showConfirm();
         } else {
@@ -266,28 +275,128 @@ function approvalPage(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authorize device -- Matrix OS</title>
   <style>
-    body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #eee; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .card { max-width: 420px; padding: 2rem; background: #141414; border: 1px solid #222; border-radius: 8px; text-align: center; }
-    h1 { margin: 0 0 1rem; font-size: 1.25rem; }
-    .code { font-family: monospace; font-size: 1.5rem; letter-spacing: 0.1em; padding: 0.5rem 1rem; background: #1f1f1f; border-radius: 6px; margin: 1rem 0; }
-    button { background: #3b82f6; color: white; border: 0; padding: 0.6rem 1.2rem; font-size: 1rem; border-radius: 6px; cursor: pointer; }
-    button:disabled { opacity: 0.6; cursor: wait; }
-    .status { min-height: 1.25rem; margin: 1rem 0 0; color: #fca5a5; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101312;
+      color: #e8efe7;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 24px;
+    }
+    main {
+      width: min(920px, 100%);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 20px;
+      align-items: stretch;
+    }
+    .terminal {
+      min-height: 480px;
+      background: #070908;
+      border: 1px solid #2b3a34;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.38);
+    }
+    .bar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      background: #151a18;
+      border-bottom: 1px solid #2b3a34;
+      color: #9aa8a1;
+      font-size: 13px;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 999px; background: #5f6b65; }
+    .dot.ok { background: #66d19e; }
+    .screen {
+      padding: 28px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .prompt { color: #8fbfa3; }
+    .muted { color: #8a968f; }
+    .code {
+      display: inline-block;
+      margin: 12px 0 18px;
+      padding: 10px 14px;
+      border: 1px solid #385247;
+      border-radius: 6px;
+      background: #101714;
+      color: #f4f7f1;
+      font-size: 24px;
+      letter-spacing: 0.08em;
+    }
+    .panel {
+      background: #f6f2e8;
+      color: #25332d;
+      border: 1px solid #ddd4c3;
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    p { margin: 0; color: #516158; line-height: 1.5; }
+    button {
+      width: 100%;
+      background: #25332d;
+      color: #fffdf6;
+      border: 0;
+      padding: 0.75rem 1rem;
+      font-size: 0.95rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.65; cursor: wait; }
+    .status { min-height: 1.25rem; color: #9f2d2d; }
+    #signin-area { min-width: 0; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      .terminal { min-height: 360px; }
+      .screen { padding: 20px; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Authorize this device</h1>
-    <p>You're approving:</p>
-    <div class="code">${escapedCode}</div>
-    <div id="signin-area" style="display:none"></div>
-    <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
-      <input type="hidden" name="userCode" value="${escapedCode}">
-      <input type="hidden" name="csrf" value="${escapedCsrf}">
-      <button id="confirm-button" type="submit">Confirm</button>
-    </form>
-    <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
-  </div>
+  <main>
+    <section class="terminal" aria-label="Matrix CLI login preview">
+      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>matrix login</span></div>
+      <div class="screen">
+        <div><span class="prompt">matrix</span> login</div>
+        <div class="muted">open app.matrix-os.com/auth/device</div>
+        <div>verification code</div>
+        <div class="code">${escapedCode}</div>
+        <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
+        <br>
+        <div><span class="prompt">matrix</span> whoami</div>
+        <div class="muted">@handle on app.matrix-os.com</div>
+        <div><span class="prompt">matrix</span> shell connect -c main</div>
+        <div><span class="prompt">matrix</span> run -it -- claude</div>
+        <div><span class="prompt">matrix</span> doctor</div>
+      </div>
+    </section>
+    <section class="panel">
+      <div>
+        <h1>Approve Matrix CLI</h1>
+        <p>Authorize this terminal to connect to your Matrix OS cloud computer.</p>
+      </div>
+      <div id="signin-area" style="display:none"></div>
+      <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
+        <input type="hidden" name="userCode" value="${escapedCode}">
+        <input type="hidden" name="csrf" value="${escapedCsrf}">
+        <button id="confirm-button" type="submit">approve login</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
+    </section>
+  </main>
   ${clerkLoader}
   ${clerkScript}
 </body>

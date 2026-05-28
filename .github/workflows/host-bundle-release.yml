@@ -43,17 +43,56 @@ on:
         required: false
         default: ""
         type: string
+      skip_dev_bundle:
+        description: "Skip dev host-bundle build/publish for metadata-only stack layers"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: host-bundle-release
+  group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}
   cancel-in-progress: false
 
 jobs:
+  dev-bundle-gate:
+    name: Dev bundle gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decision.outputs.should_build }}
+      reason: ${{ steps.decision.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to build
+        id: decision
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          SKIP_DEV_BUNDLE_INPUT: ${{ github.event.inputs.skip_dev_bundle || 'false' }}
+        run: |
+          set -euo pipefail
+
+          changed_files=""
+          zero_sha="0000000000000000000000000000000000000000"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            if [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "$GITHUB_EVENT_BEFORE" != "$zero_sha" ] && git cat-file -e "${GITHUB_EVENT_BEFORE}^{commit}" 2>/dev/null; then
+              changed_files="$(git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA")"
+            else
+              changed_files="$(git show --pretty= --name-only "$GITHUB_SHA")"
+            fi
+          fi
+
+          CHANGED_FILES="$changed_files" scripts/ci/dev-bundle-gate.sh
+
   test:
     name: Test
+    needs: dev-bundle-gate
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -80,7 +119,8 @@ jobs:
 
   build:
     name: Build host bundle
-    needs: test
+    needs: [dev-bundle-gate, test]
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -155,7 +195,8 @@ jobs:
 
   publish:
     name: Publish to R2
-    needs: build
+    needs: [dev-bundle-gate, build]
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

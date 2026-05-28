@@ -1,73 +1,89 @@
 # Matrix Symphony
 
-Symphony is the Matrix-native coding-agent runner for Linear tickets. It runs in
-the gateway, uses Matrix-owned projects/worktrees/sessions, and exposes one
-first-party app at `home/apps/symphony`.
+Symphony is the Matrix-native coding-agent runner for Linear tickets. The
+runtime is the **Elixir Symphony** server in `packages/symphony-elixir`. The
+gateway spawns it as a child process and proxies `/api/symphony/*` to its
+loopback HTTP server. The first-party shell app lives at `home/apps/symphony`.
 
-The legacy external runner path is no longer the product surface. Keep temporary
-compatibility exports only for imports that have not moved yet.
+The legacy TypeScript orchestrator that used to live under
+`packages/gateway/src/symphony/{auth,orchestrator,repository,...}.ts` has been
+removed; the only TypeScript pieces that remain in the gateway are the proxy
+(`symphony/proxy.ts`, `symphony/proxy-contracts.ts`), the slim shared types
+(`symphony/types.ts`), and the subprocess lifecycle manager
+(`symphony-runner.ts`).
 
 ## Runtime Shape
 
-- API base: `/api/symphony`
-- App: `home/apps/symphony`
-- Backend module: `packages/gateway/src/symphony/`
-- Durable state: owner Postgres through `KyselySymphonyRepository`
-- Linear API secrets: server-side credential store under
-  `~/system/symphony/credentials/`, written atomically with `0600` permissions
-- Work execution: `createWorktreeManager()` plus `createAgentSessionManager()`
+- **API base**: `/api/symphony` (gateway proxies to Elixir at
+  `http://127.0.0.1:4766` by default — same port as
+  `SymphonyElixir.Config.@fallback_server_port`).
+- **App**: `home/apps/symphony` (browser UI; talks only to the proxy).
+- **Elixir runtime**: `packages/symphony-elixir` — orchestrator, Linear client,
+  Codex app-server, workflow store, Phoenix LiveView status dashboard.
+- **Gateway shims**:
+  - `packages/gateway/src/symphony-runner.ts` — shared config and local-dev
+    lifecycle helper. Production VPSes run Elixir through
+    `matrix-symphony.service` and the `/opt/matrix/bin/matrix-symphony` wrapper.
+  - `packages/gateway/src/symphony/proxy.ts` — Hono routes that proxy
+    `/state`, `/issues/:id`, `/refresh`, and `/runs/:runId/stop` to the Elixir
+    HTTP server. Validates Elixir responses with Zod before re-emitting.
+  - `packages/gateway/src/symphony/types.ts` — `SymphonyRunStatus` and
+    `MatrixProjectOption` types for gateway callers.
+- **Workflow contract**: `packages/symphony-elixir/WORKFLOW.md`. Required env:
+  `SYMPHONY_LINEAR_API_KEY`, `SYMPHONY_LINEAR_PROJECT_SLUG`,
+  `SYMPHONY_WORKSPACE_ROOT`, `SYMPHONY_CODEX_COMMAND`.
 
-Normal browser responses expose only `credentialConfigured`; they must never
-include Linear API keys, Pipedream secrets, raw provider errors, database errors,
-or filesystem paths.
+Browser responses expose only `credentialConfigured`; they must never include
+Linear API keys, Pipedream secrets, raw provider errors, database errors, or
+filesystem paths.
 
 ## Main Endpoints
 
-- `GET /api/symphony/status`
-- `GET /api/symphony/config`
-- `POST /api/symphony/config`
-- `POST /api/symphony/credentials/linear`
-- `DELETE /api/symphony/credentials/linear`
-- `GET /api/symphony/tickets/preview`
-- `GET /api/symphony/runs`
-- `POST /api/symphony/start`
-- `POST /api/symphony/stop`
-- `POST /api/symphony/runs/:runId/actions`
-- `GET /api/symphony/events`
+- `GET /api/symphony/state` — current orchestrator state (running issues,
+  retry queue, last poll timestamp).
+- `GET /api/symphony/issues/:issueIdentifier` — issue detail (Elixir source).
+- `POST /api/symphony/refresh` — trigger an immediate Linear poll.
+- `POST /api/symphony/runs/:runId/stop` — stop a specific run.
 
-Every mutating route uses `bodyLimit`, Zod boundary schemas, request-principal
-auth, generic client errors, and operator events.
+All mutating routes go through `bodyLimit`, Zod boundary schemas,
+request-principal auth, generic client errors, and the existing CORS
+allowlist.
 
 ## Operator Flow
 
 1. Owner opens Symphony in Matrix.
-2. Owner adds a server-side Linear API secret or uses a connected Linear account
-   path when available.
-3. Owner saves the Matrix project, Linear team, labels, active/terminal states,
-   and selected Linear assignee IDs.
-4. Symphony previews matching tickets.
-5. Starting Symphony polls Linear, creates/reuses deterministic Matrix
-   worktrees, acquires the worktree lease, starts an agent session, and records
-   run state for restart recovery.
+2. Owner sets `LINEAR_API_KEY` on the VPS, normally through
+   `/opt/matrix/env/host.env`. The `matrix-symphony` wrapper sources that file
+   and passes the key to the Elixir process. There is no gateway HTTP endpoint
+   for Linear credential management in the Elixir-only runtime.
+3. `matrix-symphony.service` starts the Elixir runner on `SYMPHONY_PORT`
+   (`4766` by default). Elixir reads `WORKFLOW.md` from
+   `~/system/symphony/WORKFLOW.md` or the packaged fallback.
+4. Elixir polls Linear, deterministically routes issues to Codex agents,
+   broadcasts live state over Phoenix PubSub.
+5. Browser Symphony app pulls state via `/api/symphony/state` and renders the
+   live run board.
 
 ## Validation
 
-Focused checks:
+Focused gateway checks:
 
 ```bash
 bun run test \
-  tests/gateway/symphony-credential-store.test.ts \
-  tests/gateway/symphony-repository.test.ts \
-  tests/gateway/symphony-status-hub.test.ts \
-  tests/gateway/symphony-linear-source.test.ts \
-  tests/gateway/symphony-orchestrator.test.ts \
-  tests/gateway/symphony-routes.test.ts \
-  tests/gateway/symphony-workflow.test.ts \
-  tests/gateway/symphony-restart-recovery.test.ts \
+  tests/gateway/symphony-runner.test.ts \
+  tests/gateway/symphony-proxy.test.ts \
+  tests/gateway/server-cors.test.ts \
+  tests/gateway/coding-setup.test.ts \
   tests/default-apps/symphony-app.test.tsx
 ```
 
-Pre-PR gates remain:
+Elixir runtime checks:
+
+```bash
+cd packages/symphony-elixir && mix test
+```
+
+Pre-PR gates:
 
 ```bash
 bun run typecheck

@@ -11,7 +11,7 @@ const faqItems = [
   { q: "What happens to my data?", a: "Everything is a file on your system. Apps, data, settings, your AI's memory. Copy a folder to back up your entire OS. No vendor lock-in. No opaque databases." },
   { q: "Do I need to code?", a: "No. You describe what you want in plain English. The AI writes the code, saves it as a file, and it appears on your desktop. You never touch a line of code unless you want to." },
   { q: "What if something breaks?", a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost." },
-  { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source, MIT licensed, auditable by anyone." },
+  { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source under AGPL-3.0-or-later, auditable by anyone." },
   { q: "How is this different from ChatGPT?", a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep." },
   { q: "What does it cost?", a: "Free to start. The platform is open source. You bring your own AI key, or use our hosted instances. No surprise bills, no credit-burning loops." },
 ];
@@ -43,17 +43,25 @@ const c = {
 const navLinks = [
   { label: "about", href: "#about" },
   { label: "features", href: "#features" },
+  { label: "developers", href: "#developers" },
+  { label: "releases", href: "/releases" },
   { label: "agents", href: "/skills.md" },
 ] as const;
 
 const communityLinks = [
   { label: "Docs", href: "/docs" },
+  { label: "Releases", href: "/releases" },
   { label: "Agent Skill", href: "/skills.md" },
   { label: "Whitepaper", href: "/whitepaper" },
   { label: "Join Discord", href: "https://discord.gg/cSBBQWtPwV" },
   { label: "LinkedIn", href: "https://www.linkedin.com/company/matrix-os" },
   { label: "X", href: "https://x.com/joinmatrixos" },
   { label: "GitHub", href: "https://github.com/HamedMP/matrix-os" },
+] as const;
+
+const legalLinks = [
+  { label: "Terms", href: "/terms" },
+  { label: "Privacy", href: "/privacy" },
 ] as const;
 
 function Logo({ className = "", style = {} }: { className?: string; style?: React.CSSProperties }) {
@@ -427,7 +435,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="py-28 md:py-36" style={{ backgroundColor: c.pageBg }}>
+      <section id="developers" className="py-28 md:py-36" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">
           <div className="grid gap-10 md:grid-cols-[0.9fr_1.1fr] md:items-center">
             <div>
@@ -436,7 +444,7 @@ export default function LandingPage() {
                 Give your agent the setup file.
               </h2>
               <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-                Matrix publishes an agent-readable skill at <code>matrix-os.com/skills.md</code>. Claude, Codex, or another coding agent can read it, install the CLI, help you claim your account, and attach to the same VPS shell session you see in Matrix.
+                Matrix publishes an agent-readable skill at <code>matrix-os.com/skills.md</code>. Claude, Codex, Cursor, Cline, or another coding agent can read it, install the CLI, help you sign up with <code>matrix login</code>, and start working on your cloud computer with <code>matrix run</code>.
               </p>
             </div>
             <div className="rounded-[16px] p-6 md:p-8" style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
@@ -445,18 +453,16 @@ export default function LandingPage() {
 
 npx skills add HamedMP/matrix-os --skill matrix-os
 matrix login
-matrix run -it --session setup -- gh auth login
-matrix run -it --session setup -- claude
-matrix shell attach setup`}</code>
+matrix run -it -- claude`}</code>
               </pre>
               <div className="mt-6 flex flex-wrap gap-3">
                 <a href="/skills.md" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
                   style={{ backgroundColor: c.forest, color: c.pageBg }}>
                   Open skills.md <ArrowRightIcon className="size-3.5" />
                 </a>
-                <a href="https://skills.sh/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+                <a href="/docs/guide/developer-workflow" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
                   style={{ border: `1px solid ${c.border}`, color: c.forest }}>
-                  skills.sh
+                  Developer workflow
                 </a>
               </div>
             </div>
@@ -498,6 +504,17 @@ matrix shell attach setup`}</code>
               Go to Dashboard <ArrowRightIcon className="size-4" />
             </a>
           </SignedIn>
+          <p className="mt-5 text-[12px] leading-6" style={{ color: c.subtle }}>
+            By using Matrix OS, you agree to the{" "}
+            <a href="/terms" className="underline decoration-current/40 underline-offset-4 transition-opacity hover:opacity-70">
+              Terms
+            </a>{" "}
+            and acknowledge the{" "}
+            <a href="/privacy" className="underline decoration-current/40 underline-offset-4 transition-opacity hover:opacity-70">
+              Privacy Policy
+            </a>
+            .
+          </p>
         </div>
       </section>
 
@@ -510,7 +527,7 @@ matrix shell attach setup`}</code>
                 style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>matrix os</span>
             </div>
             <div className="flex flex-wrap items-center gap-x-7 gap-y-4">
-              {communityLinks.map((link) => (
+              {[...communityLinks, ...legalLinks].map((link) => (
                 <a
                   key={link.href}
                   href={link.href}

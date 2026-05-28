@@ -193,6 +193,7 @@ import {
   LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
+  createPendingTerminalInputQueue,
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
@@ -239,7 +240,7 @@ export function registerTerminalSessionRoutes(
     maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   });
 
-  app.get("/api/terminal/sessions", (c) => {
+  app.get("/api/terminal/pty-sessions", (c) => {
     const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
       const displayCwd = relative(homePath, session.cwd) || "~";
       return {
@@ -255,7 +256,7 @@ export function registerTerminalSessionRoutes(
     return c.json(publicSessions);
   });
 
-  app.delete("/api/terminal/sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
+  app.delete("/api/terminal/pty-sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
     const id = c.req.param("id");
     logTerminalDebug("rest-destroy-request", { sessionId: id });
     if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
@@ -264,6 +265,11 @@ export function registerTerminalSessionRoutes(
     sessionRegistry.destroy(id);
     return c.json({ ok: true });
   });
+}
+
+export async function clearLegacyTerminalSessionList(persistPath: string): Promise<void> {
+  await mkdirAsync(dirname(persistPath), { recursive: true });
+  await writeFileAsync(persistPath, "[]\n");
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
@@ -359,8 +365,8 @@ export function buildAllowedOrigins(options: {
       options.proxyOrigin,
       "http://localhost:3000",
       "http://localhost:4001",
-      "http://localhost:4066",
-      "http://127.0.0.1:4066",
+      "http://localhost:4766",
+      "http://127.0.0.1:4766",
       ...symphonyPorts.flatMap((port) => [
         `http://localhost:${port}`,
         `http://127.0.0.1:${port}`,
@@ -407,6 +413,41 @@ export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getC
   }
 }
 
+function parseSymphonyPort(value: string | undefined): number | undefined {
+  if (!value || !/^(?:0|[1-9]\d*)$/.test(value)) return undefined;
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined;
+}
+
+function parseLoopbackOriginPort(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+      return undefined;
+    }
+    return parseSymphonyPort(url.port);
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("[gateway] Ignoring invalid Symphony upstream origin:", err);
+    }
+    return undefined;
+  }
+}
+
+export async function resolveInitialSymphonyPort(
+  runner: Pick<SymphonyRunner, "getConfig">,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number | undefined> {
+  return parseLoopbackOriginPort(env.SYMPHONY_UPSTREAM_ORIGIN) ??
+    parseSymphonyPort(env.SYMPHONY_PORT) ??
+    await readInitialSymphonyPort(runner);
+}
+
+function symphonyUpstreamOriginForPort(port: number | undefined): string | undefined {
+  return port ? `http://127.0.0.1:${port}` : undefined;
+}
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
@@ -422,10 +463,15 @@ export async function createGateway(config: GatewayConfig) {
   });
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
+  const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
+  await clearLegacyTerminalSessionList(terminalSessionsPersistPath).catch((err: unknown) => {
+    logBestEffortFailure("Failed to clear legacy terminal sessions", err);
+  });
   const sessionRegistry = new SessionRegistry(homePath, {
     maxSessions: 10,
     bufferSize: 1024 * 1024,
-    persistPath: join(homePath, "system", "terminal-sessions.json"),
+    persistPath: terminalSessionsPersistPath,
+    autoRestore: false,
   });
   const workspaceZellijRuntime = createZellijRuntime({ homePath });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
@@ -443,6 +489,11 @@ export async function createGateway(config: GatewayConfig) {
     maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
   });
+  const symphonyRunner = createSymphonyRunner({ homePath });
+  const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
+  if (initialSymphonyPort) {
+    allowedOriginController.updateSymphonyPort(initialSymphonyPort);
+  }
   const zellijShellWs = createShellWsHandler({
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
@@ -1468,12 +1519,14 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
-  app.route("/api", createShellRoutes({
+  const shellRouteDeps = {
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
     layouts: shellLayoutStore,
-  }));
+  };
+  app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route("/api", createShellRoutes(shellRouteDeps));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -2069,6 +2122,90 @@ export async function createGateway(config: GatewayConfig) {
   );
 
   app.get(
+    "/ws/terminal/session",
+    upgradeWebSocket((c) => {
+      const namedSession = c.req.query("session");
+      const fromSeqParam = c.req.query("fromSeq");
+      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+      let namedSocketClosed = false;
+      const pendingInput = createPendingTerminalInputQueue();
+
+      return {
+        onOpen(_evt, ws) {
+          if (!namedSession) {
+            ws.send(JSON.stringify({
+              type: "error",
+              code: "invalid_request",
+              message: "Invalid request",
+            }));
+            ws.close();
+            return;
+          }
+          const fromSeq =
+            typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
+              ? Number(fromSeqParam)
+              : 0;
+          void zellijShellWs.open({
+            ws,
+            session: namedSession,
+            fromSeq,
+          }).then((session) => {
+            if (namedSocketClosed) {
+              session.onClose();
+              return;
+            }
+            namedHandle = session;
+            pendingInput.drain((raw) => {
+              session.onMessage(raw);
+            });
+          }).catch((err: unknown) => {
+            console.warn("[shell] terminal session attach failed:", err instanceof Error ? err.message : String(err));
+            pendingInput.clear();
+            if (namedSocketClosed) {
+              return;
+            }
+            try {
+              ws.send(JSON.stringify({
+                type: "error",
+                code: "attach_failed",
+                message: "Shell attach failed",
+              }));
+            } catch (sendErr: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+            }
+            ws.close();
+          });
+        },
+        onMessage(evt, ws) {
+          const raw = typeof evt.data === "string" ? evt.data : "";
+          if (namedHandle) {
+            namedHandle.onMessage(raw);
+            return;
+          }
+          if (!pendingInput.enqueue(raw)) {
+            try {
+              ws.send(JSON.stringify({
+                type: "error",
+                code: "buffer_overflow",
+                message: "Input buffer overflow before session was ready",
+              }));
+            } catch (sendErr: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+            }
+            ws.close();
+          }
+        },
+        onClose() {
+          namedSocketClosed = true;
+          pendingInput.clear();
+          namedHandle?.onClose();
+          namedHandle = null;
+        },
+      };
+    }),
+  );
+
+  app.get(
     "/ws/terminal",
     upgradeWebSocket((c) => {
       const cwdParam = c.req.query("cwd");
@@ -2522,7 +2659,9 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
-  app.route("/api/symphony", createElixirSymphonyProxyRoutes());
+  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
+    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
+  }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");

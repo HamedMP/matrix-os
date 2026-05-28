@@ -156,6 +156,7 @@ describe("zellij adapter", () => {
         ZELLIJ_SESSION_NAME: "main",
         ZELLIJ_PANE_ID: "1",
         ZELLIJ_SOCKET_DIR: "/run/user/999/zellij",
+        LANG: "fr_FR.UTF-8",
         SECRET_TOKEN: "nope",
       },
       cwd: "/opt/matrix/app",
@@ -175,6 +176,10 @@ describe("zellij adapter", () => {
           HOME: "/home/matrix",
           PATH: "/opt/matrix/bin",
           TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+          LANG: "fr_FR.UTF-8",
           XDG_RUNTIME_DIR: "/run/user/999",
           ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
           ZELLIJ_CONFIG_FILE: "/home/matrix/.config/zellij/config.kdl",
@@ -186,6 +191,7 @@ describe("zellij adapter", () => {
     expect(env).not.toHaveProperty("ZELLIJ");
     expect(env).not.toHaveProperty("ZELLIJ_SESSION_NAME");
     expect(env).not.toHaveProperty("ZELLIJ_PANE_ID");
+    expect(env).not.toHaveProperty("LC_ALL");
     expect(env).not.toHaveProperty("SECRET_TOKEN");
   });
 
@@ -234,9 +240,46 @@ describe("zellij adapter", () => {
     expect(execFile).toHaveBeenCalledWith(
       "zellij",
       ["--session", "main", "attach", "--create-background", "main"],
-      expect.objectContaining({ timeout: 25, cwd: "/home/alice/work" }),
+      expect.objectContaining({
+        timeout: 25,
+        cwd: "/home/alice/work",
+        env: expect.objectContaining({
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+        }),
+      }),
       expect.any(Function),
     );
+  });
+
+  it("creates tabs and panes with terminal-capable environment at process launch", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const adapter = createZellijAdapter({
+      execFile,
+      spawn: vi.fn(),
+      timeoutMs: 25,
+      env: { TERM: "dumb", COLORTERM: "", PATH: "/usr/bin" },
+    });
+
+    await adapter.createTab("main", { name: "tools" });
+    await adapter.splitPane("main", { direction: "right" });
+
+    for (const call of execFile.mock.calls) {
+      expect(call[2]).toEqual(expect.objectContaining({
+        env: expect.objectContaining({
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+        }),
+      }));
+    }
   });
 
   it("splits multi-word commands into argv tokens for zellij actions", async () => {
