@@ -578,6 +578,8 @@ export function useOnboarding(): OnboardingHook {
 
   // Public API
   const start = useCallback((useVoice: boolean) => {
+    setNotice(null);
+    setError(null);
     setIsVoiceMode(useVoice);
 
     void connect()
