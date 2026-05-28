@@ -1286,6 +1286,9 @@ function LocalTerminalSidebar() {
       } else {
         setShellsError("Failed to create shell");
       }
+    } catch (err: unknown) {
+      console.warn("Failed to create shell session:", err instanceof Error ? err.message : err);
+      setShellsError("Could not create shell");
     } finally {
       creatingShellRef.current = false;
       setCreatingShell(false);
