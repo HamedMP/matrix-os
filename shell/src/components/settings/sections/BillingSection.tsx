@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { CreditCardIcon, Loader2Icon } from "lucide-react";
 import {
   MATRIX_BILLING_PLAN,
-  MATRIX_BILLING_RETURN_PATH,
+  MATRIX_BILLING_SUCCESS_RETURN_PATH,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
 
@@ -70,7 +70,7 @@ export function BillingSection() {
         <div className="rounded-xl border border-border/60 bg-card p-4">
           <PricingTable
             for="user"
-            newSubscriptionRedirectUrl={MATRIX_BILLING_RETURN_PATH}
+            newSubscriptionRedirectUrl={MATRIX_BILLING_SUCCESS_RETURN_PATH}
             fallback={<PricingFallback />}
           />
         </div>

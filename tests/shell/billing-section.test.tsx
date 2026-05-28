@@ -54,6 +54,9 @@ describe("BillingSection", () => {
     expect(screen.getByText("Early adopter access")).toBeTruthy();
     expect(screen.getByText("Not active")).toBeTruthy();
     expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
+    expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
+      "/?checkout=success",
+    );
   });
 
   it("marks early adopter as active when Clerk grants the plan", async () => {

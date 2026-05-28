@@ -1,11 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { PricingTable, SignInButton, useAuth } from "@clerk/nextjs";
 import { CreditCardIcon, Loader2Icon, LogInIcon } from "lucide-react";
 import {
   MATRIX_BILLING_PLAN,
   MATRIX_BILLING_RETURN_PATH,
+  MATRIX_BILLING_SUCCESS_RETURN_PATH,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
 
@@ -47,7 +48,7 @@ function BillingRequired() {
         <section className="rounded-xl border border-border/60 bg-card/95 p-4 shadow-sm">
           <PricingTable
             for="user"
-            newSubscriptionRedirectUrl={MATRIX_BILLING_RETURN_PATH}
+            newSubscriptionRedirectUrl={MATRIX_BILLING_SUCCESS_RETURN_PATH}
             fallback={<BillingTableFallback />}
           />
         </section>
@@ -85,8 +86,42 @@ function SignInRequired() {
   );
 }
 
+function SubscriptionConfirmationPending() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+      <section className="flex w-full max-w-xl flex-col gap-4 rounded-xl border border-border/60 bg-card/95 p-6 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-medium text-primary">
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          <span>Matrix OS billing</span>
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-normal">Confirming your subscription</h1>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Clerk is updating your early adopter access. Refresh the shell in a moment if it
+            does not open automatically.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.location.assign(MATRIX_BILLING_RETURN_PATH)}
+          className="inline-flex h-10 w-fit items-center rounded-md border border-border/60 px-4 text-sm font-medium hover:bg-muted/50"
+        >
+          Refresh status
+        </button>
+      </section>
+    </main>
+  );
+}
+
 export function BillingGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, has } = useAuth();
+  const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
+
+  useEffect(() => {
+    setCheckoutJustCompleted(
+      new URLSearchParams(window.location.search).get("checkout") === "success",
+    );
+  }, []);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
@@ -108,6 +143,10 @@ export function BillingGate({ children }: { children: ReactNode }) {
   }
 
   if (!hasMatrixBillingAccess(has)) {
+    if (checkoutJustCompleted) {
+      return <SubscriptionConfirmationPending />;
+    }
+
     return <BillingRequired />;
   }
 

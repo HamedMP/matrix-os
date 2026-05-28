@@ -2,7 +2,7 @@
 
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -29,6 +29,10 @@ vi.mock("@clerk/nextjs", () => ({
 }));
 
 describe("BillingGate", () => {
+  afterEach(() => {
+    window.history.replaceState({}, "", "/");
+  });
+
   it("bypasses billing only for explicit test screenshot runs", async () => {
     vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
     clerkState.isLoaded = true;
@@ -87,7 +91,29 @@ describe("BillingGate", () => {
     expect(screen.queryByText("Matrix workspace")).toBeNull();
     expect(screen.getByText("Choose the early adopter plan to continue")).toBeTruthy();
     expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
-    expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe("/");
+    expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
+      "/?checkout=success",
+    );
+  });
+
+  it("shows confirmation feedback after a completed checkout redirect", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?checkout=success");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.hasPlan = false;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
   it("prompts unauthenticated visitors to sign in before checkout", async () => {
