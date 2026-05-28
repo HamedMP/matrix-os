@@ -508,6 +508,9 @@ importers:
       citty:
         specifier: ^0.2.2
         version: 0.2.2
+      ink:
+        specifier: ^6.2.3
+        version: 6.8.0(@types/react@19.2.14)(bufferutil@4.1.0)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(utf-8-validate@6.0.6)
       node-diff3:
         specifier: ^3.2.0
         version: 3.2.0
@@ -520,6 +523,9 @@ importers:
       pino-roll:
         specifier: ^2.1.0
         version: 2.2.0
+      react:
+        specifier: ^19.2.6
+        version: 19.2.6
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -533,6 +539,9 @@ importers:
       '@types/node':
         specifier: ^25.2.3
         version: 25.5.0
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.14
       '@types/picomatch':
         specifier: ^4.0.0
         version: 4.0.3

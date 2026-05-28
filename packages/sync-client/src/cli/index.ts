@@ -1,5 +1,7 @@
 import { createRequire } from "node:module";
 import { defineCommand, runMain } from "citty";
+import { conciseNonInteractiveHelp, resolveTuiLaunchMode } from "./tui/launch.js";
+import { launchTui } from "./tui/app.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { syncCommand } from "./commands/sync.js";
@@ -23,6 +25,17 @@ const main = defineCommand({
     description: "Matrix OS CLI — file sync, shell sessions, and instance access",
   },
   subCommands: {
+    tui: defineCommand({
+      meta: { name: "tui", description: "Open the Matrix OS terminal UI" },
+      args: {
+        noColor: { type: "boolean", required: false, default: false },
+      },
+      // NOTE: this subcommand exists for `matrix tui --help` output. Normal
+      // interactive `matrix tui` launches are intercepted before citty runs.
+      run: async ({ args }) => {
+        await launchTui({ noColor: args.noColor === true });
+      },
+    }),
     login: loginCommand,
     logout: logoutCommand,
     sync: syncCommand,
@@ -39,4 +52,16 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+const launchMode = resolveTuiLaunchMode({
+  argv: process.argv.slice(2),
+  stdinIsTTY: process.stdin.isTTY === true,
+  stdoutIsTTY: process.stdout.isTTY === true,
+});
+
+if (launchMode.mode === "tui") {
+  await launchTui({ noColor: process.argv.includes("--no-color") });
+} else if (launchMode.mode === "help") {
+  console.log(conciseNonInteractiveHelp());
+} else {
+  runMain(main);
+}

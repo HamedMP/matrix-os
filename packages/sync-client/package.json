@@ -51,10 +51,12 @@
   "dependencies": {
     "chokidar": "^4.0.0",
     "citty": "^0.2.2",
+    "ink": "^6.2.3",
     "node-diff3": "^3.2.0",
     "picomatch": "^4.0.4",
     "pino": "^9.6.0",
     "pino-roll": "^2.1.0",
+    "react": "^19.2.6",
     "tsx": "^4.21.0",
     "ws": "^8.19.0",
     "zod": "^4.4.3"
@@ -62,6 +64,7 @@
   "devDependencies": {
     "@types/node": "^25.2.3",
     "@types/picomatch": "^4.0.0",
+    "@types/react": "^19.2.7",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
     "typescript": "^5.9.3",
