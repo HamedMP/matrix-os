@@ -4,21 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --import=tsx src/main.ts",
     "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
+    "@types/pg": "^8.15.6",
+    "kysely-pglite": "^0.6.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
     "@matrix-os/observability": "workspace:*",
-    "better-sqlite3": "^12.10.0",
     "hono": "^4.11.9",
+    "kysely": "^0.28.13",
+    "pg": "^8.21.0",
     "prom-client": "^15.1.3"
   }
 }

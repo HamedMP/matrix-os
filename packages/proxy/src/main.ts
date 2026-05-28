@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
-import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMetricsSeed } from './db.js';
+import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMetricsSeed, resetProxyDb } from './db.js';
 import { calculateCost } from './cost.js';
 import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
 import { isAuthorizedProxyAdminRequest, parseProxyApiKey } from './auth.js';
@@ -95,19 +95,19 @@ app.post('/send/:targetHandle', async (c) => {
 });
 
 // Usage endpoints
-app.get('/usage/:userId', (c) => {
+app.get('/usage/:userId', async (c) => {
   if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
-  const usage = getUserUsage(c.req.param('userId'));
+  const usage = await getUserUsage(c.req.param('userId'));
   return c.json(usage);
 });
 
-app.get('/usage/summary', (c) => {
+app.get('/usage/summary', async (c) => {
   if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
-  return c.json(getUsageSummary());
+  return c.json(await getUsageSummary());
 });
 
 app.post('/quotas/:userId', async (c) => {
@@ -115,7 +115,7 @@ app.post('/quotas/:userId', async (c) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const body = await c.req.json<{ dailyLimitUsd?: number | null; monthlyLimitUsd?: number | null }>();
-  setQuota(c.req.param('userId'), body.dailyLimitUsd ?? null, body.monthlyLimitUsd ?? null);
+  await setQuota(c.req.param('userId'), body.dailyLimitUsd ?? null, body.monthlyLimitUsd ?? null);
   return c.json({ ok: true });
 });
 
@@ -132,7 +132,7 @@ app.all('/v1/*', async (c) => {
   const sessionId = c.req.header('x-matrix-session') ?? undefined;
 
   // Check quota
-  const quota = checkQuota(userId);
+  const quota = await checkQuota(userId);
   if (!quota.allowed) {
     quotaRejections.inc({ user_id: userId });
     return c.json({
@@ -228,7 +228,7 @@ app.all('/v1/*', async (c) => {
 
   const costUsd = calculateCost({ model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens });
 
-  insertUsage({
+  await insertUsage({
     userId, model, inputTokens, outputTokens,
     cacheReadTokens, cacheWriteTokens, costUsd,
     sessionId, status: upstream.status,
@@ -297,7 +297,7 @@ async function collectStreamUsage(
   }
 
   const costUsd = calculateCost({ model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens });
-  insertUsage({
+  await insertUsage({
     userId, model, inputTokens, outputTokens,
     cacheReadTokens, cacheWriteTokens, costUsd,
     sessionId, status,
@@ -310,7 +310,7 @@ async function collectStreamUsage(
 }
 
 // Seed Prometheus counters from DB so metrics survive restarts
-for (const row of getMetricsSeed()) {
+for (const row of await getMetricsSeed()) {
   apiCallsTotal.inc({ user_id: row.user_id, model: row.model, status: '200' }, row.calls);
   if (row.cost > 0) {
     apiCostTotal.inc({ user_id: row.user_id, model: row.model }, row.cost);
@@ -330,7 +330,10 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   server.close();
   const forceExit = setTimeout(() => process.exit(1), 6_000);
   try {
-    await posthogErrorTracker.shutdown();
+    await Promise.allSettled([
+      posthogErrorTracker.shutdown(),
+      resetProxyDb(),
+    ]);
   } catch (err: unknown) {
     console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
   } finally {

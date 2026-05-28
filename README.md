@@ -224,6 +224,29 @@ bun run test:integration  # Integration tests (needs API key, uses haiku)
 bun run test:coverage     # Coverage report
 ```
 
+### Postgres (host dev only)
+
+Matrix OS uses PostgreSQL for all persistence (platform, kernel durable state, proxy usage tracking). The Docker dev stack runs Postgres for you; if you're running on the host via `bun run dev`, you need a Postgres available.
+
+The easiest path on macOS:
+
+```bash
+brew install postgresql@17           # one-time
+brew services start postgresql@17
+createdb matrixos_platform
+```
+
+Then in your `.env`:
+
+```bash
+PROXY_DATABASE_URL=postgresql://localhost:5432/matrixos_platform
+PLATFORM_DATABASE_URL=postgresql://localhost:5432/matrixos_platform
+```
+
+Homebrew's Postgres uses your local user with no password (local trust auth). The proxy creates its tables automatically on first boot.
+
+Don't need the proxy locally? Skip Postgres entirely and run only the gateway + shell: `bun run dev:gateway & bun run dev:shell`.
+
 ### Start Development
 
 ```bash
@@ -261,6 +284,8 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 | `PORT` | Gateway port | `4000` |
 | `FAL_API_KEY` | AI icon generation (fal.ai) | -- |
 | `DATABASE_URL` | Postgres connection (social/app data) | -- |
+| `PLATFORM_DATABASE_URL` | Postgres for platform metadata | -- |
+| `PROXY_DATABASE_URL` | Postgres for proxy usage/quotas (falls back to `PLATFORM_DATABASE_URL`) | -- |
 
 ---
 
