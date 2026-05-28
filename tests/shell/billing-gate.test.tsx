@@ -138,8 +138,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
+    expect(await screen.findByTestId("pricing-table")).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
-    expect(screen.getByTestId("pricing-table")).toBeTruthy();
   });
 
   it("records a checkout attempt before interacting with the pricing table", async () => {

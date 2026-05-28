@@ -160,13 +160,20 @@ function SubscriptionConfirmationPending() {
 export function BillingGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, has } = useAuth();
   const searchParams = useSearchParams();
+  const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
+  const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
 
   useEffect(() => {
-    setCheckoutJustCompleted(
-      searchParams.get("checkout") === "success" && hasRecentBillingCheckoutAttempt(),
-    );
-  }, [searchParams]);
+    if (!checkoutReturnRequested) {
+      setCheckoutJustCompleted(false);
+      setCheckoutAttemptChecked(true);
+      return;
+    }
+
+    setCheckoutJustCompleted(hasRecentBillingCheckoutAttempt());
+    setCheckoutAttemptChecked(true);
+  }, [checkoutReturnRequested]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
@@ -187,7 +194,20 @@ export function BillingGate({ children }: { children: ReactNode }) {
     return <SignInRequired />;
   }
 
-  if (!hasMatrixBillingAccess(has)) {
+  const hasBillingAccess = hasMatrixBillingAccess(has);
+
+  if (!hasBillingAccess && checkoutReturnRequested && !checkoutAttemptChecked) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        <div className="flex items-center gap-2 text-sm" role="status">
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          Checking billing status...
+        </div>
+      </main>
+    );
+  }
+
+  if (!hasBillingAccess) {
     if (checkoutJustCompleted) {
       return <SubscriptionConfirmationPending />;
     }
