@@ -562,7 +562,7 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Agents" }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -571,7 +571,7 @@ describe("TerminalApp", () => {
     expect(screen.getByText("running health")).toBeTruthy();
     expect(screen.getByText("zellij attach matrix-sess_abc123")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Search sessions and transcripts"), { target: { value: "task_abc123" } });
+    fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "task_abc123" } });
     expect(screen.getByText("sess_abc123")).toBeTruthy();
 
     await act(async () => {
@@ -609,5 +609,82 @@ describe("TerminalApp", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/pty-sessions"), expect.objectContaining({ method: "GET" }));
+  });
+
+  it("manages canonical zellij shells from a dedicated sidebar surface", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions/main") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ name: "zellij-new", created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "main",
+              status: "active",
+              attachedClients: 1,
+              tabs: [{ idx: 0, name: "dev", focused: true }],
+            }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("active · 1 zellij tab")).toBeTruthy();
+    expect(screen.getByText("0: dev")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /open main/i }));
+    });
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: { sessionId: "main" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New" }));
+      await Promise.resolve();
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions"),
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /delete main/i }));
+      await Promise.resolve();
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main?force=1"),
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });
