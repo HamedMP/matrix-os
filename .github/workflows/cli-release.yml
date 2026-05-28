@@ -17,6 +17,11 @@ on:
         required: true
         default: true
         type: boolean
+      allow_existing_npm:
+        description: "Recovery mode: continue if this version is already on npm"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -33,6 +38,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
+      npm_exists: ${{ steps.version.outputs.npm_exists }}
     steps:
       - uses: actions/checkout@v6
 
@@ -63,9 +69,13 @@ jobs:
             exit 1
           fi
 
+          NPM_EXISTS=false
           if npm view "@finnaai/matrix@$VERSION" version >/dev/null 2>&1; then
-            echo "@finnaai/matrix@$VERSION already exists on npm" >&2
-            exit 1
+            if [ "${{ inputs.allow_existing_npm }}" != "true" ]; then
+              echo "@finnaai/matrix@$VERSION already exists on npm" >&2
+              exit 1
+            fi
+            NPM_EXISTS=true
           fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/cli-v${VERSION}" >/dev/null 2>&1; then
@@ -74,6 +84,7 @@ jobs:
           fi
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "npm_exists=${NPM_EXISTS}" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -92,6 +103,7 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish to npm
+        if: ${{ steps.version.outputs.npm_exists != 'true' }}
         working-directory: packages/sync-client
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -102,6 +114,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          for _ in $(seq 1 30); do
+            if npm view "@finnaai/matrix@$VERSION" version >/dev/null 2>&1; then break; fi
+            sleep 10
+          done
           npm view "@finnaai/matrix@$VERSION" version
           npm view "@finnaai/matrix@$VERSION" dist.tarball
 
