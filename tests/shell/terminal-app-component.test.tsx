@@ -103,6 +103,72 @@ describe("TerminalApp", () => {
     expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
   });
 
+  it("starts normal terminal tabs on the canonical main shell session", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: "main",
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "main", cwd: "projects" }),
+      }),
+    );
+  });
+
+  it("replaces saved legacy pty layouts with the canonical main shell session", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "legacy-tab",
+              label: "projects",
+              paneTree: {
+                type: "pane",
+                id: "legacy-pane",
+                cwd: "projects",
+                sessionId: "550e8400-e29b-41d4-a716-446655440000",
+              },
+            }],
+            activeTabId: "legacy-tab",
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree.sessionId).toBe("main");
+  });
+
   it("persists attached session ids in the saved layout", async () => {
     render(<TerminalApp />);
 

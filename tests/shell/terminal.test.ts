@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+import {
+  isCanonicalShellSessionId,
+  terminalWebSocketPathForSession,
+} from "../../shell/src/components/terminal/TerminalPane.js";
 
 class MockTerminalWebSocket {
   static instances: MockTerminalWebSocket[] = [];
@@ -76,5 +80,16 @@ describe("Terminal WebSocket protocol", () => {
   it("connects to the terminal WebSocket endpoint", () => {
     const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
     expect(ws.url).toBe("ws://localhost:4000/ws/terminal");
+  });
+
+  it("uses canonical zellij websocket paths only for shell session names", () => {
+    expect(isCanonicalShellSessionId("main")).toBe(true);
+    expect(isCanonicalShellSessionId("setup-1")).toBe(true);
+    expect(isCanonicalShellSessionId("term_observe_abc123")).toBe(false);
+    expect(isCanonicalShellSessionId("550e8400-e29b-41d4-a716-446655440000")).toBe(false);
+    expect(terminalWebSocketPathForSession("main")).toBe("/ws/terminal/session");
+    expect(terminalWebSocketPathForSession("term_observe_abc123")).toBe("/ws/terminal");
+    expect(terminalWebSocketPathForSession("550e8400-e29b-41d4-a716-446655440000")).toBe("/ws/terminal");
+    expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal");
   });
 });
