@@ -119,7 +119,7 @@ async function cacheFirst(req) {
   const cache = await caches.open(CACHE_STATIC);
   const cached = await cache.match(req);
   if (cached) return cached;
-  const res = await fetch(req);
+  const res = await fetch(req, { signal: AbortSignal.timeout(30_000) });
   if (res.ok && res.type === "basic") {
     cache.put(req, res.clone()).catch((err) => {
       console.warn("[sw] static cache put failed:", err?.message ?? err);

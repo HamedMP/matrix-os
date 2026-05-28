@@ -14,6 +14,20 @@ import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 
+const LAUNCHABLE_BUILT_IN_PATHS = new Set([
+  "__terminal__",
+  "__chat__",
+  "__file-browser__",
+  "__workspace__",
+  "__preview-window__",
+]);
+
+function readLaunchPathFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  const launch = new URLSearchParams(window.location.search).get("launch");
+  return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
+}
+
 // Chat lives as a popover triggered from the dock (see ChatPopover wired
 // into Desktop.tsx). The old floating ResponseOverlay was removed because
 // it competed with apps for screen space and felt heavier than chat
@@ -24,6 +38,7 @@ export default function Home() {
 
   const chat = useChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [launchAppPath, setLaunchAppPath] = useState<string | null>(null);
   const isMobile = useMobileViewport();
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
@@ -45,15 +60,23 @@ export default function Home() {
     return () => unregister(["action:new-chat"]);
   }, [register, unregister, chat.newChat]);
 
+  useEffect(() => {
+    setLaunchAppPath(readLaunchPathFromLocation());
+  }, []);
+
   return (
     <ChatProvider value={chat}>
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
           {isMobile ? (
-            <MobileShell onOpenCommandPalette={() => setPaletteOpen(true)} />
+            <MobileShell
+              launchAppPath={launchAppPath}
+              onOpenCommandPalette={() => setPaletteOpen(true)}
+            />
           ) : (
             <Desktop
+              launchAppPath={launchAppPath}
               onOpenCommandPalette={() => setPaletteOpen(true)}
               chat={chat}
             />

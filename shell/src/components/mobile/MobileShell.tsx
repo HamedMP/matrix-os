@@ -58,10 +58,11 @@ function iconUrl(slug: string): string {
 }
 
 interface MobileShellProps {
+  launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
 }
 
-export function MobileShell({ onOpenCommandPalette }: MobileShellProps) {
+export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShellProps) {
   const chat = useChatContext();
   useTheme();
 
@@ -71,6 +72,7 @@ export function MobileShell({ onOpenCommandPalette }: MobileShellProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [time, setTime] = useState(() => formatClock(new Date()));
   const stackRef = useRef(openStack);
+  const launchPathConsumedRef = useRef<string | null>(null);
   useEffect(() => {
     stackRef.current = openStack;
   }, [openStack]);
@@ -145,6 +147,14 @@ export function MobileShell({ onOpenCommandPalette }: MobileShellProps) {
     });
     setView("app");
   }, []);
+
+  useEffect(() => {
+    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
+    const app = apps.find((candidate) => candidate.path === launchAppPath);
+    if (!app) return;
+    launchPathConsumedRef.current = launchAppPath;
+    openApp(app);
+  }, [apps, launchAppPath, openApp]);
 
   const closeApp = useCallback((openId: string) => {
     setOpenStack((prev) => {

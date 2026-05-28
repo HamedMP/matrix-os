@@ -11,7 +11,7 @@ import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: () => null,
+  TerminalApp: () => <div data-testid="terminal-app" />,
 }));
 
 vi.mock("@/hooks/useTheme", () => ({
@@ -162,5 +162,16 @@ describe("mobile shell", () => {
     });
 
     expect(screen.getAllByLabelText("Close Terminal")).toHaveLength(5);
+  });
+
+  it("opens a launch shortcut target inside the mobile shell", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+
+    render(<MobileShell launchAppPath="__terminal__" />);
+
+    await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
   });
 });
