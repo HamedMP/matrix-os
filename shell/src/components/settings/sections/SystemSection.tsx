@@ -193,13 +193,16 @@ export function SystemSection() {
         if (!res.ok) continue;
         const nextInfo = await res.json() as SystemInfo;
         const installedVersion = nextInfo.release?.version ?? nextInfo.version;
-        const installedChannel = coerceReleaseChannel(nextInfo.release?.channel);
+        const polledChannel = coerceReleaseChannel(nextInfo.release?.channel);
         const targetVersion = expectedVersion ?? target.version;
-        const versionInstalled = targetVersion
-          ? installedVersion === targetVersion
-          : installedVersion !== currentVersion;
-        const channelInstalled = target.channel ? installedChannel === target.channel : true;
-        const installed = versionInstalled && channelInstalled;
+        const channelInstalled = target.channel ? polledChannel === target.channel : true;
+        const installed = target.version
+          ? installedVersion === target.version && channelInstalled
+          : target.channel
+            ? channelInstalled && (installedVersion !== currentVersion || target.channel !== installedChannel)
+            : targetVersion
+              ? installedVersion === targetVersion
+              : installedVersion !== currentVersion;
         if (installed) {
           setInfo(nextInfo);
           setUpgradeMessage("Installed. Reloading...");
@@ -211,7 +214,7 @@ export function SystemSection() {
       }
     }
     return false;
-  }, [currentVersion]);
+  }, [currentVersion, installedChannel]);
 
   const startUpdate = useCallback(async (target: { channel?: ReleaseChannel; version?: string }, expectedVersion?: string) => {
     const targetKey = target.version ?? target.channel ?? "stable";

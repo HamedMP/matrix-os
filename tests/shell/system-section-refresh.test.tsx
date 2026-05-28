@@ -222,4 +222,89 @@ describe("SystemSection release refresh", () => {
 
     expect(screen.getByText("Installed. Reloading...")).toBeTruthy();
   });
+
+  it("accepts a channel switch when a newer release installs than the click-time latest", async () => {
+    let updateStarted = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        if (updateStarted) {
+          return Promise.resolve(jsonResponse({
+            version: "v2026.05.28-152",
+            release: {
+              version: "v2026.05.28-152",
+              channel: "stable",
+              buildTime: "2026-05-28T20:02:18.421Z",
+            },
+          }));
+        }
+        return Promise.resolve(jsonResponse({
+          version: "v2026.05.28-145",
+          release: {
+            version: "v2026.05.28-145",
+            channel: "dev",
+            buildTime: "2026-05-28T15:32:51.000Z",
+          },
+        }));
+      }
+      if (url.endsWith("/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok", cronJobs: 0, channels: {} }));
+      }
+      if (url.endsWith("/api/system/update?channel=dev")) {
+        return Promise.resolve(jsonResponse({
+          channel: "dev",
+          latest: { version: "v2026.05.28-145" },
+          updateAvailable: false,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=dev")) {
+        return Promise.resolve(jsonResponse({ channel: "dev", releases: [] }));
+      }
+      if (url.endsWith("/api/system/update?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          latest: { version: "v2026.05.28-151" },
+          updateAvailable: true,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          releases: [{ version: "v2026.05.28-151", buildTime: "2026-05-28T19:53:18.421Z" }],
+        }));
+      }
+      if (url.endsWith("/api/system/update") && init?.method === "POST") {
+        updateStarted = true;
+        return Promise.resolve(jsonResponse({ ok: true, status: "started", channel: "stable" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SystemSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Installed channel")).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText("Release channel"), {
+      target: { value: "stable" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Switch to stable")).toBeTruthy();
+    });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByText("Switch to stable"));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(screen.getByText("Installed. Reloading...")).toBeTruthy();
+    expect(screen.queryByText("Upgrade is still running. Check again in a minute.")).toBeNull();
+  });
 });
