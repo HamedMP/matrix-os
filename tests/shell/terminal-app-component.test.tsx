@@ -680,6 +680,50 @@ describe("TerminalApp", () => {
     expect(screen.getByText("No files match")).toBeTruthy();
   });
 
+  it("trims project search before filtering", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/projects")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ projects: [{ name: "matrix-os", path: "projects/matrix-os" }] }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "  matrix  " } });
+    });
+
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "   " } });
+    });
+
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+  });
+
   it("manages canonical zellij shells from a dedicated sidebar surface", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

@@ -1250,10 +1250,10 @@ function LocalTerminalSidebar() {
   }
 
   const isAtRoot = !rootPath || rootPath === ".";
-  const filteredProjects = filter
-    ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
-    : projects;
   const normalizedFilter = filter.trim().toLowerCase();
+  const filteredProjects = normalizedFilter
+    ? projects.filter((p) => p.name.toLowerCase().includes(normalizedFilter))
+    : projects;
   const filteredShells = normalizedFilter
     ? shells.filter((shell) => [
       shell.name,
