@@ -11,7 +11,7 @@ const faqItems = [
   { q: "What happens to my data?", a: "Everything is a file on your system. Apps, data, settings, your AI's memory. Copy a folder to back up your entire OS. No vendor lock-in. No opaque databases." },
   { q: "Do I need to code?", a: "No. You describe what you want in plain English. The AI writes the code, saves it as a file, and it appears on your desktop. You never touch a line of code unless you want to." },
   { q: "What if something breaks?", a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost." },
-  { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source, MIT licensed, auditable by anyone." },
+  { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source under AGPL-3.0-or-later, auditable by anyone." },
   { q: "How is this different from ChatGPT?", a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep." },
   { q: "What does it cost?", a: "Free to start. The platform is open source. You bring your own AI key, or use our hosted instances. No surprise bills, no credit-burning loops." },
 ];
@@ -54,6 +54,11 @@ const communityLinks = [
   { label: "LinkedIn", href: "https://www.linkedin.com/company/matrix-os" },
   { label: "X", href: "https://x.com/joinmatrixos" },
   { label: "GitHub", href: "https://github.com/HamedMP/matrix-os" },
+] as const;
+
+const legalLinks = [
+  { label: "Terms", href: "/terms" },
+  { label: "Privacy", href: "/privacy" },
 ] as const;
 
 function Logo({ className = "", style = {} }: { className?: string; style?: React.CSSProperties }) {
@@ -498,6 +503,17 @@ matrix shell attach setup`}</code>
               Go to Dashboard <ArrowRightIcon className="size-4" />
             </a>
           </SignedIn>
+          <p className="mt-5 text-[12px] leading-6" style={{ color: c.subtle }}>
+            By using Matrix OS, you agree to the{" "}
+            <a href="/terms" className="underline decoration-current/40 underline-offset-4 transition-opacity hover:opacity-70">
+              Terms
+            </a>{" "}
+            and acknowledge the{" "}
+            <a href="/privacy" className="underline decoration-current/40 underline-offset-4 transition-opacity hover:opacity-70">
+              Privacy Policy
+            </a>
+            .
+          </p>
         </div>
       </section>
 
@@ -510,7 +526,7 @@ matrix shell attach setup`}</code>
                 style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>matrix os</span>
             </div>
             <div className="flex flex-wrap items-center gap-x-7 gap-y-4">
-              {communityLinks.map((link) => (
+              {[...communityLinks, ...legalLinks].map((link) => (
                 <a
                   key={link.href}
                   href={link.href}
