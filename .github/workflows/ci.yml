@@ -59,43 +59,58 @@ jobs:
   typecheck:
     name: Type Check
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # TODO: remove continue-on-error once baseline type errors in kernel are fixed
     continue-on-error: true
     steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping typecheck."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
 
       - name: Type check all packages
+        if: needs.changes.outputs.should_run == 'true'
         run: bun run typecheck
 
   patterns:
     name: Pattern Scan
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping pattern scan."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
         with:
           fetch-depth: 0
 
       - name: Install ripgrep
+        if: needs.changes.outputs.should_run == 'true'
         run: sudo apt-get install -y ripgrep
 
       - name: Run CLAUDE.md pattern scanner on changed files
+        if: needs.changes.outputs.should_run == 'true'
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
@@ -116,35 +131,44 @@ jobs:
   sync-client:
     name: Sync Client Package
     needs: [changes, patterns]
-    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping sync-client checks."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
 
       - name: Build sync client
+        if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter @finnaai/matrix build
 
       - name: Test sync client
+        if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter @finnaai/matrix test
 
       - name: Verify publish shape
+        if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
 
   # ── Gate 2: Tests ──
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
-    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -152,52 +176,73 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping unit shard."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - name: Configure git for tests
+        if: needs.changes.outputs.should_run == 'true'
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@matrix-os.com"
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
 
       - run: bun run test -- --shard=${{ matrix.shard }}/4
+        if: needs.changes.outputs.should_run == 'true'
 
   e2e:
     name: E2E Tests
     needs: [changes, sync-client, unit]
-    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping e2e tests."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - name: Configure git for tests
+        if: needs.changes.outputs.should_run == 'true'
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@matrix-os.com"
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
 
       - name: Run E2E tests
+        if: needs.changes.outputs.should_run == 'true'
         run: bun run test:e2e
 
       - name: Upload test results on failure

@@ -54,7 +54,7 @@ permissions:
 
 concurrency:
   group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}
-  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+  cancel-in-progress: false
 
 jobs:
   dev-bundle-gate:
