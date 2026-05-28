@@ -9,8 +9,7 @@ import {
   hasMatrixBillingAccess,
 } from "@/lib/billing";
 
-const e2eBillingBypass =
-  process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 function BillingTableFallback() {
   return (

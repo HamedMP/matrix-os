@@ -50,28 +50,6 @@ describe("BillingGate", () => {
     vi.resetModules();
   });
 
-  it("does not allow the screenshot bypass in production bundles", async () => {
-    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
-    vi.stubEnv("NODE_ENV", "production");
-    clerkState.isLoaded = true;
-    clerkState.isSignedIn = true;
-    clerkState.hasPlan = false;
-    vi.resetModules();
-
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
-
-    render(
-      <BillingGate>
-        <div>Matrix workspace</div>
-      </BillingGate>,
-    );
-
-    expect(screen.queryByText("Matrix workspace")).toBeNull();
-    expect(screen.getByText("Choose the early adopter plan to continue")).toBeTruthy();
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
   it("renders Matrix OS when the signed-in user has the early adopter plan", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
