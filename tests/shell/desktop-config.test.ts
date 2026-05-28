@@ -4,6 +4,7 @@ import { DEFAULT_PINNED_APPS } from "../../shell/src/lib/builtin-apps";
 import {
   buildMeshGradient,
   saveDesktopConfig,
+  saveDesktopConfigPatch,
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
 
@@ -77,8 +78,41 @@ describe("Desktop config", () => {
     expect(opts.method).toBe("PUT");
   });
 
+  it("saveDesktopConfigPatch preserves existing desktop metadata", async () => {
+    const existingConfig = {
+      background: { type: "wallpaper", name: "custom-family-photo.jpg" },
+      dock: { position: "bottom", size: 64, iconSize: 48, autoHide: false },
+      pinnedApps: ["apps/notes/index.html"],
+      dockOrder: { userApps: ["apps/notes/index.html"], systemApps: ["__terminal__"] },
+      iconStyle: "custom founder icon style",
+      futureImportantField: { keep: true },
+    };
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(existingConfig),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await saveDesktopConfigPatch({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [putUrl, putOpts] = mockFetch.mock.calls[1];
+    expect(putUrl).toContain("/api/settings/desktop");
+    expect(putOpts.method).toBe("PUT");
+    expect(JSON.parse(putOpts.body)).toEqual({
+      ...existingConfig,
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+    });
+  });
+
   it("hook exports are defined", () => {
     expect(saveDesktopConfig).toBeTypeOf("function");
+    expect(saveDesktopConfigPatch).toBeTypeOf("function");
     expect(buildMeshGradient).toBeTypeOf("function");
   });
 
