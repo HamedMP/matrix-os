@@ -5,10 +5,12 @@ on:
   schedule:
     # Keep the full Docker scenario matrix exercised even when PRs only run smoke.
     - cron: "17 3 * * *"
+  merge_group:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [labeled, ready_for_review]
 
 concurrency:
   group: docker-test-${{ github.ref }}
@@ -29,6 +31,8 @@ jobs:
       - name: Detect source changes
         id: changed
         env:
+          PR_ACTION: ${{ github.event.action || '' }}
+          PR_LABEL_NAME: ${{ github.event.label.name || '' }}
           GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
         run: |
           set -euo pipefail
@@ -36,6 +40,20 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Docker relevant changes: true"
+            exit 0
+          fi
+
+          should_run_trigger=true
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            should_run_trigger=false
+            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; }; then
+              should_run_trigger=true
+            fi
+          fi
+
+          if [ "$should_run_trigger" != "true" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Docker trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually."
             exit 0
           fi
 
