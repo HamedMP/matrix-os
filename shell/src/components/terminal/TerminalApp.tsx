@@ -2003,7 +2003,6 @@ function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[
     const matches = [
       node.name,
       node.path,
-      node.type,
       node.gitStatus,
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter);
 

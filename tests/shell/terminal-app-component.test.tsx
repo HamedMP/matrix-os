@@ -674,6 +674,13 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("README.md")).toBeNull();
 
     await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "file" } });
+    });
+
+    expect(screen.getByText("No files match")).toBeTruthy();
+    expect(screen.queryByText("package.json")).toBeNull();
+
+    await act(async () => {
       fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "missing" } });
     });
 
