@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --import=tsx src/main.ts",
     "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc"
   },

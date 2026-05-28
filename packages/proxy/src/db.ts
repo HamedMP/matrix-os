@@ -1,11 +1,16 @@
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 
-const DB_PATH = process.env.PROXY_DB_PATH ?? '/data/proxy.db';
+const DB_PATH =
+  process.env.PROXY_DB_PATH ?? join(homedir(), 'matrixos', 'proxy.db');
 
 let db: Database.Database;
 
 export function getDb(): Database.Database {
   if (!db) {
+    mkdirSync(dirname(DB_PATH), { recursive: true });
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
