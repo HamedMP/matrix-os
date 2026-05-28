@@ -6,16 +6,78 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasGroups } from "@/stores/canvas-groups";
 import { useCanvasLabels } from "@/stores/canvas-labels";
+import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { CanvasTransform } from "./CanvasTransform";
 import { CanvasWindow } from "./CanvasWindow";
-import { WorkspaceCanvas } from "./WorkspaceCanvas";
+import { WorkspaceCanvas, WorkspaceCanvasLayer } from "./WorkspaceCanvas";
 import { CanvasGroupRect } from "./CanvasGroup";
 import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./CanvasToolbar";
 import { CanvasMinimap } from "./CanvasMinimap";
+import { isCanvasAssetMimeType } from "../../../../packages/gateway/src/canvas/assets";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+const MAX_PASTED_IMAGE_WIDTH = 640;
+const MAX_PASTED_IMAGE_HEIGHT = 480;
+
+function isEditablePasteTarget(target: EventTarget | null): boolean {
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  const candidates = [target, active].filter(Boolean);
+  for (const candidate of candidates) {
+    if (!(candidate instanceof Element)) continue;
+    const editable = candidate.closest("input, textarea, select, [contenteditable], [data-canvas-window]");
+    if (
+      editable &&
+      (!(editable instanceof HTMLElement) || editable.getAttribute("contenteditable") !== "false")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function imageFilesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const files: File[] = [];
+  const seen = new Set<File>();
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== "file" || !isCanvasAssetMimeType(item.type)) continue;
+    const file = item.getAsFile();
+    if (file && !seen.has(file)) {
+      seen.add(file);
+      files.push(file);
+    }
+  }
+  for (const file of Array.from(data.files ?? [])) {
+    if (!isCanvasAssetMimeType(file.type) || seen.has(file)) continue;
+    seen.add(file);
+    files.push(file);
+  }
+  return files;
+}
+
+async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const dimensions = { width: bitmap.width, height: bitmap.height };
+      bitmap.close();
+      return dimensions;
+    } catch (err: unknown) {
+      console.warn("[canvas] Failed to read pasted image dimensions:", err);
+    }
+  }
+  return { width: MAX_PASTED_IMAGE_WIDTH, height: Math.round(MAX_PASTED_IMAGE_WIDTH * 9 / 16) };
+}
+
+function fitImageDimensions(dimensions: { width: number; height: number }): { width: number; height: number } {
+  const scale = Math.min(1, MAX_PASTED_IMAGE_WIDTH / dimensions.width, MAX_PASTED_IMAGE_HEIGHT / dimensions.height);
+  return {
+    width: Math.max(80, Math.round(dimensions.width * scale)),
+    height: Math.max(60, Math.round(dimensions.height * scale)),
+  };
+}
 
 interface CanvasRendererProps {
   children?: ReactNode;
@@ -30,6 +92,8 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   const createGroup = useCanvasGroups((s) => s.createGroup);
   const addToGroup = useCanvasGroups((s) => s.addToGroup);
   const labels = useCanvasLabels((s) => s.labels);
+  const uploadCanvasAsset = useWorkspaceCanvasStore((s) => s.uploadCanvasAsset);
+  const addImageNode = useWorkspaceCanvasStore((s) => s.addImageNode);
 
   const autoArrange = useCallback(
     (wins: typeof windows) => {
@@ -123,6 +187,33 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleFitAll]);
 
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (isEditablePasteTarget(event.target)) return;
+      const files = imageFilesFromClipboard(event.clipboardData);
+      if (files.length === 0) return;
+      event.preventDefault();
+      const canvasId = useWorkspaceCanvasStore.getState().activeCanvasId;
+      if (!canvasId) return;
+      const rect = useCanvasTransform.getState().containerRect;
+      const center = useCanvasTransform.getState().screenToCanvas(
+        (rect?.left ?? 0) + (rect?.width ?? window.innerWidth) / 2,
+        (rect?.top ?? 0) + (rect?.height ?? window.innerHeight) / 2,
+      );
+      void Promise.all(files.map(async (file) => {
+        const [asset, naturalSize] = await Promise.all([
+          uploadCanvasAsset(file),
+          getImageDimensions(file),
+        ]);
+        if (!asset) return;
+        await addImageNode(asset, fitImageDimensions(naturalSize), center, { canvasId });
+      }));
+    };
+
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addImageNode, uploadCanvasAsset]);
+
   return (
     <div className="relative w-full h-full">
       <CanvasTransform
@@ -146,6 +237,7 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
           </div>
         )}
         {children}
+        <WorkspaceCanvasLayer />
         {windows.map((win) => (
           <CanvasWindow key={win.id} win={win} hidden={win.minimized} />
         ))}

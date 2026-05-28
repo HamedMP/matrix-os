@@ -155,6 +155,78 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().focusedNodeId).toBe("node_note");
   });
 
+  it("updates and deletes image nodes while keeping canvas coordinates in world units", async () => {
+    useWorkspaceCanvasStore.setState({
+      document: {
+        ...document,
+        nodes: [
+          {
+            id: "node_image",
+            type: "image",
+            position: { x: 100, y: 200 },
+            size: { width: 640, height: 360 },
+            zIndex: 0,
+            displayState: "normal",
+            sourceRef: { kind: "file", id: "system/canvas-assets/cnv_0123456789abcdef/asset.png" },
+            metadata: { originalName: "Screenshot.png" },
+          },
+        ],
+      } as any,
+    });
+
+    await useWorkspaceCanvasStore.getState().updateNode("node_image", {
+      position: { x: 150, y: 225 },
+      size: { width: 800, height: 450 },
+    });
+    expect(useWorkspaceCanvasStore.getState().document?.nodes[0]).toMatchObject({
+      position: { x: 150, y: 225 },
+      size: { width: 800, height: 450 },
+    });
+
+    await useWorkspaceCanvasStore.getState().deleteNode("node_image");
+    expect(useWorkspaceCanvasStore.getState().document?.nodes).toEqual([]);
+  });
+
+  it("adds random entropy to pasted image node ids", async () => {
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(1_776_729_600_000);
+    const randomSpy = vi.spyOn(Math, "random")
+      .mockReturnValueOnce(0.111111111)
+      .mockReturnValueOnce(0.222222222);
+    useWorkspaceCanvasStore.setState({ document: document as any });
+    const asset = {
+      assetId: "asset_0123456789abcdef",
+      path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+      mimeType: "image/png",
+      sizeBytes: 8,
+      originalName: "screenshot.png",
+    };
+
+    try {
+      await useWorkspaceCanvasStore.getState().addImageNode(asset, { width: 640, height: 360 }, { x: 320, y: 180 });
+      await useWorkspaceCanvasStore.getState().addImageNode(asset, { width: 640, height: 360 }, { x: 320, y: 180 });
+
+      const ids = useWorkspaceCanvasStore.getState().document?.nodes.map((node) => node.id) ?? [];
+      expect(ids).toHaveLength(2);
+      expect(ids[0]).toMatch(/^node_image_[a-z0-9]+_0_[a-z0-9]+$/);
+      expect(ids[1]).toMatch(/^node_image_[a-z0-9]+_1_[a-z0-9]+$/);
+      expect(new Set(ids).size).toBe(2);
+    } finally {
+      dateSpy.mockRestore();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("rejects malformed canvas asset upload responses", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ assetId: "asset_missing_path" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceCanvasStore.setState({ document: document as any });
+
+    await expect(useWorkspaceCanvasStore.getState().uploadCanvasAsset(new File(["fake"], "screenshot.png", { type: "image/png" }))).resolves.toBeNull();
+
+    expect(useWorkspaceCanvasStore.getState().error).toBe("Canvas request failed");
+  });
+
   it("does not switch back to a stale canvas after a save conflict", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas conflict" }) });

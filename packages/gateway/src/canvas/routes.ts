@@ -14,11 +14,13 @@ import {
   type PatchCanvasNodeUpdates,
   type CreateCanvasRequest,
 } from "./contracts.js";
-import { mapCanvasError } from "./service.js";
+import { isCanvasAssetMimeType } from "./assets.js";
+import { CANVAS_ASSET_FILE_LIMIT, mapCanvasError } from "./service.js";
 import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
 
 const CANVAS_WRITE_BODY_LIMIT = 256 * 1024;
 const CANVAS_ACTION_BODY_LIMIT = 64 * 1024;
+const CANVAS_ASSET_BODY_LIMIT = CANVAS_ASSET_FILE_LIMIT + 256 * 1024;
 
 export interface CanvasRouteService {
   listCanvases(userId: string, query?: { scopeType?: string; scopeId?: string; limit?: number; cursor?: string; q?: string }): Promise<unknown>;
@@ -29,6 +31,7 @@ export interface CanvasRouteService {
   deleteCanvas(userId: string, canvasId: string): Promise<unknown>;
   exportCanvas(userId: string, canvasId: string): Promise<unknown>;
   executeAction(userId: string, canvasId: string, action: CanvasAction): Promise<unknown>;
+  uploadCanvasAsset?(userId: string, canvasId: string, file: File): Promise<unknown>;
 }
 
 export interface CanvasRouteDeps {
@@ -82,6 +85,10 @@ function validationError(c: any) {
   return c.json({ error: "Invalid request" }, 400);
 }
 
+function hasSafeOriginalAssetName(name: string): boolean {
+  return name.length <= 160 && !name.includes("/") && !name.includes("\\") && !name.includes("\0");
+}
+
 function handleError(c: any, err: unknown) {
   if (isRequestPrincipalError(err)) {
     const mapped = mapRequestPrincipalError(err, "Canvas request failed");
@@ -127,6 +134,7 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
   const writeBodyLimit = bodyLimit({ maxSize: CANVAS_WRITE_BODY_LIMIT, onError: bodyTooLarge });
   const actionBodyLimit = bodyLimit({ maxSize: CANVAS_ACTION_BODY_LIMIT, onError: bodyTooLarge });
   const deleteBodyLimit = bodyLimit({ maxSize: 1024, onError: bodyTooLarge });
+  const assetBodyLimit = bodyLimit({ maxSize: CANVAS_ASSET_BODY_LIMIT, onError: bodyTooLarge });
 
   app.get("/", async (c) => {
     try {
@@ -207,6 +215,23 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
       const parsed = CanvasActionSchema.safeParse(await parseJson(c));
       if (!parsed.success) return validationError(c);
       return c.json(await deps.service.executeAction(userId, parseCanvasId(c), parsed.data));
+    } catch (err: unknown) {
+      return handleError(c, err);
+    }
+  });
+
+  app.post("/:canvasId/assets", assetBodyLimit, async (c) => {
+    try {
+      const userId = getUserIdOrThrow(deps, c);
+      const canvasId = parseCanvasId(c);
+      const formData = await c.req.formData();
+      const file = formData.get("file");
+      if (!(file instanceof File)) return validationError(c);
+      if (!isCanvasAssetMimeType(file.type)) return validationError(c);
+      if (file.size <= 0 || file.size > CANVAS_ASSET_FILE_LIMIT) return validationError(c);
+      if (file.name && !hasSafeOriginalAssetName(file.name)) return validationError(c);
+      if (!deps.service.uploadCanvasAsset) return c.json({ error: "Canvas request failed" }, 500);
+      return c.json(await deps.service.uploadCanvasAsset(userId, canvasId, file), 201);
     } catch (err: unknown) {
       return handleError(c, err);
     }

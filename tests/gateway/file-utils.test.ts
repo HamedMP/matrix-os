@@ -9,6 +9,7 @@ describe("getMimeType", () => {
   it("returns correct MIME for images", () => {
     expect(getMimeType(".png")).toBe("image/png");
     expect(getMimeType(".jpg")).toBe("image/jpeg");
+    expect(getMimeType(".avif")).toBe("image/avif");
     expect(getMimeType(".svg")).toBe("image/svg+xml");
   });
 
@@ -80,6 +81,7 @@ describe("isBinaryFile", () => {
   it("recognizes binary files", () => {
     expect(isBinaryFile("photo.png")).toBe(true);
     expect(isBinaryFile("photo.jpg")).toBe(true);
+    expect(isBinaryFile("photo.avif")).toBe(true);
     expect(isBinaryFile("doc.pdf")).toBe(true);
     expect(isBinaryFile("song.mp3")).toBe(true);
     expect(isBinaryFile("clip.mp4")).toBe(true);
