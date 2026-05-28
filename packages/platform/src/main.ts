@@ -818,13 +818,21 @@ async function resolveAppDomainIdentity(opts: {
         ? claims.runtime_slot
         : undefined;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
-      if (machine?.clerkUserId !== claims.sub) {
+      if (machine?.clerkUserId === claims.sub) {
+        return {
+          handle: machine.handle,
+          userId: machine.clerkUserId,
+          runtimeSlot: machine.runtimeSlot,
+        };
+      }
+      const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
+      if (!activeMachine || activeMachine.clerkUserId !== claims.sub) {
         return null;
       }
       return {
-        handle: machine.handle,
-        userId: machine.clerkUserId,
-        runtimeSlot: machine.runtimeSlot,
+        handle: activeMachine.handle,
+        userId: activeMachine.clerkUserId,
+        runtimeSlot: activeMachine.runtimeSlot,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
