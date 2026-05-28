@@ -113,6 +113,35 @@ describe('customer VPS host bundle', () => {
     expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
   });
 
+  it('host bundle release workflow can skip dev bundles for flagged stack commits', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('skip_dev_bundle:');
+    expect(workflow).toContain('Dev bundle gate');
+    expect(workflow).toContain('SKIP_DEV_BUNDLE_INPUT');
+    expect(workflow).toContain('[skip dev-bundle]');
+    expect(workflow).toContain('[skip dev bundle]');
+    expect(workflow).toContain('Skip-Dev-Bundle: true');
+    expect(workflow).toContain('should_build=false');
+    expect(workflow).toContain("needs.dev-bundle-gate.outputs.should_build == 'true'");
+  });
+
+  it('host bundle release workflow ignores landing page and readme-only changes', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('paths-ignore:');
+    expect(workflow).toContain('www/**');
+    expect(workflow).toContain('docs/**');
+    expect(workflow).toContain('specs/**');
+    expect(workflow).toContain('audit/**');
+    expect(workflow).toContain('README.md');
+    expect(workflow).toContain('README.*');
+    expect(workflow).toContain('AGENTS.md');
+    expect(workflow).toContain('CLAUDE.md');
+  });
+
   it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');

@@ -18,6 +18,15 @@ on:
     branches: [main]
     tags:
       - "v*"
+    paths-ignore:
+      - "www/**"
+      - "docs/**"
+      - "specs/**"
+      - "audit/**"
+      - "README.md"
+      - "README.*"
+      - "AGENTS.md"
+      - "CLAUDE.md"
   workflow_dispatch:
     inputs:
       channel:
@@ -43,6 +52,11 @@ on:
         required: false
         default: ""
         type: string
+      skip_dev_bundle:
+        description: "Skip dev host-bundle build/publish for metadata-only stack layers"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -52,8 +66,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  dev-bundle-gate:
+    name: Dev bundle gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decision.outputs.should_build }}
+      reason: ${{ steps.decision.outputs.reason }}
+    steps:
+      - name: Decide whether to build
+        id: decision
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          SKIP_DEV_BUNDLE_INPUT: ${{ github.event.inputs.skip_dev_bundle || 'false' }}
+        run: |
+          set -euo pipefail
+
+          should_build=true
+          reason="host bundle build required"
+
+          if [ "$SKIP_DEV_BUNDLE_INPUT" = "true" ]; then
+            should_build=false
+            reason="skip_dev_bundle workflow input was true"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            reason="tag releases always build by default"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            case "$HEAD_COMMIT_MESSAGE" in
+              *"[skip dev-bundle]"*|*"[skip dev bundle]"*|*"Skip-Dev-Bundle: true"*|*"skip-dev-bundle: true"*|*"skip_dev_bundle: true"*)
+                should_build=false
+                reason="commit message requested dev bundle skip"
+                ;;
+            esac
+          fi
+
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "Dev bundle gate: $reason"
+
   test:
     name: Test
+    needs: dev-bundle-gate
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -80,7 +134,8 @@ jobs:
 
   build:
     name: Build host bundle
-    needs: test
+    needs: [dev-bundle-gate, test]
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -155,7 +210,8 @@ jobs:
 
   publish:
     name: Publish to R2
-    needs: build
+    needs: [dev-bundle-gate, build]
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
