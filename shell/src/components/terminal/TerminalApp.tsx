@@ -1111,6 +1111,8 @@ function LocalTerminalSidebar() {
   const [shells, setShells] = useState<ShellSessionSummary[]>([]);
   const [shellsLoading, setShellsLoading] = useState(false);
   const [shellsError, setShellsError] = useState<string | null>(null);
+  const deletingShellsRef = useRef<Set<string>>(new Set());
+  const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -1271,6 +1273,7 @@ function LocalTerminalSidebar() {
     : sessions;
 
   const createManagedShell = async () => {
+    setShellsError(null);
     const name = await ctx.createShellSessionTab("Zellij", ctx.sidebarSelectedPath ?? DEFAULT_CWD);
     if (name) {
       await fetchShells();
@@ -1280,6 +1283,9 @@ function LocalTerminalSidebar() {
   };
 
   const deleteManagedShell = async (name: string) => {
+    if (deletingShellsRef.current.has(name)) return;
+    deletingShellsRef.current.add(name);
+    setDeletingShellNames(Array.from(deletingShellsRef.current));
     setShellsError(null);
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
@@ -1294,6 +1300,9 @@ function LocalTerminalSidebar() {
     } catch (err: unknown) {
       console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
       setShellsError("Could not remove shell");
+    } finally {
+      deletingShellsRef.current.delete(name);
+      setDeletingShellNames(Array.from(deletingShellsRef.current));
     }
   };
 
@@ -1555,6 +1564,7 @@ function LocalTerminalSidebar() {
               <ShellCard
                 key={shell.name}
                 shell={shell}
+                deleting={deletingShellNames.includes(shell.name)}
                 onOpen={() => ctx.addSessionTab(shell.name, shell.name)}
                 onDelete={() => void deleteManagedShell(shell.name)}
               />
@@ -1668,10 +1678,12 @@ function SidebarRailButton({
 
 function ShellCard({
   shell,
+  deleting,
   onOpen,
   onDelete,
 }: {
   shell: ShellSessionSummary;
+  deleting?: boolean;
   onOpen: () => void;
   onDelete: () => void;
 }) {
@@ -1731,7 +1743,13 @@ function ShellCard({
       ) : null}
       <div className="flex items-center gap-1" style={{ marginTop: 8, paddingLeft: 15 }}>
         <SessionActionBtn label="Open" sessionId={shell.name} onClick={onOpen} />
-        <SessionActionBtn label="Delete" sessionId={shell.name} onClick={onDelete} danger />
+        <SessionActionBtn
+          label={deleting ? "Deleting" : "Delete"}
+          sessionId={shell.name}
+          onClick={onDelete}
+          danger
+          disabled={deleting}
+        />
       </div>
     </div>
   );
@@ -1804,16 +1822,19 @@ function SessionActionBtn({
   sessionId,
   onClick,
   danger,
+  disabled,
 }: {
   label: string;
   sessionId: string;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       aria-label={`${label} ${sessionId}`}
       onClick={onClick}
+      disabled={disabled}
       className="text-[10px] cursor-pointer transition-colors"
       style={{
         padding: "2px 6px",
@@ -1821,6 +1842,8 @@ function SessionActionBtn({
         background: danger ? "var(--destructive)" : "var(--card)",
         color: danger ? "white" : "var(--foreground)",
         border: danger ? "none" : "1px solid var(--border)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.65 : 1,
       }}
     >
       {label}

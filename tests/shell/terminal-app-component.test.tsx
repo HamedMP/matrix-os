@@ -682,13 +682,15 @@ describe("TerminalApp", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /delete main/i }));
+      const deleteButton = screen.getByRole("button", { name: /delete main/i });
+      fireEvent.click(deleteButton);
+      fireEvent.click(deleteButton);
       await Promise.resolve();
     });
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main?force=1"),
-      expect.objectContaining({ method: "DELETE" }),
-    );
+    const deleteCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/main?force=1") && init?.method === "DELETE"
+    ));
+    expect(deleteCalls).toHaveLength(1);
   });
 
   it("surfaces shell creation failures in the Shells sidebar", async () => {
