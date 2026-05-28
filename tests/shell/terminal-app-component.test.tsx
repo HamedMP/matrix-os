@@ -103,6 +103,23 @@ describe("TerminalApp", () => {
     expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
   });
 
+  it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {
+    render(<TerminalApp mobile initialSessionId="main" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+
+    const layoutSave = vi.mocked(global.fetch).mock.calls.find(([input, init]) => (
+      String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+    ));
+    expect(layoutSave).toBeTruthy();
+    expect(JSON.parse(String(layoutSave?.[1]?.body))).not.toHaveProperty("sidebarOpen");
+  });
+
   it("starts normal terminal tabs on the canonical main shell session", async () => {
     render(<TerminalApp />);
 
@@ -163,6 +180,60 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree.sessionId).toBe("main");
+  });
+
+  it("replaces mixed canonical and legacy pty layouts with the canonical main shell session", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [
+              {
+                id: "main-tab",
+                label: "main",
+                paneTree: {
+                  type: "pane",
+                  id: "main-pane",
+                  cwd: "projects",
+                  sessionId: "main",
+                },
+              },
+              {
+                id: "legacy-tab",
+                label: "Legacy Zellij",
+                paneTree: {
+                  type: "pane",
+                  id: "legacy-pane",
+                  cwd: "projects",
+                  sessionId: "550e8400-e29b-41d4-a716-446655440000",
+                },
+              },
+            ],
+            activeTabId: "legacy-tab",
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Legacy Zellij")).toBeNull();
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string };
     };
@@ -312,7 +383,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("destroys a just-attached session when the tab closes before layout state catches up", async () => {
+  it("destroys a just-attached legacy pty session when the tab closes before layout state catches up", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -326,17 +397,116 @@ describe("TerminalApp", () => {
     };
 
     act(() => {
-      props.onSessionAttached(props.paneTree.id, "session-pending-close");
+      props.onSessionAttached(props.paneTree.id, "550e8400-e29b-41d4-a716-446655440000");
     });
 
     fireEvent.click(screen.getByTitle("Close tab"));
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     const deleteCalls = fetchMock.mock.calls.filter(([input, init]) => (
-      String(input).includes("/api/terminal/pty-sessions/session-pending-close") && init?.method === "DELETE"
+      String(input).includes("/api/terminal/pty-sessions/550e8400-e29b-41d4-a716-446655440000") && init?.method === "DELETE"
     ));
 
     expect(deleteCalls.length).toBe(1);
+  });
+
+  it("creates toolbar zellij launches as canonical shell sessions", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Launch Zellij (Ctrl+Shift+Z)"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const createCall = fetchMock.mock.calls.find(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") &&
+      init?.method === "POST" &&
+      typeof init.body === "string" &&
+      JSON.parse(init.body).name.startsWith("zellij-")
+    ));
+    expect(createCall).toBeTruthy();
+    const body = JSON.parse(createCall?.[1]?.body as string) as { name: string; cwd: string };
+    expect(body).toMatchObject({ cwd: "projects" });
+    expect(body.name).toMatch(/^zellij-[a-z0-9]+$/);
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string; startupCommand?: string };
+    };
+    expect(props.paneTree.sessionId).toBe(body.name);
+    expect(props.paneTree.startupCommand).toBeUndefined();
+  });
+
+  it("cleans up a just-created zellij shell when unmounted before the tab is attached", async () => {
+    let resolveCreate: ((value: { ok: boolean; status: number; json: () => Promise<{ name: string }> }) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST" && init?.method !== "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        return new Promise((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      if (url.includes("/api/terminal/sessions/") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    const { unmount } = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Launch Zellij (Ctrl+Shift+Z)"));
+      await Promise.resolve();
+    });
+
+    const createCall = fetchMock.mock.calls.find(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") &&
+      init?.method === "POST"
+    ));
+    expect(createCall).toBeTruthy();
+    const name = JSON.parse(createCall?.[1]?.body as string).name as string;
+
+    unmount();
+    await act(async () => {
+      resolveCreate?.({ ok: true, status: 200, json: async () => ({ name }) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/sessions/${name}?force=1`),
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 
   it("uses workspace sessions as the coding cockpit source of truth", async () => {

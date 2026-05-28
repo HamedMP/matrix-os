@@ -16,6 +16,7 @@ import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
+import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -82,7 +83,7 @@ type TerminalServerMessage =
   | { type: "error"; message: string };
 
 const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z][a-z0-9-]{0,30}$/;
+const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
 export function isLegacyPtySessionId(sessionId: string): boolean {
   return LEGACY_PTY_SESSION_ID_PATTERN.test(sessionId);
@@ -316,6 +317,22 @@ export function TerminalPane({
       sessionIdRef.current = initialSessionId;
     }
   }, [initialSessionId]);
+
+  // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
+  // window event with the target paneId; we forward to this pane's PTY if it
+  // matches.
+  useEffect(() => {
+    const onKey = (e: Event) => {
+      const detail = (e as CustomEvent<TerminalInputEventDetail>).detail;
+      if (!detail || detail.paneId !== paneId) return;
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data: detail.data }));
+      }
+    };
+    window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
+    return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
+  }, [paneId]);
 
   useEffect(() => {
     let disposed = false;
