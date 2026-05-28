@@ -12,6 +12,9 @@ export function hasMatrixBillingAccess(has: BillingPlanChecker): boolean {
 }
 
 export function getMatrixBillingSuccessRedirectUrl(): string {
+  // Only called from "use client" components after Clerk has loaded; window is
+  // expected there. The configured/default URL is a safety net for tests and
+  // non-browser evaluation, not the normal checkout target.
   const configuredAppUrl = process.env.NEXT_PUBLIC_MATRIX_APP_URL;
   const fallbackOrigin =
     configuredAppUrl && URL.canParse(configuredAppUrl)
