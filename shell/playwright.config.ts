@@ -18,6 +18,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
     ...devices["Desktop Chrome"],
+    ...(process.env.CI ? { channel: "chrome" } : {}),
     viewport: { width: 1440, height: 900 },
   },
   webServer: {

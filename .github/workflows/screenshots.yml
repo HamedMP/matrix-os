@@ -13,6 +13,7 @@ permissions:
 jobs:
   screenshots:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -37,8 +38,8 @@ jobs:
           E2E_TEST_BYPASS: "1"
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
 
-      - name: Install Playwright Chromium
-        run: cd shell && pnpm exec playwright install chromium
+      - name: Verify Chrome
+        run: google-chrome --version
 
       - name: Run Playwright tests
         run: cd shell && pnpm exec playwright test --update-snapshots
