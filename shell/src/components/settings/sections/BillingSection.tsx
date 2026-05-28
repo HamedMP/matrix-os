@@ -20,7 +20,7 @@ function PricingFallback() {
 
 export function BillingSection() {
   const { isLoaded, has } = useAuth();
-  const active = isLoaded && hasMatrixBillingAccess(has);
+  const active = isLoaded ? hasMatrixBillingAccess(has) : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -34,12 +34,14 @@ export function BillingSection() {
         <Badge
           variant="outline"
           className={
-            active
+            active === true
               ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-700"
+              : active === false
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-700"
+                : "border-border/30 bg-muted/30 text-muted-foreground"
           }
         >
-          {active ? "Active" : "Not active"}
+          {active === true ? "Active" : active === false ? "Not active" : "Checking"}
         </Badge>
       </div>
 
@@ -60,17 +62,24 @@ export function BillingSection() {
         </CardContent>
       </Card>
 
-      {active ? (
+      {active === true ? (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-800">
           Your early adopter access is active for this Clerk account.
         </div>
-      ) : (
+      ) : active === false ? (
         <div className="rounded-xl border border-border/60 bg-card p-4">
           <PricingTable
             for="user"
             newSubscriptionRedirectUrl={MATRIX_BILLING_RETURN_PATH}
             fallback={<PricingFallback />}
           />
+        </div>
+      ) : (
+        <div className="flex min-h-48 items-center justify-center rounded-xl border border-border/60 bg-card p-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+            <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+            Checking billing status
+          </div>
         </div>
       )}
     </div>

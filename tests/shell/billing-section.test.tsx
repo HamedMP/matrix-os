@@ -25,6 +25,21 @@ vi.mock("@clerk/nextjs", () => ({
 }));
 
 describe("BillingSection", () => {
+  it("waits for Clerk before rendering a subscription state", async () => {
+    clerkState.isLoaded = false;
+    clerkState.hasPlan = true;
+
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
+
+    render(<BillingSection />);
+
+    expect(screen.getByText("Checking")).toBeTruthy();
+    expect(screen.getByText("Checking billing status")).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
   it("surfaces the early adopter subscription state and Clerk pricing table", async () => {
     clerkState.isLoaded = true;
     clerkState.hasPlan = false;
