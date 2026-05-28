@@ -562,7 +562,7 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Agents" }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -571,7 +571,7 @@ describe("TerminalApp", () => {
     expect(screen.getByText("running health")).toBeTruthy();
     expect(screen.getByText("zellij attach matrix-sess_abc123")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Search sessions and transcripts"), { target: { value: "task_abc123" } });
+    fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "task_abc123" } });
     expect(screen.getByText("sess_abc123")).toBeTruthy();
 
     await act(async () => {
@@ -609,5 +609,252 @@ describe("TerminalApp", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/pty-sessions"), expect.objectContaining({ method: "GET" }));
+  });
+
+  it("filters the Files sidebar tree by the search input", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { name: "package.json", type: "file", gitStatus: null },
+            { name: "README.md", type: "file", gitStatus: null },
+            {
+              name: "src",
+              type: "directory",
+              gitStatus: null,
+              expanded: false,
+              children: [{ name: "app.tsx", type: "file", gitStatus: null, path: "projects/src/app.tsx" }],
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Files" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("package.json")).toBeTruthy();
+    expect(screen.getByText("README.md")).toBeTruthy();
+    expect(screen.getByText("src")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "readme" } });
+    });
+
+    expect(screen.queryByText("package.json")).toBeNull();
+    expect(screen.getByText("README.md")).toBeTruthy();
+    expect(screen.queryByText("src")).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "src" } });
+    });
+
+    expect(screen.getByText("src")).toBeTruthy();
+    expect(screen.getByText("app.tsx")).toBeTruthy();
+    expect(screen.queryByText("README.md")).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "file" } });
+    });
+
+    expect(screen.getByText("No files match")).toBeTruthy();
+    expect(screen.queryByText("package.json")).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "missing" } });
+    });
+
+    expect(screen.getByText("No files match")).toBeTruthy();
+  });
+
+  it("trims project search before filtering", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/projects")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ projects: [{ name: "matrix-os", path: "projects/matrix-os" }] }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "  matrix  " } });
+    });
+
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "   " } });
+    });
+
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+  });
+
+  it("manages canonical zellij shells from a dedicated sidebar surface", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions/main") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ name: "zellij-new", created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "main",
+              status: "active",
+              attachedClients: 1,
+              tabs: [{ idx: 0, name: "dev", focused: true }],
+            }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "does-not-carry-over" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByLabelText("Search shells")).toHaveProperty("value", "");
+    expect(screen.getByText("active · 1 zellij tab")).toBeTruthy();
+    expect(screen.getByText("0: dev")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /open main/i }));
+    });
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: { sessionId: "main" },
+    });
+
+    await act(async () => {
+      const newButton = screen.getByRole("button", { name: "New" });
+      fireEvent.click(newButton);
+      fireEvent.click(newButton);
+      await Promise.resolve();
+    });
+    const createCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") && init?.method === "POST"
+    ));
+    expect(createCalls).toHaveLength(1);
+
+    await act(async () => {
+      const deleteButton = screen.getByRole("button", { name: /delete main/i });
+      fireEvent.click(deleteButton);
+      fireEvent.click(deleteButton);
+      await Promise.resolve();
+    });
+    const deleteCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/main?force=1") && init?.method === "DELETE"
+    ));
+    expect(deleteCalls).toHaveLength(1);
+  });
+
+  it("surfaces shell creation failures in the Shells sidebar", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        return Promise.resolve({ ok: false, status: 503, json: async () => ({ ok: false }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main", status: "active" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Failed to create shell")).toBeTruthy();
   });
 });
