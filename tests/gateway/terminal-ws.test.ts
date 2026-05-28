@@ -13,7 +13,7 @@ import {
   DestroySchema,
 } from "../../packages/gateway/src/session-registry.js";
 import {
-  clearLegacyTerminalSessionList,
+  resetVolatilePtySessionList,
   registerTerminalSessionRoutes,
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
@@ -187,13 +187,13 @@ describe("Terminal WebSocket Protocol — Zod Schemas", () => {
 });
 
 describe("Terminal session REST routes", () => {
-  it("clears legacy persisted pty session lists during canonical shell startup", async () => {
+  it("resets volatile persisted pty session lists during canonical shell startup", async () => {
     const root = await mkdtemp(join(tmpdir(), "matrix-os-terminal-list-"));
     const persistPath = join(root, "system", "terminal-sessions.json");
     await mkdir(join(root, "system"), { recursive: true });
     await writeFile(persistPath, JSON.stringify([{ sessionId: SESSION_ID }]), { flag: "w" });
 
-    await clearLegacyTerminalSessionList(persistPath);
+    await resetVolatilePtySessionList(persistPath);
 
     await expect(readFile(persistPath, "utf-8")).resolves.toBe("[]\n");
     await rm(root, { recursive: true, force: true });

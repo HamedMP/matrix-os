@@ -103,6 +103,23 @@ describe("TerminalApp", () => {
     expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
   });
 
+  it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {
+    render(<TerminalApp mobile initialSessionId="main" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+
+    const layoutSave = vi.mocked(global.fetch).mock.calls.find(([input, init]) => (
+      String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+    ));
+    expect(layoutSave).toBeTruthy();
+    expect(JSON.parse(String(layoutSave?.[1]?.body))).not.toHaveProperty("sidebarOpen");
+  });
+
   it("starts normal terminal tabs on the canonical main shell session", async () => {
     render(<TerminalApp />);
 

@@ -267,7 +267,7 @@ export function registerTerminalSessionRoutes(
   });
 }
 
-export async function clearLegacyTerminalSessionList(persistPath: string): Promise<void> {
+export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
   await writeFileAsync(persistPath, "[]\n");
 }
@@ -464,8 +464,12 @@ export async function createGateway(config: GatewayConfig) {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
-  await clearLegacyTerminalSessionList(terminalSessionsPersistPath).catch((err: unknown) => {
-    logBestEffortFailure("Failed to clear legacy terminal sessions", err);
+  // PTY session handles are process-local and cannot survive a gateway restart.
+  // Zellij shell sessions are the canonical durable terminal surface; reset this
+  // legacy compatibility list on every boot so old PTY ids cannot diverge from
+  // the zellij session list used by the shell and CLI.
+  await resetVolatilePtySessionList(terminalSessionsPersistPath).catch((err: unknown) => {
+    logBestEffortFailure("Failed to reset volatile PTY terminal sessions", err);
   });
   const sessionRegistry = new SessionRegistry(homePath, {
     maxSessions: 10,

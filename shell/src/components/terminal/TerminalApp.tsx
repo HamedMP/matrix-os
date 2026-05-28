@@ -222,7 +222,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
-      sidebarOpen: sidebarOpenRef.current,
+      ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
     };
 
     return fetch(`${getGatewayUrl()}/api/terminal/layout`, {
