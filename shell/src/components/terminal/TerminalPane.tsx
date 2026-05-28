@@ -81,6 +81,21 @@ type TerminalServerMessage =
   | { type: "exit"; code: number | null }
   | { type: "error"; message: string };
 
+const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z][a-z0-9-]{0,30}$/;
+
+export function isLegacyPtySessionId(sessionId: string): boolean {
+  return LEGACY_PTY_SESSION_ID_PATTERN.test(sessionId);
+}
+
+export function isCanonicalShellSessionId(sessionId: string): boolean {
+  return CANONICAL_SHELL_SESSION_NAME_PATTERN.test(sessionId);
+}
+
+export function terminalWebSocketPathForSession(sessionId: string | null): "/ws/terminal" | "/ws/terminal/session" {
+  return sessionId && isCanonicalShellSessionId(sessionId) ? "/ws/terminal/session" : "/ws/terminal";
+}
+
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -103,16 +118,22 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
 
   const msg = parsed as Record<string, unknown>;
   switch (msg.type) {
-    case "attached":
-      if (typeof msg.sessionId !== "string" || (msg.state !== "running" && msg.state !== "exited")) {
+    case "attached": {
+      const sessionId = typeof msg.sessionId === "string"
+        ? msg.sessionId
+        : typeof msg.session === "string"
+          ? msg.session
+          : null;
+      if (!sessionId || (msg.state !== "running" && msg.state !== "exited")) {
         return null;
       }
       return {
         type: "attached",
-        sessionId: msg.sessionId,
+        sessionId,
         state: msg.state,
         exitCode: toFiniteNumber(msg.exitCode),
       };
+    }
     case "output":
       if (typeof msg.data !== "string") {
         return null;
@@ -542,16 +563,22 @@ export function TerminalPane({
         });
 
         const sendAttach = () => {
-          const attachMode = sessionIdRef.current ? "reattach" : "create";
+          const currentSessionId = sessionIdRef.current;
+          const isCanonicalShellSession = Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
+          const attachMode = currentSessionId ? (isCanonicalShellSession ? "canonical" : "reattach") : "create";
           log("send-attach", {
             attachMode,
-            attachSessionId: sessionIdRef.current,
+            attachSessionId: currentSessionId,
             fromSeq: lastSeqRef.current,
           });
-          if (sessionIdRef.current) {
+          if (isCanonicalShellSession) {
+            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            return;
+          }
+          if (currentSessionId) {
             ws.send(JSON.stringify({
               type: "attach",
-              sessionId: sessionIdRef.current,
+              sessionId: currentSessionId,
               fromSeq: lastSeqRef.current,
             }));
           } else {
@@ -740,7 +767,7 @@ export function TerminalPane({
             case "error": {
               const safeMsg = stripTerminalControls(msg.message);
               log("server-error", { message: safeMsg });
-              if (safeMsg === "Session not found" && sessionIdRef.current) {
+              if (safeMsg === "Session not found" && sessionIdRef.current && isLegacyPtySessionId(sessionIdRef.current)) {
                 log("session-not-found-reset");
                 sessionIdRef.current = null;
                 lastSeqRef.current = 0;
@@ -761,25 +788,34 @@ export function TerminalPane({
       }
 
       function connectWs() {
-        const query =
-          sessionIdRef.current || !cwd
+        const currentSessionId = sessionIdRef.current;
+        const wsPath = terminalWebSocketPathForSession(currentSessionId);
+        const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
+          ? { session: currentSessionId, fromSeq: String(lastSeqRef.current) }
+          : currentSessionId || !cwd
             ? undefined
             : { cwd };
+        const queryCwd = query && "cwd" in query ? query.cwd : null;
+        const querySession = query && "session" in query ? query.session : null;
         log("connect-ws", {
-          queryCwd: query?.cwd ?? null,
+          wsPath,
+          queryCwd,
+          querySession,
           reconnectAttempt: reconnectAttemptRef.current,
         });
 
-        void buildAuthenticatedWebSocketUrl("/ws/terminal", {
-          cwd: query?.cwd,
-        })
+        void buildAuthenticatedWebSocketUrl(wsPath, query)
           .catch((err: unknown) => {
             console.warn(
               "[terminal] Falling back to unauthenticated terminal websocket URL:",
               err instanceof Error ? err.message : err,
             );
-            const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
-            return query?.cwd ? `${baseWs}?cwd=${encodeURIComponent(query.cwd)}` : baseWs;
+            const baseWs = getGatewayWs().replace("/ws", wsPath);
+            const url = new URL(baseWs);
+            for (const [key, value] of Object.entries(query ?? {})) {
+              if (value) url.searchParams.set(key, value);
+            }
+            return url.toString();
           })
           .then((wsUrl) => {
             if (disposed || isClosingRef.current) {

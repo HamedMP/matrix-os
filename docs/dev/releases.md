@@ -14,6 +14,7 @@ For installable CLI releases, use [CLI Release Process](cli-release.md). CLI ver
 - Host-bundle updates must never overwrite owner data. Do not delete or replace `/home/matrix/home`, `/opt/matrix/env`, or the local Postgres data directory during deploys or rollbacks.
 - `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` and CI/release paths use `pnpm install --frozen-lockfile`; do not bypass either during releases.
 - CLI releases are manual through `.github/workflows/release.yml`; bump `packages/sync-client/package.json`, run the sync-client checks, and dispatch the workflow with the same semver.
+- Fleet upgrade operations, blocked-machine handling, and the durable control-plane setup are documented in [Fleet Upgrade Operations](fleet-upgrade-operations.md).
 
 ## Version Scheme
 

@@ -208,6 +208,16 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("allows /ws/terminal/session with query token", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/ws/terminal/session", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("allows canvas WebSocket paths with query token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

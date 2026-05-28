@@ -103,6 +103,120 @@ describe("TerminalApp", () => {
     expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
   });
 
+  it("starts normal terminal tabs on the canonical main shell session", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: "main",
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "main", cwd: "projects" }),
+      }),
+    );
+  });
+
+  it("replaces saved legacy pty layouts with the canonical main shell session", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "legacy-tab",
+              label: "projects",
+              paneTree: {
+                type: "pane",
+                id: "legacy-pane",
+                cwd: "projects",
+                sessionId: "550e8400-e29b-41d4-a716-446655440000",
+              },
+            }],
+            activeTabId: "legacy-tab",
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree.sessionId).toBe("main");
+  });
+
+  it("does not replace a legacy layout after unmount while ensuring the canonical session", async () => {
+    let resolveSessions: ((value: { ok: boolean; json: () => Promise<{ sessions: Array<{ name: string }> }> }) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "legacy-tab",
+              label: "projects",
+              paneTree: {
+                type: "pane",
+                id: "legacy-pane",
+                cwd: "projects",
+                sessionId: "550e8400-e29b-41d4-a716-446655440000",
+              },
+            }],
+            activeTabId: "legacy-tab",
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        return new Promise((resolve) => {
+          resolveSessions = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const { unmount } = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const callsBeforeUnmount = paneGridSpy.mock.calls.length;
+
+    unmount();
+    await act(async () => {
+      resolveSessions?.({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.calls.length).toBe(callsBeforeUnmount);
+  });
+
   it("persists attached session ids in the saved layout", async () => {
     render(<TerminalApp />);
 
@@ -219,7 +333,7 @@ describe("TerminalApp", () => {
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     const deleteCalls = fetchMock.mock.calls.filter(([input, init]) => (
-      String(input).includes("/api/terminal/sessions/session-pending-close") && init?.method === "DELETE"
+      String(input).includes("/api/terminal/pty-sessions/session-pending-close") && init?.method === "DELETE"
     ));
 
     expect(deleteCalls.length).toBe(1);
@@ -324,6 +438,6 @@ describe("TerminalApp", () => {
       expect.stringContaining("/api/sessions/sess_abc123"),
       expect.objectContaining({ method: "DELETE" }),
     );
-    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions"), expect.objectContaining({ method: "GET" }));
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/pty-sessions"), expect.objectContaining({ method: "GET" }));
   });
 });

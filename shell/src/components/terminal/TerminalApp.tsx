@@ -10,6 +10,7 @@ import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
+import { isCanonicalShellSessionId } from "./TerminalPane";
 
 // Map xterm theme ids onto zellij's built-in theme names. Zellij ships with
 // these themes in 0.44, so referencing them by name "just works".
@@ -44,6 +45,7 @@ function isLightTerminalTheme(themeId: TerminalThemeId, desktopThemeSlug?: strin
 }
 
 const DEFAULT_CWD = "projects";
+const DEFAULT_SHELL_SESSION_NAME = "main";
 
 interface Tab {
   id: string;
@@ -138,6 +140,37 @@ function getSessionIds(node: PaneNode): string[] {
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
 }
 
+function layoutHasCanonicalShellSession(layout: TerminalLayout): boolean {
+  return Array.isArray(layout.tabs) && layout.tabs.some((tab) => (
+    getSessionIds(tab.paneTree).some((sessionId) => isCanonicalShellSessionId(sessionId))
+  ));
+}
+
+async function ensureDefaultShellSession(): Promise<boolean> {
+  try {
+    const listRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (listRes.ok) {
+      const data = await listRes.json() as { sessions?: Array<{ name?: unknown }> };
+      if (Array.isArray(data.sessions) && data.sessions.some((session) => session.name === DEFAULT_SHELL_SESSION_NAME)) {
+        return true;
+      }
+    }
+
+    const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: DEFAULT_SHELL_SESSION_NAME, cwd: DEFAULT_CWD }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return createRes.ok || createRes.status === 409;
+  } catch (err: unknown) {
+    console.warn("Failed to ensure default terminal session:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 function getSafePreferencesSessionName(value: string | null): string | null {
   return value && /^[a-z][a-z0-9-]{0,30}$/.test(value) ? value : null;
 }
@@ -223,7 +256,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const destroyTerminalSessions = useCallback((sessionIds: string[]) => {
     const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
     for (const sessionId of uniqueIds) {
-      void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+      void fetch(`${getGatewayUrl()}/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
         keepalive: true,
         signal: AbortSignal.timeout(5_000),
@@ -329,14 +362,23 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         if (res.ok) {
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
-            const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-            const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-            setTabs(data.tabs);
-            setActiveTabId(nextActiveTabId);
-            setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-            setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
-            setInitialized(true);
-            return;
+            if (layoutHasCanonicalShellSession(data)) {
+              const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+              const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+              setTabs(data.tabs);
+              setActiveTabId(nextActiveTabId);
+              setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+              setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+              setInitialized(true);
+              return;
+            }
+
+            const sessionReady = await ensureDefaultShellSession();
+            if (!cancelled && sessionReady) {
+              addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
+              setInitialized(true);
+              return;
+            }
           }
         }
       } catch (err: unknown) {
@@ -344,8 +386,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       if (!cancelled) {
-        addTab(DEFAULT_CWD);
-        setInitialized(true);
+        const sessionReady = await ensureDefaultShellSession();
+        if (!cancelled) {
+          if (sessionReady) {
+            addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
+          } else {
+            addTab(DEFAULT_CWD);
+          }
+          setInitialized(true);
+        }
       }
     }
 

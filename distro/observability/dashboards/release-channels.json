@@ -32,7 +32,7 @@
       "gridPos": { "h": 4, "w": 12, "x": 12, "y": 0 },
       "id": 3,
       "options": {
-        "content": "Upgrade actions are still intentionally outside Grafana. Use the platform release endpoints for now; this dashboard shows the exact channel target and version drift data needed for a future controlled action panel.",
+        "content": "Operator flow: publish host bundle, promote a channel, deploy by channel/version, then verify runtime drift here. Grafana remains read-only; upgrade actions stay in platform APIs or the shell settings update flow.",
         "mode": "markdown"
       },
       "title": "Upgrade Action Boundary",
@@ -63,8 +63,8 @@
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
       "id": 5,
       "options": { "legend": { "displayMode": "table", "placement": "right" }, "pieType": "pie", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count by (version) (matrix_vps_info)", "legendFormat": "{{version}}", "refId": "A" }],
-      "title": "Installed VPS Versions",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count by (version) (matrix_vps_runtime_info)", "legendFormat": "{{version}}", "refId": "A" }],
+      "title": "Reported Runtime Versions",
       "type": "piechart"
     },
     {
@@ -76,6 +76,25 @@
       "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_release_channel_bundle_bytes", "legendFormat": "{{channel}} {{version}}", "refId": "A" }],
       "title": "Bundle Size by Channel",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 20 },
+      "id": 7,
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "handle" }] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_runtime_info unless on(version) matrix_release_channel_info{channel=\"stable\"}", "format": "table", "instant": true, "refId": "A" }],
+      "title": "Reachable VPSes Not on Stable",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Value": true, "__name__": true, "instance": true, "job": true },
+            "indexByName": { "handle": 0, "version": 1 }
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
   "schemaVersion": 39,
@@ -86,5 +105,5 @@
   "timezone": "browser",
   "title": "Release Channels",
   "uid": "matrix-release-channels",
-  "version": 1
+  "version": 2
 }

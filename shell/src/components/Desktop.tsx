@@ -9,7 +9,7 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
+import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
@@ -623,7 +623,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
-    void saveDesktopConfig({
+    void saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
       dock,
       pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
@@ -1146,7 +1146,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
-    void saveDesktopConfig({
+    void saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
       dock,
       pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
