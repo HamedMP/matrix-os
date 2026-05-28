@@ -409,8 +409,14 @@ export function SystemSection() {
               This is a security update scheduled for automatic installation. Use the button below if it hasn't taken effect.
             </p>
           )}
+          {upgradeError && (
+            <p className="text-xs text-red-500">{upgradeError}</p>
+          )}
+          {upgradeMessage && (
+            <p className="text-xs text-muted-foreground">{upgradeMessage}</p>
+          )}
           {canInstallSelectedChannel && (
-            <div className="pt-1 space-y-2">
+            <div className="pt-1">
               <button
                 onClick={handleUpgrade}
                 disabled={upgrading}
@@ -422,12 +428,6 @@ export function SystemSection() {
                     ? `Switch to ${selectedChannel}`
                     : resolvedUpdate.autoApplying ? "Retry Update" : "Upgrade Now"}
               </button>
-              {upgradeError && (
-                <p className="text-xs text-red-500">{upgradeError}</p>
-              )}
-              {upgradeMessage && (
-                <p className="text-xs text-muted-foreground">{upgradeMessage}</p>
-              )}
             </div>
           )}
           {latestVersion && !canInstallSelectedChannel && (
