@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
-import { SearchIcon, UserIcon } from "lucide-react";
+import { SearchIcon, ServerIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
@@ -81,7 +81,15 @@ function MenuBarUser() {
           },
         }}
         afterSignOutUrl="https://app.matrix-os.com/sign-in"
-      />
+      >
+        <ClerkUserButton.MenuItems>
+          <ClerkUserButton.Link
+            label="Switch computer"
+            labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
+            href="/runtime"
+          />
+        </ClerkUserButton.MenuItems>
+      </ClerkUserButton>
     </div>
   );
 }
@@ -189,10 +197,6 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   const openAppSettings = useCallback(() => {
     setAppSettingsOpen(true);
   }, []);
-  const switchComputer = useCallback(() => {
-    window.location.assign("/runtime");
-  }, []);
-
   const appItems: MenuEntry[] = [
     { label: "Settings…", shortcut: "⌘,", action: openAppSettings },
   ];
@@ -243,10 +247,6 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
     { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },
   ];
 
-  const computerItems: MenuEntry[] = [
-    { label: "Switch Computer…", action: switchComputer },
-  ];
-
   return (
     <>
       <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-7 items-center px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
@@ -270,7 +270,6 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
           <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
           <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
           <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
-          <MenuDropdown label="Computer" items={computerItems} open={openMenu === "computer"} onToggle={() => toggleMenu("computer")} onClose={closeMenu} />
         </div>
 
         {/* Center: contextual toolbar controls — always centered via grid */}
