@@ -257,7 +257,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
               style={{
                 position: "absolute",
                 inset: 0,
-                display: visible ? "block" : "none",
+                display: "block",
+                visibility: visible ? "visible" : "hidden",
+                pointerEvents: visible ? "auto" : "none",
                 background: "var(--background)",
               }}
             >

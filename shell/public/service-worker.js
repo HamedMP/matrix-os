@@ -32,7 +32,7 @@ self.addEventListener("install", (event) => {
             }),
         ),
       ),
-    ).then(() => self.skipWaiting()),
+    ),
   );
 });
 
@@ -55,6 +55,9 @@ function isBypassed(url) {
     p.startsWith("/api/") ||
     p.startsWith("/v1/") ||
     p.startsWith("/clerk") ||
+    p.startsWith("/_clerk") ||
+    p.startsWith("/__clerk") ||
+    p.startsWith("/__session") ||
     p.startsWith("/sign-in") ||
     p.startsWith("/sign-up") ||
     p.includes("/__nextjs_") ||

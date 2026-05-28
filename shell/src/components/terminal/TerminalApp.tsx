@@ -361,6 +361,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           "Failed to create shell session:",
           err instanceof Error ? err.message : String(err),
         );
+        if (err instanceof Error && err.name === "AbortError") {
+          continue;
+        }
         return null;
       }
     }
