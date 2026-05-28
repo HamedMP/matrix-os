@@ -223,7 +223,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const destroyTerminalSessions = useCallback((sessionIds: string[]) => {
     const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
     for (const sessionId of uniqueIds) {
-      void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+      void fetch(`${getGatewayUrl()}/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
         keepalive: true,
         signal: AbortSignal.timeout(5_000),

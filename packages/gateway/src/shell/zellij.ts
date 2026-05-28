@@ -108,6 +108,10 @@ function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, stri
     }
   }
   env.TERM = "xterm-256color";
+  env.COLORTERM = "truecolor";
+  env.CLICOLOR = "1";
+  env.FORCE_COLOR = "3";
+  env.LANG = env.LANG || "en_US.UTF-8";
   return env;
 }
 
@@ -169,7 +173,12 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       const child = execFile(
         "zellij",
         args,
-        { timeout, signal: controller.signal, cwd: runCwd },
+        {
+          timeout,
+          signal: controller.signal,
+          cwd: runCwd,
+          env: attachEnv(deps.env),
+        },
         (err, stdout, stderr) => {
           if (err) {
             const safe = shellError("zellij_failed", "Shell operation failed", 500);

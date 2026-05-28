@@ -44,13 +44,13 @@ export interface ShellRouteDeps {
 }
 
 const CreateSessionBodySchema = z.object({
-  name: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/),
   cwd: safeCwdSchema().optional(),
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
-const SafeSessionNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
+const SafeSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);
 const SafeLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const SafeCwdSchema = safeCwdSchema();
 const TabBodySchema = z.object({
@@ -228,6 +228,15 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   });
 
   app.get("/sessions/:name/layout/dump", async (c) => {
+    try {
+      if (!deps.workspace) return unavailable(c, "workspace_unavailable");
+      return c.json({ layout: await deps.workspace.dumpLayout(SafeSessionNameSchema.parse(c.req.param("name"))) });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.get("/sessions/:name/layout", async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       return c.json({ layout: await deps.workspace.dumpLayout(SafeSessionNameSchema.parse(c.req.param("name"))) });

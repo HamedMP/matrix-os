@@ -219,7 +219,7 @@ describe("TerminalApp", () => {
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     const deleteCalls = fetchMock.mock.calls.filter(([input, init]) => (
-      String(input).includes("/api/terminal/sessions/session-pending-close") && init?.method === "DELETE"
+      String(input).includes("/api/terminal/pty-sessions/session-pending-close") && init?.method === "DELETE"
     ));
 
     expect(deleteCalls.length).toBe(1);
@@ -324,6 +324,6 @@ describe("TerminalApp", () => {
       expect.stringContaining("/api/sessions/sess_abc123"),
       expect.objectContaining({ method: "DELETE" }),
     );
-    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions"), expect.objectContaining({ method: "GET" }));
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/pty-sessions"), expect.objectContaining({ method: "GET" }));
   });
 });
