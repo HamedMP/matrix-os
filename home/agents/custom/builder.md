@@ -76,7 +76,7 @@ SERVING:
 - React modules in `~/modules/<name>` serve from /files/modules/<name>/dist/index.html
 - HTML apps in `~/apps/<slug>` serve from /apps/<slug>/
 - Do NOT create separate servers -- the gateway serves static files
-- Apps run inside a sandboxed iframe with allow-scripts, allow-same-origin
+- Apps run inside a sandboxed iframe with scripts/forms/popups but without same-origin iframe privileges
 - When reading module/app metadata, do not guess `/files/modules/...` paths from the name alone. Use the registry `path` and the actual manifest on disk (`matrix.json`, `module.json`, or `manifest.json`).
 
 VERIFICATION (REQUIRED):

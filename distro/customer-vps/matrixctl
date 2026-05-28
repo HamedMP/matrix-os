@@ -27,7 +27,7 @@ MATRIX_PLATFORM_TOKEN="${MATRIX_PLATFORM_TOKEN:-${PLATFORM_TOKEN:-}}"
 
 usage() {
   echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
-  echo "usage: matrixctl recover <clerk-user-id> [--allow-empty]" >&2
+  echo "usage: matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]" >&2
   echo "usage: matrixctl deploy [<version>]" >&2
 }
 
@@ -107,15 +107,26 @@ r2_exists() {
 r2_put_latest() {
   local snapshot_key="$1"
   safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
+  local latest_key
   case "$snapshot_key" in
-    system/db/snapshots/*.dump) ;;
+    system/db/snapshots/*.dump)
+      latest_key="system/db/latest"
+      ;;
+    system/runtime-slots/*/db/snapshots/*.dump)
+      local runtime_slot="${snapshot_key#system/runtime-slots/}"
+      runtime_slot="${runtime_slot%%/*}"
+      case "$runtime_slot" in
+        ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid latest pointer" ;;
+      esac
+      latest_key="system/runtime-slots/${runtime_slot}/db/latest"
+      ;;
     *) fail "invalid latest pointer" ;;
   esac
   local tmp
   tmp="$(mktemp)"
   trap 'rm -f "${tmp:-}"' EXIT
   printf '%s\n' "$snapshot_key" > "$tmp"
-  r2_put "$tmp" "system/db/latest"
+  r2_put "$tmp" "$latest_key"
 }
 
 r2_prune() {
@@ -130,23 +141,37 @@ r2_prune() {
 
 recover() {
   local clerk_user_id="$1"
-  local allow_empty="${2:-}"
+  shift
+  local allow_empty="false"
+  local runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
   case "$clerk_user_id" in
     ""|*[^A-Za-z0-9_-]*) fail "invalid recovery user" ;;
   esac
-  if [ -n "$allow_empty" ] && [ "$allow_empty" != "--allow-empty" ]; then
-    usage
-    exit 2
-  fi
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --allow-empty)
+        allow_empty="true"
+        shift
+        ;;
+      --slot)
+        [ "$#" -ge 2 ] || { usage; exit 2; }
+        runtime_slot="$2"
+        shift 2
+        ;;
+      *)
+        usage
+        exit 2
+        ;;
+    esac
+  done
+  case "$runtime_slot" in
+    ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid runtime slot" ;;
+  esac
   [ -n "$MATRIX_PLATFORM_URL" ] || fail "platform recovery not configured"
   [ -n "$MATRIX_PLATFORM_TOKEN" ] || fail "platform recovery not configured"
 
-  local allow_json="false"
-  if [ "$allow_empty" = "--allow-empty" ]; then
-    allow_json="true"
-  fi
   local payload
-  payload="$(printf '{"clerkUserId":"%s","allowEmpty":%s}' "$clerk_user_id" "$allow_json")"
+  payload="$(printf '{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}' "$clerk_user_id" "$runtime_slot" "$allow_empty")"
   if ! curl --fail --silent --show-error --max-time 10 \
     -H "authorization: Bearer ${MATRIX_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
@@ -194,8 +219,9 @@ for r in d.get('results',[]):
 }
 
 if [ "${1:-}" = "recover" ]; then
-  [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage; exit 2; }
-  recover "$2" "${3:-}"
+  [ "$#" -ge 2 ] || { usage; exit 2; }
+  shift
+  recover "$@"
   exit 0
 fi
 

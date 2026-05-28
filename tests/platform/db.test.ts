@@ -8,6 +8,9 @@ import {
   updateLastActive,
   listContainers,
   deleteContainer,
+  insertUserMachine,
+  getActiveUserMachineByHandle,
+  getRunningUserMachineByHandle,
   allocatePort,
   releasePort,
 } from '../../packages/platform/src/db.js';
@@ -167,5 +170,55 @@ describe('platform/db', () => {
     await expect(
       insertContainer(db, { handle: 'bob', clerkUserId: 'clerk_1', containerId: null, port: 4002, shellPort: 3002, status: 'running' }),
     ).rejects.toThrow();
+  });
+
+  it('routes same-handle user-machine slots deterministically', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_primary',
+      clerkUserId: 'clerk_1',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      status: 'running',
+      hetznerServerId: 123,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-test',
+      provisionedAt: '2026-05-25T00:00:00.000Z',
+    });
+
+    await insertUserMachine(db, {
+      machineId: 'machine_staging',
+      clerkUserId: 'clerk_1',
+      handle: 'alice',
+      runtimeSlot: 'staging',
+      status: 'running',
+      hetznerServerId: 124,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'matrix-os-host-test',
+      provisionedAt: '2026-05-26T00:00:00.000Z',
+    });
+
+    await expect(getActiveUserMachineByHandle(db, 'alice')).resolves.toMatchObject({
+      machineId: 'machine_primary',
+      runtimeSlot: 'primary',
+    });
+    await expect(getActiveUserMachineByHandle(db, 'alice', 'staging')).resolves.toMatchObject({
+      machineId: 'machine_staging',
+      runtimeSlot: 'staging',
+    });
+    await expect(getRunningUserMachineByHandle(db, 'alice')).resolves.toMatchObject({
+      machineId: 'machine_primary',
+      runtimeSlot: 'primary',
+    });
+    await expect(insertUserMachine(db, {
+      machineId: 'machine_other_primary',
+      clerkUserId: 'clerk_2',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      status: 'running',
+      hetznerServerId: 125,
+      publicIPv4: '203.0.113.12',
+      imageVersion: 'matrix-os-host-test',
+      provisionedAt: '2026-05-27T00:00:00.000Z',
+    })).rejects.toThrow();
   });
 });

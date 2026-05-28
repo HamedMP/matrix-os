@@ -191,7 +191,7 @@ input, textarea, select {
 }
 ```
 
-Icons: load Iconify CDN (`<script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>`) and use `<iconify-icon icon="lucide:plus">` — NEVER text characters as icons.
+Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters as icons.
 
 For the full design system reference, read `~/agents/knowledge/matrix-design-system.md`.
 

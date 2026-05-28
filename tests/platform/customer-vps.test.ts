@@ -5,6 +5,8 @@ import {
   claimUserMachineDelete,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
+  getRunningUserMachineByHandle,
   getUserMachine,
   listPendingProviderDeletions,
   promoteHostBundleChannel,
@@ -49,6 +51,10 @@ describe('platform/customer-vps', () => {
         S3_SECRET_ACCESS_KEY: 'r2-secret-key',
         S3_ENDPOINT: 'https://r2.example',
         R2_BUCKET: 'matrixos-sync',
+        POSTHOG_TOKEN: 'phc_public',
+        POSTHOG_PROJECT_TOKEN: 'phc_project',
+        POSTHOG_HOST: 'https://eu.i.posthog.com',
+        NEXT_PUBLIC_POSTHOG_API_HOST: '/ingest',
       }),
       hetzner,
       systemStore,
@@ -64,6 +70,15 @@ describe('platform/customer-vps', () => {
     });
     return { service, hetzner, systemStore };
   }
+
+  it('defaults new customer VPS provisioning to the beta host bundle channel', () => {
+    const config = loadCustomerVpsConfig({
+      PLATFORM_PUBLIC_URL: 'https://app.matrix-os.com',
+    });
+
+    expect(config.imageVersion).toBe('beta');
+    expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/beta/matrix-host-bundle.tar.gz');
+  });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService();
@@ -82,7 +97,7 @@ describe('platform/customer-vps', () => {
   it('pins channel image versions to the current immutable host bundle release at provision time', async () => {
     await upsertHostBundleRelease(db, {
       version: 'v2026.05.25-80',
-      channel: 'stable',
+      channel: 'beta',
       gitCommit: 'adb12c560b8e6253fd0047eb2375b379e7659cbe',
       gitRef: 'main',
       buildTime: '2026-05-25T11:58:42.274Z',
@@ -95,7 +110,7 @@ describe('platform/customer-vps', () => {
       changelog: 'Release latest main host bundle',
       createdAt: '2026-05-25T12:14:58.275Z',
     });
-    await promoteHostBundleChannel(db, 'stable', 'v2026.05.25-80');
+    await promoteHostBundleChannel(db, 'beta', 'v2026.05.25-80');
     const { service, hetzner } = createService();
 
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -106,7 +121,70 @@ describe('platform/customer-vps', () => {
       'MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/v2026.05.25-80/matrix-host-bundle.tar.gz',
     );
     expect(createInput?.userData).toContain('MATRIX_IMAGE_VERSION=v2026.05.25-80');
-    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
+    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=beta');
+  });
+
+  it('can provision an isolated staging runtime for the same Clerk user', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    });
+
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    const stagingAgain = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+
+    expect(primary.machineId).toBe(ids[0]);
+    expect(staging.machineId).toBe(ids[1]);
+    expect(stagingAgain).toEqual(staging);
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
+      handle: 'alice',
+      runtimeSlot: 'primary',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'staging')).resolves.toMatchObject({
+      handle: 'alice-staging',
+      runtimeSlot: 'staging',
+    });
+  });
+
+  it('resolves staging machines by distinct handle for auth and sync fallback paths', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service } = createService({
+      machineIdFactory: () => ids[nextId++] ?? '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    });
+
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    await updateUserMachine(db, primary.machineId, {
+      status: 'running',
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    await updateUserMachine(db, staging.machineId, {
+      status: 'running',
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(getActiveUserMachineByHandle(db, 'alice-staging')).resolves.toMatchObject({
+      machineId: staging.machineId,
+      runtimeSlot: 'staging',
+    });
+    await expect(getRunningUserMachineByHandle(db, 'alice-staging')).resolves.toMatchObject({
+      machineId: staging.machineId,
+      runtimeSlot: 'staging',
+      status: 'running',
+    });
+    await expect(getRunningUserMachineByHandle(db, 'alice-staging', 'primary')).resolves.toBeUndefined();
   });
 
   it('templates the platform verification token into provisioned customer hosts', async () => {
@@ -131,6 +209,21 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
     expect(createInput?.userData).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
     expect(createInput?.userData).toContain("R2_ENDPOINT='https://r2.example'");
+  });
+
+  it('templates public PostHog telemetry into provisioned customer hosts', async () => {
+    const { service, hetzner } = createService();
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain('POSTHOG_TOKEN=phc_public');
+    expect(createInput?.userData).toContain('POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(createInput?.userData).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {
@@ -343,14 +436,16 @@ describe('platform/customer-vps', () => {
 
   it('validates R2 latest pointers without accepting paths or URLs', () => {
     expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
+    expect(validateDbLatestPointer('system/runtime-slots/staging/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
     expect(validateDbLatestPointer('../system/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);
     expect(validateDbLatestPointer('https://example.com/snapshot.dump')).toBe(false);
     expect(validateDbLatestPointer('system/db/snapshots/not-a-date.dump')).toBe(false);
+    expect(validateDbLatestPointer('system/runtime-slots/staging-/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);
   });
 
   it('writes VPS metadata to the scoped user R2 key', async () => {
     const writes: Array<{ key: string; body: string; signal?: AbortSignal }> = [];
-    const reads: AbortSignal[] = [];
+    const reads: Array<{ key: string; signal?: AbortSignal }> = [];
     const store = createCustomerVpsSystemStore({
       r2PrefixRoot: 'matrixos-sync',
       r2: {
@@ -358,8 +453,8 @@ describe('platform/customer-vps', () => {
           writes.push({ key, body: String(body), signal: options?.signal });
           return {};
         },
-        async getObject(_key, options) {
-          if (options?.signal) reads.push(options.signal);
+        async getObject(key, options) {
+          reads.push({ key, signal: options?.signal });
           throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
         },
       },
@@ -383,7 +478,10 @@ describe('platform/customer-vps', () => {
       status: 'running',
     });
     await expect(store.hasDbLatest('user_123')).resolves.toBe(false);
-    expect(reads[0]).toBeInstanceOf(AbortSignal);
+    await expect(store.hasDbLatest('user_123', 'staging')).resolves.toBe(false);
+    expect(reads[0]?.signal).toBeInstanceOf(AbortSignal);
+    expect(reads[0]?.key).toBe('matrixos-sync/user_123/system/db/latest');
+    expect(reads[1]?.key).toBe('matrixos-sync/user_123/system/runtime-slots/staging/db/latest');
     expect(buildCustomerVpsR2Key('matrixos-sync/', 'user_123', 'system/db/latest')).toBe(
       'matrixos-sync/user_123/system/db/latest',
     );
@@ -449,6 +547,7 @@ describe('platform/customer-vps', () => {
     expect(recovered).toMatchObject({
       oldMachineId: provisioned.machineId,
       machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      runtimeSlot: 'primary',
       status: 'recovering',
     });
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
@@ -457,6 +556,7 @@ describe('platform/customer-vps', () => {
     ).toBeLessThan(vi.mocked(hetzner.deleteServer).mock.invocationCallOrder[0]);
     const secondCreate = vi.mocked(hetzner.createServer).mock.calls[1][0];
     expect(secondCreate.name).toBe('matrix-alice-f973bb98');
+    expect(secondCreate.labels).toMatchObject({ runtime_slot: 'primary' });
     const row = (await getUserMachine(db, recovered.machineId))!;
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
@@ -466,6 +566,57 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.11',
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
+  });
+
+  it('recovers the requested runtime slot without touching primary', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      '7fe6cb68-738b-46a4-a338-f5fb74ac9123',
+    ];
+    const hetzner = createMockHetznerClient({
+      createServer: vi
+        .fn()
+        .mockResolvedValueOnce({ id: 123456, status: 'running', publicIPv4: '203.0.113.10' })
+        .mockResolvedValueOnce({ id: 789012, status: 'running', publicIPv4: '203.0.113.11' })
+        .mockResolvedValueOnce({ id: 789013, status: 'running', publicIPv4: '203.0.113.12' }),
+    });
+    const { service } = createService({
+      hetzner,
+      systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    await service.register('registration-token', {
+      machineId: primary.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    await service.register('registration-token', {
+      machineId: staging.machineId,
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const recovered = await service.recover({ clerkUserId: 'user_123', runtimeSlot: 'staging' });
+
+    expect(recovered.oldMachineId).toBe(staging.machineId);
+    expect(recovered.runtimeSlot).toBe('staging');
+    expect(vi.mocked(hetzner.createServer).mock.calls[2][0].labels).toMatchObject({
+      runtime_slot: 'staging',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
+      machineId: primary.machineId,
+      status: 'running',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'staging')).resolves.toMatchObject({
+      machineId: '7fe6cb68-738b-46a4-a338-f5fb74ac9123',
+      runtimeSlot: 'staging',
+      status: 'recovering',
+    });
   });
 
   it('queues failed old-server cleanup after recovery and retries it during reconciliation', async () => {
@@ -688,6 +839,47 @@ describe('platform/customer-vps', () => {
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ channel: 'dev' }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('only deploys to the requested VPS handle when provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff113',
+    ];
+    const { service } = createService({
+      machineIdFactory: () => machineIds.shift() ?? '9f05824c-8d0a-4d83-9cb4-b312d43ff114',
+    });
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: primary.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'stable',
+    });
+    const staging = await service.provision({ clerkUserId: 'user_123', handle: 'alice-staging', runtimeSlot: 'staging' });
+    await service.register('registration-token', {
+      machineId: staging.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'stable',
+    });
+
+    try {
+      await expect(service.deploy({ version: 'v082-onboarding-test', handle: 'alice-staging' }))
+        .resolves.toMatchObject({ triggered: 1, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://203.0.113.11:443/api/internal/upgrade',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ version: 'v082-onboarding-test' }),
         }),
       );
     } finally {

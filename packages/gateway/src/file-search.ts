@@ -1,7 +1,7 @@
 import { readdir, lstat, open } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { createInterface } from "node:readline";
-import { resolveWithinHome } from "./path-security.js";
+import { isDeniedFileApiPath, resolveWithinHome } from "./path-security.js";
 import { isBinaryFile } from "./file-utils.js";
 
 const SKIP_DIRS = new Set([".git", ".trash", "node_modules", ".next", "system"]);
@@ -43,7 +43,7 @@ export async function fileSearch(
   const queryLower = q.toLowerCase();
 
   const startDir = resolveWithinHome(homePath, searchPath);
-  if (!startDir) return { query: q, results: [], truncated: false };
+  if (!startDir || isDeniedFileApiPath(homePath, searchPath)) return { query: q, results: [], truncated: false };
 
   let truncated = false;
   const deadline = Date.now() + 5000;

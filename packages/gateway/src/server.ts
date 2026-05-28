@@ -9,7 +9,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
@@ -17,25 +17,21 @@ import { createConversationStore, type ConversationStore } from "./conversations
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
-import { resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  resolveExistingFileApiPath,
+  resolveWithinHome,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
-import { createProjectManager } from "./project-manager.js";
-import { createSymphonyRoutes } from "./symphony-routes.js";
+import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
-import { createAgentSessionManager } from "./agent-session-manager.js";
-import { createWorktreeManager } from "./worktree-manager.js";
-import { createCompositeSymphonyCredentialStore, createFileSymphonyCredentialStore } from "./symphony/credential-store.js";
-import { createIntegrationAwareLinearGraphql, hasConnectedLinearIntegration } from "./symphony/linear-integration.js";
-import { createLinearSource } from "./symphony/linear-source.js";
-import { createMatrixSymphonyOrchestrator } from "./symphony/orchestrator.js";
-import { KyselySymphonyRepository } from "./symphony/repository.js";
-import { createSymphonyStatusHub } from "./symphony/status-hub.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -76,6 +72,23 @@ import {
 } from "./auth.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
+import { createReadinessService } from "./onboarding/readiness-service.js";
+import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
+import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
+import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
+import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
+import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
+import { createAdminControlService } from "./onboarding/admin-control-service.js";
+import { createAdminControlRoutes } from "./onboarding/admin-control-routes.js";
+import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
+import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
+import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
+import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
@@ -141,6 +154,7 @@ import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-cl
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
@@ -192,6 +206,15 @@ const BridgeCallBodySchema = z.object({
   action: z.string().min(1),
   label: z.string().trim().min(1).max(100).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
+});
+
+const ApiMessageBodySchema = z.object({
+  text: z.string().refine((value) => value.trim().length > 0),
+  sessionId: z.string().optional(),
+  from: z.object({
+    handle: z.string(),
+    displayName: z.string().optional(),
+  }).optional(),
 });
 
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
@@ -263,6 +286,7 @@ export interface GatewayConfig {
   port?: number;
   model?: string;
   maxTurns?: number;
+  spawnFn?: SpawnFn;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
@@ -387,12 +411,9 @@ export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
-  const symphonyRunner = createSymphonyRunner({ homePath });
-  const symphonyPort = await readInitialSymphonyPort(symphonyRunner);
   const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
     proxyOrigin: process.env.PROXY_ORIGIN,
-    symphonyPort,
   });
 
   const app = new Hono();
@@ -431,12 +452,124 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     model: config.model,
     maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
   });
 
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
+  const readinessRepository = new InMemoryReadinessRepository();
+  const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
+  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
+  const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalHandle = process.env.MATRIX_HANDLE;
+  let platformDb: PlatformDb | null = null;
+  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
+  let internalIntegrationBaseUrl: string | null = null;
+  const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
+  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+  async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
+    if (platformDb) {
+      try {
+        const dbForLookup = platformDb;
+        const services = await withCapabilityLookupTimeout(async () => {
+          const user = await dbForLookup.getUserByClerkId(ownerId);
+          const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
+          if (!platformUserId) return [];
+          return dbForLookup.listConnectedServices(platformUserId);
+        });
+        return capabilityIdsForConnectedServices(services.map((service) => service.service));
+      } catch (err: unknown) {
+        console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));
+        return [];
+      }
+    }
+    if (!internalIntegrationBaseUrl) return [];
+    try {
+      const headers = new Headers({ Accept: "application/json" });
+      if (internalPlatformToken) headers.set("authorization", `Bearer ${internalPlatformToken}`);
+      const response = await fetch(internalIntegrationBaseUrl, {
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return [];
+      const body = await response.json() as unknown;
+      const connections = Array.isArray(body)
+        ? body
+        : body && typeof body === "object" && Array.isArray((body as { connections?: unknown }).connections)
+          ? (body as { connections: unknown[] }).connections
+          : [];
+      return capabilityIdsForConnectedServices(connections.flatMap((connection) =>
+        connection && typeof connection === "object" && typeof (connection as { service?: unknown }).service === "string"
+          ? [(connection as { service: string }).service]
+          : [],
+      ));
+    } catch (err: unknown) {
+      console.warn("[integrations] capability connection lookup failed:", err instanceof Error ? err.message : String(err));
+      return [];
+    }
+  }
+  const agentCredentialService = createAgentCredentialStatusService({
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    probeAgent: async (_ownerId, agent) => {
+      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
+        agentDetectionInFlight = null;
+      });
+      const detected = await agentDetectionInFlight;
+      const status = detected.agents.find((candidate) => candidate.id === agent);
+      return {
+        available: Boolean(status?.installed && status.authState === "ok"),
+        missing: status?.installed === false,
+      };
+    },
+  });
+  const integrationCapabilityService = createIntegrationCapabilityService({
+    getConnectedCapabilityIds,
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    storagePath: join(homePath, "system", "integration-capabilities.json"),
+  });
+  const agentActionAuditService = createAgentActionAuditService();
+  const companyBrainService = createCompanyBrainReadinessService();
+  const draftActionService = createDraftActionReadinessService();
+  const unavailableCodingSetup: CodingSetupStatus = {
+    githubConnected: false,
+    selectedProject: null,
+    issueSourceConfigured: false,
+    symphonyReady: false,
+    terminalReady: false,
+    activeAgents: ["hermes"],
+    handoffStatus: "idle",
+  };
+  const readinessService = createReadinessService({
+    repository: readinessRepository,
+    cache: readinessCache,
+    agentCredentials: agentCredentialService,
+    integrationCapabilities: integrationCapabilityService,
+    codingSetup: {
+      getCodingSetup: async () => unavailableCodingSetup,
+    },
+  });
+  const adminControlService = createAdminControlService({
+    agentCredentials: agentCredentialService,
+    integrations: integrationCapabilityService,
+    readiness: readinessService,
+  });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -576,9 +709,6 @@ export async function createGateway(config: GatewayConfig) {
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
-  const internalPlatformToken = process.env.UPGRADE_TOKEN;
-  const internalHandle = process.env.MATRIX_HANDLE;
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle
       ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
@@ -664,20 +794,24 @@ export async function createGateway(config: GatewayConfig) {
       // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
       // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
       // identity is plumbed through.
-      const userId =
+      const baseUserId =
         process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
       if (!process.env.MATRIX_USER_ID) {
         console.warn(
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
+      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+        baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       homeMirror = createHomeMirror({
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId,
-        peerId: `gateway-${userId}`,
+        userId: syncUserId,
+        peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
         // commit. Without this the mirror is push-only (container -> R2)
@@ -698,7 +832,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
-  const internalIntegrationBaseUrl =
+  internalIntegrationBaseUrl =
     internalPlatformUrl && internalHandle
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
@@ -782,7 +916,6 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   // Platform DB + Integrations (Pipedream Connect)
-  let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
@@ -1326,6 +1459,15 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
+  app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/integrations", createIntegrationCapabilityRoutes({
+    service: integrationCapabilityService,
+    audit: agentActionAuditService,
+  }));
+  app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
+  app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
+  app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -1832,7 +1974,7 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "message") {
             clearConversationRunAttachment();
-            pendingText = parsed.text;
+            pendingText = parsed.displayText ?? parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
 
@@ -2201,6 +2343,8 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     geminiConnection: geminiLiveConnection,
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+    readinessService,
+    ownerId: process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
   });
 
   app.get(
@@ -2378,64 +2522,7 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
-  let matrixSymphonyOrchestrator: ReturnType<typeof createMatrixSymphonyOrchestrator> | null = null;
-  let matrixSymphonyStatusHub: ReturnType<typeof createSymphonyStatusHub> | null = null;
-  if (kyselyInstance) {
-    const repository = new KyselySymphonyRepository(kyselyInstance as Kysely<any>);
-    await repository.bootstrap();
-    const fileCredentialStore = createFileSymphonyCredentialStore({ homePath });
-    const credentialStore = platformDb && pipedreamClient
-      ? createCompositeSymphonyCredentialStore({
-        primary: fileCredentialStore,
-        hasLinearIntegration: (ownerId) => hasConnectedLinearIntegration(platformDb!, ownerId),
-      })
-      : fileCredentialStore;
-    const linearSource = platformDb && pipedreamClient
-      ? createLinearSource({ graphql: createIntegrationAwareLinearGraphql({ platformDb, pipedream: pipedreamClient }) })
-      : createLinearSource();
-    const projectManager = createProjectManager({ homePath });
-    const worktreeManager = createWorktreeManager({ homePath });
-    const agentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
-    const agentSessionManager = createAgentSessionManager({
-      homePath,
-      worktreeManager,
-      agentLauncher,
-      zellijRuntime: workspaceZellijRuntime,
-    });
-    matrixSymphonyStatusHub = createSymphonyStatusHub();
-    matrixSymphonyOrchestrator = createMatrixSymphonyOrchestrator({
-      homePath,
-      repository,
-      credentialStore,
-      linearSource,
-      worktreeManager,
-      agentSessionManager,
-      agentStatusProvider: agentLauncher,
-      statusHub: matrixSymphonyStatusHub,
-    });
-    await matrixSymphonyOrchestrator.resumeEnabledInstallations();
-    app.route("/api/symphony", createSymphonyRoutes({
-      repository,
-      credentialStore,
-      linearSource,
-      orchestrator: matrixSymphonyOrchestrator,
-      statusHub: matrixSymphonyStatusHub,
-      listMatrixProjects: async () => {
-        const result = await projectManager.listManagedProjects();
-        return result.projects.map((project) => ({
-          slug: project.slug,
-          name: project.name,
-          repositoryUrl: project.github?.htmlUrl ?? project.remote,
-          updatedAt: project.updatedAt,
-        }));
-      },
-    }));
-  } else {
-    console.warn("[symphony] Matrix-native Symphony requires owner Postgres; routes are disabled");
-    const unavailable = new Hono();
-    unavailable.all("*", (c) => c.json({ error: { code: "symphony_unavailable", message: "Symphony is unavailable" } }, 503));
-    app.route("/api/symphony", unavailable);
-  }
+  app.route("/api/symphony", createElixirSymphonyProxyRoutes());
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
@@ -2559,46 +2646,60 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
-    const body = await c.req.json<{
-      text: string;
-      sessionId?: string;
-      from?: { handle: string; displayName?: string };
-    }>();
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      console.warn("[gateway] Invalid /api/message JSON:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsedBody = ApiMessageBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid message body" }, 400);
+    }
+    const body = parsedBody.data;
     const events: KernelEvent[] = [];
 
     const context: DispatchContext | undefined = body.from
       ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
       : undefined;
 
-    await dispatcher.dispatch(body.text, body.sessionId, (event) => {
-      events.push(event);
-    }, context);
+    try {
+      await dispatcher.dispatch(body.text, body.sessionId, (event) => {
+        events.push(event);
+      }, context);
+    } catch (err: unknown) {
+      console.error("[gateway] Message dispatch failed:", err);
+      return c.json({ error: "Message dispatch failed" }, 500);
+    }
 
     return c.json({ events });
   });
 
   function resolveServedFilePath(filePath: string): string | null {
-    const fullPath = resolveWithinHome(homePath, filePath);
-    if (!fullPath) {
+    const lexicalPath = resolveWithinHome(homePath, filePath);
+    if (!lexicalPath || isDeniedFileApiPath(homePath, filePath)) {
       return null;
     }
-    if (existsSync(fullPath)) {
-      return fullPath;
+
+    if (existsSync(lexicalPath)) {
+      return resolveExistingFileApiPath(homePath, filePath);
     }
 
     if (!filePath.endsWith("/manifest.json")) {
-      return fullPath;
+      return lexicalPath;
     }
 
-    const dirPath = dirname(fullPath);
+    const dirPath = dirname(lexicalPath);
     const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
     for (const candidate of fallbackCandidates) {
       if (existsSync(candidate)) {
-        return candidate;
+        const relativeCandidate = relative(homePath, candidate);
+        return resolveExistingFileApiPath(homePath, relativeCandidate);
       }
     }
 
-    return fullPath;
+    return lexicalPath;
   }
 
   app.on("HEAD", "/files/*", (c) => {
@@ -2669,7 +2770,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.put("/files/*", fileBodyLimit, async (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveWritableFileApiPath(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
     const content = await c.req.text();
     const dir = dirname(fullPath);
@@ -3805,7 +3906,6 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
-      await symphonyRunner.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

@@ -29,9 +29,9 @@ function extractScore(filePath: string): number | null {
     }
 
     if (typeof data === "object" && data !== null) {
-      if (typeof data.wins === "number") return data.wins;
-      if (typeof data.score === "number") return data.score;
-      if (typeof data.best === "number") return data.best;
+      if (typeof data.wins === "number" && Number.isFinite(data.wins)) return data.wins;
+      if (typeof data.score === "number" && Number.isFinite(data.score)) return data.score;
+      if (typeof data.best === "number" && Number.isFinite(data.best)) return data.best;
     }
 
     return null;

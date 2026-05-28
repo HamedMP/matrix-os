@@ -8,6 +8,7 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "profile",
   "whoami",
   "status",
+  "run",
   "doctor",
   "instance",
   "completion",

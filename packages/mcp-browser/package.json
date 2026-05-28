@@ -20,9 +20,9 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.39",
     "@matrix-os/kernel": "workspace:*",
-    "zod": "^4.0"
+    "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "playwright": "^1.52.0"
+    "playwright": "^1.60.0"
   }
 }

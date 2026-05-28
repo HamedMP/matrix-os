@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
@@ -63,5 +63,24 @@ describe("MenuBar focus display", () => {
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
     expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
     expect(screen.queryByRole("button", { name: "Matrix OS" })).toBeNull();
+  });
+
+  it("offers switch-computer from the menu bar", () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { assign },
+    });
+
+    render(
+      <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}}>
+        <button type="button">Fit</button>
+      </MenuBar>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch Computer…" }));
+
+    expect(assign).toHaveBeenCalledWith("/runtime");
   });
 });

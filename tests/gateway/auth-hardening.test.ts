@@ -63,13 +63,44 @@ describe("T828: Auth hardening", () => {
     expect(nextCalled).toBe(true);
   });
 
-  it("skips auth when no token configured", async () => {
+  it("rejects protected paths when no token configured", async () => {
+    const previous = process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+    delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+    const mw = authMiddleware(undefined);
+    const { ctx, getBody } = mockContext("/api/message");
+    let nextCalled = false;
+    try {
+      await mw(ctx, async () => {
+        nextCalled = true;
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+      } else {
+        process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = previous;
+      }
+    }
+    expect(nextCalled).toBe(false);
+    expect(getBody()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("allows explicit insecure dev mode when no token configured", async () => {
+    const previous = process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+    process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = "1";
     const mw = authMiddleware(undefined);
     const { ctx } = mockContext("/api/message");
     let nextCalled = false;
-    await mw(ctx, async () => {
-      nextCalled = true;
-    });
+    try {
+      await mw(ctx, async () => {
+        nextCalled = true;
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+      } else {
+        process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = previous;
+      }
+    }
     expect(nextCalled).toBe(true);
   });
 

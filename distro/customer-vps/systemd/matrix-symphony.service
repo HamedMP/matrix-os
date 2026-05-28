@@ -1,0 +1,26 @@
+[Unit]
+Description=Matrix OS customer Symphony
+After=network-online.target matrix-restore.service
+Wants=network-online.target
+Requires=matrix-restore.service
+ConditionPathExists=/opt/matrix/restore-complete
+ConditionPathExists=/opt/matrix/bin/matrix-symphony
+ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/bin/symphony
+
+[Service]
+User=matrix
+Group=matrix
+Environment=MATRIX_HOME=/home/matrix/home
+Environment=SYMPHONY_HOST=127.0.0.1
+Environment=SYMPHONY_PORT=4766
+Environment=SYMPHONY_WORKSPACE_ROOT=/home/matrix/home/projects/matrix-os/symphony-workspaces
+WorkingDirectory=/opt/matrix
+ExecStart=/opt/matrix/bin/matrix-symphony
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

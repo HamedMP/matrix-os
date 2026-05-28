@@ -43,6 +43,11 @@ export function getVersion(): string {
 export interface SystemInfo {
   version: string;
   image: string;
+  runtime: {
+    handle: string | null;
+    machineId: string | null;
+    runtimeSlot: string;
+  };
   build: {
     sha: string;
     ref: string;
@@ -163,6 +168,11 @@ export function getSystemInfo(homePath: string): SystemInfo {
   return {
     version: getVersion(),
     image: process.env.MATRIX_IMAGE ?? "unknown",
+    runtime: {
+      handle: process.env.MATRIX_HANDLE ?? null,
+      machineId: process.env.MATRIX_MACHINE_ID ?? null,
+      runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "primary",
+    },
     build: {
       sha: process.env.MATRIX_BUILD_SHA ?? "unknown",
       ref: process.env.MATRIX_BUILD_REF ?? "unknown",

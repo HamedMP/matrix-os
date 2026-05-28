@@ -22,11 +22,13 @@ interface UserMachinesTable {
   machine_id: string;
   clerk_user_id: string;
   handle: string;
+  runtime_slot: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
   public_ipv6: string | null;
   status: string;
   image_version: string | null;
+  server_type: string | null;
   registration_token_hash: string | null;
   registration_token_expires_at: string | null;
   provisioned_at: string;
@@ -221,11 +223,13 @@ export interface UserMachineRecord {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   hetznerServerId: number | null;
   publicIPv4: string | null;
   publicIPv6: string | null;
   status: string;
   imageVersion: string | null;
+  serverType: string | null;
   registrationTokenHash: string | null;
   registrationTokenExpiresAt: string | null;
   provisionedAt: string;
@@ -297,11 +301,13 @@ export interface NewUserMachine {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot?: string;
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
   publicIPv6?: string | null;
   status: string;
   imageVersion?: string | null;
+  serverType?: string | null;
   registrationTokenHash?: string | null;
   registrationTokenExpiresAt?: string | null;
   provisionedAt: string;
@@ -365,11 +371,13 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       machine_id TEXT PRIMARY KEY,
       clerk_user_id TEXT NOT NULL,
       handle TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL DEFAULT 'primary',
       hetzner_server_id INTEGER,
       public_ipv4 TEXT,
       public_ipv6 TEXT,
       status TEXT NOT NULL DEFAULT 'provisioning',
       image_version TEXT,
+      server_type TEXT,
       registration_token_hash TEXT,
       registration_token_expires_at TEXT,
       provisioned_at TEXT NOT NULL,
@@ -379,14 +387,28 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       failure_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_clerk_active`.execute(db);
   await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active
-    ON user_machines(clerk_user_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_active
+    ON user_machines(clerk_user_id, runtime_slot)
     WHERE deleted_at IS NULL
   `.execute(db);
+  // A Matrix login can own more than one active VPS slot. Slot-qualified
+  // routing selects the requested runtime; unqualified handle routing resolves
+  // deterministically to primary first in the read helpers below.
+  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_active`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_slot_active`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_handle_slot_active
+    ON user_machines(handle, runtime_slot)
+    WHERE deleted_at IS NULL
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
 
   await sql`
@@ -671,11 +693,13 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     machineId: row.machine_id,
     clerkUserId: row.clerk_user_id,
     handle: row.handle,
+    runtimeSlot: row.runtime_slot,
     hetznerServerId: row.hetzner_server_id,
     publicIPv4: row.public_ipv4,
     publicIPv6: row.public_ipv6,
     status: row.status,
     imageVersion: row.image_version,
+    serverType: row.server_type,
     registrationTokenHash: row.registration_token_hash,
     registrationTokenExpiresAt: row.registration_token_expires_at,
     provisionedAt: row.provisioned_at,
@@ -691,11 +715,13 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     machine_id: record.machineId,
     clerk_user_id: record.clerkUserId,
     handle: record.handle,
+    runtime_slot: record.runtimeSlot ?? 'primary',
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
     public_ipv6: record.publicIPv6 ?? null,
     status: record.status,
     image_version: record.imageVersion ?? null,
+    server_type: record.serverType ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
     registration_token_expires_at: record.registrationTokenExpiresAt ?? null,
     provisioned_at: record.provisionedAt,
@@ -711,11 +737,13 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.machineId !== undefined) update.machine_id = values.machineId;
   if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
   if (values.handle !== undefined) update.handle = values.handle;
+  if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
   if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
   if (values.status !== undefined) update.status = values.status;
   if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
+  if (values.serverType !== undefined) update.server_type = values.serverType;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
   if (values.registrationTokenExpiresAt !== undefined) update.registration_token_expires_at = values.registrationTokenExpiresAt;
   if (values.provisionedAt !== undefined) update.provisioned_at = values.provisionedAt;
@@ -877,55 +905,81 @@ export async function getUserMachine(db: PlatformDB, machineId: string): Promise
 export async function getActiveUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getActiveUserMachineByHandle(
   db: PlatformDB,
   handle: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getRunningUserMachineByHandle(
   db: PlatformDB,
   handle: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
     .where('status', '=', 'running')
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getRunningUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
@@ -945,6 +999,23 @@ export async function listUserMachines(
     query = query.where('deleted_at', 'is', null);
   }
   const rows = await query.execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function listActiveUserMachinesByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('status', 'in', ['running', 'provisioning', 'recovering'])
+    .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+    .orderBy('provisioned_at', 'desc')
+    .execute();
   return rows.map(mapUserMachine);
 }
 
@@ -987,6 +1058,7 @@ export async function completeUserMachineRegistration(
 export async function claimUserMachineRecovery(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
@@ -1000,6 +1072,7 @@ export async function claimUserMachineRecovery(
       failure_at: null,
     })
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('deleted_at', 'is', null)
     .where('status', '!=', 'recovering')
     .returningAll()

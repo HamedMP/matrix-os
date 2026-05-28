@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /opt/matrix/env/host.env
+if [ -f /opt/matrix/env/registration.env ]; then
+  source /opt/matrix/env/registration.env
+fi
+
+APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+SYMPHONY_BIN="${SYMPHONY_BIN:-$APP_DIR/packages/symphony-elixir/bin/symphony}"
+WORKFLOW_FILE="${SYMPHONY_WORKFLOW_FILE:-$APP_DIR/packages/symphony-elixir/WORKFLOW.md}"
+
+export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+export SYMPHONY_HOST="${SYMPHONY_HOST:-127.0.0.1}"
+export SYMPHONY_PORT="${SYMPHONY_PORT:-4766}"
+export SYMPHONY_WORKSPACE_ROOT="${SYMPHONY_WORKSPACE_ROOT:-$MATRIX_HOME/projects/matrix-os/symphony-workspaces}"
+export SYMPHONY_CODEX_COMMAND="${SYMPHONY_CODEX_COMMAND:-codex app-server}"
+export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
+
+mkdir -p "$SYMPHONY_WORKSPACE_ROOT"
+mkdir -p "$MATRIX_HOME/system/symphony/logs"
+exec "$SYMPHONY_BIN" \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --logs-root "$MATRIX_HOME/system/symphony/logs" \
+  --port "$SYMPHONY_PORT" \
+  "$WORKFLOW_FILE"

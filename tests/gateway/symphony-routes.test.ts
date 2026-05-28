@@ -176,6 +176,125 @@ describe("Matrix Symphony routes", () => {
     expect(JSON.stringify(body)).not.toContain("lin_api");
   });
 
+  it("returns active agent and current handoff summaries without worktree paths", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [
+      ...snapshot.runs,
+      {
+        id: "run_done",
+        installationId: "sym_user_123",
+        ticketExternalId: "issue_2",
+        ticketIdentifier: "MAT-2",
+        ticketTitle: "Ship setup",
+        status: "completed",
+        attempt: 1,
+        agent: "claude",
+        projectSlug: "matrix-os",
+        claimKey: "linear:issue_2",
+        worktreePath: "/home/matrix/home/projects/matrix-os/.worktrees/wt_done",
+        lastEvent: "Pull request ready",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+        finishedAt: "2026-05-13T00:05:00.000Z",
+      },
+    ];
+    const { app } = deps(snapshot);
+
+    const res = await app.request("/status");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.activeAgents).toEqual(expect.arrayContaining(["codex", "claude"]));
+    expect(body.handoff).toMatchObject({
+      status: "running",
+      runningCount: 1,
+      nextAction: "Monitor the active Symphony run",
+    });
+    expect(JSON.stringify(body)).not.toContain("/home/matrix");
+  });
+
+  it("only exposes onboarding-supported active agents in status", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [
+      ...snapshot.runs,
+      {
+        ...snapshot.runs[0]!,
+        id: "run_opencode",
+        agent: "opencode",
+        status: "running",
+      },
+      {
+        ...snapshot.runs[0]!,
+        id: "run_pi",
+        agent: "pi",
+        status: "handoff",
+      },
+    ];
+    const { app } = deps(snapshot);
+
+    const res = await app.request("/status");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.activeAgents).toEqual(["codex"]);
+  });
+
+  it("reports failed when the latest handoff-relevant run failed", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      ...snapshot.runs[0]!,
+      status: "failed",
+      lastEvent: "Agent failed",
+      updatedAt: "2026-05-14T00:00:00.000Z",
+    }, {
+      ...snapshot.runs[0]!,
+      id: "run_done",
+      status: "completed",
+      lastEvent: "Older handoff",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }];
+    const { app } = deps(snapshot);
+
+    const res = await app.request("/status");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      handoff: {
+        status: "failed",
+        failedCount: 1,
+        nextAction: "Review the failure summary and retry when ready",
+      },
+    });
+  });
+
+  it("prioritizes blocked handoffs over ready handoffs", async () => {
+    const snapshot = structuredClone(baseSnapshot);
+    snapshot.runs = [{
+      ...snapshot.runs[0]!,
+      status: "handoff",
+      lastEvent: "Ready for review",
+      updatedAt: "2026-05-14T00:00:00.000Z",
+    }, {
+      ...snapshot.runs[0]!,
+      id: "run_blocked",
+      status: "blocked",
+      lastEvent: "Needs input",
+      updatedAt: "2026-05-14T00:01:00.000Z",
+    }];
+    const { app } = deps(snapshot);
+
+    const res = await app.request("/status");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      handoff: {
+        status: "needs_input",
+        readyCount: 1,
+        needsInputCount: 1,
+        nextAction: "Open the blocked run and provide input",
+      },
+    });
+  });
+
   it("saves config and never returns the Linear secret", async () => {
     const { app, repository, statusHub } = deps(structuredClone(baseSnapshot));
 

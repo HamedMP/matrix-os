@@ -29,7 +29,7 @@ export interface OrchestratorConfig {
   cpuQuota?: number;
   dataDir?: string;
   platformSecret?: string;
-  extraEnv?: string[];
+  publicTelemetryEnv?: string[];
   postgresUrl?: string;
 }
 
@@ -68,12 +68,16 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     cpuQuota = 50000,
     dataDir = '/data/users',
     platformSecret = '',
-    extraEnv = [],
+    publicTelemetryEnv = [],
     postgresUrl,
   } = config;
 
   function dbNameForHandle(handle: string): string {
     return `matrixos_${handle.replace(/[^a-z0-9_]/g, '_')}`;
+  }
+
+  function dbRoleForHandle(handle: string): string {
+    return `${dbNameForHandle(handle)}_owner`;
   }
 
   function assertSafeDbIdentifier(dbName: string): void {
@@ -84,13 +88,43 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
   function databaseUrlForHandle(handle: string): string | undefined {
     if (!postgresUrl) return undefined;
-    return `${postgresUrl}/${dbNameForHandle(handle)}`;
+    const dbName = dbNameForHandle(handle);
+    const roleName = dbRoleForHandle(handle);
+    assertSafeDbIdentifier(dbName);
+    assertSafeDbIdentifier(roleName);
+    const url = new URL(`${postgresUrl}/${dbName}`);
+    url.username = roleName;
+    url.password = createTenantDbPassword(handle);
+    return url.toString();
+  }
+
+  function createTenantDbPassword(handle: string): string {
+    // Prefer PLATFORM_SECRET. When it is absent, postgresUrl becomes the HMAC
+    // key; rotating the admin URL then changes every derived tenant password.
+    const secret = platformSecret || postgresUrl;
+    if (!secret) {
+      throw new Error('Cannot derive tenant database credentials without PLATFORM_SECRET or POSTGRES_URL');
+    }
+    return createHmac('sha256', secret).update(`tenant-db:${handle}`).digest('base64url');
+  }
+
+  function quotePgLiteral(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+
+  function proxyApiKeyForHandle(handle: string): string | undefined {
+    if (!platformSecret) return undefined;
+    const sig = createHmac('sha256', platformSecret).update(`proxy:${handle}`).digest('base64url');
+    return `sk-proxy-${handle}.${sig}`;
   }
 
   async function createUserDatabase(handle: string): Promise<void> {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
+    const roleName = dbRoleForHandle(handle);
+    const password = createTenantDbPassword(handle);
     assertSafeDbIdentifier(dbName);
+    assertSafeDbIdentifier(roleName);
     const client = new pg.Client({
       connectionString: `${postgresUrl}/matrixos`,
       connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
@@ -101,10 +135,23 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         `SELECT 1 FROM pg_database WHERE datname = $1`,
         [dbName],
       );
-      if (exists.rows.length === 0) {
-        await client.query(`CREATE DATABASE "${dbName}"`);
-        console.log(`[pg] Created database ${dbName}`);
+      const roleExists = await client.query(
+        `SELECT 1 FROM pg_roles WHERE rolname = $1`,
+        [roleName],
+      );
+      if (roleExists.rows.length === 0) {
+        await client.query(`CREATE ROLE "${roleName}" LOGIN PASSWORD ${quotePgLiteral(password)}`);
+      } else {
+        await client.query(`ALTER ROLE "${roleName}" WITH LOGIN PASSWORD ${quotePgLiteral(password)}`);
       }
+      if (exists.rows.length === 0) {
+        await client.query(`CREATE DATABASE "${dbName}" OWNER "${roleName}"`);
+        console.log(`[pg] Created database ${dbName}`);
+      } else {
+        await client.query(`ALTER DATABASE "${dbName}" OWNER TO "${roleName}"`);
+      }
+      await client.query(`REVOKE ALL ON DATABASE "${dbName}" FROM PUBLIC`);
+      await client.query(`GRANT CONNECT, TEMPORARY ON DATABASE "${dbName}" TO "${roleName}"`);
     } finally {
       await client.end();
     }
@@ -113,7 +160,9 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   async function dropUserDatabase(handle: string): Promise<void> {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
+    const roleName = dbRoleForHandle(handle);
     assertSafeDbIdentifier(dbName);
+    assertSafeDbIdentifier(roleName);
     const client = new pg.Client({
       connectionString: `${postgresUrl}/matrixos`,
       connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
@@ -121,6 +170,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     try {
       await client.connect();
       await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
+      await client.query(`DROP ROLE IF EXISTS "${roleName}"`);
       console.log(`[pg] Dropped database ${dbName}`);
     } finally {
       await client.end();
@@ -191,13 +241,16 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `MATRIX_IMAGE=${image}`,
       `PROXY_URL=${proxyUrl}`,
       `ANTHROPIC_BASE_URL=${proxyUrl}`,
-      `ANTHROPIC_API_KEY=sk-proxy-${handle}`,
       `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
       `PORT=4000`,
       `SHELL_PORT=3000`,
       `MATRIX_CODE_SERVER_PORT=8787`,
-      ...extraEnv,
+      ...publicTelemetryEnv,
     ];
+    const proxyApiKey = proxyApiKeyForHandle(handle);
+    if (proxyApiKey) {
+      env.push(`ANTHROPIC_API_KEY=${proxyApiKey}`);
+    }
     // MATRIX_USER_ID is the immutable Clerk userId; gateway + home-mirror
     // key R2 prefixes off it so renaming the handle never orphans files.
     // Only emit when we have it; buildEnv is also called from upgrade /

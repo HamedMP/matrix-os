@@ -296,7 +296,7 @@ Palette: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (acc
 Background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%) — NEVER flat colors.
 Typography: Orbitron for H1/H2 display only. Inter for everything else (subtitles, body, buttons, labels). JetBrains Mono for code.
 Shapes: buttons/inputs border-radius: 50px (capsule). Cards: 22px. Glass cards: rgba(255,255,255,0.55) + backdrop-filter blur(12px).
-Icons: load Iconify CDN, use lucide: prefix for UI, meteocons: for weather, svg-spinners: for loading. NEVER text characters (+, ×, →).
+Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters (+, ×, →).
 Animation: stagger fade-up on mount (60ms between siblings). Hover lift on cards/buttons.
 Shadows: rgba(50,53,46,X) — never pure black. Never use #000000.
 Full reference: ~/agents/knowledge/matrix-design-system.md`);

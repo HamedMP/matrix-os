@@ -138,6 +138,30 @@ describe("T2063: Leaderboard API", () => {
     expect(result).toEqual([]);
   });
 
+  it("skips non-finite object scores from score fields", () => {
+    mkdirSync(join(homePath, "data", "games-2048"), { recursive: true });
+    writeFileSync(join(homePath, "data", "games-2048", "best.json"), '{"score":1e999}');
+
+    const result = getLeaderboard(homePath);
+    expect(result).toEqual([]);
+  });
+
+  it("skips non-finite object scores from wins fields", () => {
+    mkdirSync(join(homePath, "data", "games-solitaire"), { recursive: true });
+    writeFileSync(join(homePath, "data", "games-solitaire", "wins.json"), '{"wins":1e999}');
+
+    const result = getLeaderboard(homePath);
+    expect(result).toEqual([]);
+  });
+
+  it("skips non-finite object scores from best fields", () => {
+    mkdirSync(join(homePath, "data", "games-2048"), { recursive: true });
+    writeFileSync(join(homePath, "data", "games-2048", "best.json"), '{"best":1e999}');
+
+    const result = getLeaderboard(homePath);
+    expect(result).toEqual([]);
+  });
+
   it("reads mtime as date from the score file", () => {
     const dataDir = join(homePath, "data", "games-2048");
     mkdirSync(dataDir, { recursive: true });

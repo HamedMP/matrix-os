@@ -1,105 +1,48 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ExternalLink, KeyRound, Play, RefreshCw, Square, TerminalSquare } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ExternalLink, FolderOpen, RefreshCw, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
-type RunStatus = "queued" | "running" | "retrying" | "blocked" | "stopped" | "failed" | "handoff" | "completed";
-type Agent = "codex" | "claude" | "opencode" | "pi";
-type AgentAuthState = "unknown" | "ok" | "required" | "error";
+type RunGroup = "queue" | "running" | "needsAttention" | "done";
+const RUN_GROUPS: RunGroup[] = ["queue", "running", "needsAttention", "done"];
 
-interface AgentStatus {
-  id: Agent;
-  displayName?: string;
-  installed: boolean;
-  authState: AgentAuthState;
-  errorCode: string | null;
+interface SymphonyRun {
+  issueIdentifier: string | null;
+  issueId?: string | null;
+  status: string;
+  state?: string | null;
+  sessionId?: string | null;
+  turnCount?: number;
+  latestEvent?: string | null;
+  latestMessage?: string | null;
+  updatedAt?: string | null;
+  attempt?: number;
+  allowedActions?: string[];
 }
 
-interface SymphonyStatus {
-  running: boolean;
-  installationId: string | null;
-  credentialConfigured: boolean;
-  pollIntervalMs: number | null;
-  maxConcurrentAgents: number | null;
-  counts: { queued: number; running: number; needsAttention: number; handoff: number };
-  lastPollAt: string | null;
-}
-
-interface SymphonyConfigResponse {
-  installation: {
-    projectSlug: string;
-    enabled: boolean;
-    credentialConfigured: boolean;
-    pollIntervalMs: number;
-    maxConcurrentAgents: number;
-    defaultAgent: Agent;
-    authorizedOperators: string[];
-  } | null;
-  rule: {
-    teamId: string;
-    teamKey: string;
-    projectId?: string;
-    projectSlug?: string;
-    requiredLabels: string[];
-    activeStates: string[];
-    terminalStates: string[];
-    assigneeIds: string[];
-  } | null;
-}
-
-interface SetupOptions {
-  credentialConfigured: boolean;
-  matrixProjects: Array<{ slug: string; name: string; repositoryUrl?: string }>;
-  linear: {
-    teams: Array<{ id: string; key: string; name: string }>;
-    projects: Array<{ id: string; name: string; slug?: string; teamIds: string[] }>;
-    users: Array<{ id: string; name: string; displayName?: string; active?: boolean }>;
+interface SymphonyState {
+  service: {
+    status: "ready" | "degraded" | "unavailable";
+    credentialStatus?: "connected" | "setup_required" | "unavailable" | "not_required";
+    generatedAt: string | null;
   };
+  groups: Record<RunGroup, SymphonyRun[]>;
 }
 
-interface Ticket {
-  externalId: string;
-  identifier: string;
-  title: string;
-  url?: string;
-  stateName: string;
-  assigneeName?: string;
-  labels: string[];
-}
-
-interface Run {
-  id: string;
-  status: RunStatus;
-  ticketIdentifier: string;
-  ticketTitle: string;
-  ticketUrl?: string;
-  agent: Agent;
-  projectSlug: string;
-  worktreeId?: string;
-  sessionId?: string;
-  lastErrorCode?: string;
-  lastEvent: string;
-  updatedAt: string;
-}
-
-interface FormState {
-  projectSlug: string;
-  teamId: string;
-  teamKey: string;
-  linearProjectId: string;
-  linearProjectSlug: string;
-  linearSecret: string;
-  requiredLabels: string;
-  activeStates: string;
-  terminalStates: string;
-  assigneeIds: string[];
-  maxConcurrentAgents: number;
-  defaultAgent: Agent;
-}
-
-interface LoadOptions {
-  hydrateForm?: boolean;
+interface SymphonyIssueDetail {
+  issueIdentifier: string | null;
+  issueId: string | null;
+  status: string;
+  sessionId: string | null;
+  turnCount: number;
+  latestEvent: string | null;
+  latestMessage: string | null;
+  workspacePath: string | null;
+  workpadUrl: string | null;
+  logs: unknown;
+  recentEvents: Array<{ at?: string; event?: string; message?: string } | unknown>;
+  retry: { attempt: number; dueAt: string | null } | null;
+  allowedActions: string[];
 }
 
 interface MatrixOSBridge {
@@ -112,569 +55,343 @@ declare global {
   }
 }
 
-const DEFAULT_FORM: FormState = {
-  projectSlug: "matrix-os",
-  teamId: "",
-  teamKey: "MAT",
-  linearProjectId: "",
-  linearProjectSlug: "",
-  linearSecret: "",
-  requiredLabels: "symphony",
-  activeStates: "Todo, In Progress, Merging, Rework",
-  terminalStates: "Done, Canceled, Cancelled, Duplicate",
-  assigneeIds: [],
-  maxConcurrentAgents: 3,
-  defaultAgent: "codex",
+const EMPTY_STATE: SymphonyState = {
+  service: { status: "unavailable", generatedAt: null },
+  groups: { queue: [], running: [], needsAttention: [], done: [] },
 };
-
-function splitList(value: string): string[] {
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
-}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    signal: init?.signal ?? AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error("request_failed");
   return await response.json() as T;
 }
 
-function groupRuns(runs: Run[]) {
-  return {
-    Queue: runs.filter((run) => run.status === "queued"),
-    Running: runs.filter((run) => run.status === "running"),
-    "Needs Attention": runs.filter((run) => ["retrying", "blocked", "failed"].includes(run.status)),
-    "Done / Handoff": runs.filter((run) => ["handoff", "completed", "stopped"].includes(run.status)),
-  };
+function allRuns(state: SymphonyState): SymphonyRun[] {
+  return [...state.groups.running, ...state.groups.needsAttention, ...state.groups.queue, ...state.groups.done];
 }
 
-function statusTone(status: RunStatus): string {
+function groupLabel(group: RunGroup): string {
+  if (group === "needsAttention") return "Needs Attention";
+  if (group === "done") return "Done / Handoff";
+  return group[0].toUpperCase() + group.slice(1);
+}
+
+function tone(status: string): string {
   if (status === "running") return "bg-emerald-100 text-emerald-800";
   if (status === "queued") return "bg-sky-100 text-sky-800";
-  if (["retrying", "blocked", "failed"].includes(status)) return "bg-amber-100 text-amber-900";
+  if (status === "needs_attention" || status === "retrying" || status === "failed") return "bg-amber-100 text-amber-900";
   return "bg-zinc-100 text-zinc-700";
 }
 
-function eventTone(run: Run): string {
-  return run.lastErrorCode === "agent_auth_required" ? "text-amber-900" : "text-muted-foreground";
+function eventText(run: SymphonyRun): string {
+  return run.latestMessage || run.latestEvent || run.state || "No events yet";
 }
 
-function openWorkspaceInShell() {
+function safeIssue(issueIdentifier: string | null | undefined): string | null {
+  return issueIdentifier && /^[A-Z][A-Z0-9]{1,12}-[0-9]{1,10}$/.test(issueIdentifier) ? issueIdentifier : null;
+}
+
+function chooseActiveIssue(state: SymphonyState, currentIssue: string | null, preferredIssue?: string | null): string | null {
+  const runs = allRuns(state);
+  const candidates = [safeIssue(currentIssue), safeIssue(preferredIssue), safeIssue(runs[0]?.issueIdentifier)];
+  return candidates.find((candidate) => Boolean(candidate) && runs.some((run) => safeIssue(run.issueIdentifier) === candidate)) ?? null;
+}
+
+function openWorkspace(path: string | null) {
+  if (!path) return;
   if (window.MatrixOS?.openApp) {
-    window.MatrixOS.openApp("Workspace", "__workspace__");
+    window.MatrixOS.openApp("Workspace", path);
     return;
   }
-
   window.parent.postMessage({
     type: "os:open-app",
     app: "Symphony",
-    payload: { name: "Workspace", path: "__workspace__" },
-  }, "*");
+    payload: { name: "Workspace", path },
+  }, window.location.origin);
+}
+
+function flattenLogs(logs: unknown): string[] {
+  if (!logs || typeof logs !== "object") return [];
+  const values = Object.values(logs as Record<string, unknown>);
+  return values.flatMap((value) => {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => typeof entry === "string" ? entry : JSON.stringify(entry));
+  }).slice(0, 100);
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+function withTimeoutSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeoutSignal]);
+  if (signal.aborted) return signal;
+  if (timeoutSignal.aborted) return timeoutSignal;
+
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener("abort", abort, { once: true });
+  timeoutSignal.addEventListener("abort", abort, { once: true });
+  return controller.signal;
 }
 
 export default function App() {
-  const [status, setStatus] = useState<SymphonyStatus | null>(null);
-  const [config, setConfig] = useState<SymphonyConfigResponse | null>(null);
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [agents, setAgents] = useState<AgentStatus[]>([]);
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [setupOptions, setSetupOptions] = useState<SetupOptions | null>(null);
-  const [setupLoading, setSetupLoading] = useState(false);
-  const [form, setForm] = useState<FormState>(DEFAULT_FORM);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsOpenRef = useRef(false);
+  const [state, setState] = useState<SymphonyState>(EMPTY_STATE);
+  const [selectedIssue, setSelectedIssue] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SymphonyIssueDetail | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const selectedIssueRef = useRef<string | null>(null);
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const detailRequestRef = useRef(0);
 
-  useEffect(() => {
-    settingsOpenRef.current = settingsOpen;
-  }, [settingsOpen]);
+  const runs = useMemo(() => allRuns(state), [state]);
+  const activeIssue = selectedIssue ?? safeIssue(runs[0]?.issueIdentifier);
 
-  const load = useCallback(async (options: LoadOptions = {}) => {
-    setError(null);
-    const [nextStatus, nextConfig, runList, agentList] = await Promise.all([
-      fetchJson<SymphonyStatus>("/api/symphony/status"),
-      fetchJson<SymphonyConfigResponse>("/api/symphony/config"),
-      fetchJson<{ runs: Run[] }>("/api/symphony/runs"),
-      fetchJson<{ agents: AgentStatus[] }>("/api/agents").catch((err: unknown) => {
-        console.warn("[symphony] agent status load failed:", err instanceof Error ? err.message : String(err));
-        return { agents: [] };
-      }),
-    ]);
-    setStatus(nextStatus);
-    setConfig(nextConfig);
-    setRuns(runList.runs);
-    setAgents(Array.isArray(agentList.agents) ? agentList.agents : []);
-    if ((options.hydrateForm ?? true) && !settingsOpenRef.current && (nextConfig.installation || nextConfig.rule)) {
-      setForm({
-        projectSlug: nextConfig.installation?.projectSlug ?? DEFAULT_FORM.projectSlug,
-        teamId: nextConfig.rule?.teamId ?? "",
-        teamKey: nextConfig.rule?.teamKey ?? DEFAULT_FORM.teamKey,
-        linearProjectId: nextConfig.rule?.projectId ?? "",
-        linearProjectSlug: nextConfig.rule?.projectSlug ?? "",
-        linearSecret: "",
-        requiredLabels: nextConfig.rule?.requiredLabels.join(", ") ?? DEFAULT_FORM.requiredLabels,
-        activeStates: nextConfig.rule?.activeStates.join(", ") ?? DEFAULT_FORM.activeStates,
-        terminalStates: nextConfig.rule?.terminalStates.join(", ") ?? DEFAULT_FORM.terminalStates,
-        assigneeIds: nextConfig.rule?.assigneeIds ?? [],
-        maxConcurrentAgents: nextConfig.installation?.maxConcurrentAgents ?? DEFAULT_FORM.maxConcurrentAgents,
-        defaultAgent: nextConfig.installation?.defaultAgent ?? DEFAULT_FORM.defaultAgent,
-      });
+  const setActiveIssue = useCallback((issueIdentifier: string | null) => {
+    selectedIssueRef.current = issueIdentifier;
+    setSelectedIssue(issueIdentifier);
+  }, []);
+
+  const loadIssueDetail = useCallback(async (issueIdentifier: string) => {
+    detailAbortRef.current?.abort();
+    const controller = new AbortController();
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    detailAbortRef.current = controller;
+
+    try {
+      const signal = withTimeoutSignal(controller.signal, 10_000);
+      const nextDetail = await fetchJson<SymphonyIssueDetail>(`/api/symphony/issues/${issueIdentifier}`, { signal });
+      if (detailRequestRef.current === requestId) setDetail(nextDetail);
+    } catch (err: unknown) {
+      if (controller.signal.aborted) return;
+      throw err;
+    } finally {
+      if (detailRequestRef.current === requestId) detailAbortRef.current = null;
     }
   }, []);
 
-  useEffect(() => {
-    void load().catch((err: unknown) => {
-      console.warn("[symphony] initial load failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony could not load.");
-    });
-  }, [load]);
-
-  useEffect(() => {
-    if (typeof EventSource === "undefined") return undefined;
-    let closed = false;
-    const events = new EventSource("/api/symphony/events");
-    const refresh = () => {
-      if (closed) return;
-      void load({ hydrateForm: false }).catch((err: unknown) => {
-        console.warn("[symphony] event refresh failed:", err instanceof Error ? err.message : String(err));
-      });
-    };
-    const eventTypes = [
-      "symphony.config.updated",
-      "symphony.credential.updated",
-      "symphony.credential.deleted",
-      "symphony.started",
-      "symphony.stopped",
-      "symphony.poll.completed",
-      "symphony.run.updated",
-      "symphony.run.stopped",
-      "symphony.run.retry",
-    ];
-    for (const type of eventTypes) events.addEventListener(type, refresh);
-    events.onerror = () => {
-      if (!closed) console.warn("[symphony] event stream interrupted");
-    };
-    return () => {
-      closed = true;
-      for (const type of eventTypes) events.removeEventListener(type, refresh);
-      events.close();
-    };
-  }, [load]);
-
-  const grouped = useMemo(() => groupRuns(runs), [runs]);
-  const selectedAgent = config?.installation?.defaultAgent ?? form.defaultAgent;
-  const selectedAgentStatus = agents.find((agent) => agent.id === selectedAgent);
-  const agentAuthIssue = config?.installation && selectedAgentStatus && (
-    !selectedAgentStatus.installed ||
-    selectedAgentStatus.authState === "required" ||
-    selectedAgentStatus.authState === "error"
-  )
-    ? selectedAgentStatus
-    : null;
-  const filteredLinearProjects = useMemo(() => {
-    const projects = setupOptions?.linear.projects ?? [];
-    if (!form.teamId) return projects;
-    return projects.filter((project) => project.teamIds.length === 0 || project.teamIds.includes(form.teamId));
-  }, [form.teamId, setupOptions?.linear.projects]);
-  const needsSetup = !status?.credentialConfigured || !config?.rule;
-
-  const loadSetupOptions = useCallback(async () => {
-    setSetupLoading(true);
+  const loadState = useCallback(async (preferredIssue?: string | null) => {
     setError(null);
-    try {
-      const options = await fetchJson<SetupOptions>("/api/symphony/setup-options");
-      setSetupOptions(options);
-      setForm((current) => ({
-        ...current,
-        projectSlug: current.projectSlug || options.matrixProjects[0]?.slug || DEFAULT_FORM.projectSlug,
-      }));
-    } catch (err: unknown) {
-      console.warn("[symphony] setup options failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony setup options could not be loaded.");
-    } finally {
-      setSetupLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    void loadSetupOptions();
-  }, [loadSetupOptions, settingsOpen]);
-
-  function selectLinearTeam(teamId: string) {
-    const team = setupOptions?.linear.teams.find((candidate) => candidate.id === teamId);
-    setForm((current) => ({
-      ...current,
-      teamId,
-      teamKey: team?.key ?? "",
-      linearProjectId: "",
-      linearProjectSlug: "",
-    }));
-  }
-
-  function selectLinearProject(projectId: string) {
-    const project = setupOptions?.linear.projects.find((candidate) => candidate.id === projectId);
-    setForm((current) => ({
-      ...current,
-      linearProjectId: projectId,
-      linearProjectSlug: project?.slug ?? "",
-    }));
-  }
-
-  function toggleAssignee(userId: string) {
-    setForm((current) => ({
-      ...current,
-      assigneeIds: current.assigneeIds.includes(userId)
-        ? current.assigneeIds.filter((id) => id !== userId)
-        : [...current.assigneeIds, userId],
-    }));
-  }
-
-  function resetLinearSelection(next: Partial<FormState> = {}) {
-    setForm((current) => ({
-      ...current,
-      teamId: "",
-      teamKey: "",
-      linearProjectId: "",
-      linearProjectSlug: "",
-      assigneeIds: [],
-      ...next,
-    }));
-  }
-
-  async function saveLinearCredential() {
-    if (!form.linearSecret.trim()) return;
-    setBusy("credential");
-    setError(null);
-    try {
-      await fetchJson("/api/symphony/credentials/linear", {
-        method: "POST",
-        body: JSON.stringify({ kind: "api_key", secret: form.linearSecret.trim() }),
-      });
-      resetLinearSelection({ linearSecret: "" });
-      await loadSetupOptions();
-      await load({ hydrateForm: false });
-    } catch (err: unknown) {
-      console.warn("[symphony] credential save failed:", err instanceof Error ? err.message : String(err));
-      setError("Linear credential could not be saved.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function saveSetup() {
-    setBusy("setup");
-    setError(null);
-    try {
-      if (form.linearSecret.trim()) {
-        await fetchJson("/api/symphony/credentials/linear", {
-          method: "POST",
-          body: JSON.stringify({ kind: "api_key", secret: form.linearSecret.trim() }),
-        });
-        resetLinearSelection({ linearSecret: "" });
-        await loadSetupOptions();
-        return;
+    const next = await fetchJson<SymphonyState>("/api/symphony/state");
+    setState(next);
+    const nextActive = chooseActiveIssue(next, selectedIssueRef.current, preferredIssue);
+    setActiveIssue(nextActive);
+    setLoading(false);
+    if (nextActive) {
+      try {
+        await loadIssueDetail(nextActive);
+      } catch (err: unknown) {
+        if (isAbortError(err)) return;
+        console.warn("[symphony] issue detail failed:", err instanceof Error ? err.message : String(err));
+        setError("Issue detail could not be loaded.");
       }
-      await fetchJson("/api/symphony/config", {
-        method: "POST",
-        body: JSON.stringify({
-          installation: {
-            projectSlug: form.projectSlug,
-            pollIntervalMs: config?.installation?.pollIntervalMs ?? 30_000,
-            maxConcurrentAgents: Number(form.maxConcurrentAgents),
-            defaultAgent: form.defaultAgent,
-            authorizedOperators: config?.installation?.authorizedOperators ?? [],
-          },
-          rule: {
-            teamId: form.teamId,
-            teamKey: form.teamKey,
-            projectId: form.linearProjectId || undefined,
-            projectSlug: form.linearProjectSlug || undefined,
-            requiredLabels: splitList(form.requiredLabels),
-            activeStates: splitList(form.activeStates),
-            terminalStates: splitList(form.terminalStates),
-            assigneeIds: form.assigneeIds,
-          },
-        }),
-      });
-      const preview = await fetchJson<{ tickets: Ticket[] }>("/api/symphony/tickets/preview?limit=10");
-      setTickets(preview.tickets);
-      setSettingsOpen(false);
-      await load();
+    } else {
+      detailAbortRef.current?.abort();
+      setDetail(null);
+    }
+  }, [loadIssueDetail, setActiveIssue]);
+
+  useEffect(() => {
+    void loadState().catch((err: unknown) => {
+      console.warn("[symphony] state load failed:", err instanceof Error ? err.message : String(err));
+      setError("Symphony is unavailable.");
+      setLoading(false);
+    });
+  }, [loadState]);
+
+  useEffect(() => () => {
+    detailAbortRef.current?.abort();
+  }, []);
+
+  async function refresh() {
+    setBusy("refresh");
+    setError(null);
+    try {
+      await fetchJson("/api/symphony/refresh", { method: "POST", body: "{}" });
+      await loadState(activeIssue);
     } catch (err: unknown) {
-      console.warn("[symphony] setup save failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony setup could not be saved.");
+      console.warn("[symphony] refresh failed:", err instanceof Error ? err.message : String(err));
+      setError("Symphony refresh failed.");
     } finally {
       setBusy(null);
     }
   }
 
-  async function startStop() {
-    setBusy("toggle");
+  async function stopCurrent() {
+    if (!activeIssue) return;
+    setBusy("stop");
     setError(null);
     try {
-      await fetchJson(status?.running ? "/api/symphony/stop" : "/api/symphony/start", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      await load();
+      await fetchJson(`/api/symphony/runs/${activeIssue}/stop`, { method: "POST", body: "{}" });
+      await loadState(activeIssue);
     } catch (err: unknown) {
-      console.warn("[symphony] runtime toggle failed:", err instanceof Error ? err.message : String(err));
-      setError(status?.running ? "Symphony could not be stopped." : "Symphony could not be started.");
+      console.warn("[symphony] stop failed:", err instanceof Error ? err.message : String(err));
+      setError("Symphony stop failed.");
     } finally {
       setBusy(null);
     }
   }
 
-  async function runAction(run: Run, type: "stop" | "retry" | "open_workspace") {
-    if (type === "open_workspace") {
-      openWorkspaceInShell();
-      return;
-    }
-    setBusy(`${type}:${run.id}`);
-    setError(null);
-    try {
-      await fetchJson(`/api/symphony/runs/${run.id}/actions`, {
-        method: "POST",
-        body: JSON.stringify({ type }),
+  function selectIssue(issueIdentifier: string | null | undefined) {
+    const safe = safeIssue(issueIdentifier);
+    if (!safe) return;
+    setActiveIssue(safe);
+    setBusy("detail");
+    const detailPromise = loadIssueDetail(safe);
+    const thisRequestId = detailRequestRef.current;
+    void detailPromise
+      .catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        console.warn("[symphony] issue detail failed:", err instanceof Error ? err.message : String(err));
+        setError("Issue detail could not be loaded.");
+      })
+      .finally(() => {
+        if (detailRequestRef.current === thisRequestId) setBusy(null);
       });
-      await load();
-    } catch (err: unknown) {
-      console.warn("[symphony] run action failed:", err instanceof Error ? err.message : String(err));
-      setError("Run action failed.");
-    } finally {
-      setBusy(null);
-    }
   }
+
+  const logLines = flattenLogs(detail?.logs);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="flex items-center justify-between border-b bg-white/90 px-6 py-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">Symphony</h1>
-          <p className="text-sm text-muted-foreground">Matrix-native Linear agents and worktrees</p>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-white px-5 py-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-normal">Symphony</h1>
+          <p className="truncate text-sm text-muted-foreground">Elixir runtime via Codex app-server</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => void load()} disabled={Boolean(busy)} aria-label="Refresh Symphony">
-            <RefreshCw className="size-4" />
+          <Button variant="outline" onClick={() => void refresh()} disabled={Boolean(busy)}>
+            <RefreshCw className="size-4" /> Refresh
           </Button>
-          <Button variant="outline" onClick={() => setSettingsOpen((open) => !open)}>
-            <KeyRound className="size-4" /> Setup
-          </Button>
-          <Button onClick={() => void startStop()} disabled={Boolean(busy) || needsSetup}>
-            {status?.running ? <Square className="size-4" /> : <Play className="size-4" />}
-            {status?.running ? "Stop" : "Start"}
+          <Button variant="outline" onClick={() => void stopCurrent()} disabled={!activeIssue || Boolean(busy)}>
+            <Square className="size-4" /> Stop
           </Button>
         </div>
       </header>
 
       {error && (
-        <div className="mx-6 mt-4 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="mx-5 mt-4 flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <AlertTriangle className="size-4" /> {error}
         </div>
       )}
 
-      {agentAuthIssue && (
-        <div className="mx-6 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <div className="flex min-w-0 items-center gap-2">
-            <AlertTriangle className="size-4 shrink-0" />
-            <span>{agentAuthIssue.displayName ?? agentAuthIssue.id} needs authentication in this Matrix runtime.</span>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={Boolean(busy)}>
-            <RefreshCw className="size-4" /> Refresh
-          </Button>
+      <section className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Queue" value={state.groups.queue.length} />
+        <Metric label="Running" value={state.groups.running.length} />
+        <Metric label="Needs Attention" value={state.groups.needsAttention.length} />
+        <Metric label="Done / Handoff" value={state.groups.done.length} />
+      </section>
+
+      {loading && (
+        <div className="mx-5 mb-4 border bg-white px-4 py-3 text-sm text-muted-foreground">
+          Loading Symphony state...
         </div>
       )}
 
-      <section className="grid gap-4 p-6 md:grid-cols-4">
-        <Metric label="Queue" value={status?.counts.queued ?? 0} />
-        <Metric label="Running" value={status?.counts.running ?? 0} />
-        <Metric label="Needs Attention" value={status?.counts.needsAttention ?? 0} />
-        <Metric label="Done / Handoff" value={status?.counts.handoff ?? 0} />
-      </section>
+      {state.service.credentialStatus === "setup_required" && (
+        <div className="mx-5 mb-4 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Connect Linear in Matrix Integrations to let Symphony poll assigned work.
+        </div>
+      )}
 
-      <section className="grid gap-6 px-6 pb-6 lg:grid-cols-[1fr_360px]">
-        <div className="space-y-5">
-          {Object.entries(grouped).map(([label, group]) => (
-            <section key={label} className="rounded-md border bg-white">
+      <section className="grid gap-5 px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <div className="space-y-4">
+          {RUN_GROUPS.map((group) => (
+            <section key={group} className="border bg-white">
               <div className="flex items-center justify-between border-b px-4 py-3">
-                <h2 className="text-sm font-semibold uppercase tracking-normal text-muted-foreground">{label}</h2>
-                <span className="text-sm text-muted-foreground">{group.length}</span>
+                <h2 className="text-sm font-semibold uppercase tracking-normal text-muted-foreground">{groupLabel(group)}</h2>
+                <span className="text-sm text-muted-foreground">{state.groups[group].length}</span>
               </div>
               <div className="divide-y">
-                {group.length === 0 ? (
-                  <div className="flex items-center gap-3 px-4 py-8 text-sm text-muted-foreground">
-                    <TerminalSquare className="size-5" />
-                    No runs in this group.
-                  </div>
-                ) : group.map((run) => (
-                  <RunRow key={run.id} run={run} busy={busy} onAction={(type) => void runAction(run, type)} />
+                {state.groups[group].length === 0 ? (
+                  <div className="px-4 py-6 text-sm text-muted-foreground">No runs in this group.</div>
+                ) : state.groups[group].map((run, index) => (
+                  <button
+                    key={`${group}-${run.issueIdentifier ?? run.issueId ?? run.sessionId ?? String(index)}`}
+                    type="button"
+                    className="block w-full px-4 py-3 text-left hover:bg-zinc-50 disabled:opacity-50"
+                    disabled={Boolean(busy)}
+                    onClick={() => selectIssue(run.issueIdentifier)}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">{run.issueIdentifier ?? "Unknown issue"}</span>
+                      <Badge className={tone(run.status)}>{run.status}</Badge>
+                      {run.sessionId && <span className="text-xs text-muted-foreground">session {run.sessionId}</span>}
+                    </div>
+                    <p className="mt-1 break-words text-sm text-muted-foreground">{eventText(run)}</p>
+                  </button>
                 ))}
               </div>
             </section>
           ))}
         </div>
 
-        <aside className="rounded-md border bg-white p-4">
-          <h2 className="text-base font-semibold">Setup</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {needsSetup ? "Connect Linear and choose which tickets Symphony can claim." : "Linear and ticket rules are configured."}
-          </p>
-          <div className="mt-4 space-y-2 text-sm">
-            <StatusLine label="Linear account" value={status?.credentialConfigured ? "Configured" : "Missing"} />
-            <StatusLine label="Project" value={config?.installation?.projectSlug ?? "Not set"} />
-            <StatusLine label="Team" value={config?.rule?.teamKey ?? "Not set"} />
-            <StatusLine label="Assignees" value={config?.rule?.assigneeIds.length ? `${config.rule.assigneeIds.length} selected` : "Any matching assignee"} />
-          </div>
-          {tickets.length > 0 && (
-            <div className="mt-4 border-t pt-4">
-              <h3 className="text-sm font-semibold">Preview</h3>
-              <div className="mt-2 space-y-2">
-                {tickets.slice(0, 4).map((ticket) => (
-                  <div key={ticket.externalId} className="rounded-md bg-zinc-50 p-2 text-sm">
-                    <div className="font-medium">{ticket.identifier}</div>
-                    <div className="text-muted-foreground">{ticket.title}</div>
-                  </div>
-                ))}
-              </div>
+        <aside className="border bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-semibold">{detail?.issueIdentifier ?? activeIssue ?? "No active issue"}</h2>
+              <p className="text-sm text-muted-foreground">Service: {state.service.status}</p>
+              <p className="text-sm text-muted-foreground">Linear: {state.service.credentialStatus ?? "unavailable"}</p>
             </div>
-          )}
-        </aside>
-      </section>
-
-      {settingsOpen && (
-        <div className="fixed inset-0 z-20 bg-black/20" onClick={() => setSettingsOpen(false)}>
-          <section className="absolute right-0 top-0 h-full w-full max-w-[420px] overflow-auto bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Symphony Setup</h2>
-              <Button variant="ghost" onClick={() => setSettingsOpen(false)}>Close</Button>
-            </div>
-            <div className="mt-5 space-y-4">
-              <div className="rounded-md border bg-zinc-50 p-3">
-                <Field label="Linear API key"><Input value={form.linearSecret} type="password" onChange={(event) => setForm({ ...form, linearSecret: event.target.value })} placeholder="lin_api_..." /></Field>
-                <Button className="mt-3 w-full" variant="outline" onClick={() => void saveLinearCredential()} disabled={busy === "credential" || !form.linearSecret.trim()}>
-                  Save Linear Key
-                </Button>
-              </div>
-              <Field label="Matrix project">
-                <select
-                  className="h-10 w-full rounded-md border bg-white px-3 text-sm"
-                  value={form.projectSlug}
-                  onChange={(event) => setForm({ ...form, projectSlug: event.target.value })}
-                >
-                  {(setupOptions?.matrixProjects.length ? setupOptions.matrixProjects : [{ slug: form.projectSlug, name: form.projectSlug }]).map((project) => (
-                    <option key={project.slug} value={project.slug}>{project.name} ({project.slug})</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Linear team">
-                <select
-                  className="h-10 w-full rounded-md border bg-white px-3 text-sm"
-                  value={form.teamId}
-                  onChange={(event) => selectLinearTeam(event.target.value)}
-                  disabled={setupLoading || !setupOptions?.linear.teams.length}
-                >
-                  <option value="">{setupLoading ? "Loading Linear teams..." : "Choose a Linear team"}</option>
-                  {(setupOptions?.linear.teams ?? []).map((team) => (
-                    <option key={team.id} value={team.id}>{team.name} ({team.key})</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Linear project">
-                <select
-                  className="h-10 w-full rounded-md border bg-white px-3 text-sm"
-                  value={form.linearProjectId}
-                  onChange={(event) => selectLinearProject(event.target.value)}
-                  disabled={setupLoading || filteredLinearProjects.length === 0}
-                >
-                  <option value="">Any project in selected team</option>
-                  {filteredLinearProjects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}{project.slug ? ` (${project.slug})` : ""}</option>
-                  ))}
-                </select>
-              </Field>
-              <div className="block text-sm">
-                <div className="mb-2 font-medium">Team members</div>
-                <div className="max-h-44 space-y-2 overflow-auto rounded-md border bg-white p-2">
-                  {(setupOptions?.linear.users ?? []).length === 0 ? (
-                    <div className="px-1 py-2 text-muted-foreground">{setupLoading ? "Loading members..." : "Any matching assignee"}</div>
-                  ) : setupOptions!.linear.users.filter((user) => user.active !== false).map((user) => (
-                    <label key={user.id} className="flex items-center gap-2 rounded px-1 py-1">
-                      <input type="checkbox" checked={form.assigneeIds.includes(user.id)} onChange={() => toggleAssignee(user.id)} />
-                      <span className="min-w-0 flex-1 truncate">{user.displayName ?? user.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <Field label="Required labels"><Input value={form.requiredLabels} onChange={(event) => setForm({ ...form, requiredLabels: event.target.value })} /></Field>
-              <Field label="Active states"><Input value={form.activeStates} onChange={(event) => setForm({ ...form, activeStates: event.target.value })} /></Field>
-              <Field label="Terminal states"><Input value={form.terminalStates} onChange={(event) => setForm({ ...form, terminalStates: event.target.value })} /></Field>
-              <Field label="Concurrency"><Input value={form.maxConcurrentAgents} type="number" min={1} max={10} onChange={(event) => setForm({ ...form, maxConcurrentAgents: Number(event.target.value) })} /></Field>
-              <Button className="w-full" onClick={() => void saveSetup()} disabled={busy === "setup" || !form.teamId.trim()}>
-                Save and Preview Tickets
+            {detail?.workpadUrl && (
+              <Button variant="outline" size="sm" onClick={() => window.open(detail.workpadUrl!, "_blank", "noopener,noreferrer")}>
+                <ExternalLink className="size-4" /> Workpad
               </Button>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-2 text-sm">
+            <Info label="Status" value={detail?.status ?? "Idle"} />
+            <Info label="Session" value={detail?.sessionId ?? "None"} />
+            <Info label="Turns" value={String(detail?.turnCount ?? 0)} />
+            <Info label="Latest event" value={detail?.latestEvent ?? "None"} />
+            <Info label="Workspace" value={detail?.workspacePath ?? "Unavailable"} />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => openWorkspace(detail?.workspacePath ?? null)} disabled={!detail?.workspacePath}>
+              <FolderOpen className="size-4" /> Workspace
+            </Button>
+          </div>
+
+          <section className="mt-5 border-t pt-4">
+            <h3 className="text-sm font-semibold">Logs</h3>
+            <div className="mt-2 max-h-72 overflow-auto bg-zinc-950 p-3 font-mono text-xs text-zinc-100">
+              {logLines.length === 0 ? (
+                <div className="text-zinc-400">No logs available.</div>
+              ) : logLines.map((line, index) => (
+                <div key={`${index}-${line.slice(0, 24)}`} className="break-words">{line}</div>
+              ))}
             </div>
           </section>
-        </div>
-      )}
+        </aside>
+      </section>
     </main>
   );
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-md border bg-white px-4 py-3">
+    <div className="border bg-white px-4 py-3">
       <div className="text-sm text-muted-foreground">{label}</div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
     </div>
   );
 }
 
-function StatusLine({ label, value }: { label: string; value: string }) {
+function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function RunRow({ run, busy, onAction }: { run: Run; busy: string | null; onAction: (type: "stop" | "retry" | "open_workspace") => void }) {
-  return (
-    <div className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold">{run.ticketIdentifier}</span>
-          <Badge className={statusTone(run.status)}>{run.status}</Badge>
-          <span className="text-sm text-muted-foreground">{run.agent}</span>
-        </div>
-        <div className="mt-1 text-sm">{run.ticketTitle}</div>
-        <div className={`mt-1 text-xs ${eventTone(run)}`}>{run.lastEvent}</div>
-      </div>
-      <div className="flex items-center gap-2">
-        {run.ticketUrl && (
-          <Button variant="outline" size="sm" onClick={() => window.open(run.ticketUrl, "_blank", "noopener,noreferrer")}>
-            <ExternalLink className="size-4" /> Ticket
-          </Button>
-        )}
-        <Button variant="outline" size="sm" onClick={() => onAction("open_workspace")}>Workspace</Button>
-        {run.status === "running" ? (
-          <Button variant="outline" size="sm" disabled={busy === `stop:${run.id}`} onClick={() => onAction("stop")}>Stop</Button>
-        ) : (
-          <Button variant="outline" size="sm" disabled={busy === `retry:${run.id}`} onClick={() => onAction("retry")}>Retry</Button>
-        )}
-      </div>
+      <span className="min-w-0 break-words font-medium">{value}</span>
     </div>
   );
 }

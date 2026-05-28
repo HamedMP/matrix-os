@@ -100,7 +100,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = (msg) => messages.push(msg);
 
     adapter.setVoiceContext({ homePath, stt });
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       voice: { file_id: "voice_file_abc", duration: 5 },
@@ -132,7 +132,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = () => {};
 
     adapter.setVoiceContext({ homePath, stt });
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       voice: { file_id: "voice_file_abc", duration: 5 },
@@ -170,7 +170,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = (msg) => messages.push(msg);
 
     adapter.setVoiceContext({ homePath, stt });
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       voice: { file_id: "voice_abc", duration: 3 },
@@ -210,7 +210,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = (msg) => messages.push(msg);
 
     adapter.setVoiceContext({ homePath, stt });
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       voice: { file_id: "voice_abc", duration: 3 },
@@ -252,7 +252,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = (msg) => messages.push(msg);
 
     adapter.setVoiceContext({ homePath, stt });
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       voice: { file_id: "voice_abc", duration: 3 },
@@ -293,7 +293,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = (msg) => messages.push(msg);
 
     adapter.setVoiceContext({ homePath, stt });
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       audio: { file_id: "audio_file_xyz", duration: 10 },
@@ -312,7 +312,7 @@ describe("Telegram voice note handling", () => {
     adapter.onMessage = (msg) => messages.push(msg);
 
     // Do NOT set voice context
-    await adapter.start({ enabled: true, token: "test-token-123" });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
 
     mockBot.triggerMessage({
       voice: { file_id: "voice_abc", duration: 3 },

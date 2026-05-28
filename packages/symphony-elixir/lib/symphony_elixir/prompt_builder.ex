@@ -1,0 +1,65 @@
+defmodule SymphonyElixir.PromptBuilder do
+  @moduledoc """
+  Builds agent prompts from Linear issue data.
+  """
+
+  alias SymphonyElixir.{Config, Workflow}
+
+  @render_opts [strict_variables: true, strict_filters: true]
+
+  @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def build_prompt(issue, opts \\ []) do
+    with {:ok, prompt} <- prompt_template(Workflow.current()),
+         {:ok, template} <- parse_template(prompt) do
+      try do
+        rendered =
+          template
+          |> Solid.render!(
+            %{
+              "attempt" => Keyword.get(opts, :attempt),
+              "issue" => issue |> Map.from_struct() |> to_solid_map()
+            },
+            @render_opts
+          )
+          |> IO.iodata_to_binary()
+
+        {:ok, rendered}
+      rescue
+        error ->
+          {:error, {:template_render_error, Exception.message(error)}}
+      end
+    end
+  end
+
+  defp prompt_template({:ok, %{prompt_template: prompt}}), do: {:ok, default_prompt(prompt)}
+  defp prompt_template({:ok, _workflow, {:stale, reason}}), do: {:error, {:stale_workflow, reason}}
+  defp prompt_template({:error, reason}), do: {:error, {:workflow_unavailable, reason}}
+
+  defp parse_template(prompt) when is_binary(prompt) do
+    {:ok, Solid.parse!(prompt)}
+  rescue
+    error ->
+      {:error, {:template_parse_error, Exception.message(error), prompt}}
+  end
+
+  defp to_solid_map(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), to_solid_value(value)} end)
+  end
+
+  defp to_solid_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp to_solid_value(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp to_solid_value(%Date{} = value), do: Date.to_iso8601(value)
+  defp to_solid_value(%Time{} = value), do: Time.to_iso8601(value)
+  defp to_solid_value(%_{} = value), do: value |> Map.from_struct() |> to_solid_map()
+  defp to_solid_value(value) when is_map(value), do: to_solid_map(value)
+  defp to_solid_value(value) when is_list(value), do: Enum.map(value, &to_solid_value/1)
+  defp to_solid_value(value), do: value
+
+  defp default_prompt(prompt) when is_binary(prompt) do
+    if String.trim(prompt) == "" do
+      Config.workflow_prompt()
+    else
+      prompt
+    end
+  end
+end

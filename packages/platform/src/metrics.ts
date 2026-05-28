@@ -71,6 +71,12 @@ export function recordPlatformHttpRequest(input: {
 }
 
 export function normalizePlatformMetricPath(path: string): string {
+  if (path === '/') return '/';
+  if (path === '/health') return '/health';
+  if (path === '/metrics') return '/metrics';
+  if (path === '/containers') return '/containers';
+  if (path === '/vps') return '/vps';
+  if (path === '/runtime') return '/runtime';
   if (path.startsWith('/system-bundles/releases/')) return '/system-bundles/releases/:version';
   if (path.startsWith('/system-bundles/channels/')) return '/system-bundles/channels/:channel';
   if (/^\/system-bundles\/[^/]+\/[^/]+$/.test(path)) {
@@ -89,7 +95,7 @@ export function normalizePlatformMetricPath(path: string): string {
   if (/^\/social\/profiles\/[^/]+$/.test(path)) return '/social/profiles/:handle';
   if (/^\/social\/send\/[^/]+$/.test(path)) return '/social/send/:handle';
   if (path.startsWith('/api/')) return '/api/:path';
-  return path;
+  return '/:path';
 }
 
 export const vpsInfo = new Gauge({

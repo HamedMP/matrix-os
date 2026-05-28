@@ -15,12 +15,29 @@ function childProcess() {
 }
 
 function ptyProcess() {
+  const dataListeners = new Set<(data: string) => void>();
+  const exitListeners = new Set<(event: { exitCode: number }) => void>();
   return {
-    kill: vi.fn(),
+    writes: [] as string[],
     resize: vi.fn(),
-    write: vi.fn(),
-    onData: vi.fn(() => ({ dispose: vi.fn() })),
-    onExit: vi.fn(() => ({ dispose: vi.fn() })),
+    kill: vi.fn(),
+    write(data: string) {
+      this.writes.push(data);
+    },
+    onData(listener: (data: string) => void) {
+      dataListeners.add(listener);
+      return { dispose: () => dataListeners.delete(listener) };
+    },
+    onExit(listener: (event: { exitCode: number }) => void) {
+      exitListeners.add(listener);
+      return { dispose: () => exitListeners.delete(listener) };
+    },
+    emitData(data: string) {
+      for (const listener of dataListeners) listener(data);
+    },
+    emitExit(exitCode: number) {
+      for (const listener of exitListeners) listener({ exitCode });
+    },
   };
 }
 
@@ -182,6 +199,26 @@ describe("zellij adapter", () => {
     controller.abort();
 
     expect(pty.kill).toHaveBeenCalled();
+  });
+
+  it("attaches through a PTY so input, output, exit, and resize behave like a real terminal", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
+
+    const attached = adapter.attachSession("setup");
+    attached.write("claude\r");
+    attached.resize(140, 50);
+    pty.emitData("ready");
+    pty.emitExit(0);
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["attach", "setup"],
+      expect.objectContaining({ name: "xterm-256color", cols: 120, rows: 40 }),
+    );
+    expect(pty.writes).toEqual(["claude\r"]);
+    expect(pty.resize).toHaveBeenCalledWith(140, 50);
   });
 
   it("creates sessions in the requested cwd using headless attach", async () => {

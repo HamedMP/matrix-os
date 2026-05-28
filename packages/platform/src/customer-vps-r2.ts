@@ -1,6 +1,6 @@
 import { z } from 'zod/v4';
 import type { UserMachineRecord } from './db.js';
-import { ClerkUserIdSchema } from './customer-vps-schema.js';
+import { ClerkUserIdSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 
 export const VpsMetaSchema = z.object({
   version: z.literal(1),
@@ -23,7 +23,7 @@ const StrictIsoDateTimeSchema = z.string().datetime();
 
 export interface CustomerVpsSystemStore {
   writeVpsMeta(meta: VpsMeta): Promise<void>;
-  hasDbLatest(clerkUserId: string): Promise<boolean>;
+  hasDbLatest(clerkUserId: string, runtimeSlot?: string): Promise<boolean>;
 }
 
 export interface CustomerVpsObjectStore {
@@ -69,10 +69,19 @@ function normalizeStrictIsoDateTime(value: string): string {
 }
 
 export function validateDbLatestPointer(value: string): boolean {
-  return /^system\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/.test(value) &&
+  const primarySnapshot = /^system\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/.test(value);
+  const slotSnapshot = /^system\/runtime-slots\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/.exec(value);
+  return (primarySnapshot || Boolean(slotSnapshot && RuntimeSlotSchema.safeParse(slotSnapshot[1]).success)) &&
     !value.includes('..') &&
     !value.includes(':') &&
     !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function buildDbLatestKey(runtimeSlot = 'primary'): string {
+  const parsedSlot = RuntimeSlotSchema.parse(runtimeSlot);
+  return parsedSlot === 'primary'
+    ? 'system/db/latest'
+    : `system/runtime-slots/${parsedSlot}/db/latest`;
 }
 
 function isSafeRelativeSystemKey(value: string): boolean {
@@ -126,10 +135,10 @@ export function createCustomerVpsSystemStore(options: {
       );
     },
 
-    async hasDbLatest(clerkUserId) {
+    async hasDbLatest(clerkUserId, runtimeSlot) {
       try {
         const object = await options.r2.getObject(
-          buildCustomerVpsR2Key(options.r2PrefixRoot, clerkUserId, 'system/db/latest'),
+          buildCustomerVpsR2Key(options.r2PrefixRoot, clerkUserId, buildDbLatestKey(runtimeSlot)),
           { signal: AbortSignal.timeout(CUSTOMER_VPS_R2_READ_TIMEOUT_MS) },
         );
         const pointer = await readObjectText(object.body);
