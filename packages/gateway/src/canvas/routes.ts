@@ -14,13 +14,13 @@ import {
   type PatchCanvasNodeUpdates,
   type CreateCanvasRequest,
 } from "./contracts.js";
+import { isCanvasAssetMimeType } from "./assets.js";
 import { CANVAS_ASSET_FILE_LIMIT, mapCanvasError } from "./service.js";
 import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
 
 const CANVAS_WRITE_BODY_LIMIT = 256 * 1024;
 const CANVAS_ACTION_BODY_LIMIT = 64 * 1024;
 const CANVAS_ASSET_BODY_LIMIT = CANVAS_ASSET_FILE_LIMIT + 256 * 1024;
-const CANVAS_ASSET_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"]);
 
 export interface CanvasRouteService {
   listCanvases(userId: string, query?: { scopeType?: string; scopeId?: string; limit?: number; cursor?: string; q?: string }): Promise<unknown>;
@@ -227,7 +227,7 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
       const formData = await c.req.formData();
       const file = formData.get("file");
       if (!(file instanceof File)) return validationError(c);
-      if (!CANVAS_ASSET_MIME_TYPES.has(file.type)) return validationError(c);
+      if (!isCanvasAssetMimeType(file.type)) return validationError(c);
       if (file.size <= 0 || file.size > CANVAS_ASSET_FILE_LIMIT) return validationError(c);
       if (file.name && !hasSafeOriginalAssetName(file.name)) return validationError(c);
       if (!deps.service.uploadCanvasAsset) return c.json({ error: "Canvas request failed" }, 500);

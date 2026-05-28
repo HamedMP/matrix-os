@@ -15,9 +15,9 @@ import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./CanvasToolbar";
 import { CanvasMinimap } from "./CanvasMinimap";
+import { isCanvasAssetMimeType } from "../../../../packages/gateway/src/canvas/assets.js";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
-const CANVAS_PASTE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"]);
 const MAX_PASTED_IMAGE_WIDTH = 640;
 const MAX_PASTED_IMAGE_HEIGHT = 480;
 
@@ -42,7 +42,7 @@ function imageFilesFromClipboard(data: DataTransfer | null): File[] {
   const files: File[] = [];
   const seen = new Set<File>();
   for (const item of Array.from(data.items ?? [])) {
-    if (item.kind !== "file" || !CANVAS_PASTE_IMAGE_TYPES.has(item.type)) continue;
+    if (item.kind !== "file" || !isCanvasAssetMimeType(item.type)) continue;
     const file = item.getAsFile();
     if (file && !seen.has(file)) {
       seen.add(file);
@@ -50,7 +50,7 @@ function imageFilesFromClipboard(data: DataTransfer | null): File[] {
     }
   }
   for (const file of Array.from(data.files ?? [])) {
-    if (!CANVAS_PASTE_IMAGE_TYPES.has(file.type) || seen.has(file)) continue;
+    if (!isCanvasAssetMimeType(file.type) || seen.has(file)) continue;
     seen.add(file);
     files.push(file);
   }

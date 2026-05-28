@@ -113,6 +113,20 @@ describe("canvas contracts", () => {
     expect(() =>
       CanvasNodeSchema.parse({
         ...node("node_image", "image"),
+        sourceRef: { kind: "file", id: "system/theme.json" },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      CanvasNodeSchema.parse({
+        ...node("node_image", "image"),
+        sourceRef: { kind: "file", id: "system/canvas-assets/cnv_0123456789abcdef/asset.txt" },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      CanvasNodeSchema.parse({
+        ...node("node_image", "image"),
         sourceRef: { kind: "url", id: "https://example.com/image.png" },
       }),
     ).toThrow();

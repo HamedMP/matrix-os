@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
+import { isCanvasAssetMimeType, isCanvasAssetPath } from "../../../packages/gateway/src/canvas/assets.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const SAFE_CANVAS_ERROR_MESSAGES = new Set([
@@ -95,6 +96,23 @@ export interface CanvasAssetUpload {
   mimeType: string;
   sizeBytes: number;
   originalName: string;
+}
+
+function parseCanvasAssetUpload(value: unknown): CanvasAssetUpload | null {
+  if (typeof value !== "object" || value === null) return null;
+  const asset = value as Record<string, unknown>;
+  if (typeof asset.assetId !== "string" || asset.assetId.length < 1 || asset.assetId.length > 120) return null;
+  if (typeof asset.path !== "string" || !isCanvasAssetPath(asset.path)) return null;
+  if (typeof asset.mimeType !== "string" || !isCanvasAssetMimeType(asset.mimeType)) return null;
+  if (typeof asset.sizeBytes !== "number" || !Number.isFinite(asset.sizeBytes) || asset.sizeBytes <= 0) return null;
+  if (typeof asset.originalName !== "string" || asset.originalName.length < 1 || asset.originalName.length > 160) return null;
+  return {
+    assetId: asset.assetId,
+    path: asset.path,
+    mimeType: asset.mimeType,
+    sizeBytes: asset.sizeBytes,
+    originalName: asset.originalName,
+  };
 }
 
 interface WorkspaceCanvasStore {
@@ -429,8 +447,12 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
       if (!response.ok) {
         throw new Error(safeCanvasErrorMessage((body as { error?: unknown }).error));
       }
+      const asset = parseCanvasAssetUpload(body);
+      if (!asset) {
+        throw new Error("Canvas request failed");
+      }
       set({ error: null });
-      return body as CanvasAssetUpload;
+      return asset;
     } catch (err: unknown) {
       set({ error: err instanceof Error ? err.message : "Canvas request failed" });
       return null;

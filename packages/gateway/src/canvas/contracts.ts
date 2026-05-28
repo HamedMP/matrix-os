@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { isCanvasAssetPath } from "./assets.js";
 
 export const CANVAS_DOCUMENT_MAX_BYTES = 256 * 1024;
 export const CANVAS_NODE_METADATA_MAX_BYTES = 16 * 1024;
@@ -160,6 +161,9 @@ export const CanvasNodeSchema = z.object({
   }
   if (value.type === "image" && value.sourceRef?.kind !== "file") {
     ctx.addIssue({ code: "custom", message: "Image nodes require a file source", path: ["sourceRef", "kind"] });
+  }
+  if (value.type === "image" && value.sourceRef?.kind === "file" && !isCanvasAssetPath(value.sourceRef.id)) {
+    ctx.addIssue({ code: "custom", message: "Image nodes require a canvas asset path", path: ["sourceRef", "id"] });
   }
 });
 

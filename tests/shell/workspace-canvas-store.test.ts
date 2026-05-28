@@ -216,6 +216,17 @@ describe("workspace canvas store", () => {
     }
   });
 
+  it("rejects malformed canvas asset upload responses", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ assetId: "asset_missing_path" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceCanvasStore.setState({ document: document as any });
+
+    await expect(useWorkspaceCanvasStore.getState().uploadCanvasAsset(new File(["fake"], "screenshot.png", { type: "image/png" }))).resolves.toBeNull();
+
+    expect(useWorkspaceCanvasStore.getState().error).toBe("Canvas request failed");
+  });
+
   it("does not switch back to a stale canvas after a save conflict", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas conflict" }) });

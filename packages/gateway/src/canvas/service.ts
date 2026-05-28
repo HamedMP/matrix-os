@@ -4,6 +4,7 @@ import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname } from "node:path";
 import { resolveWithinHome } from "../path-security.js";
+import { canvasAssetExtensionForMimeType } from "./assets.js";
 import {
   CanvasNodeSchema,
   createBlankCanvasDocument,
@@ -87,13 +88,6 @@ export interface CanvasServiceOptions {
 }
 
 export const CANVAS_ASSET_FILE_LIMIT = 10 * 1024 * 1024;
-const CANVAS_ASSET_EXTENSIONS = new Map([
-  ["image/png", "png"],
-  ["image/jpeg", "jpg"],
-  ["image/webp", "webp"],
-  ["image/gif", "gif"],
-  ["image/avif", "avif"],
-]);
 
 export function mapCanvasError(err: unknown): CanvasSafeError {
   if (err instanceof CanvasConflictError) {
@@ -343,7 +337,7 @@ export class CanvasService {
     const record = await this.repository.get(ownerFromUser(userId), canvasId);
     if (!record) throw new CanvasNotFoundError(canvasId);
 
-    const extension = CANVAS_ASSET_EXTENSIONS.get(file.type);
+    const extension = canvasAssetExtensionForMimeType(file.type);
     if (!extension || file.size <= 0 || file.size > CANVAS_ASSET_FILE_LIMIT) {
       throw new CanvasInvalidRequestError();
     }
