@@ -137,6 +137,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_R2_BUCKET={{r2Bucket}}',
   '      MATRIX_R2_PREFIX={{r2Prefix}}',
