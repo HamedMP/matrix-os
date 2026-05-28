@@ -126,7 +126,7 @@ jobs:
           echo "count=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit updated snapshots
-        if: steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.screenshots.outputs.should_run == 'true' && steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -134,7 +134,7 @@ jobs:
           git push
 
       - name: Comment on PR
-        if: steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.screenshots.outputs.should_run == 'true' && steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v9
         with:
           script: |
@@ -147,7 +147,7 @@ jobs:
             });
 
       - name: Upload updated snapshots for fork PRs
-        if: steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name != github.repository
+        if: steps.screenshots.outputs.should_run == 'true' && steps.snapshots.outputs.count != '0' && github.event.pull_request.head.repo.full_name != github.repository
         uses: actions/upload-artifact@v7
         with:
           name: updated-screenshots
