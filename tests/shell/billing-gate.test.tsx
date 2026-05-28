@@ -18,6 +18,9 @@ vi.mock("@clerk/nextjs", () => ({
       data-testid="pricing-table"
     />
   ),
+  SignInButton: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="sign-in-button">{children}</div>
+  ),
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
@@ -85,5 +88,26 @@ describe("BillingGate", () => {
     expect(screen.getByText("Choose the early adopter plan to continue")).toBeTruthy();
     expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
     expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe("/");
+  });
+
+  it("prompts unauthenticated visitors to sign in before checkout", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.hasPlan = false;
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.queryByText("Matrix workspace")).toBeNull();
+    expect(screen.getByText("Sign in to continue")).toBeTruthy();
+    expect(screen.getByTestId("sign-in-button")).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 });

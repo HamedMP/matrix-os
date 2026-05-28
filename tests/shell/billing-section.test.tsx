@@ -29,7 +29,9 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.hasPlan = false;
 
-    const { BillingSection } = await import("../../shell/src/components/settings/sections/BillingSection.js");
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
 
     render(<BillingSection />);
 
@@ -43,10 +45,16 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.hasPlan = true;
 
-    const { BillingSection } = await import("../../shell/src/components/settings/sections/BillingSection.js");
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
 
     render(<BillingSection />);
 
     expect(screen.getByText("Active")).toBeTruthy();
+    expect(
+      screen.getByText("Your early adopter access is active for this Clerk account."),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 });

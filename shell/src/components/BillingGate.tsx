@@ -1,16 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { PricingTable, useAuth } from "@clerk/nextjs";
-import { CreditCardIcon, Loader2Icon } from "lucide-react";
+import { PricingTable, SignInButton, useAuth } from "@clerk/nextjs";
+import { CreditCardIcon, Loader2Icon, LogInIcon } from "lucide-react";
 import {
   MATRIX_BILLING_PLAN,
   MATRIX_BILLING_RETURN_PATH,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
 
-const e2eBillingBypass =
-  process.env.NODE_ENV === "test" && process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 function BillingTableFallback() {
   return (
@@ -57,6 +56,35 @@ function BillingRequired() {
   );
 }
 
+function SignInRequired() {
+  return (
+    <main className="min-h-screen overflow-y-auto bg-background px-4 py-10 text-foreground">
+      <section className="mx-auto flex w-full max-w-3xl flex-col gap-5 rounded-xl border border-border/60 bg-card/95 p-6 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-medium text-primary">
+          <LogInIcon className="size-4" aria-hidden="true" />
+          <span>Matrix OS billing</span>
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-normal">Sign in to continue</h1>
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            Matrix OS checks your Clerk account for the early adopter plan before opening
+            the shell.
+          </p>
+        </div>
+        <SignInButton mode="modal">
+          <button
+            type="button"
+            className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <LogInIcon className="size-4" aria-hidden="true" />
+            Sign in
+          </button>
+        </SignInButton>
+      </section>
+    </main>
+  );
+}
+
 export function BillingGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, has } = useAuth();
 
@@ -75,7 +103,11 @@ export function BillingGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!isSignedIn || !hasMatrixBillingAccess(has)) {
+  if (!isSignedIn) {
+    return <SignInRequired />;
+  }
+
+  if (!hasMatrixBillingAccess(has)) {
     return <BillingRequired />;
   }
 

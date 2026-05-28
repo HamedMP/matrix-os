@@ -52,20 +52,27 @@ export function BillingSection() {
             <div>
               <p className="text-sm font-medium">Early adopter access</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Required plan: <span className="font-medium text-foreground">{MATRIX_BILLING_PLAN}</span>
+                Required plan:{" "}
+                <span className="font-medium text-foreground">{MATRIX_BILLING_PLAN}</span>
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <div className="rounded-xl border border-border/60 bg-card p-4">
-        <PricingTable
-          for="user"
-          newSubscriptionRedirectUrl={MATRIX_BILLING_RETURN_PATH}
-          fallback={<PricingFallback />}
-        />
-      </div>
+      {active ? (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-800">
+          Your early adopter access is active for this Clerk account.
+        </div>
+      ) : (
+        <div className="rounded-xl border border-border/60 bg-card p-4">
+          <PricingTable
+            for="user"
+            newSubscriptionRedirectUrl={MATRIX_BILLING_RETURN_PATH}
+            fallback={<PricingFallback />}
+          />
+        </div>
+      )}
     </div>
   );
 }
