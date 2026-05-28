@@ -40,8 +40,12 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(cloudInit).toContain("erlang-base");
     expect(cloudInit).toContain("erlang-ssl");
     expect(cloudInit).toContain("matrix-symphony");
-    expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
-    expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).not.toContain("required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony");
+    expect(cloudInit).toContain("optional_bin in matrix-symphony matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore");
+    expect(cloudInit).toContain("optional_services=\"\"");
+    expect(cloudInit).toContain("optional_services=\"$optional_services matrix-symphony.service\"");
+    expect(cloudInit).toContain("systemctl enable $base_services $optional_services matrix-linux-tools.service matrix-db-backup.timer nginx");
+    expect(cloudInit).toContain("systemctl start $base_services $optional_services");
   });
 
   it("packages the adapted Elixir Symphony source and license in the host bundle app tree", async () => {
