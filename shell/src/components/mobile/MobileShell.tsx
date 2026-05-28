@@ -141,7 +141,13 @@ export function MobileShell({ onOpenCommandPalette }: MobileShellProps) {
   }, []);
 
   const closeApp = useCallback((openId: string) => {
-    setOpenStack((prev) => prev.filter((o) => o.id !== openId));
+    setOpenStack((prev) => {
+      const next = prev.filter((o) => o.id !== openId);
+      if (next.length === 0) {
+        setView("launcher");
+      }
+      return next;
+    });
   }, []);
 
   const closeAll = useCallback(() => {

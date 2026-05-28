@@ -108,7 +108,8 @@ async function networkFirstHtml(req) {
     console.warn("[sw] network-first fetch failed, trying cache:", err?.message ?? err);
     const cached = await cache.match(req);
     if (cached) return cached;
-    const fallback = await cache.match("/");
+    const staticCache = await caches.open(CACHE_STATIC);
+    const fallback = await staticCache.match("/");
     if (fallback) return fallback;
     throw new Error("offline and no cached HTML");
   }
