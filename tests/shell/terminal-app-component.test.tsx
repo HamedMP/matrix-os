@@ -620,7 +620,13 @@ describe("TerminalApp", () => {
           json: async () => [
             { name: "package.json", type: "file", gitStatus: null },
             { name: "README.md", type: "file", gitStatus: null },
-            { name: "src", type: "directory", gitStatus: null },
+            {
+              name: "src",
+              type: "directory",
+              gitStatus: null,
+              expanded: false,
+              children: [{ name: "app.tsx", type: "file", gitStatus: null, path: "projects/src/app.tsx" }],
+            },
           ],
         });
       }
@@ -658,6 +664,14 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("package.json")).toBeNull();
     expect(screen.getByText("README.md")).toBeTruthy();
     expect(screen.queryByText("src")).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "src" } });
+    });
+
+    expect(screen.getByText("src")).toBeTruthy();
+    expect(screen.getByText("app.tsx")).toBeTruthy();
+    expect(screen.queryByText("README.md")).toBeNull();
 
     await act(async () => {
       fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "missing" } });

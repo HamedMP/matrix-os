@@ -2008,7 +2008,7 @@ function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter);
 
     if (matches) {
-      return [{ ...node }];
+      return [{ ...node, expanded: node.type === "directory" ? true : node.expanded }];
     }
     if (children.length > 0) {
       return [{ ...node, children, expanded: true }];
