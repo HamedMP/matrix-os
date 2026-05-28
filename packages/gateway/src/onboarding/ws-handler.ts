@@ -283,6 +283,13 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     } else {
       console.log("[onboarding] No voice mode — Gemini Live connection:", hasVoiceConnection ? "set" : "MISSING");
       audioMode = false;
+      if (audioFormat === "pcm16" && !hasVoiceConnection) {
+        send({
+          type: "notice",
+          code: "gemini_unavailable",
+          message: "Voice intro is unavailable — set GEMINI_API_KEY for the spoken onboarding, or continue in text below.",
+        });
+      }
       send({ type: "mode_change", mode: "text" });
     }
   }

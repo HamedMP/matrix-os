@@ -82,6 +82,11 @@ export const GatewayToShellSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("api_key_result"), valid: z.boolean(), error: z.string().optional() }),
   z.object({ type: z.literal("onboarding_already_complete") }),
   z.object({
+    type: z.literal("notice"),
+    code: z.enum(["gemini_unavailable"]),
+    message: z.string(),
+  }),
+  z.object({
     type: z.literal("error"),
     code: z.string(),
     stage: z.string(),

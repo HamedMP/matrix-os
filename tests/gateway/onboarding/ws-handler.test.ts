@@ -94,6 +94,32 @@ describe("onboarding websocket handler", () => {
     expect(existsSync(join(homePath, "system/onboarding-complete.json"))).toBe(true);
   });
 
+  it("sends a gemini_unavailable notice when voice is requested but no Gemini key is configured", async () => {
+    const h = handler();
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "pcm16" }));
+
+    expect(geminiMock.clients).toHaveLength(0);
+    expect(sent).toContainEqual({ type: "mode_change", mode: "text" });
+    const notice = sent.find((m) => m.type === "notice");
+    expect(notice).toBeDefined();
+    expect(notice).toMatchObject({
+      type: "notice",
+      code: "gemini_unavailable",
+    });
+    expect((notice as { message: string }).message).toMatch(/GEMINI_API_KEY/);
+  });
+
+  it("does not send a gemini_unavailable notice when the user explicitly chose text mode", async () => {
+    const h = handler();
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "text" }));
+
+    expect(sent.find((m) => m.type === "notice")).toBeUndefined();
+  });
+
   it("closes an existing Gemini client before handling a duplicate start", async () => {
     const h = handler("test-gemini-key");
     await h.onOpen((msg) => sent.push(msg));

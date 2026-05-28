@@ -295,6 +295,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         </div>
       )}
 
+      {/* Notice (informational, e.g. voice unavailable) */}
+      {ob.notice && !ob.error && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-muted/40 border border-border text-muted-foreground text-xs max-w-md text-center">
+          {ob.notice}
+        </div>
+      )}
+
       {/* Error */}
       {ob.error && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs">

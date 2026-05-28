@@ -36,6 +36,7 @@ export interface OnboardingHook {
   transcripts: Transcript[];
   suggestedApps: SuggestedApp[];
   error: string | null;
+  notice: string | null;
   isVoiceMode: boolean;
   alreadyComplete: boolean;
   apiKeyResult: { valid: boolean; error?: string } | null;
@@ -55,6 +56,7 @@ export function useOnboarding(): OnboardingHook {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [suggestedApps, setSuggestedApps] = useState<SuggestedApp[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [alreadyComplete, setAlreadyComplete] = useState(false);
   const [apiKeyResult, setApiKeyResult] = useState<{ valid: boolean; error?: string } | null>(null);
@@ -331,6 +333,9 @@ export function useOnboarding(): OnboardingHook {
       case "onboarding_already_complete":
         setAlreadyComplete(true);
         break;
+      case "notice":
+        setNotice(msg.message as string);
+        break;
       case "error":
         setError(msg.message as string);
         break;
@@ -433,6 +438,7 @@ export function useOnboarding(): OnboardingHook {
     transcripts,
     suggestedApps,
     error,
+    notice,
     isVoiceMode,
     alreadyComplete,
     apiKeyResult,
