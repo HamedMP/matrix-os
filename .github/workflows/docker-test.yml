@@ -13,7 +13,7 @@ on:
     types: [labeled, ready_for_review]
 
 concurrency:
-  group: docker-test-${{ github.ref }}
+  group: docker-test-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Docker relevant changes: true"
             exit 0

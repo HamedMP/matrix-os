@@ -10,7 +10,7 @@ on:
     types: [labeled, ready_for_review]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
   cancel-in-progress: true
 
 jobs:
@@ -34,10 +34,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Manual dispatch is an explicit request to run CI, regardless of changed paths.
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          # Manual and merge-queue runs must execute CI regardless of changed paths.
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "CI relevant changes: true (manual dispatch)"
+            echo "CI relevant changes: true ($GITHUB_EVENT_NAME always runs)"
             exit 0
           fi
 
