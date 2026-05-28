@@ -53,8 +53,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: host-bundle-release
-  cancel-in-progress: false
+  group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
 
 jobs:
   dev-bundle-gate:

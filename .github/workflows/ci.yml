@@ -11,9 +11,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect CI-relevant changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should_run: ${{ steps.changed.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect source changes
+        id: changed
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+            changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
+          else
+            zero_sha="0000000000000000000000000000000000000000"
+            if [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "$GITHUB_EVENT_BEFORE" != "$zero_sha" ] && git cat-file -e "${GITHUB_EVENT_BEFORE}^{commit}" 2>/dev/null; then
+              changed_files="$(git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA")"
+            else
+              changed_files="$(git show --pretty= --name-only "$GITHUB_SHA")"
+            fi
+          fi
+
+          should_run=false
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              docs/*|specs/*|www/*|*.md) ;;
+              *) should_run=true; break ;;
+            esac
+          done <<EOF
+          $changed_files
+          EOF
+
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          echo "CI relevant changes: $should_run"
+
   # ── Gate 1: Mechanical checks ──
   typecheck:
     name: Type Check
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # TODO: remove continue-on-error once baseline type errors in kernel are fixed
@@ -37,6 +83,8 @@ jobs:
 
   patterns:
     name: Pattern Scan
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -67,7 +115,8 @@ jobs:
 
   sync-client:
     name: Sync Client Package
-    needs: [typecheck, patterns]
+    needs: [changes, patterns]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -94,7 +143,8 @@ jobs:
   # ── Gate 2: Tests ──
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
-    needs: [typecheck, patterns, sync-client]
+    needs: [changes, patterns]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -124,7 +174,8 @@ jobs:
 
   e2e:
     name: E2E Tests
-    needs: unit
+    needs: [changes, sync-client, unit]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
