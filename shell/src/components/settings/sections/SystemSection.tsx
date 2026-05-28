@@ -211,6 +211,7 @@ export function SystemSection() {
           : target.channel
             ? channelInstalled && (installedVersion !== currentVersion || target.channel !== installedChannel)
             : installedVersion !== currentVersion;
+        if (!mountedRef.current) return false;
         if (installed) {
           setInfo(nextInfo);
           setUpgradeMessage("Installed. Reloading...");

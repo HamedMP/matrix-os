@@ -476,4 +476,100 @@ describe("SystemSection release refresh", () => {
 
     expect(clearTimeoutSpy.mock.calls.length).toBeGreaterThan(clearCallsBeforeUnmount);
   });
+
+  it("does not schedule a reload when unmounted before a successful poll resolves", async () => {
+    let updateStarted = false;
+    const successfulPoll = deferred<Response>();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        if (updateStarted) {
+          return successfulPoll.promise;
+        }
+        return Promise.resolve(jsonResponse({
+          version: "v2026.05.28-145",
+          release: {
+            version: "v2026.05.28-145",
+            channel: "dev",
+            buildTime: "2026-05-28T15:32:51.000Z",
+          },
+        }));
+      }
+      if (url.endsWith("/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok", cronJobs: 0, channels: {} }));
+      }
+      if (url.endsWith("/api/system/update?channel=dev")) {
+        return Promise.resolve(jsonResponse({
+          channel: "dev",
+          latest: { version: "v2026.05.28-145" },
+          updateAvailable: false,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=dev")) {
+        return Promise.resolve(jsonResponse({ channel: "dev", releases: [] }));
+      }
+      if (url.endsWith("/api/system/update?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          latest: { version: "v2026.05.28-151" },
+          updateAvailable: true,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          releases: [{ version: "v2026.05.28-151", buildTime: "2026-05-28T19:53:18.421Z" }],
+        }));
+      }
+      if (url.endsWith("/api/system/update") && init?.method === "POST") {
+        updateStarted = true;
+        return Promise.resolve(jsonResponse({ ok: true, status: "started", channel: "stable" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unmount } = render(<SystemSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Installed channel")).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText("Release channel"), {
+      target: { value: "stable" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Switch to stable")).toBeTruthy();
+    });
+
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    fireEvent.click(screen.getByText("Switch to stable"));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    act(() => {
+      unmount();
+    });
+
+    await act(async () => {
+      successfulPoll.resolve(jsonResponse({
+        version: "v2026.05.28-151",
+        release: {
+          version: "v2026.05.28-151",
+          channel: "stable",
+          buildTime: "2026-05-28T19:53:18.421Z",
+        },
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 2_000)).toBe(false);
+  });
 });
