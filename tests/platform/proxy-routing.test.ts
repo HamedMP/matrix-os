@@ -329,6 +329,49 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
   });
 
+  it("reports recovering VPS status for sync JWT gateway health instead of returning unauthorized", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff201",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "recovering",
+      hetznerServerId: 123501,
+      publicIPv4: "203.0.113.41",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+    });
+
+    const res = await app.request("/api/health", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+      },
+    });
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: "VPS provisioning",
+      status: "recovering",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("routes mobile app session-token launches to the hinted customer VPS without Clerk cookies", async () => {
     await insertUserMachine(db, {
       machineId: "machine-alice-mobile-app",
