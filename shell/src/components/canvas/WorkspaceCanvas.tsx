@@ -9,6 +9,34 @@ import { WorkspaceCanvasNode } from "./WorkspaceCanvasNode";
 import { WorkspaceCanvasToolbar } from "./WorkspaceCanvasToolbar";
 import { WorkspaceCanvasInspector } from "./WorkspaceCanvasInspector";
 
+type ImageDragState = {
+  nodeId: string;
+  mode: "move" | "resize";
+  pointerId: number;
+  startX: number;
+  startY: number;
+  origX: number;
+  origY: number;
+  origW: number;
+  origH: number;
+  nextX: number;
+  nextY: number;
+  nextW: number;
+  nextH: number;
+};
+
+function applyImageDragPreview(element: HTMLElement, drag: ImageDragState) {
+  element.style.transform = `translate(${drag.nextX}px, ${drag.nextY}px)`;
+  element.style.width = `${drag.nextW}px`;
+  element.style.height = `${drag.nextH}px`;
+}
+
+function clearImageDragPreview(element: HTMLElement) {
+  element.style.transform = "";
+  element.style.width = "";
+  element.style.height = "";
+}
+
 export function WorkspaceCanvasLayer() {
   const document = useWorkspaceCanvasStore((s) => s.document);
   const query = useWorkspaceCanvasStore((s) => s.query);
@@ -16,16 +44,7 @@ export function WorkspaceCanvasLayer() {
   const setSelectedNode = useWorkspaceCanvasStore((s) => s.setSelectedNode);
   const updateNode = useWorkspaceCanvasStore((s) => s.updateNode);
   const zoom = useCanvasTransform((s) => s.zoom);
-  const dragRef = useRef<{
-    nodeId: string;
-    mode: "move" | "resize";
-    startX: number;
-    startY: number;
-    origX: number;
-    origY: number;
-    origW: number;
-    origH: number;
-  } | null>(null);
+  const dragRef = useRef<ImageDragState | null>(null);
   const visibleNodes = useMemo(() => selectVisibleWorkspaceCanvasNodes(document, query, filters), [document, filters, query]);
   const nodeById = useMemo(() => new Map(document?.nodes.map((node) => [node.id, node]) ?? []), [document?.nodes]);
 
@@ -54,36 +73,60 @@ export function WorkspaceCanvasLayer() {
             dragRef.current = {
               nodeId: node.id,
               mode,
+              pointerId: event.pointerId,
               startX: event.clientX,
               startY: event.clientY,
               origX: node.position.x,
               origY: node.position.y,
               origW: node.size.width,
               origH: node.size.height,
+              nextX: node.position.x,
+              nextY: node.position.y,
+              nextW: node.size.width,
+              nextH: node.size.height,
             };
-            event.currentTarget.setPointerCapture(event.pointerId);
+            if ("setPointerCapture" in event.currentTarget) {
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }
           }}
           onPointerMove={(event) => {
             const drag = dragRef.current;
-            if (!drag || drag.nodeId !== node.id) return;
+            if (!drag || drag.nodeId !== node.id || drag.pointerId !== event.pointerId) return;
             const dx = (event.clientX - drag.startX) / zoom;
             const dy = (event.clientY - drag.startY) / zoom;
             if (drag.mode === "move") {
-              void updateNode(node.id, { position: { x: Math.round(drag.origX + dx), y: Math.round(drag.origY + dy) } });
-              return;
+              drag.nextX = Math.round(drag.origX + dx);
+              drag.nextY = Math.round(drag.origY + dy);
+            } else {
+              drag.nextW = Math.max(80, Math.round(drag.origW + dx));
+              drag.nextH = Math.max(60, Math.round(drag.origH + dy));
             }
-            void updateNode(node.id, {
-              size: {
-                width: Math.max(80, Math.round(drag.origW + dx)),
-                height: Math.max(60, Math.round(drag.origH + dy)),
-              },
-            });
+            applyImageDragPreview(event.currentTarget, drag);
           }}
-          onPointerUp={() => {
+          onPointerUp={(event) => {
+            const drag = dragRef.current;
+            if (!drag || drag.nodeId !== node.id || drag.pointerId !== event.pointerId) return;
             dragRef.current = null;
+            if ("releasePointerCapture" in event.currentTarget) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+            if (drag.mode === "move") {
+              void updateNode(node.id, { position: { x: drag.nextX, y: drag.nextY } });
+            } else {
+              void updateNode(node.id, { size: { width: drag.nextW, height: drag.nextH } });
+            }
+            clearImageDragPreview(event.currentTarget);
           }}
-          onPointerCancel={() => {
+          onPointerCancel={(event) => {
+            const drag = dragRef.current;
+            if (!drag || drag.nodeId !== node.id || drag.pointerId !== event.pointerId) return;
             dragRef.current = null;
+            if (drag.mode === "move") {
+              void updateNode(node.id, { position: { x: drag.nextX, y: drag.nextY } });
+            } else {
+              void updateNode(node.id, { size: { width: drag.nextW, height: drag.nextH } });
+            }
+            clearImageDragPreview(event.currentTarget);
           }}
         >
           <WorkspaceCanvasNode node={node} />

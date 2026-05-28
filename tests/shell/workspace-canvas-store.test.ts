@@ -187,6 +187,35 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().document?.nodes).toEqual([]);
   });
 
+  it("adds random entropy to pasted image node ids", async () => {
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(1_776_729_600_000);
+    const randomSpy = vi.spyOn(Math, "random")
+      .mockReturnValueOnce(0.111111111)
+      .mockReturnValueOnce(0.222222222);
+    useWorkspaceCanvasStore.setState({ document: document as any });
+    const asset = {
+      assetId: "asset_0123456789abcdef",
+      path: "system/canvas-assets/cnv_0123456789abcdef/asset_0123456789abcdef.png",
+      mimeType: "image/png",
+      sizeBytes: 8,
+      originalName: "screenshot.png",
+    };
+
+    try {
+      await useWorkspaceCanvasStore.getState().addImageNode(asset, { width: 640, height: 360 }, { x: 320, y: 180 });
+      await useWorkspaceCanvasStore.getState().addImageNode(asset, { width: 640, height: 360 }, { x: 320, y: 180 });
+
+      const ids = useWorkspaceCanvasStore.getState().document?.nodes.map((node) => node.id) ?? [];
+      expect(ids).toHaveLength(2);
+      expect(ids[0]).toMatch(/^node_image_[a-z0-9]+_0_[a-z0-9]+$/);
+      expect(ids[1]).toMatch(/^node_image_[a-z0-9]+_1_[a-z0-9]+$/);
+      expect(new Set(ids).size).toBe(2);
+    } finally {
+      dateSpy.mockRestore();
+      randomSpy.mockRestore();
+    }
+  });
+
   it("does not switch back to a stale canvas after a save conflict", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas conflict" }) });

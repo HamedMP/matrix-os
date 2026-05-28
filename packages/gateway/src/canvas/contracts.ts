@@ -158,6 +158,9 @@ export const CanvasNodeSchema = z.object({
   if (value.type === "preview" && value.sourceRef?.kind === "url" && !safeUrl(value.sourceRef.id)) {
     ctx.addIssue({ code: "custom", message: "Unsafe preview URL", path: ["sourceRef", "id"] });
   }
+  if (value.type === "image" && value.sourceRef?.kind !== "file") {
+    ctx.addIssue({ code: "custom", message: "Image nodes require a file source", path: ["sourceRef", "kind"] });
+  }
 });
 
 export const CanvasEdgeTypeSchema = z.enum(["visual", "depends_on", "implements", "reviews", "opens", "related"]);

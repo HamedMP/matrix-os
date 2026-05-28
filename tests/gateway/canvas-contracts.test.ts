@@ -109,6 +109,13 @@ describe("canvas contracts", () => {
         sourceRef: { kind: "file", id: "../system/canvas-assets/cnv_0123456789abcdef/asset.png" },
       }),
     ).toThrow();
+
+    expect(() =>
+      CanvasNodeSchema.parse({
+        ...node("node_image", "image"),
+        sourceRef: { kind: "url", id: "https://example.com/image.png" },
+      }),
+    ).toThrow();
   });
 
   it("rejects stale revisions before repository writes", () => {

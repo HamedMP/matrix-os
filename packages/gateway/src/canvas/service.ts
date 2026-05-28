@@ -66,6 +66,13 @@ export class CanvasConfigurationError extends Error {
   }
 }
 
+export class CanvasInvalidRequestError extends Error {
+  constructor(message = "Invalid request") {
+    super(message);
+    this.name = "CanvasInvalidRequestError";
+  }
+}
+
 export interface CanvasTerminalRegistry {
   create(cwd: string, shell?: string): string;
   getSession(sessionId: string): { sessionId: string; state: "running" | "exited"; attachedClients?: number } | null;
@@ -79,7 +86,7 @@ export interface CanvasServiceOptions {
   resolvePreviewHost?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 }
 
-const CANVAS_ASSET_FILE_LIMIT = 10 * 1024 * 1024;
+export const CANVAS_ASSET_FILE_LIMIT = 10 * 1024 * 1024;
 const CANVAS_ASSET_EXTENSIONS = new Map([
   ["image/png", "png"],
   ["image/jpeg", "jpg"],
@@ -98,6 +105,9 @@ export function mapCanvasError(err: unknown): CanvasSafeError {
   if (err instanceof CanvasConfigurationError) {
     console.error("[canvas] Configuration error:", err.message);
     return { error: "Canvas service unavailable", status: 503 };
+  }
+  if (err instanceof CanvasInvalidRequestError) {
+    return { error: "Invalid request", status: 400 };
   }
   if (err instanceof SyntaxError) {
     return { error: "Invalid JSON", status: 400 };
@@ -335,7 +345,7 @@ export class CanvasService {
 
     const extension = CANVAS_ASSET_EXTENSIONS.get(file.type);
     if (!extension || file.size <= 0 || file.size > CANVAS_ASSET_FILE_LIMIT) {
-      throw new SyntaxError("Invalid request");
+      throw new CanvasInvalidRequestError();
     }
 
     const assetId = `asset_${randomBytes(12).toString("hex")}`;

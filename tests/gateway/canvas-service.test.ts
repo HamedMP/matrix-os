@@ -157,6 +157,19 @@ describe("CanvasService", () => {
     await expect(service.uploadCanvasAsset("user_a", "cnv_0123456789abcdef", file)).rejects.toBeInstanceOf(CanvasNotFoundError);
   });
 
+  it("maps invalid canvas image asset files to a generic invalid request", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "canvas-home-"));
+    const service = new CanvasService(repository([record()]), { homePath });
+    const file = new File([Buffer.from("<svg/>")], "bad.svg", { type: "image/svg+xml" });
+
+    try {
+      await service.uploadCanvasAsset("user_a", "cnv_0123456789abcdef", file);
+      throw new Error("expected upload to fail");
+    } catch (err: unknown) {
+      expect(mapCanvasError(err)).toEqual({ error: "Invalid request", status: 400 });
+    }
+  });
+
   it("marks stale terminal refs recoverable on the main canvas read path", async () => {
     const service = new CanvasService(repository([record({
       nodes: [{

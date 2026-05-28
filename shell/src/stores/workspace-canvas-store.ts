@@ -211,7 +211,8 @@ function createImageNode(
   center: { x: number; y: number },
   index: number,
 ): WorkspaceCanvasNode {
-  const id = `node_image_${Date.now().toString(36)}_${index}`;
+  const entropy = Math.random().toString(36).slice(2, 10);
+  const id = `node_image_${Date.now().toString(36)}_${index}_${entropy}`;
   const now = new Date().toISOString();
   return {
     id,

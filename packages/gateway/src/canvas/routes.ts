@@ -14,12 +14,11 @@ import {
   type PatchCanvasNodeUpdates,
   type CreateCanvasRequest,
 } from "./contracts.js";
-import { mapCanvasError } from "./service.js";
+import { CANVAS_ASSET_FILE_LIMIT, mapCanvasError } from "./service.js";
 import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
 
 const CANVAS_WRITE_BODY_LIMIT = 256 * 1024;
 const CANVAS_ACTION_BODY_LIMIT = 64 * 1024;
-const CANVAS_ASSET_FILE_LIMIT = 10 * 1024 * 1024;
 const CANVAS_ASSET_BODY_LIMIT = CANVAS_ASSET_FILE_LIMIT + 256 * 1024;
 const CANVAS_ASSET_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"]);
 
