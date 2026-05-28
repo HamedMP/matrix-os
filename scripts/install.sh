@@ -1,5 +1,6 @@
 #!/bin/sh
-# Matrix OS installer. Served at https://get.matrix-os.com.
+# Matrix OS installer. Intended for the hosted CLI install endpoint once DNS is
+# configured. Until then, prefer Homebrew or npm in public docs.
 #
 # Platform detection:
 #   macOS   -> downloads the signed .pkg from the GitHub release and runs
@@ -8,10 +9,10 @@
 #   Windows -> print a PowerShell install hint.
 #
 # Usage:
-#   curl -sL https://get.matrix-os.com | sh
+#   sh scripts/install.sh
 #
 # Env overrides:
-#   MATRIX_VERSION   pin to a specific release tag (default: latest)
+#   MATRIX_VERSION   pin to a CLI version or release tag (default: latest)
 #   MATRIX_CHANNEL   "stable" (default). Reserved for future pre-release lanes.
 
 set -eu
@@ -52,7 +53,11 @@ fetch() {
 resolve_version() {
   # Turn "latest" into an actual tag so all downstream URLs are deterministic.
   if [ "$MATRIX_VERSION" != "latest" ]; then
-    printf '%s' "$MATRIX_VERSION"
+    case "$MATRIX_VERSION" in
+      cli-v*) printf '%s' "$MATRIX_VERSION" ;;
+      v*)     printf 'cli-v%s' "${MATRIX_VERSION#v}" ;;
+      *)      printf 'cli-v%s' "$MATRIX_VERSION" ;;
+    esac
     return
   fi
   # GitHub's /releases/latest endpoint 302s to /releases/tag/<tag>.
@@ -67,13 +72,22 @@ resolve_version() {
   fi
 }
 
+version_from_tag() {
+  # Accept cli-v0.3.0, v0.3.0, or 0.3.0 and return 0.3.0.
+  case "$1" in
+    cli-v*) printf '%s' "${1#cli-v}" ;;
+    v*)     printf '%s' "${1#v}" ;;
+    *)      printf '%s' "$1" ;;
+  esac
+}
+
 install_macos() {
   echo "==> Matrix OS installer (macOS)"
   need sudo
   TAG="$(resolve_version)"
-  # Release tags are v-prefixed (v0.2.0) but the .pkg asset strips the v
-  # (MatrixSync-0.2.0.pkg). Normalize both for URL construction.
-  VERSION="${TAG#v}"
+  # CLI release tags are cli-v-prefixed (cli-v0.3.0), but the .pkg asset strips
+  # the prefix (MatrixSync-0.3.0.pkg). Normalize both for URL construction.
+  VERSION="$(version_from_tag "$TAG")"
   echo "    version: $VERSION"
 
   INSTALL_TMPDIR="$(mktemp -d)"
@@ -118,7 +132,7 @@ install_linux() {
     die "Node.js 24 or newer required (detected $NODE_MAJOR). Upgrade at https://nodejs.org"
   fi
 
-  VERSION="${MATRIX_VERSION#v}"
+  VERSION="$(version_from_tag "$MATRIX_VERSION")"
   case "$MATRIX_VERSION" in
     latest) NPM_SPEC="@finnaai/matrix" ;;
     *)      NPM_SPEC="@finnaai/matrix@$VERSION" ;;

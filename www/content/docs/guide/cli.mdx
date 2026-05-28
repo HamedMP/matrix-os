@@ -1,46 +1,128 @@
 ---
-title: CLI
-description: The matrix CLI — log in, sync files, attach to remote zellij sessions, and drive your instance from the terminal.
+title: Matrix CLI
+description: Install, update, uninstall, and use the Matrix OS command-line client.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The Matrix OS CLI is a single binary — `matrix` (also installed as `matrixos` and `mos`) — for everything you do against your Matrix OS instance from outside the browser: signing in, syncing files, opening terminal sessions, and (soon) driving the upcoming VSCode extension.
+The Matrix OS CLI is a single command, `matrix`, for working with your Matrix OS instance from a terminal. It is also installed as `matrixos` and `mos`.
+
+Use it to sign in, sync files, attach to remote shell sessions, run commands on your Matrix computer, inspect instance status, and script workflows with JSON output.
+
+## Requirements
+
+- Node.js 24 or newer when installing with npm or Homebrew.
+- A Matrix OS account at [app.matrix-os.com](https://app.matrix-os.com).
+- A shell with `curl`, `npm`, or Homebrew depending on the install path.
 
 ## Install
 
 <Callout type="info">
-The CLI is published as `@finnaai/matrix` on npm and as a Homebrew formula. It works against the cloud at `app.matrix-os.com` and against a local stack via `--profile local`.
+The CLI is published as `@finnaai/matrix` on npm and as the `finnaai/tap/matrix` Homebrew formula. The current stable release is `0.3.0`.
 </Callout>
 
+### macOS
+
 ```bash
-# Homebrew (macOS / Linux)
 brew install finnaai/tap/matrix
-
-# npm
-npm install -g @finnaai/matrix
-
-# Inside the matrix-os repo (development)
-pnpm install
-pnpm exec matrix --help
+matrix --version
+matrix login
 ```
 
-Verify:
+You can also use npm:
+
+```bash
+npm install -g @finnaai/matrix
+```
+
+<Callout type="warn">
+The hosted curl installer is not public yet. On macOS, install with Homebrew or npm until Matrix OS has Apple Developer signing, notarization secrets, and installer hosting configured.
+</Callout>
+
+### Linux
+
+```bash
+npm install -g @finnaai/matrix
+```
+
+### Windows
+
+Native Windows packaging is not available yet. Use npm from PowerShell after installing Node.js 24+:
+
+```powershell
+npm install -g @finnaai/matrix
+matrix --version
+```
+
+### Development Checkout
+
+Inside the `matrix-os` repo:
+
+```bash
+pnpm install
+pnpm --filter @finnaai/matrix build
+pnpm --filter @finnaai/matrix exec matrix --help
+```
+
+## Update
+
+Use the same package manager you installed with:
+
+```bash
+# Homebrew
+brew update
+brew upgrade finnaai/tap/matrix
+
+# npm
+npm install -g @finnaai/matrix@latest
+```
+
+Pin a specific CLI version with npm or the install script:
+
+```bash
+npm install -g @finnaai/matrix@0.3.0
+```
+
+Check what you have:
 
 ```bash
 matrix --version
 matrix doctor
 ```
 
-## First run
+## Uninstall
+
+```bash
+# Homebrew
+brew uninstall matrix
+
+# npm
+npm uninstall -g @finnaai/matrix
+```
+
+Remove local CLI state if you also want to clear profiles, tokens, daemon state, and sync metadata:
+
+```bash
+rm -rf ~/.matrixos
+```
+
+If you installed a future macOS MatrixSync `.pkg`, remove the app and CLI links:
+
+```bash
+sudo rm -rf /Applications/MatrixSync.app
+sudo rm -f /usr/local/bin/matrix /usr/local/bin/matrixos
+sudo rm -rf /usr/local/lib/matrix-os
+```
+
+## Sign In
 
 ```bash
 matrix login                 # opens a browser, completes the device flow
 matrix whoami                # confirms handle, gateway, token expiry
-matrix shell new main        # creates and attaches to your "main" session
+matrix status                # checks the active profile and gateway
 ```
 
-`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell attach main`.
+Use `matrix logout` to clear the active profile's token.
 
 ## Profiles
 
@@ -67,6 +149,38 @@ Profiles are stored at `~/.matrixos/profiles.json`. Auth tokens are scoped per-p
 
 `matrix login` writes auth into the active profile. `matrix login --profile local` (or `matrix login --dev`) skips the OAuth device flow and writes a long-lived dev stub — the local gateway in dev mode accepts any bearer. The success line always names the profile that was just written, so you always know where you are.
 
+Profile commands:
+
+```bash
+matrix profile ls
+matrix profile show
+matrix profile show local
+matrix profile use cloud
+matrix profile set staging --platform https://app.example.com --gateway https://app.example.com
+```
+
+## Remote Commands
+
+`matrix run` runs a command on your Matrix computer. Use `-it` when you want an interactive terminal.
+
+```bash
+matrix run -- echo hello
+matrix run -it -- claude
+matrix run -it -- codex
+matrix run -it --session setup -- gh auth login
+matrix run -it --session dev -C ~/projects/app -- pnpm dev
+```
+
+Options:
+
+| Option | Use |
+| ------ | --- |
+| `-i`, `--interactive` | Attach your terminal to the remote command. |
+| `--t` | Request a TTY. Combine with `-i` as `-it`. |
+| `--session <name>` | Create or attach to a named shell session. |
+| `-C`, `--cwd <path>` | Working directory inside the Matrix home. |
+| `--json` | Emit machine-readable output when supported. |
+
 ## Shell sessions
 
 Every Matrix OS instance ships with [zellij](https://zellij.dev) pre-installed. The CLI treats zellij sessions as the source of truth — the same sessions you see in the web shell are the ones you list and attach from the terminal.
@@ -91,6 +205,7 @@ Tabs may be anonymous (zellij assigns an index) but **named tabs are recommended
 ```bash
 matrix shell tab ls --session code
 matrix shell tab new --session code --name editor --cwd ~/projects/site
+matrix shell tab new --session code --name server --cmd "pnpm dev"
 matrix shell tab go --session code --tab 1
 matrix shell tab close --session code --tab 1
 ```
@@ -119,7 +234,7 @@ matrix shell layout rm --name dev
 
 ## File sync
 
-The sync daemon mirrors a local folder against your instance's home directory. It runs as a background service installed by `matrix sync start`.
+The sync daemon mirrors a local folder against your instance's home directory.
 
 ```bash
 matrix sync ~/matrixos                    # initialize and start
@@ -133,6 +248,8 @@ Scope sync to a subtree of your instance with `--folder`:
 ```bash
 matrix sync ~/work-projects --folder projects
 ```
+
+The default local sync path is `~/matrixos/`. Use `matrix doctor` when the daemon socket looks stale or a sync appears paused.
 
 ## Instance ops
 
@@ -148,30 +265,67 @@ matrix instance logs
 matrix peers                # list connected sync peers (machines)
 ```
 
+## Command Reference
+
+| Command | What it does |
+| ------- | ------------ |
+| `matrix login` | Authenticate a profile with Matrix OS. |
+| `matrix logout` | Clear local credentials for a profile. |
+| `matrix whoami` | Print the authenticated Matrix identity. |
+| `matrix status` | Show profile and gateway health. |
+| `matrix sync` | Start or manage file sync. |
+| `matrix sync status` | Show sync daemon status. |
+| `matrix sync pause` | Pause sync. |
+| `matrix sync resume` | Resume sync. |
+| `matrix peers` | List connected peers. |
+| `matrix shell ls` | List shell sessions. |
+| `matrix shell new <name>` | Create and attach to a shell session. |
+| `matrix shell attach <name>` | Attach to an existing shell session. |
+| `matrix shell rm <name> --force` | Remove a shell session. |
+| `matrix shell tab ls --session <name>` | List tabs in a session. |
+| `matrix shell tab new --session <name>` | Create a tab. |
+| `matrix shell tab go --session <name> --tab <id>` | Switch tabs. |
+| `matrix shell tab close --session <name> --tab <id>` | Close a tab. |
+| `matrix shell pane split --session <name>` | Split the focused pane. |
+| `matrix shell pane close --session <name> --pane <id>` | Close a pane. |
+| `matrix shell layout ls` | List saved layouts. |
+| `matrix shell layout save --name <name> --kdl <kdl>` | Save a layout. |
+| `matrix shell layout show --name <name>` | Print a saved layout. |
+| `matrix shell layout apply --session <name> --name <layout>` | Apply a layout. |
+| `matrix shell layout dump --session <name>` | Dump a session layout. |
+| `matrix shell layout rm --name <name>` | Delete a saved layout. |
+| `matrix run -- <command>` | Run a command on your Matrix computer. |
+| `matrix profile ls` | List CLI profiles. |
+| `matrix profile show [name]` | Show a profile. |
+| `matrix profile use <name>` | Set the active profile. |
+| `matrix profile set <name>` | Create or update a profile. |
+| `matrix doctor` | Diagnose CLI, auth, daemon, gateway, and shell issues. |
+| `matrix instance info` | Show active instance details. |
+| `matrix instance restart` | Restart the active Matrix OS instance. |
+| `matrix instance logs` | Show active instance logs. |
+| `matrix completion` | Print shell completion command names. |
+
 ## Machine-readable output
 
-Every command supports `--json` for scripting and integration with the upcoming VSCode extension. Streams (terminal output, sync events, log follow) emit NDJSON, one event per line.
+Most commands that return structured data support `--json` for scripting. Streams such as terminal output, sync events, and log follow use NDJSON: one event per line.
 
 ```bash
 matrix shell ls --json
 matrix sync status --json
-matrix shell tab ls main --json | jq '.[] | .name'
+matrix shell tab ls --session main --json | jq '.[] | .name'
 ```
 
-The schema is documented at [`docs/cli-json-schema.md`](https://github.com/HamedMP/matrix-os/blob/main/docs/cli-json-schema.md). Every payload includes `"v": 1` for forward compatibility.
+Every payload includes `"v": 1` for forward compatibility.
 
 ## Global flags
 
 ```
---profile <name>      Use a named profile (default: profiles.json:active)
---platform <url>      Override platform URL (also $MATRIXOS_PLATFORM_URL)
---gateway <url>       Override gateway URL (also $MATRIXOS_GATEWAY_URL)
---token <jwt>         Override auth (also $MATRIXOS_TOKEN; useful in CI)
---json                Machine-readable output (NDJSON for streams)
---no-color            Disable ANSI colors
--q, --quiet
--v, --verbose
---dev                 Sugar for --profile local
+--profile <name>    Use a named profile.
+--platform <url>    Override platform URL for commands that contact platform.
+--gateway <url>     Override gateway URL for commands that contact gateway.
+--token <jwt>       Override auth for this command.
+--json              Machine-readable output when supported.
+--dev               Sugar for --profile local.
 ```
 
 ## Diagnostics
@@ -196,11 +350,49 @@ Disk              ok      23G available
 matrix completion
 ```
 
+## macOS Package Releases
+
+The release workflow can also build a signed and notarized `MatrixSync-<version>.pkg`. That package installs:
+
+- `MatrixSync.app` in `/Applications`
+- the FinderSync extension
+- the `matrix` and `matrixos` launchers in `/usr/local/bin`
+- the CLI package under `/usr/local/lib/matrix-os/cli`
+
+To enable this for future releases, configure the repository variable:
+
+```text
+ENABLE_MACOS_PKG=true
+```
+
+Then add these GitHub Actions secrets:
+
+```text
+APPLE_DEV_ID_APP_P12_BASE64
+APPLE_DEV_ID_INSTALLER_P12_BASE64
+APPLE_CERT_PASSWORD
+KEYCHAIN_PASSWORD
+APPLE_DEV_ID_APP
+APPLE_DEV_ID_INSTALLER
+APPLE_TEAM_ID
+APPLE_ID
+APPLE_APP_PASSWORD
+```
+
+You need both Developer ID certificates from your Apple Developer account:
+
+- Developer ID Application: signs `MatrixSync.app` and the FinderSync extension.
+- Developer ID Installer: signs the flat `.pkg`.
+
+Export each certificate with its private key from Keychain as `.p12`, base64 encode it, and store it in the matching secret. `APPLE_APP_PASSWORD` is an app-specific password for the Apple ID used by `xcrun notarytool`.
+
+After those are configured, run the release workflow with the next patch version, for example `0.3.1`. npm versions are immutable, so the existing `cli-v0.3.0` release cannot be republished with a new package asset through the same workflow without moving tags manually.
+
 ## Troubleshooting
 
 **`Cannot connect to daemon. Is it running?`**
 
-The sync daemon is installed but not running. Start it with `matrix sync start`. If `matrix doctor` says the daemon is running but the socket is unreachable, remove the stale socket: `rm ~/.matrixos/daemon.sock` then `matrix sync start`.
+The sync daemon is installed but not running. Start it by syncing a folder, for example `matrix sync ~/matrixos`. If `matrix doctor` says the daemon is running but the socket is unreachable, remove the stale socket with `rm ~/.matrixos/daemon.sock`, then run `matrix sync ~/matrixos` again.
 
 **`401 Unauthorized` on any command**
 

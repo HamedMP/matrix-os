@@ -1,6 +1,6 @@
 # CLI Release Process
 
-The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-client`. It is separate from the VPS host-bundle release path: host bundles update customer VPS runtime code, while CLI releases update what users install through npm, Homebrew, `get.matrix-os.com`, and the macOS MatrixSync installer.
+The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-client`. It is separate from the VPS host-bundle release path: host bundles update customer VPS runtime code, while CLI releases update what users install through npm, Homebrew, and the macOS MatrixSync installer.
 
 ## Current Prepared Release
 
@@ -42,6 +42,66 @@ Use the manual GitHub Actions workflow named `Release` with `version=0.3.0`. The
 5. Creates GitHub release `cli-v<version>`.
 6. Updates `FinnaAI/homebrew-tap` with the npm tarball URL and SHA-256.
 
+Dispatch from `main`:
+
+```bash
+gh workflow run release.yml --ref main -f version=0.3.0
+gh run watch <run-id> --interval 30
+```
+
+## macOS `.pkg` Setup
+
+By default, the release workflow skips the macOS package job. To build, sign, notarise, and attach `MatrixSync-<version>.pkg` to future CLI releases, configure the GitHub repository variable:
+
+```text
+ENABLE_MACOS_PKG=true
+```
+
+Then add the following repository secrets:
+
+| Secret | Purpose |
+| ------ | ------- |
+| `APPLE_DEV_ID_APP_P12_BASE64` | Base64-encoded `.p12` export containing the Developer ID Application certificate and private key. |
+| `APPLE_DEV_ID_INSTALLER_P12_BASE64` | Base64-encoded `.p12` export containing the Developer ID Installer certificate and private key. |
+| `APPLE_CERT_PASSWORD` | Password used when exporting the `.p12` files. |
+| `KEYCHAIN_PASSWORD` | Temporary CI keychain password; generate a long random value. |
+| `APPLE_DEV_ID_APP` | Full signing identity, for example `Developer ID Application: Company Name (TEAMID)`. |
+| `APPLE_DEV_ID_INSTALLER` | Full signing identity, for example `Developer ID Installer: Company Name (TEAMID)`. |
+| `APPLE_TEAM_ID` | Apple Developer Team ID. |
+| `APPLE_ID` | Apple ID email used for notarization. |
+| `APPLE_APP_PASSWORD` | App-specific password for `APPLE_ID`, created at appleid.apple.com. |
+
+Create the Apple certificates in the Apple Developer portal:
+
+1. Create or reuse a **Developer ID Application** certificate.
+2. Create or reuse a **Developer ID Installer** certificate.
+3. Install both in Keychain Access on a trusted Mac.
+4. Export each certificate with its private key as a `.p12`.
+5. Base64 encode each `.p12`:
+
+```bash
+base64 -i DeveloperIDApplication.p12 | pbcopy
+base64 -i DeveloperIDInstaller.p12 | pbcopy
+```
+
+The workflow imports both certificates into a temporary keychain, builds `packages/sync-client/macos/MatrixSync.xcodeproj`, stages the npm CLI into `/usr/local/lib/matrix-os/cli`, signs the flat package with `productsign`, notarises it with `xcrun notarytool`, staples the ticket, uploads the artifact, and attaches it to the GitHub release.
+
+Local dry run on a Mac:
+
+```bash
+export APPLE_DEV_ID_APP="Developer ID Application: Company Name (TEAMID)"
+export APPLE_DEV_ID_INSTALLER="Developer ID Installer: Company Name (TEAMID)"
+export APPLE_TEAM_ID="TEAMID"
+export VERSION=0.3.1
+./scripts/build-macos-pkg.sh
+
+export APPLE_ID="you@example.com"
+export APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+./scripts/notarise-macos.sh "dist/macos/MatrixSync-0.3.1.pkg"
+```
+
+Use a new patch version for the first macOS-enabled release, for example `0.3.1`. npm versions are immutable, and the `cli-v0.3.0` workflow already completed without a `.pkg` because `ENABLE_MACOS_PKG` was disabled.
+
 ## Post-Release Verification
 
 ```bash
@@ -54,7 +114,13 @@ matrix login --help
 matrix run --help
 ```
 
-For macOS, also verify the GitHub release contains `MatrixSync-0.3.0.pkg` when the macOS job was enabled.
+For macOS, also verify the GitHub release contains `MatrixSync-<version>.pkg` when the macOS job was enabled:
+
+```bash
+gh release view "cli-v0.3.1" --json assets --jq '.assets[].name'
+pkgutil --check-signature "dist/macos/MatrixSync-0.3.1.pkg"
+spctl --assess -vv --type install "dist/macos/MatrixSync-0.3.1.pkg"
+```
 
 ## Rollback
 
