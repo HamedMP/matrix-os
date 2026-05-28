@@ -55,7 +55,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("Not active")).toBeTruthy();
     expect(screen.getByTestId("pricing-table").getAttribute("data-for")).toBe("user");
     expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
-      "/?checkout=success",
+      "http://localhost:3000/?checkout=success",
     );
   });
 

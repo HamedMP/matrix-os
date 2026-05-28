@@ -7,7 +7,7 @@ import { CreditCardIcon, Loader2Icon, LogInIcon } from "lucide-react";
 import {
   MATRIX_BILLING_PLAN,
   MATRIX_BILLING_RETURN_PATH,
-  MATRIX_BILLING_SUCCESS_RETURN_PATH,
+  getMatrixBillingSuccessRedirectUrl,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
 
@@ -49,7 +49,7 @@ function BillingRequired() {
         <section className="rounded-xl border border-border/60 bg-card/95 p-4 shadow-sm">
           <PricingTable
             for="user"
-            newSubscriptionRedirectUrl={MATRIX_BILLING_SUCCESS_RETURN_PATH}
+            newSubscriptionRedirectUrl={getMatrixBillingSuccessRedirectUrl()}
             fallback={<BillingTableFallback />}
           />
         </section>
