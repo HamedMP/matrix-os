@@ -9,6 +9,7 @@ describe("gateway shell routes", () => {
     delete: (name: string, options?: { force?: boolean }) => Promise<void>;
   }) {
     const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({ registry }));
     app.route("/api", createShellRoutes({ registry }));
     return app;
   }
@@ -26,6 +27,29 @@ describe("gateway shell routes", () => {
     await expect(res.json()).resolves.toEqual({
       sessions: [{ name: "main", status: "active" }],
     });
+  });
+
+  it("serves canonical terminal sessions routes under /api/terminal", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      create: vi.fn(async () => ({ name: "setup" })),
+      delete: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry);
+
+    await expect((await app.request("/api/terminal/sessions")).json()).resolves.toEqual({
+      sessions: [{ name: "main", status: "active" }],
+    });
+    const created = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "setup" }),
+    });
+    expect(created.status).toBe(201);
+    await app.request("/api/terminal/sessions/setup?force=1", { method: "DELETE" });
+
+    expect(registry.create).toHaveBeenCalledWith({ name: "setup" });
+    expect(registry.delete).toHaveBeenCalledWith("setup", { force: true });
   });
 
   it("creates sessions through a bounded JSON route", async () => {
@@ -150,6 +174,7 @@ describe("gateway shell routes", () => {
       dumpLayout: vi.fn(),
     };
     const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({ registry, workspace }));
     app.route("/api", createShellRoutes({ registry, workspace }));
 
     const res = await app.request("/api/sessions/main/layouts/BadLayout/apply", { method: "POST" });

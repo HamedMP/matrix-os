@@ -199,7 +199,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request("/api/terminal/sessions");
+    const res = await app.request("/api/terminal/pty-sessions");
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{
@@ -220,7 +220,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request("/api/terminal/sessions/not-a-uuid", { method: "DELETE" });
+    const res = await app.request("/api/terminal/pty-sessions/not-a-uuid", { method: "DELETE" });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid session ID" });
@@ -236,7 +236,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request(`/api/terminal/sessions/${SESSION_ID}`, { method: "DELETE" });
+    const res = await app.request(`/api/terminal/pty-sessions/${SESSION_ID}`, { method: "DELETE" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -251,7 +251,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request(`/api/terminal/sessions/${SESSION_ID}`, {
+    const res = await app.request(`/api/terminal/pty-sessions/${SESSION_ID}`, {
       method: "DELETE",
       headers: {
         "Content-Type": "text/plain",

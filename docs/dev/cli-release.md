@@ -4,7 +4,7 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.0` is the prepared CLI release for the post-onboarding PR set. It includes the user-facing `matrix run` command, shell-session attachment support, completion updates, and the signup/onboarding-compatible login flow already present in `packages/sync-client`.
+`0.3.1` is the prepared CLI patch release for the post-onboarding PR set. It includes the user-facing `matrix run` command, shell-session attachment support, completion updates, the signup/onboarding-compatible login flow, and the canonical `matrix shell connect` fixes already present in `packages/sync-client`.
 
 ## Versioning
 

@@ -86,7 +86,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 ];
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
-const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/onboarding", "/ws/vocal"];
+const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
 const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran

@@ -236,6 +236,15 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
+  app.get("/sessions/:name/layout", async (c) => {
+    try {
+      if (!deps.workspace) return unavailable(c, "workspace_unavailable");
+      return c.json({ layout: await deps.workspace.dumpLayout(SafeSessionNameSchema.parse(c.req.param("name"))) });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
   app.get("/sessions/:name/preferences", async (c) => {
     try {
       if (!deps.preferences) {

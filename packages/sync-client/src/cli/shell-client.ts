@@ -47,10 +47,13 @@ export interface ShellAttachOptions {
   output?: NodeJS.WriteStream;
   errorOutput?: NodeJS.WriteStream;
   detachSequence?: string;
+  mouse?: boolean;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
 }
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
+const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l";
+const MAX_PENDING_MOUSE_SEQUENCE_CHARS = 128;
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -78,13 +81,86 @@ function terminalSize(input: MaybeTtyStream, output: NodeJS.WriteStream): {
   return { cols, rows };
 }
 
+function createTerminalInputFilter(options: { dropMouse: boolean }) {
+  let focused = true;
+  let pendingMouseSequence = "";
+
+  return {
+    filter(chunk: string): string {
+      const input = pendingMouseSequence + chunk;
+      pendingMouseSequence = "";
+      let output = "";
+      for (let i = 0; i < input.length;) {
+        if (input[i] !== "\u001b" || input[i + 1] !== "[") {
+          output += input[i] ?? "";
+          i += 1;
+          continue;
+        }
+
+        const third = input[i + 2];
+        if (third === undefined) {
+          pendingMouseSequence = input.slice(i);
+          break;
+        }
+
+        if (third === "I" || third === "O") {
+          focused = third === "I";
+          if (!options.dropMouse) {
+            output += input.slice(i, i + 3);
+          }
+          i += 3;
+          continue;
+        }
+
+        if (third === "<") {
+          let end = i + 3;
+          while (end < input.length && input[end] !== "M" && input[end] !== "m") {
+            end += 1;
+          }
+          if (end >= input.length) {
+            pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
+            break;
+          }
+          if (!options.dropMouse && focused) {
+            output += input.slice(i, end + 1);
+          }
+          i = end + 1;
+          continue;
+        }
+
+        if (third === "M") {
+          if (i + 6 > input.length) {
+            pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
+            break;
+          }
+          if (!options.dropMouse && focused) {
+            output += input.slice(i, i + 6);
+          }
+          i += 6;
+          continue;
+        }
+
+        output += input[i] ?? "";
+        i += 1;
+      }
+      return output;
+    },
+    reset() {
+      focused = true;
+      pendingMouseSequence = "";
+    },
+  };
+}
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const base = options.gatewayUrl.replace(/\/+$/, "");
+  const terminalSessionsPath = "/api/terminal/sessions";
+  const terminalLayoutsPath = "/api/terminal/layouts";
 
   function createAttachUrl(name: string, attachOptions: { fromSeq?: number; token?: string } = {}): string {
-    const url = new URL(`${base}/ws/terminal`);
+    const url = new URL(`${base}/ws/terminal/session`);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("session", name);
     if (typeof attachOptions.fromSeq === "number") {
@@ -138,7 +214,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
 
   return {
     async listSessions() {
-      const payload = await request("/api/sessions");
+      const payload = await request(terminalSessionsPath);
       if (
         typeof payload === "object" &&
         payload !== null &&
@@ -150,77 +226,77 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       return [];
     },
     async createSession(input) {
-      return (await request("/api/sessions", {
+      return (await request(terminalSessionsPath, {
         method: "POST",
         body: JSON.stringify(input),
       })) as Record<string, unknown>;
     },
     async deleteSession(name, options = {}) {
       const suffix = options.force ? "?force=1" : "";
-      await request(`/api/sessions/${encodeURIComponent(name)}${suffix}`, {
+      await request(`${terminalSessionsPath}/${encodeURIComponent(name)}${suffix}`, {
         method: "DELETE",
       });
     },
     async listTabs(name) {
-      const payload = await request(`/api/sessions/${encodeURIComponent(name)}/tabs`);
+      const payload = await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs`);
       return typeof payload === "object" && payload !== null && "tabs" in payload && Array.isArray((payload as { tabs: unknown }).tabs)
         ? (payload as { tabs: unknown[] }).tabs
         : [];
     },
     async createTab(name, input) {
-      return (await request(`/api/sessions/${encodeURIComponent(name)}/tabs`, {
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs`, {
         method: "POST",
         body: JSON.stringify(input),
       })) as Record<string, unknown>;
     },
     async switchTab(name, tab) {
-      return (await request(`/api/sessions/${encodeURIComponent(name)}/tabs/${tab}/go`, {
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs/${tab}/go`, {
         method: "POST",
       })) as Record<string, unknown>;
     },
     async closeTab(name, tab) {
-      return (await request(`/api/sessions/${encodeURIComponent(name)}/tabs/${tab}`, {
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs/${tab}`, {
         method: "DELETE",
       })) as Record<string, unknown>;
     },
     async splitPane(name, input) {
-      return (await request(`/api/sessions/${encodeURIComponent(name)}/panes`, {
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/panes`, {
         method: "POST",
         body: JSON.stringify(input),
       })) as Record<string, unknown>;
     },
     async closePane(name, pane) {
-      return (await request(`/api/sessions/${encodeURIComponent(name)}/panes/${encodeURIComponent(pane)}`, {
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/panes/${encodeURIComponent(pane)}`, {
         method: "DELETE",
       })) as Record<string, unknown>;
     },
     async listLayouts() {
-      const payload = await request("/api/layouts");
+      const payload = await request(terminalLayoutsPath);
       return typeof payload === "object" && payload !== null && "layouts" in payload && Array.isArray((payload as { layouts: unknown }).layouts)
         ? (payload as { layouts: unknown[] }).layouts
         : [];
     },
     async showLayout(name) {
-      return (await request(`/api/layouts/${encodeURIComponent(name)}`)) as Record<string, unknown>;
+      return (await request(`${terminalLayoutsPath}/${encodeURIComponent(name)}`)) as Record<string, unknown>;
     },
     async saveLayout(name, kdl) {
-      return (await request(`/api/layouts/${encodeURIComponent(name)}`, {
+      return (await request(`${terminalLayoutsPath}/${encodeURIComponent(name)}`, {
         method: "PUT",
         body: JSON.stringify({ kdl }),
       })) as Record<string, unknown>;
     },
     async deleteLayout(name) {
-      return (await request(`/api/layouts/${encodeURIComponent(name)}`, {
+      return (await request(`${terminalLayoutsPath}/${encodeURIComponent(name)}`, {
         method: "DELETE",
       })) as Record<string, unknown>;
     },
     async applyLayout(session, layout) {
-      return (await request(`/api/sessions/${encodeURIComponent(session)}/layouts/${encodeURIComponent(layout)}/apply`, {
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layouts/${encodeURIComponent(layout)}/apply`, {
         method: "POST",
       })) as Record<string, unknown>;
     },
     async dumpLayout(session) {
-      return (await request(`/api/sessions/${encodeURIComponent(session)}/layout/dump`)) as Record<string, unknown>;
+      return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layout`)) as Record<string, unknown>;
     },
     createAttachUrl,
     async attachSession(name, attachOptions = {}) {
@@ -237,6 +313,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const errorOutput = attachOptions.errorOutput ?? process.stderr;
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
       const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
+      const dropMouse = attachOptions.mouse === false;
+      const inputFilter = createTerminalInputFilter({ dropMouse });
       let pendingInput = "";
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
@@ -254,10 +332,16 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           clearTimeout(timeout);
           input.off?.("data", onInput);
           process.off("SIGWINCH", onResize);
+          process.off("SIGINT", onSignal);
+          process.off("SIGTERM", onSignal);
+          process.off("exit", onProcessExit);
           ws.off?.("open", onOpen);
           ws.off?.("message", onMessage);
           ws.off?.("close", onClose);
           ws.off?.("error", onError);
+          pendingInput = "";
+          inputFilter.reset();
+          output.write(LOCAL_TERMINAL_INPUT_RESET);
           if (rawModeEnabled) {
             input.setRawMode?.(false);
             rawModeEnabled = false;
@@ -311,7 +395,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
         };
         const onInput = (chunk: Buffer | string) => {
-          const data = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          const data = inputFilter.filter(rawData);
           let outbound = "";
           for (const char of data) {
             pendingInput += char;
@@ -346,6 +431,18 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         };
         const onResize = () => {
           sendResizeFrame();
+        };
+        const onSignal = () => {
+          sendFrame(JSON.stringify({ type: "detach" }));
+          ws.close();
+          settle(() => resolve({ detached: true }));
+        };
+        const onProcessExit = () => {
+          output.write(LOCAL_TERMINAL_INPUT_RESET);
+          if (rawModeEnabled) {
+            input.setRawMode?.(false);
+            rawModeEnabled = false;
+          }
         };
         const onOpen = () => {
           markOpen();
@@ -396,6 +493,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           input.resume?.();
           process.on("SIGWINCH", onResize);
         }
+        process.once("SIGINT", onSignal);
+        process.once("SIGTERM", onSignal);
+        process.once("exit", onProcessExit);
         input.on?.("data", onInput);
       });
     },

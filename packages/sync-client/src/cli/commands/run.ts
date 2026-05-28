@@ -72,6 +72,7 @@ export async function createOrAttachRunSession(
     command: string[];
     cwd?: string;
     sessionProvided: boolean;
+    mouse?: boolean;
   },
 ): Promise<{ detached: boolean }> {
   try {
@@ -85,7 +86,9 @@ export async function createOrAttachRunSession(
       throw err;
     }
   }
-  return await client.attachSession(input.name);
+  return input.mouse === undefined
+    ? await client.attachSession(input.name)
+    : await client.attachSession(input.name, { mouse: input.mouse });
 }
 
 function isInteractive(args: Record<string, unknown>, rawArgs: string[] | undefined): boolean {
@@ -141,6 +144,12 @@ export const runCommand = defineCommand({
     dev: { type: "boolean", required: false, default: false },
     gateway: { type: "string", required: false },
     token: { type: "string", required: false },
+    noMouse: {
+      type: "boolean",
+      required: false,
+      default: false,
+      description: "Drop local terminal mouse escape sequences before forwarding input",
+    },
     json: { type: "boolean", required: false, default: false },
   },
   run: async ({ args, rawArgs }) => {
@@ -165,6 +174,7 @@ export const runCommand = defineCommand({
         cwd: typeof args.cwd === "string" ? args.cwd : undefined,
         command,
         sessionProvided,
+        mouse: args.noMouse === true ? false : undefined,
       });
       console.log(
         json

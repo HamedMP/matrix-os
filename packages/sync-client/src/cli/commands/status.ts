@@ -11,6 +11,23 @@ function writeError(err: unknown, json: boolean): void {
   console.error(json ? formatCliError(code) : `Error: Request failed (${code})`);
 }
 
+const SAFE_GATEWAY_STATUS = /^[a-z][a-z0-9_-]{0,31}$/;
+
+async function readGatewayStatus(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { status?: unknown };
+    if (typeof body.status === "string" && SAFE_GATEWAY_STATUS.test(body.status)) {
+      return body.status;
+    }
+    return res.ok ? "ok" : "unreachable";
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError) && !(err instanceof TypeError)) {
+      throw err;
+    }
+    return res.ok ? "ok" : "unreachable";
+  }
+}
+
 export const statusCommand = defineCommand({
   meta: { name: "status", description: "Show Matrix OS profile and gateway status" },
   args: {
@@ -31,14 +48,14 @@ export const statusCommand = defineCommand({
         ...(headers ? { headers } : {}),
         signal: AbortSignal.timeout(10_000),
       });
-      const body = res.ok ? ((await res.json()) as { status?: unknown }) : {};
+      const status = await readGatewayStatus(res);
       const data = {
         profile: profile.name,
         gatewayUrl: profile.gatewayUrl,
         authenticated: !!token,
         gateway: {
           reachable: res.ok,
-          status: typeof body.status === "string" ? body.status : res.ok ? "ok" : "unreachable",
+          status,
         },
       };
 
