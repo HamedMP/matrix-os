@@ -109,6 +109,17 @@ export function SystemSection() {
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
   const releaseRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (reloadTimeoutRef.current) {
+        clearTimeout(reloadTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const refreshReleaseData = useCallback(async (channel: ReleaseChannel) => {
     const requestId = releaseRequestIdRef.current + 1;
@@ -181,11 +192,11 @@ export function SystemSection() {
 
   const waitForInstalledUpdate = useCallback(async (
     target: { channel?: ReleaseChannel; version?: string },
-    expectedVersion?: string,
   ) => {
     const deadline = Date.now() + UPDATE_INSTALL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, UPDATE_INSTALL_POLL_MS));
+      if (!mountedRef.current) return false;
       try {
         const res = await fetch(`${GATEWAY}/api/system/info`, {
           signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
@@ -194,19 +205,21 @@ export function SystemSection() {
         const nextInfo = await res.json() as SystemInfo;
         const installedVersion = nextInfo.release?.version ?? nextInfo.version;
         const polledChannel = coerceReleaseChannel(nextInfo.release?.channel);
-        const targetVersion = expectedVersion ?? target.version;
         const channelInstalled = target.channel ? polledChannel === target.channel : true;
         const installed = target.version
           ? installedVersion === target.version && channelInstalled
           : target.channel
             ? channelInstalled && (installedVersion !== currentVersion || target.channel !== installedChannel)
-            : targetVersion
-              ? installedVersion === targetVersion
-              : installedVersion !== currentVersion;
+            : installedVersion !== currentVersion;
         if (installed) {
           setInfo(nextInfo);
           setUpgradeMessage("Installed. Reloading...");
-          setTimeout(() => window.location.reload(), 2_000);
+          setUpgrading(false);
+          setInstallingTarget(null);
+          if (reloadTimeoutRef.current) {
+            clearTimeout(reloadTimeoutRef.current);
+          }
+          reloadTimeoutRef.current = setTimeout(() => window.location.reload(), 2_000);
           return true;
         }
       } catch (err: unknown) {
@@ -216,7 +229,7 @@ export function SystemSection() {
     return false;
   }, [currentVersion, installedChannel]);
 
-  const startUpdate = useCallback(async (target: { channel?: ReleaseChannel; version?: string }, expectedVersion?: string) => {
+  const startUpdate = useCallback(async (target: { channel?: ReleaseChannel; version?: string }) => {
     const targetKey = target.version ?? target.channel ?? "stable";
     setUpgrading(true);
     setInstallingTarget(targetKey);
@@ -253,7 +266,8 @@ export function SystemSection() {
       setUpgradeMessage("Upgrade started. Waiting for services to come back...");
     }
 
-    const installed = await waitForInstalledUpdate(target, expectedVersion);
+    const installed = await waitForInstalledUpdate(target);
+    if (!mountedRef.current) return;
     if (!installed) {
       setUpgradeMessage(null);
       setUpgradeError("Upgrade is still running. Check again in a minute.");
@@ -269,8 +283,8 @@ export function SystemSection() {
   }, [refreshReleaseData]);
 
   const handleUpgrade = useCallback(async () => {
-    await startUpdate({ channel: selectedChannel }, latestVersion ?? undefined);
-  }, [latestVersion, selectedChannel, startUpdate]);
+    await startUpdate({ channel: selectedChannel });
+  }, [selectedChannel, startUpdate]);
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -463,7 +477,7 @@ export function SystemSection() {
                       </p>
                     </div>
                     <button
-                      onClick={() => release.version && void startUpdate({ version: release.version }, release.version)}
+                      onClick={() => release.version && void startUpdate({ version: release.version })}
                       disabled={!canInstallRelease || upgrading}
                       className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
                     >
