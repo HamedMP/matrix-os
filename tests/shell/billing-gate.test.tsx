@@ -28,6 +28,10 @@ vi.mock("@clerk/nextjs", () => ({
   }),
 }));
 
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
+
 describe("BillingGate", () => {
   afterEach(() => {
     window.history.replaceState({}, "", "/");
