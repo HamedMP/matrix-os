@@ -34,9 +34,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Manual dispatch is an explicit request to run CI, regardless of changed paths.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "CI relevant changes: true (workflow_dispatch always runs)"
+            echo "CI relevant changes: true (manual dispatch)"
             exit 0
           fi
 
