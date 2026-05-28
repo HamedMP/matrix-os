@@ -2,7 +2,8 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import { shellError } from "./errors.js";
 
-const SESSION_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
+const SESSION_SLUG = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const PROFILE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
 const LONG_SLUG = /^[a-z][a-z0-9-]{0,63}$/;
 
 function validateSlug(value: string, regex: RegExp, code: string): string {
@@ -17,7 +18,7 @@ export function validateSessionName(value: string): string {
 }
 
 export function validateProfileName(value: string): string {
-  return validateSlug(value, SESSION_SLUG, "invalid_profile_name");
+  return validateSlug(value, PROFILE_SLUG, "invalid_profile_name");
 }
 
 export function validateLayoutName(value: string): string {

@@ -3,9 +3,16 @@ import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
+import type { ShellAttachOptions } from "../shell-client.js";
 
-const SHELL_USAGE = "Usage: matrix shell ls|new|attach|rm|tab|pane|layout";
-const SHELL_SUBCOMMANDS = new Set(["ls", "new", "attach", "rm", "tab", "pane", "layout"]);
+const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|tab|pane|layout";
+const SHELL_SUBCOMMANDS = new Set([
+  "ls", "list",
+  "new",
+  "attach", "connect",
+  "rm",
+  "tab", "pane", "layout",
+]);
 const SHELL_VALUE_OPTIONS = new Set(["--gateway", "--profile", "--token"]);
 
 function hasShellSubCommand(rawArgs: string[] | undefined): boolean {
@@ -104,6 +111,111 @@ async function runShellJsonCommand(
   }
 }
 
+function parseFromSeq(value: unknown): number | undefined {
+  return typeof value === "string" && /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+function attachOptionsFromArgs(args: Record<string, unknown>) {
+  const options: ShellAttachOptions = {
+    fromSeq: parseFromSeq(args.fromSeq),
+  };
+  if (typeof args.WebSocketImpl === "function") {
+    options.WebSocketImpl = args.WebSocketImpl as ShellAttachOptions["WebSocketImpl"];
+  }
+  return options;
+}
+
+function sessionCreateInput(args: Record<string, unknown>) {
+  return {
+    name: String(args.name),
+    cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+    layout: typeof args.layout === "string" ? args.layout : undefined,
+    cmd: typeof args.cmd === "string" ? args.cmd : undefined,
+  };
+}
+
+function listCommand(name: string, description: string) {
+  return defineCommand({
+    meta: { name, description },
+    args: commonArgs,
+    run: async ({ args }) => {
+      const json = args.json === true;
+      try {
+        const sessions = await (await clientFromArgs(args)).listSessions();
+        if (json) {
+          console.log(formatCliSuccess({ sessions }));
+        } else if (sessions.length === 0) {
+          console.log("No shell sessions.");
+        } else {
+          for (const session of sessions) {
+            const sessionName =
+              typeof session === "object" && session !== null && "name" in session
+                ? String((session as { name: unknown }).name)
+                : String(session);
+            console.log(sessionName);
+          }
+        }
+      } catch (err) {
+        writeError(err, json);
+        process.exitCode = 1;
+      }
+    },
+  });
+}
+
+function attachCommand(name: string, description: string) {
+  return defineCommand({
+    meta: { name, description },
+    args: {
+      name: { type: "positional", required: true },
+      create: {
+        type: "boolean",
+        alias: "c",
+        required: false,
+        default: false,
+        description: "Create the session if it does not exist before connecting",
+      },
+      cwd: { type: "string", required: false },
+      layout: { type: "string", required: false },
+      cmd: { type: "string", required: false },
+      fromSeq: { type: "string", required: false },
+      ...commonArgs,
+    },
+    run: async ({ args }) => {
+      const json = args.json === true;
+      try {
+        const client = await clientFromArgs(args);
+        let result: { detached: boolean };
+        try {
+          result = await client.attachSession(String(args.name), attachOptionsFromArgs(args));
+        } catch (err) {
+          const code = err instanceof Error && "code" in err
+            ? (err as { code?: unknown }).code
+            : undefined;
+          if (args.create !== true || code !== "session_not_found") {
+            throw err;
+          }
+          const data = await client.createSession(sessionCreateInput(args));
+          if (json) {
+            console.log(formatCliSuccess({ created: data, attached: false }));
+            return;
+          }
+          console.log(`Created shell session ${args.name}. Connecting...`);
+          result = await client.attachSession(String(args.name), attachOptionsFromArgs(args));
+        }
+        console.log(
+          json
+            ? formatCliSuccess({ detached: result.detached })
+            : `Detached. Reattach: matrix shell connect ${args.name}`,
+        );
+      } catch (err) {
+        writeError(err, json);
+        process.exitCode = 1;
+      }
+    },
+  });
+}
+
 export const shellCommand = defineCommand({
   meta: {
     name: "shell",
@@ -117,38 +229,8 @@ export const shellCommand = defineCommand({
     json: { type: "boolean", required: false, default: false },
   },
   subCommands: {
-    ls: defineCommand({
-      meta: { name: "ls", description: "List shell sessions" },
-      args: {
-        profile: { type: "string", required: false },
-        dev: { type: "boolean", required: false, default: false },
-        gateway: { type: "string", required: false },
-        token: { type: "string", required: false },
-        json: { type: "boolean", required: false, default: false },
-      },
-      run: async ({ args }) => {
-        const json = args.json === true;
-        try {
-          const sessions = await (await clientFromArgs(args)).listSessions();
-          if (json) {
-            console.log(formatCliSuccess({ sessions }));
-          } else if (sessions.length === 0) {
-            console.log("No shell sessions.");
-          } else {
-            for (const session of sessions) {
-              const name =
-                typeof session === "object" && session !== null && "name" in session
-                  ? String((session as { name: unknown }).name)
-                  : String(session);
-              console.log(name);
-            }
-          }
-        } catch (err) {
-          writeError(err, json);
-          process.exitCode = 1;
-        }
-      },
-    }),
+    ls: listCommand("ls", "List shell sessions"),
+    list: listCommand("list", "List shell sessions"),
     new: defineCommand({
       meta: { name: "new", description: "Create a shell session" },
       args: {
@@ -156,60 +238,29 @@ export const shellCommand = defineCommand({
         cwd: { type: "string", required: false },
         layout: { type: "string", required: false },
         cmd: { type: "string", required: false },
-        profile: { type: "string", required: false },
-        dev: { type: "boolean", required: false, default: false },
-        gateway: { type: "string", required: false },
-        token: { type: "string", required: false },
-        json: { type: "boolean", required: false, default: false },
+        attach: { type: "boolean", required: false, default: false },
+        ...commonArgs,
       },
       run: async ({ args }) => {
         const json = args.json === true;
         try {
-          const data = await (await clientFromArgs(args)).createSession({
-            name: String(args.name),
-            cwd: typeof args.cwd === "string" ? args.cwd : undefined,
-            layout: typeof args.layout === "string" ? args.layout : undefined,
-            cmd: typeof args.cmd === "string" ? args.cmd : undefined,
-          });
-          console.log(json ? formatCliSuccess(data) : `Created shell session ${args.name}`);
+          const client = await clientFromArgs(args);
+          const data = await client.createSession(sessionCreateInput(args));
+          if (json || args.attach !== true) {
+            console.log(json ? formatCliSuccess(data) : `Created shell session ${args.name}`);
+            return;
+          }
+          console.log(`Created shell session ${args.name}. Attaching...`);
+          await client.attachSession(String(args.name), attachOptionsFromArgs(args));
+          console.log(`Detached. Reattach: matrix shell connect ${args.name}`);
         } catch (err) {
           writeError(err, json);
           process.exitCode = 1;
         }
       },
     }),
-    attach: defineCommand({
-      meta: { name: "attach", description: "Attach to a shell session" },
-      args: {
-        name: { type: "positional", required: true },
-        fromSeq: { type: "string", required: false },
-        profile: { type: "string", required: false },
-        dev: { type: "boolean", required: false, default: false },
-        gateway: { type: "string", required: false },
-        token: { type: "string", required: false },
-        json: { type: "boolean", required: false, default: false },
-      },
-      run: async ({ args }) => {
-        const json = args.json === true;
-        try {
-          const fromSeq =
-            typeof args.fromSeq === "string" && /^\d+$/.test(args.fromSeq)
-              ? Number(args.fromSeq)
-              : undefined;
-          const result = await (await clientFromArgs(args)).attachSession(String(args.name), {
-            fromSeq,
-          });
-          console.log(
-            json
-              ? formatCliSuccess({ detached: result.detached })
-              : `Detached. Reattach: matrix shell attach ${args.name}`,
-          );
-        } catch (err) {
-          writeError(err, json);
-          process.exitCode = 1;
-        }
-      },
-    }),
+    attach: attachCommand("attach", "Attach to a shell session"),
+    connect: attachCommand("connect", "Connect to a shell session"),
     rm: defineCommand({
       meta: { name: "rm", description: "Remove a shell session" },
       args: {

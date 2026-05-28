@@ -23,7 +23,7 @@ matrix sync ~/matrixos    # start the sync daemon against the logged-in instance
 matrix run -it -- claude  # attach local TTY to Claude on your Matrix VPS
 matrix run -it -- codex   # same shared zellij session primitive for Codex
 matrix run -it --session setup -- gh auth login
-matrix shell attach setup # reattach the same session from local CLI or web terminal
+matrix shell connect setup # reattach the same session from local CLI or web terminal
 matrix peers              # list connected peers
 matrix logout             # clear local credentials
 ```

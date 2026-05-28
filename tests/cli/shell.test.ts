@@ -34,16 +34,25 @@ describe("shell CLI command", () => {
     expect(shellCommand.meta?.name).toBe("shell");
   });
 
-  it("registers ls, new, attach, and rm session subcommands", () => {
+  it("registers list/ls, new, connect/attach, and rm session subcommands", () => {
     expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
       "attach",
+      "connect",
       "layout",
+      "list",
       "ls",
       "new",
       "pane",
       "rm",
       "tab",
     ]);
+  });
+
+  it("keeps aliases as distinct command objects with canonical names", () => {
+    expect(shellCommand.subCommands!.connect).not.toBe(shellCommand.subCommands!.attach);
+    expect(shellCommand.subCommands!.connect.meta?.name).toBe("connect");
+    expect(shellCommand.subCommands!.list).not.toBe(shellCommand.subCommands!.ls);
+    expect(shellCommand.subCommands!.list.meta?.name).toBe("list");
   });
 
   it("prints complete usage for the bare shell command", async () => {
@@ -54,7 +63,7 @@ describe("shell CLI command", () => {
 
     await shellCommand.run?.({ args: {} } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
   });
 
   it("prints usage for the bare shell command with valued root flags", async () => {
@@ -68,7 +77,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
   });
 
   it("prints usage when a root flag value matches a shell subcommand", async () => {
@@ -82,7 +91,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell ls|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
   });
 
   it("does not print usage after subcommands run", async () => {
@@ -106,6 +115,18 @@ describe("shell CLI command", () => {
       rawArgs: ["--profile", "local", "--json", "ls"],
       args: {},
     } as never);
+
+    expect(logs).toEqual([]);
+  });
+
+  it("does not print usage for the friendlier list and connect verbs", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.run?.({ rawArgs: ["list", "--dev", "--json"], args: {} } as never);
+    await shellCommand.run?.({ rawArgs: ["connect", "main"], args: {} } as never);
 
     expect(logs).toEqual([]);
   });
@@ -217,5 +238,77 @@ describe("shell CLI command", () => {
       { v: 1, ok: true, data: { name: "main", created: true } },
       { v: 1, ok: true, data: { ok: true } },
     ]);
+  });
+
+  it("creates shell sessions without attaching by default", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    class UnexpectedWebSocket {
+      constructor() {
+        throw new Error("new should not attach by default");
+      }
+    }
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.subCommands!.new.run!({
+      args: { name: "main", dev: true, token: "tok", WebSocketImpl: UnexpectedWebSocket },
+    } as never);
+
+    expect(logs).toEqual(["Created shell session main"]);
+  });
+
+  it("creates missing sessions with connect -c", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "1", created: true }), { status: 201 });
+      }
+      return new Response(JSON.stringify({ sessions: [] }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    class ClosingWebSocket {
+      static instances = 0;
+      private readonly instance: number;
+      constructor(_url: string, _options?: unknown) {
+        ClosingWebSocket.instances += 1;
+        this.instance = ClosingWebSocket.instances;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "message" && this.instance === 1) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "error", code: "session_not_found" })));
+        }
+        if (event === "open" || (event === "close" && this.instance === 2)) {
+          queueMicrotask(() => listener());
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.subCommands!.connect.run!({
+      args: { name: "1", create: true, dev: true, token: "tok", WebSocketImpl: ClosingWebSocket },
+    } as never);
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/sessions$/),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(logs).toContain("Created shell session 1. Connecting...");
+    expect(logs).toContain("Detached. Reattach: matrix shell connect 1");
   });
 });

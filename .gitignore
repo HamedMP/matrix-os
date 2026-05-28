@@ -84,7 +84,7 @@ www/next-env.d.ts
 .windsurf/
 .zencoder/
 .agents/skills/
-.claude/skills/
+.claude/skills/*
 /skills/
 skills-lock.json
 # Symphony worker skills must be present in unattended repo clones
@@ -115,6 +115,15 @@ skills-lock.json
 !/skills/
 !/skills/matrix/
 !/skills/matrix/**
+# Compound-engineering skills vendored from EveryInc/compound-engineering-plugin (MIT)
+!.claude/skills/ce-code-review/
+!.claude/skills/ce-code-review/**
+!.claude/skills/ce-compound/
+!.claude/skills/ce-compound/**
+!.claude/skills/ce-strategy/
+!.claude/skills/ce-strategy/**
+!.claude/skills/ce-work/
+!.claude/skills/ce-work/**
 
 # Xcode per-user state (do NOT track these -- they contain local paths
 # and window positions, and constantly show up as noise in diffs)

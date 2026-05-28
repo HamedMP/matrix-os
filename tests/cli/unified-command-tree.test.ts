@@ -47,4 +47,21 @@ describe("unified CLI command tree", () => {
     expect(completed).not.toContain("ssh");
     expect(completed).not.toContain("keys");
   });
+
+  it("prints installable shell completion scripts", async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (line?: unknown) => {
+      logs.push(String(line));
+    };
+    try {
+      await completionCommand.run?.({ args: { shell: "zsh" } } as never);
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs.join("\n")).toContain("#compdef matrix");
+    expect(logs.join("\n")).toContain("connect");
+    expect(logs.join("\n")).not.toContain("ssh");
+  });
 });

@@ -24,8 +24,13 @@ afterEach(async () => {
 describe("shell name and path validation", () => {
   it("accepts safe session, layout, and profile slugs", () => {
     expect(validateSessionName("main")).toBe("main");
+    expect(validateSessionName("1")).toBe("1");
     expect(validateLayoutName("dev-workspace-1")).toBe("dev-workspace-1");
     expect(validateProfileName("local")).toBe("local");
+  });
+
+  it("keeps profile names letter-leading even though sessions may start with digits", () => {
+    expect(() => validateProfileName("1prod")).toThrow("Invalid request");
   });
 
   it("rejects unsafe identifiers", () => {
