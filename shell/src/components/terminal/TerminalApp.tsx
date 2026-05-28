@@ -1273,6 +1273,7 @@ function LocalTerminalSidebar() {
       session.transcriptPath,
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
     : sessions;
+  const filteredTree = normalizedFilter ? filterTreeNodes(tree, normalizedFilter) : tree;
 
   const createManagedShell = async () => {
     if (creatingShellRef.current) return;
@@ -1634,7 +1635,7 @@ function LocalTerminalSidebar() {
             </span>
           </div>
           <div className="flex-1 overflow-y-auto py-1 text-xs">
-            {tree.map(node => (
+            {filteredTree.map(node => (
               <TreeItem
                 key={node.path}
                 node={node}
@@ -1645,9 +1646,9 @@ function LocalTerminalSidebar() {
                 onOpenTerminal={(path) => ctx.addTab(path)}
               />
             ))}
-            {tree.length === 0 && (
+            {filteredTree.length === 0 && (
               <div className="px-3 py-4 text-center" style={{ color: "var(--muted-foreground)" }}>
-                Empty directory
+                {normalizedFilter ? "No files match" : "Empty directory"}
               </div>
             )}
           </div>
@@ -1995,6 +1996,26 @@ function ProjectActionBtn({
 interface TreeNode { name: string; type: "file" | "directory"; size?: number; gitStatus: string | null; changedCount?: number; path: string; children?: TreeNode[]; expanded?: boolean; }
 
 const GIT_COLORS: Record<string, string> = { modified: "var(--warning)", added: "var(--success)", untracked: "var(--success)", deleted: "var(--destructive)", renamed: "var(--primary)" };
+
+function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[] {
+  return nodes.flatMap((node) => {
+    const children = node.children ? filterTreeNodes(node.children, normalizedFilter) : [];
+    const matches = [
+      node.name,
+      node.path,
+      node.type,
+      node.gitStatus,
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter);
+
+    if (matches) {
+      return [{ ...node }];
+    }
+    if (children.length > 0) {
+      return [{ ...node, children, expanded: true }];
+    }
+    return [];
+  });
+}
 
 function TreeItem({ node, depth, selectedPath, onToggle, onSelect, onOpenTerminal }: { node: TreeNode; depth: number; selectedPath: string | null; onToggle: (n: TreeNode) => void; onSelect: (n: TreeNode) => void; onOpenTerminal: (path: string) => void }) {
   return (

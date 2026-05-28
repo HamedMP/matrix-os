@@ -611,6 +611,61 @@ describe("TerminalApp", () => {
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/pty-sessions"), expect.objectContaining({ method: "GET" }));
   });
 
+  it("filters the Files sidebar tree by the search input", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { name: "package.json", type: "file", gitStatus: null },
+            { name: "README.md", type: "file", gitStatus: null },
+            { name: "src", type: "directory", gitStatus: null },
+          ],
+        });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Files" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("package.json")).toBeTruthy();
+    expect(screen.getByText("README.md")).toBeTruthy();
+    expect(screen.getByText("src")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "readme" } });
+    });
+
+    expect(screen.queryByText("package.json")).toBeNull();
+    expect(screen.getByText("README.md")).toBeTruthy();
+    expect(screen.queryByText("src")).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search files"), { target: { value: "missing" } });
+    });
+
+    expect(screen.getByText("No files match")).toBeTruthy();
+  });
+
   it("manages canonical zellij shells from a dedicated sidebar surface", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
