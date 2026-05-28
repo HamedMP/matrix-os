@@ -110,6 +110,25 @@ describe("Desktop config", () => {
     });
   });
 
+  it("saveDesktopConfigPatch still writes when the current config cannot be loaded", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await saveDesktopConfigPatch({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [, putOpts] = mockFetch.mock.calls[1];
+    expect(putOpts.method).toBe("PUT");
+    expect(JSON.parse(putOpts.body)).toEqual({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+    });
+  });
+
   it("hook exports are defined", () => {
     expect(saveDesktopConfig).toBeTypeOf("function");
     expect(saveDesktopConfigPatch).toBeTypeOf("function");

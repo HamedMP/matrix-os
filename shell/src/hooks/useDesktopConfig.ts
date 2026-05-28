@@ -162,10 +162,9 @@ export async function saveDesktopConfigPatch(
   const getRes = await fetch(url, {
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
   });
-  if (!getRes.ok) {
-    throw new Error(`GET /api/settings/desktop ${getRes.status}`);
-  }
-  const config = (await getRes.json()) as Record<string, unknown>;
+  const config = getRes.ok
+    ? (await getRes.json()) as Record<string, unknown>
+    : {};
   const definedPatch = Object.fromEntries(
     Object.entries(patch).filter(([, value]) => value !== undefined),
   );
