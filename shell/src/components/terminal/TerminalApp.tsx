@@ -373,7 +373,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               return;
             }
 
-            if (await ensureDefaultShellSession()) {
+            const sessionReady = await ensureDefaultShellSession();
+            if (!cancelled && sessionReady) {
               addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
               setInitialized(true);
               return;
@@ -385,12 +386,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       if (!cancelled) {
-        if (await ensureDefaultShellSession()) {
-          addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
-        } else {
-          addTab(DEFAULT_CWD);
+        const sessionReady = await ensureDefaultShellSession();
+        if (!cancelled) {
+          if (sessionReady) {
+            addSessionTab(DEFAULT_SHELL_SESSION_NAME, DEFAULT_SHELL_SESSION_NAME);
+          } else {
+            addTab(DEFAULT_CWD);
+          }
+          setInitialized(true);
         }
-        setInitialized(true);
       }
     }
 

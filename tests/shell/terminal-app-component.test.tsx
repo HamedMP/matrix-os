@@ -169,6 +169,54 @@ describe("TerminalApp", () => {
     expect(props.paneTree.sessionId).toBe("main");
   });
 
+  it("does not replace a legacy layout after unmount while ensuring the canonical session", async () => {
+    let resolveSessions: ((value: { ok: boolean; json: () => Promise<{ sessions: Array<{ name: string }> }> }) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "legacy-tab",
+              label: "projects",
+              paneTree: {
+                type: "pane",
+                id: "legacy-pane",
+                cwd: "projects",
+                sessionId: "550e8400-e29b-41d4-a716-446655440000",
+              },
+            }],
+            activeTabId: "legacy-tab",
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        return new Promise((resolve) => {
+          resolveSessions = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const { unmount } = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const callsBeforeUnmount = paneGridSpy.mock.calls.length;
+
+    unmount();
+    await act(async () => {
+      resolveSessions?.({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.calls.length).toBe(callsBeforeUnmount);
+  });
+
   it("persists attached session ids in the saved layout", async () => {
     render(<TerminalApp />);
 

@@ -82,7 +82,7 @@ type TerminalServerMessage =
   | { type: "error"; message: string };
 
 const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z][a-z0-9-]{0,30}$/;
 
 export function isLegacyPtySessionId(sessionId: string): boolean {
   return LEGACY_PTY_SESSION_ID_PATTERN.test(sessionId);
@@ -118,7 +118,7 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
 
   const msg = parsed as Record<string, unknown>;
   switch (msg.type) {
-    case "attached":
+    case "attached": {
       const sessionId = typeof msg.sessionId === "string"
         ? msg.sessionId
         : typeof msg.session === "string"
@@ -133,6 +133,7 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
         state: msg.state,
         exitCode: toFiniteNumber(msg.exitCode),
       };
+    }
     case "output":
       if (typeof msg.data !== "string") {
         return null;

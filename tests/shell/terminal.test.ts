@@ -85,6 +85,7 @@ describe("Terminal WebSocket protocol", () => {
   it("uses canonical zellij websocket paths only for shell session names", () => {
     expect(isCanonicalShellSessionId("main")).toBe(true);
     expect(isCanonicalShellSessionId("setup-1")).toBe(true);
+    expect(isCanonicalShellSessionId("1test")).toBe(false);
     expect(isCanonicalShellSessionId("term_observe_abc123")).toBe(false);
     expect(isCanonicalShellSessionId("550e8400-e29b-41d4-a716-446655440000")).toBe(false);
     expect(terminalWebSocketPathForSession("main")).toBe("/ws/terminal/session");
