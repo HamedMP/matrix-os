@@ -461,7 +461,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           settle(() => resolve({ detached: true }));
         };
         const onProcessExit = () => {
-          output.write(LOCAL_TERMINAL_INPUT_RESET);
+          resetLocalInputModes();
           if (rawModeEnabled) {
             input.setRawMode?.(false);
             rawModeEnabled = false;
