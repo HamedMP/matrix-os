@@ -65,6 +65,31 @@ describe("proxy db (Postgres)", () => {
     expect(check.monthlyLimit).toBeNull();
   });
 
+  it("getUsageSummary rolls up daily/monthly/total per user in a single query", async () => {
+    await db.insertUsage({
+      userId: "alice", model: "opus-4", inputTokens: 0, outputTokens: 0,
+      cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.10, status: 200,
+    });
+    await db.insertUsage({
+      userId: "alice", model: "haiku", inputTokens: 0, outputTokens: 0,
+      cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.02, status: 200,
+    });
+    await db.insertUsage({
+      userId: "bob", model: "opus-4", inputTokens: 0, outputTokens: 0,
+      cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.50, status: 200,
+    });
+
+    const summary = await db.getUsageSummary();
+    const alice = summary.find((u) => u.userId === "alice");
+    const bob = summary.find((u) => u.userId === "bob");
+    expect(alice).toMatchObject({ userId: "alice" });
+    expect(alice?.total).toBeCloseTo(0.12);
+    expect(alice?.daily).toBeCloseTo(0.12);
+    expect(alice?.monthly).toBeCloseTo(0.12);
+    expect(bob?.total).toBeCloseTo(0.50);
+    expect(summary).toHaveLength(2);
+  });
+
   it("getMetricsSeed groups by user_id and model", async () => {
     await db.insertUsage({
       userId: "alice", model: "opus-4", inputTokens: 0, outputTokens: 0,

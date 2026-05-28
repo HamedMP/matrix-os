@@ -156,17 +156,28 @@ export function createProxyDb(opts: string | { dialect: unknown } = DEFAULT_PROX
     },
     async getUsageSummary() {
       await ready;
-      const users = await kysely
-        .selectFrom('api_usage')
-        .select('user_id')
-        .distinct()
-        .execute();
-      return Promise.all(
-        users.map(async (u) => ({
-          userId: u.user_id,
-          ...(await this.getUserUsage(u.user_id)),
-        })),
-      );
+      // Single grouped query with FILTER aggregates: O(1) round-trips
+      // regardless of user count. Previous implementation was 1 + 3N.
+      const result = await sql<{
+        user_id: string;
+        daily: string | number;
+        monthly: string | number;
+        total: string | number;
+      }>`
+        SELECT
+          user_id,
+          COALESCE(SUM(cost_usd) FILTER (WHERE timestamp >= current_date), 0) AS daily,
+          COALESCE(SUM(cost_usd) FILTER (WHERE timestamp >= date_trunc('month', current_date)), 0) AS monthly,
+          COALESCE(SUM(cost_usd), 0) AS total
+        FROM api_usage
+        GROUP BY user_id
+      `.execute(kysely);
+      return result.rows.map((r) => ({
+        userId: r.user_id,
+        daily: Number(r.daily),
+        monthly: Number(r.monthly),
+        total: Number(r.total),
+      }));
     },
     async getMetricsSeed() {
       await ready;

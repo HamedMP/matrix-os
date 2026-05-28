@@ -329,17 +329,22 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   console.log(`[proxy] Received ${signal}, shutting down`);
   server.close();
   const forceExit = setTimeout(() => process.exit(1), 6_000);
-  try {
-    await Promise.allSettled([
-      posthogErrorTracker.shutdown(),
-      resetProxyDb(),
-    ]);
-  } catch (err: unknown) {
-    console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
-  } finally {
-    clearTimeout(forceExit);
-    process.exit(0);
+  // allSettled never rejects — inspect each result individually so DB pool
+  // errors don't get swallowed alongside PostHog flush failures.
+  const results = await Promise.allSettled([
+    posthogErrorTracker.shutdown(),
+    resetProxyDb(),
+  ]);
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.warn(
+        '[proxy] Failed during shutdown:',
+        result.reason instanceof Error ? result.reason.message : String(result.reason),
+      );
+    }
   }
+  clearTimeout(forceExit);
+  process.exit(0);
 }
 
 process.once('SIGTERM', () => {
