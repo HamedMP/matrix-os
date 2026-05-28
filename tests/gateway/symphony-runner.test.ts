@@ -72,7 +72,7 @@ describe("Symphony runner", () => {
       requiredLabels: ["symphony"],
       activeStates: ["Todo", "In Progress", "Merging", "Rework"],
     });
-    expect(status.config.port).toBe(4066);
+    expect(status.config.port).toBe(4766);
     expect(status.config.workflowPath).toBe(join(homePath, "system", "symphony", "WORKFLOW.md"));
   });
 
@@ -92,7 +92,7 @@ describe("Symphony runner", () => {
     const status = await runner.stop();
 
     expect(status.running).toBe(false);
-    expect(status.config.port).toBe(4066);
+    expect(status.config.port).toBe(4766);
   });
 
   it("refuses to start without a local Linear API key", async () => {
@@ -161,7 +161,7 @@ describe("Symphony runner", () => {
     expect(spawnProcess).toHaveBeenCalledWith(expect.any(String), [
       await realpath(defaultWorkflowPath),
       "--port",
-      "4066",
+      "4766",
       "--i-understand-that-this-will-be-running-without-the-usual-guardrails",
     ], expect.any(Object));
   });

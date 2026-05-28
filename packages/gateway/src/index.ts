@@ -113,7 +113,6 @@ export type {
 } from "./messages/repository.js";
 export { createSymphonyRunner, SymphonyConfigSchema, SymphonyConfigUpdateSchema, SymphonyTrackerConfigSchema, SymphonyTrackerConfigUpdateSchema } from "./symphony-runner.js";
 export type { SymphonyConfig, SymphonyConfigUpdate, SymphonyStatus, SymphonyStartResult } from "./symphony-runner.js";
-export { createSymphonyRoutes } from "./symphony-routes.js";
 export * from "./symphony/index.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
