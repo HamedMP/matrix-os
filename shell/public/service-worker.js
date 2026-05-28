@@ -24,7 +24,7 @@ self.addEventListener("install", (event) => {
     caches.open(CACHE_STATIC).then((cache) =>
       Promise.all(
         PRECACHE.map((url) =>
-          fetch(url, { credentials: "same-origin" })
+          fetch(url, { credentials: "same-origin", signal: AbortSignal.timeout(10_000) })
             .then((res) => (res.ok ? cache.put(url, res.clone()) : null))
             .catch((err) => {
               console.warn("[sw] precache failed for", url, err?.message ?? err);
