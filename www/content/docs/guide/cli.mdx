@@ -32,6 +32,13 @@ matrix --version
 matrix doctor
 ```
 
+
+## Interactive TUI
+
+Running `matrix` with no arguments opens the Matrix OS terminal UI in an interactive terminal. The same experience is available explicitly with `matrix tui`, and aliases `matrixos` and `mos` follow the same routing.
+
+Direct commands such as `matrix shell ls`, `matrix login`, `matrix status --json`, `matrix --help`, and non-interactive bare invocations remain script-safe and do not render the TUI.
+
 ## First run
 
 ```bash
