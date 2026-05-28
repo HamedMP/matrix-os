@@ -209,10 +209,10 @@ describe("shell CLI command", () => {
 
   it("emits versioned JSON for ls, new, and rm", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+      if (url.endsWith("/api/terminal/sessions") && init?.method === "POST") {
         return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
       }
-      if (url.endsWith("/api/sessions/main")) {
+      if (url.endsWith("/api/terminal/sessions/main")) {
         return new Response(JSON.stringify({ ok: true }));
       }
       return new Response(JSON.stringify({ sessions: [{ name: "main" }] }));
@@ -242,7 +242,7 @@ describe("shell CLI command", () => {
 
   it("creates shell sessions without attaching by default", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+      if (/\/api\/(?:terminal\/)?sessions$/.test(url) && init?.method === "POST") {
         return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
       }
       throw new Error(`unexpected fetch ${url}`);
@@ -305,7 +305,7 @@ describe("shell CLI command", () => {
     } as never);
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      expect.stringMatching(/\/api\/sessions$/),
+      expect.stringMatching(/\/api\/terminal\/sessions$/),
       expect.objectContaining({ method: "POST" }),
     );
     expect(logs).toContain("Created shell session 1. Connecting...");

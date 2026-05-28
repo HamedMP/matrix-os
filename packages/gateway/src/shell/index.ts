@@ -3,6 +3,7 @@ export * from "./osc133.js";
 export * from "./atomic-write.js";
 export * from "./errors.js";
 export * from "./layouts.js";
+export * from "./pending-input.js";
 export * from "./preferences.js";
 export * from "./registry.js";
 export * from "./replay-buffer.js";

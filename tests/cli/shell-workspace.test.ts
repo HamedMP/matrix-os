@@ -39,13 +39,13 @@ describe("shell workspace CLI commands", () => {
 
   it("emits JSON for tab, pane, and layout operations", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/api/sessions/main/tabs") && init?.method === "POST") {
+      if (url.endsWith("/api/terminal/sessions/main/tabs") && init?.method === "POST") {
         return new Response(JSON.stringify({ tab: { idx: 1, name: "api" } }));
       }
-      if (url.endsWith("/api/sessions/main/panes") && init?.method === "POST") {
+      if (url.endsWith("/api/terminal/sessions/main/panes") && init?.method === "POST") {
         return new Response(JSON.stringify({ pane: { paneId: "pane-2" } }));
       }
-      if (url.endsWith("/api/layouts/dev") && init?.method === "PUT") {
+      if (url.endsWith("/api/terminal/layouts/dev") && init?.method === "PUT") {
         return new Response(JSON.stringify({ ok: true }));
       }
       return new Response(JSON.stringify({ ok: true }));
@@ -112,8 +112,8 @@ describe("shell workspace CLI commands", () => {
     } as never);
 
     expect(calls).toEqual([
-      { url: "http://localhost:4000/api/sessions/main/tabs/1/go", method: "POST" },
-      { url: "http://localhost:4000/api/sessions/main/tabs/1", method: "DELETE" },
+      { url: "http://localhost:4000/api/terminal/sessions/main/tabs/1/go", method: "POST" },
+      { url: "http://localhost:4000/api/terminal/sessions/main/tabs/1", method: "DELETE" },
     ]);
   });
 
