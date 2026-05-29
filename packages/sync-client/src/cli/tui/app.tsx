@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { render, Text, useInput } from "ink";
+import { render, Text, useApp, useInput } from "ink";
 import { DEFAULT_TUI_ACTIONS } from "./actions.js";
 import { normalizeTuiError } from "./errors.js";
 import { searchTuiActions } from "./palette.js";
@@ -7,6 +7,9 @@ import { aggregateTuiStatusSnapshot, type TuiStatusSnapshot } from "./status.js"
 import { getTerminalCapabilities } from "./terminal.js";
 import { CommandPalette } from "./views/CommandPalette.js";
 import { HomeView } from "./views/HomeView.js";
+
+const ENTER_ALTERNATE_SCREEN = "\u001B[?1049h\u001B[H\u001B[2J";
+const EXIT_ALTERNATE_SCREEN = "\u001B[?1049l";
 
 function createSnapshotFailure(error: unknown): TuiStatusSnapshot {
   const unknownSubsystem = { state: "unknown" as const, label: "unknown" };
@@ -25,6 +28,7 @@ function createSnapshotFailure(error: unknown): TuiStatusSnapshot {
 }
 
 export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnapshot?: TuiStatusSnapshot; noColor?: boolean }) {
+  const { exit } = useApp();
   const [snapshot, setSnapshot] = useState<TuiStatusSnapshot | null>(initialSnapshot ?? null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -42,6 +46,10 @@ export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnap
     if (input === "/" || (key.ctrl && input === "p")) {
       setPaletteOpen(true);
       setSelectedIndex(0);
+      return;
+    }
+    if (!paletteOpen && input === "q") {
+      exit();
       return;
     }
     if (paletteOpen && key.upArrow) {
@@ -101,13 +109,48 @@ export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnap
   }
 
   if (paletteOpen) {
-    return <CommandPalette results={paletteResults} query={paletteQuery} selectedIndex={selectedIndex} noColor={capabilities.noColor} />;
+    return (
+      <CommandPalette
+        results={paletteResults}
+        query={paletteQuery}
+        selectedIndex={selectedIndex}
+        columns={capabilities.columns}
+        noColor={capabilities.noColor}
+      />
+    );
   }
 
-  return <HomeView snapshot={snapshot} columns={capabilities.columns} noColor={capabilities.noColor} />;
+  return <HomeView snapshot={snapshot} columns={capabilities.columns} rows={capabilities.rows} noColor={capabilities.noColor} />;
+}
+
+export function shouldUseAlternateScreen({
+  stdout = process.stdout,
+  env = process.env,
+}: {
+  stdout?: NodeJS.WriteStream & { isTTY?: boolean };
+  env?: NodeJS.ProcessEnv;
+} = {}): boolean {
+  return stdout.isTTY === true && env.TERM !== "dumb" && env.MATRIX_TUI_FULLSCREEN !== "0";
 }
 
 export async function launchTui(options: { noColor?: boolean } = {}): Promise<void> {
+  const useAlternateScreen = shouldUseAlternateScreen();
+  if (useAlternateScreen) {
+    process.stdout.write(ENTER_ALTERNATE_SCREEN);
+    const restoreAlternateScreen = () => {
+      process.stdout.write(EXIT_ALTERNATE_SCREEN);
+    };
+    process.once("exit", restoreAlternateScreen);
+    try {
+      const { waitUntilExit } = render(<MatrixTuiApp noColor={options.noColor} />);
+      await waitUntilExit();
+    } finally {
+      process.removeListener("exit", restoreAlternateScreen);
+      restoreAlternateScreen();
+    }
+    return;
+  }
+
   const { waitUntilExit } = render(<MatrixTuiApp noColor={options.noColor} />);
   await waitUntilExit();
 }

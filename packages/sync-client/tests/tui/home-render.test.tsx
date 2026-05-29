@@ -17,28 +17,52 @@ const baseSnapshot: TuiStatusSnapshot = {
 };
 
 describe("HomeView", () => {
-  it("renders prompt-first Matrix OS home with compact status", () => {
+  it("renders wide Matrix OS launcher with rabbit art, prompt, shortcuts, and status", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor={false} />);
 
-    expect(output).toContain("Matrix OS");
-    expect(output).toContain("Ask Hermes");
+    expect(output).toContain("MATRIX OS");
+    expect(output).not.toContain("M   M   A   TTTTT");
+    expect(output).toContain(".@@@@oo.o@@@.");
+    expect(output).toContain("@@@@@@@@@@@@@@@");
+    expect(output).toContain("Ask Matrix");
+    expect(output).toContain("Build    Matrix");
+    expect(output).toContain("q quit");
     expect(output).toContain("cloud");
     expect(output).toContain("2 sessions");
-    expect(output).toContain("/ commands");
+    expect(output).toContain("healthy · cloud · ok · 2 sessions");
   });
 
-  it("keeps no-color output understandable", () => {
+  it("keeps no-color home output understandable without ANSI escapes", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor />);
 
+    expect(output).toContain("MATRIX OS");
+    expect(output).toContain(".@@@@@@@@@@o.");
     expect(output).toContain("healthy");
     expect(output).not.toContain("\u001B[");
   });
 
-  it("hides mascot and preserves critical text in narrow terminals", () => {
+  it("fills tall terminals as a fullscreen launcher", () => {
+    const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} rows={40} noColor />);
+
+    expect(output.split("\n").length).toBeGreaterThanOrEqual(40);
+    expect(output).toContain("Ask Matrix");
+  });
+
+  it("keeps large rabbit art readable on normal-width terminals", () => {
+    const output = renderToString(<HomeView snapshot={baseSnapshot} columns={80} noColor />);
+
+    expect(output).toContain(".@@@@oo.o@@@.");
+    expect(output).toContain("Ask Matrix");
+    expect(output).toContain("healthy · cloud · ok · 2 sessions");
+  });
+
+  it("hides large art and preserves critical prompt/status text in narrow terminals", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={60} noColor />);
 
-    expect(output).toContain("Ask Hermes");
+    expect(output).toContain("MATRIX OS");
+    expect(output).toContain("Ask Matrix");
     expect(output).toContain("cloud");
-    expect(output).not.toContain("rabbit");
+    expect(output).toContain("rabbit: .@@. @@@");
+    expect(output).not.toContain(".@@@@oo.o@@@.");
   });
 });

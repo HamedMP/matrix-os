@@ -27,7 +27,7 @@ describe("TUI accessibility rendering", () => {
 
     expect(home).toContain("degraded");
     expect(home).toContain("gateway degraded");
-    expect(palette).toContain("Command Palette");
+    expect(palette).toContain("MATRIX COMMANDS");
     expect(`${home}${palette}`).not.toContain("\u001B[");
   });
 });
