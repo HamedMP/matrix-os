@@ -12,7 +12,7 @@
  *   the bar stays one row tall by default.
  */
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 interface KeyDef {
   label: string;
@@ -55,6 +55,33 @@ interface TerminalKeyBarProps {
   accent?: string;
 }
 
+function readVisualViewportKeyboardInset(): number {
+  if (typeof window === "undefined" || !window.visualViewport) return 0;
+  const inset = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+  return Math.max(0, Math.round(inset));
+}
+
+function useVisualViewportKeyboardInset(): number {
+  const [inset, setInset] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const viewport = window.visualViewport;
+    const update = () => setInset(readVisualViewportKeyboardInset());
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
+  return inset;
+}
+
 export function TerminalKeyBar({
   onSend,
   background = "var(--background)",
@@ -62,11 +89,13 @@ export function TerminalKeyBar({
   accent = "var(--primary)",
 }: TerminalKeyBarProps) {
   const [expanded, setExpanded] = useState(false);
+  const keyboardInset = useVisualViewportKeyboardInset();
 
   const visible = expanded ? KEYS : KEYS.filter((k) => k.primary);
   const buttonBackground = `color-mix(in srgb, ${foreground} 10%, transparent)`;
   const buttonBorder = `color-mix(in srgb, ${foreground} 18%, transparent)`;
   const mutedForeground = `color-mix(in srgb, ${foreground} 66%, transparent)`;
+  const bottomInset = keyboardInset > 0 ? `${keyboardInset}px` : "env(keyboard-inset-height, 0px)";
 
   return (
     <div
@@ -74,7 +103,7 @@ export function TerminalKeyBar({
       aria-label="Terminal accessory keys"
       data-testid="terminal-key-bar"
       style={{
-        "--matrix-terminal-keybar-bottom": "env(keyboard-inset-height, 0px)",
+        "--matrix-terminal-keybar-bottom": bottomInset,
         display: "flex",
         alignItems: "center",
         gap: 4,
