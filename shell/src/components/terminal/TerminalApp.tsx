@@ -1134,6 +1134,7 @@ function LocalTerminalSidebar() {
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
+  const shellPollAbortRef = useRef<AbortController | null>(null);
 
   const selectSidebarTab = useCallback((nextTab: SidebarTab) => {
     setTab(nextTab);
@@ -1168,12 +1169,12 @@ function LocalTerminalSidebar() {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
-  const fetchShells = useCallback(async (options: { silent?: boolean } = {}) => {
+  const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
     if (!options.silent) setShellsLoading(true);
     if (!options.silent) setShellsError(null);
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-        signal: AbortSignal.timeout(10_000),
+        signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         setShellsError("Failed to load shells");
@@ -1182,7 +1183,9 @@ function LocalTerminalSidebar() {
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
       setShells(Array.isArray(data.sessions) ? data.sessions : []);
+      setShellsError(null);
     } catch (err: unknown) {
+      if (options.silent && err instanceof DOMException && err.name === "AbortError") return;
       console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
       setShellsError("Could not reach gateway");
       if (!options.silent) setShells([]);
@@ -1197,10 +1200,26 @@ function LocalTerminalSidebar() {
 
   useEffect(() => {
     if (tab !== "shells") return;
+    const refresh = () => {
+      shellPollAbortRef.current?.abort();
+      const controller = new AbortController();
+      shellPollAbortRef.current = controller;
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      void fetchShells({ silent: true, signal: controller.signal }).finally(() => {
+        clearTimeout(timeout);
+        if (shellPollAbortRef.current === controller) {
+          shellPollAbortRef.current = null;
+        }
+      });
+    };
     const timer = setInterval(() => {
-      void fetchShells({ silent: true });
+      refresh();
     }, SHELL_SESSION_REFRESH_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      shellPollAbortRef.current?.abort();
+      shellPollAbortRef.current = null;
+    };
   }, [fetchShells, tab]);
 
   const fetchSessions = useCallback(async () => {

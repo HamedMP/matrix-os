@@ -186,7 +186,7 @@ describe("TerminalApp", () => {
           }),
         });
       }
-      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
       }
       return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
@@ -239,7 +239,7 @@ describe("TerminalApp", () => {
           }),
         });
       }
-      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
       }
       return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
@@ -282,7 +282,7 @@ describe("TerminalApp", () => {
           }),
         });
       }
-      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return new Promise((resolve) => {
           resolveSessions = resolve;
         });
@@ -855,7 +855,7 @@ describe("TerminalApp", () => {
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
-      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -893,7 +893,7 @@ describe("TerminalApp", () => {
   });
 
   it("keeps the last known Shells list visible during transient refresh failures", async () => {
-    let shellListCalls = 0;
+    let shellListMode: "initial" | "fail" | "recover" = "initial";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/files/tree")) {
@@ -905,14 +905,18 @@ describe("TerminalApp", () => {
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
-      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
-        shellListCalls += 1;
-        if (shellListCalls > 1) {
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        if (shellListMode === "fail") {
+          shellListMode = "recover";
           return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
         }
         return Promise.resolve({
           ok: true,
-          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
+          json: async () => ({
+            sessions: shellListMode === "recover"
+              ? [{ name: "main", status: "active" }, { name: "bench", status: "active" }]
+              : [{ name: "main", status: "active" }],
+          }),
         });
       }
       return Promise.resolve({ ok: true, json: async () => ({}) });
@@ -929,7 +933,17 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    shellListMode = "fail";
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_001);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    expect(screen.getByText("Failed to load shells")).toBeTruthy();
 
     await act(async () => {
       vi.advanceTimersByTime(5_000);
@@ -937,8 +951,73 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("main")).toBeTruthy();
-    expect(screen.getByText("Failed to load shells")).toBeTruthy();
+    expect(screen.getByText("bench")).toBeTruthy();
+    expect(screen.queryByText("Failed to load shells")).toBeNull();
+  });
+
+  it("aborts an in-flight silent Shells refresh before starting the next poll", async () => {
+    let blockNextShellList = false;
+    let firstSilentSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        if (blockNextShellList && !firstSilentSignal) {
+          firstSilentSignal = init?.signal ?? undefined;
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: firstSilentSignal
+              ? [{ name: "main", status: "active" }, { name: "bench", status: "active" }]
+              : [{ name: "main", status: "active" }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    blockNextShellList = true;
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+
+    expect(firstSilentSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(firstSilentSignal?.aborted).toBe(true);
+    expect(screen.getByText("bench")).toBeTruthy();
   });
 
   it("surfaces shell creation failures in the Shells sidebar", async () => {
