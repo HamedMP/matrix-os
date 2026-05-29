@@ -6,6 +6,17 @@ import { Readable } from "node:stream";
 import { resolveWithinHome } from "../path-security.js";
 
 const MAX_STATIC_ASSET_BYTES = 25 * 1024 * 1024;
+const APP_STATIC_CSP = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'self'",
+].join("; ");
 
 const TEXT_MIME_TYPES: Record<string, string> = {
   html: "text/html",
@@ -47,6 +58,15 @@ function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
   return candidateReal === baseReal || candidateReal.startsWith(`${baseReal}${sep}`);
 }
 
+function appStaticCorsHeaders(c: Context): Record<string, string> {
+  if (c.req.header("origin") !== "null") return {};
+  return {
+    "Access-Control-Allow-Origin": "null",
+    "Access-Control-Allow-Credentials": "true",
+    Vary: "Origin",
+  };
+}
+
 async function resolveEntry(baseDir: string, baseReal: string, path: string) {
   const fullPath = resolveWithinHome(baseDir, path);
   if (fullPath === null) {
@@ -84,12 +104,20 @@ function serveFile(
   const etag = `"${fileStat.mtimeMs.toString(36)}-${fileStat.size.toString(36)}"`;
 
   if (c.req.header("if-none-match") === etag) {
-    return c.body(null, 304);
+    return new Response(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        ...appStaticCorsHeaders(c),
+      },
+    });
   }
 
   const headers: Record<string, string> = {
     "Content-Type": contentType,
     ETag: etag,
+    "Content-Security-Policy": APP_STATIC_CSP,
+    ...appStaticCorsHeaders(c),
   };
   if (BINARY_MIME_TYPES[ext]) {
     headers["Cache-Control"] = "public, max-age=86400, immutable";

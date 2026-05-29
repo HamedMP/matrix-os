@@ -86,14 +86,14 @@ export interface BoardSummary {
 }
 
 export const DEFAULT_COLUMNS: BoardColumn[] = [
-  { id: "backlog", title: "Backlog", color: "#64748b" },
-  { id: "ready", title: "Ready", color: "#0ea5e9" },
-  { id: "in-progress", title: "In progress", color: "#f59e0b" },
-  { id: "review", title: "Review", color: "#8b5cf6" },
-  { id: "done", title: "Done", color: "#10b981" },
+  { id: "backlog", title: "Backlog", color: "#7A7768" },
+  { id: "ready", title: "Ready", color: "#434E3F" },
+  { id: "in-progress", title: "In progress", color: "#D06F25" },
+  { id: "review", title: "Review", color: "#D6AB8B" },
+  { id: "done", title: "Done", color: "#3A7D44" },
 ];
 
-const PROJECT_COLORS = ["#2563eb", "#059669", "#d97706", "#7c3aed", "#e11d48"];
+const PROJECT_COLORS = ["#434E3F", "#3A7D44", "#D06F25", "#D6AB8B", "#32352E"];
 let sequence = 0;
 
 function now(): string {

@@ -1,0 +1,6 @@
+Matrix-adapted Elixir Symphony
+Copyright 2026 Matrix OS contributors
+
+This package adapts Symphony runtime concepts for Matrix OS customer VPS
+services. The adapted source is distributed under the Apache License, Version
+2.0, and keeps third-party license boundaries explicit for later vendored code.

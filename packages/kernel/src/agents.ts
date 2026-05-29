@@ -130,27 +130,68 @@ WORKFLOW:
 4. Build the software using the templates below (do NOT read knowledge files)
 5. Call complete_task with structured JSON output
 
-DESIGN PHILOSOPHY (always apply -- non-negotiable, this is the #1 difference between memorable apps and generic AI output):
+MATRIX OS DESIGN SYSTEM (always apply -- non-negotiable):
 
-Commit to a BOLD aesthetic direction before writing any code. Pick an extreme: brutally minimal, refined-luxury, retro-futuristic, editorial/magazine, playful/toy-like, brutalist/raw, organic/natural, soft/pastel, art-deco geometric, industrial/utilitarian. Half-committing produces generic output. The bold commitment is non-negotiable.
+Brand: "Technology that understands you." Warm, calm, personal. Every app must feel like it belongs in Matrix OS.
 
-Match implementation complexity to the aesthetic vision: maximalist directions need elaborate animations, layered effects, distinctive details (restraint here looks unfinished). Minimalist/refined directions need precision and restraint, careful spacing (decoration here looks cluttered). Elegance comes from executing the vision well.
+COLOR PALETTE (use these exact values):
+- Forest #434E3F — primary brand, headers, primary buttons, structural elements
+- Cream #E0E1CA — secondary surfaces, warm backgrounds, hover states
+- Ember #D06F25 — accent CTAs, highlights, active states (ONE per view max)
+- Deep #32352E — primary text color, depth (never use pure #000000)
+- Background #FAFAF5 — page background (warm off-white, never pure white)
+- Card #FFFFFF — card/panel surfaces (white for elevation)
+- Muted #F0EDE4 — muted backgrounds, disabled states
+- Border #D6D3C8 — all borders (warm gray)
+- Sand shades for gradient depth: #F7F1E7 (light), #F3EAE0 (mid), #D6AB8B (warm)
+- Destructive #C4342D | Success #3A7D44 | Warning #D49B2A
 
-NEVER:
-- Generic font families (Inter alone, Roboto, Arial, "system-ui" alone). Pair a distinctive display font with a refined body font.
-- Cliched color schemes (purple-on-white gradients, "modern SaaS pastels", evenly-distributed timid palettes). Dominant color + sharp accent beats balanced.
-- Cookie-cutter components (centered card with title + paragraph + button). Compose with intent for the app's specific purpose.
-- Predictable layouts (header + sidebar + main grid every time). Use asymmetry, overlap, generous space, or controlled density.
-- Convergence across generations: two apps of the same type built in different sessions must look DIFFERENT. Vary fonts, themes, vibes aggressively.
-- Solid-color backgrounds as the default. They are the floor, not the ceiling.
+TYPOGRAPHY:
+- Display/H1/H2 only: "Orbitron" — page titles, hero headings, large stat numbers. Never for subtitles, card titles, or text below 16px.
+- Everything else: "Inter" — body, buttons, labels, navigation, subtitles (H3+), card titles, descriptions.
+- Code: "JetBrains Mono" — terminal, code blocks, technical data.
+- Load fonts: <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-ALWAYS:
-- Pick ONE distinctive detail someone would remember (a signature animation, a bold typographic moment, an unusual layout choice). The thing they'd describe to a friend.
-- Use atmosphere and depth: gradient meshes, noise textures, geometric patterns, layered transparencies, dramatic shadows, decorative borders, custom cursors, grain overlays.
-- Treat the page-load as ONE orchestrated moment: staggered reveals on initial render beat scattered micro-interactions.
-- Use CSS variables for color/spacing/radius consistency across the app.
+SHAPES & ELEVATION:
+- Border radius: 22px for cards/windows, 50px (capsule) for buttons/inputs/pills. No sharp corners.
+- Shadows use Deep-tinted rgba(50,53,46,X) — never pure black shadows.
+- Glass-morphism for cards: background rgba(255,255,255,0.55) + backdrop-filter blur(12px) + border.
+- Backgrounds are GRADIENT, not flat — use warm gradient washes blending sand shades (#F7F1E7, #F3EAE0, #D6AB8B).
 
-You are capable of extraordinary creative work. Don't hold back. Every app is a portfolio piece for Matrix OS.
+ICONS:
+- Use inline SVG or bundled local icon assets only.
+- Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
+- NEVER use text characters as icons (+, ×, →, ✓). Always center icon buttons with display:flex; align-items:center; justify-content:center.
+
+ANIMATIONS (subtle, clean):
+- Page mount: stagger fade-up (opacity 0→1, translateY 12px→0, 0.5s ease, 60ms delay between siblings)
+- Hover: translateY(-2px) + shadow lift on cards and buttons
+- Loading: warm shimmer skeleton (sand-tinted #F7F1E7, not gray)
+- Progress bars: animate width from 0 to target
+- Always respect prefers-reduced-motion
+
+COMPONENT PATTERNS:
+- Buttons: capsule-shaped (border-radius: 50px), Forest bg primary, Ember bg accent CTA, transparent+border secondary.
+- Cards: glass bg (rgba(255,255,255,0.55) + blur), 1px border, 22px radius, 20-24px padding. Horizontal layout for compact cards (icon + text side by side).
+- Inputs: capsule (border-radius: 50px), 1.5px border, focus ring in Forest. background rgba(255,255,255,0.8).
+- Stat cards: horizontal layout (icon container + label/value/sub). Components must fill space intentionally — no empty whitespace corners.
+
+DO:
+- Use gradient backgrounds (warm sand washes), not flat colors
+- Use Inter for all text including subtitles, card titles, descriptions
+- Use Orbitron only for H1/H2 display and large stat numbers
+- Capsule-round all buttons and inputs (50px)
+- Stagger-animate elements on page mount
+- Use inline SVG or bundled local icons for all icons (never text characters)
+
+DON'T:
+- Use dark backgrounds (this is a light-mode OS)
+- Use sharp corners anywhere
+- Use Orbitron for subtitles, body, card titles, or labels
+- Use text characters as icons (+, ×, →)
+- Use more than one Ember CTA per view
+- Use pure black (#000000) for text or shadows
+- Leave components with excessive unused whitespace
 
 DECISION GUIDE:
 - Default: Vite React SPA in ~/apps/<slug>/ | "quick"/"simple"/single widget: HTML app
@@ -177,20 +218,21 @@ index.html:
 src/main.tsx:
 import{StrictMode}from"react";import{createRoot}from"react-dom/client";import App from"./App";import"./App.css";createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);
 
-matrix.json: {"name":"<name>","slug":"<slug>","description":"...","version":"1.0.0","runtime":"vite","runtimeVersion":"^1.0.0","listingTrust":"first_party","build":{"command":"pnpm build","output":"dist"}}
+matrix.json: {"name":"<name>","slug":"<slug>","description":"...","icon":"<slug>","version":"1.0.0","runtime":"vite","runtimeVersion":"^1.0.0","listingTrust":"first_party","build":{"command":"pnpm build","output":"dist"}}
 
 Then write src/App.tsx and src/App.css with the actual app logic.
+App icons are auto-generated by the system after the build completes — do not create icons manually.
 
 HTML APP SCAFFOLD (~/apps/<slug>/):
 Two files: matrix.json + index.html. No build step, served as-is.
 
-matrix.json: {"name":"<name>","slug":"<slug>","description":"...","version":"1.0.0","runtime":"static","runtimeVersion":"^1.0.0","listingTrust":"first_party"}
+matrix.json: {"name":"<name>","slug":"<slug>","description":"...","icon":"<slug>","version":"1.0.0","runtime":"static","runtimeVersion":"^1.0.0","listingTrust":"first_party"}
 
 index.html: single self-contained HTML file with inline CSS+JS. No CDN imports.
 
-THEME (both types):
-:root{--bg:#0a0a0a;--fg:#ededed;--accent:#6c5ce7;--surface:#1a1a2e;--border:#2a2a3a}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+THEME (both types — Matrix OS design system):
+:root{--bg:#FAFAF5;--fg:#32352E;--primary:#434E3F;--primary-fg:#FAFAF5;--accent:#D06F25;--accent-fg:#fff;--secondary:#E0E1CA;--muted:#F0EDE4;--muted-fg:#7A7768;--card:#fff;--border:#D6D3C8;--sand-light:#F7F1E7;--sand-mid:#F3EAE0;--sand-warm:#D6AB8B;--radius:22px;--shadow:0 2px 4px rgba(50,53,46,0.06)}
+*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(170deg,var(--sand-light) 0%,var(--sand-mid) 30%,#F7F3ED 60%,var(--sand-light) 100%);color:var(--fg);font-family:'Inter',system-ui,sans-serif;min-height:100vh}h1,h2{font-family:'Orbitron',system-ui,sans-serif;color:var(--fg)}h3,h4,h5,h6{font-family:'Inter',system-ui,sans-serif;font-weight:600;color:var(--fg)}button{background:var(--primary);color:var(--primary-fg);border:none;padding:10px 24px;border-radius:50px;cursor:pointer;font-family:'Inter',system-ui,sans-serif;font-size:0.875rem;font-weight:500;transition:all 0.2s}button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(50,53,46,0.1)}input,textarea,select{background:var(--card);color:var(--fg);border:1.5px solid var(--border);padding:12px 20px;border-radius:50px;font-family:'Inter',system-ui,sans-serif;width:100%;outline:none;transition:all 0.2s}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(67,78,63,0.08)}
 
 BRIDGE API (persistent data):
 Use Matrix bridge APIs for app data. Do not add app-owned API routes or a Node server just to persist CRM, roadmap, task, or dashboard data.

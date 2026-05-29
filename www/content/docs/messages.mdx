@@ -1,0 +1,39 @@
+---
+title: Messages
+description: Connect Telegram and WhatsApp to Matrix OS with private, room-level AI controls.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Messages brings Telegram and WhatsApp into Matrix OS through a private Matrix backbone on the user's VPS. Conversations appear in the Messages app, and Hermes starts with no access to any room until the owner grants it.
+
+## What You Can Connect
+
+The first bridge slice focuses on:
+
+- Telegram accounts
+- WhatsApp accounts
+- Text conversations
+- Room-level AI read, reply, mention-only, and automation controls
+- Pending AI drafts that can be approved or cancelled
+
+Edits, deletes, reactions, receipts, typing indicators, stickers, voice notes, and full historical imports are deferred.
+
+## Privacy Model
+
+Messages is default-deny. Connecting an account does not let Hermes read or reply to every chat. Each room has its own access settings:
+
+- Read access lets Hermes receive new room events.
+- Reply access lets Hermes send only after a final permission check.
+- Mention-only mode limits delivery to messages that explicitly address Matrix OS.
+- Automation access lets rules run only for that room.
+
+Revoking access cancels queued work and prevents new delivery. Draft replies that still need approval remain visible in Messages until approved or cancelled.
+
+## Recovery
+
+Messaging state is part of the owner-controlled VPS backup lifecycle. Telegram and Matrix mappings restore with the backup. WhatsApp may require relinking after a stale restore or when the paired-device session is rejected.
+
+<Callout type="info" title="Current rollout status">
+  The first implementation is built around Synapse, mautrix-telegram, and mautrix-whatsapp. Real account pairing is still a production validation gate before broad enablement.
+</Callout>

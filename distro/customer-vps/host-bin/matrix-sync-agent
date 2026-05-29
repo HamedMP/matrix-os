@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Matrix OS Sync Agent — polls for bundle updates, applies on trigger, rollback support.
 #
-# Env (from host.env):  MATRIX_MACHINE_ID, MATRIX_HOST_BUNDLE_URL
+# Env (from host.env):  MATRIX_MACHINE_ID, MATRIX_HOST_BUNDLE_URL, PLATFORM_INTERNAL_URL
 # Trigger files:        /opt/matrix/app/.update-now   — apply pending update
 #                       /opt/matrix/app/.rollback-now  — rollback to previous version
 # Signals:              SIGUSR1 — alternative apply-update trigger
@@ -14,17 +14,88 @@ readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
 readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
+readonly RELEASE_FILE="/opt/matrix/release.json"
 readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
 readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
+readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
+readonly UPDATE_VERSION_FILE="$APP_DIR/.update-version"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
 readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
-manifest_url() { echo "${MATRIX_HOST_BUNDLE_URL%/*}/manifest.json"; }
+platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+default_update_channel() {
+  local channel="${MATRIX_UPDATE_CHANNEL:-}"
+  case "$channel" in
+    stable|canary|beta|dev) echo "$channel"; return 0 ;;
+  esac
+  if [ -f "$RELEASE_FILE" ]; then
+    channel="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('channel',''))" "$RELEASE_FILE" 2>/dev/null || true)"
+    case "$channel" in
+      stable|canary|beta|dev) echo "$channel"; return 0 ;;
+    esac
+  fi
+  echo "stable"
+}
+manifest_url() {
+  local channel
+  channel="$(default_update_channel)"
+  echo "$(platform_url)/system-bundles/channels/${channel}.json"
+}
+release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.json"; }
+release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.json"; }
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
+
+fetch_manifest() {
+  local url="$1" manifest
+  if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
+    log "WARN: failed to fetch release metadata from $url"; return 1
+  fi
+  printf '%s' "$manifest"
+}
+
+prepare_triggered_update() {
+  local url="" target=""
+  if [ -f "$UPDATE_VERSION_FILE" ]; then
+    target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
+    [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
+    url="$(release_url_for_version "$target")"
+  elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
+    target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
+    [ -n "$target" ] || { log "WARN: update channel file is empty"; return 1; }
+    url="$(release_url_for_channel "$target")"
+  elif [ -f "$UPDATE_MARKER" ]; then
+    local manifest remote_version marker_channel
+    manifest="$(cat "$UPDATE_MARKER")"
+    remote_version="$(json_field "$manifest" version)"
+    if [ -z "$remote_version" ]; then
+      log "WARN: prepared release metadata missing 'version' field"; return 1
+    fi
+    marker_channel="$(json_field "$manifest" channel)"
+    log "Prepared requested update target ${marker_channel:-prepared}: $remote_version"
+    return 0
+  else
+    target="$(default_update_channel)"
+    url="$(manifest_url)"
+  fi
+
+  local manifest remote_version
+  manifest="$(fetch_manifest "$url")" || return 1
+  remote_version="$(json_field "$manifest" version)"
+  if [ -z "$remote_version" ]; then
+    log "WARN: release metadata missing 'version' field"; return 1
+  fi
+  if [ ! -f "$UPDATE_VERSION_FILE" ] && [ ! -f "$UPDATE_CHANNEL_FILE" ] && [ "$remote_version" = "$(current_version)" ]; then
+    log "No update available on ${target} — nothing to apply"
+    rm -f "$UPDATE_MARKER"
+    return 1
+  fi
+  echo "$manifest" > "$UPDATE_MARKER"
+  log "Prepared requested update target ${target}: $remote_version"
+}
 
 # ── Poll for updates ─────────────────────────────────────────────────
 check_for_update() {
@@ -124,10 +195,28 @@ apply_update() {
   sudo chown -R matrix:matrix "$APP_DIR"
   echo "$version" | sudo tee "$VERSION_FILE" >/dev/null
   log "Installed app $version"
+  if [ -f "$extract_dir/release.json" ]; then
+    sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
+    log "Updated release metadata"
+  fi
   if [ -d "$extract_dir/bin" ]; then
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
+  fi
+
+  if [ -d "$extract_dir/systemd" ]; then
+    sudo install -d -o root -g root -m 0755 /etc/systemd/system
+    sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
+    sudo systemctl daemon-reload
+    log "Installed systemd units"
+    if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
+      sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
+      sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
+      log "Messaging services enabled"
+    else
+      log "Messaging runtimes missing; units installed but not enabled"
+    fi
   fi
 
   # Start services and health-check
@@ -212,7 +301,16 @@ while true; do
   if [ -f "$UPDATE_TRIGGER" ]; then
     sudo rm -f "$UPDATE_TRIGGER"
     rm -f "$AUTO_APPLY_FAILED_MARKER"
-    apply_update || log "Update failed — will retry on next trigger"
+    if prepare_triggered_update; then
+      if apply_update; then
+        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+      else
+        log "Update failed — will retry on next trigger"
+      fi
+    else
+      log "Requested release metadata fetch failed — skipping apply"
+      rm -f "$UPDATE_MARKER"
+    fi
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
     sudo rm -f "$ROLLBACK_TRIGGER"
@@ -220,7 +318,16 @@ while true; do
   fi
   if [ "$update_requested" = true ]; then
     update_requested=false
-    apply_update || log "Update (via SIGUSR1) failed"
+    if prepare_triggered_update; then
+      if apply_update; then
+        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+      else
+        log "Update (via SIGUSR1) failed — will retry on next trigger"
+      fi
+    else
+      log "Requested release metadata fetch failed — skipping apply"
+      rm -f "$UPDATE_MARKER"
+    fi
   fi
 
   # Poll for new version

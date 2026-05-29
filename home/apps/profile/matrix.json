@@ -1,6 +1,6 @@
 {
   "name": "Profile",
-  "description": "Your public profile page at handle.matrix-os.com",
+  "description": "Your Matrix profile page",
   "runtime": "vite",
   "category": "social",
   "version": "1.0.0",

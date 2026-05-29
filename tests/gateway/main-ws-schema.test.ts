@@ -6,6 +6,7 @@ describe("MainWsClientMessageSchema", () => {
     const result = MainWsClientMessageSchema.safeParse({
       type: "message",
       text: "hello",
+      displayText: "visible hello",
       requestId: "req-1",
     });
 

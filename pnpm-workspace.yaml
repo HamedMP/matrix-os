@@ -5,3 +5,23 @@ packages:
   - "www"
   - "marketing"
   - "marketing/web"
+
+# Delay newly published package versions by 7 days (10,080 minutes) to reduce
+# exposure to short-lived compromised npm releases.
+minimumReleaseAge: 10080
+
+shamefullyHoist: true
+
+# Tests at the workspace root (tests/integrations/*) import packages that
+# are direct dependencies of workspace sub-packages (e.g. hono, @pipedream/sdk,
+# kysely-pglite from packages/gateway). pnpm doesn't hoist workspace-package
+# direct deps to the root by default, even with shamefullyHoist: true, so
+# root-level vitest can't resolve them. publicHoistPattern forces these
+# specific packages into the root node_modules so both the running gateway
+# and the integration test suite see the same module instance, which is
+# also what vi.mock() needs to intercept imports by bare package name.
+publicHoistPattern:
+  - "@pipedream/*"
+  - "hono"
+  - "kysely-pglite"
+  - "@electric-sql/pglite"

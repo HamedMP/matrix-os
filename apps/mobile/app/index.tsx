@@ -1,38 +1,43 @@
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
-import { useGateway } from "./_layout";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 export default function Index() {
-  const { gateway } = useGateway();
   const { isSignedIn } = useAuth();
   const router = useRouter();
+  const redirectedRef = useRef(false);
 
   useEffect(() => {
-    if (gateway || isSignedIn) {
-      router.replace("/(tabs)/chat");
+    if (isSignedIn && !redirectedRef.current) {
+      redirectedRef.current = true;
+      router.replace("/(tabs)/apps" as any);
     }
-  }, [gateway, isSignedIn, router]);
+  }, [isSignedIn, router]);
 
-  if (gateway || isSignedIn) {
+  if (isSignedIn) {
     return null;
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <View style={styles.content}>
         <View style={styles.heroSection}>
           <View style={styles.iconContainer}>
-            <Ionicons name="grid" size={48} color={colors.light.primary} />
+            <Image
+              source={require("../assets/icon.png")}
+              style={styles.logo}
+              contentFit="contain"
+              accessibilityLabel="Matrix OS"
+            />
           </View>
-          <Text style={styles.title}>Matrix OS</Text>
-          <Text style={styles.subtitle}>Your AI operating system</Text>
+          <Text style={styles.wordmark}>MATRIX OS</Text>
+          <Text style={styles.title}>Your AI operating system</Text>
           <Text style={styles.description}>
-            Connect to your Matrix OS gateway to chat with AI, manage tasks, and control your digital life.
+            Native access to your shell, apps, channels, and agent kernel.
           </Text>
         </View>
 
@@ -47,25 +52,14 @@ export default function Index() {
             <Ionicons name="person-circle-outline" size={20} color={colors.light.primaryForeground} />
             <Text style={styles.primaryButtonText}>Sign In</Text>
           </Pressable>
-
-          <Pressable
-            onPress={() => router.push("/connect")}
-            style={({ pressed }) => [
-              styles.secondaryButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Ionicons name="link" size={20} color={colors.light.foreground} />
-            <Text style={styles.secondaryButtonText}>Self-hosted Setup</Text>
-          </Pressable>
         </View>
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>matrix-os.com</Text>
-          <Text style={styles.versionText}>v0.3.0</Text>
+          <Text style={styles.versionText}>v0.1.0 mobile</Text>
         </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -86,22 +80,33 @@ const styles = StyleSheet.create({
   iconContainer: {
     width: 96,
     height: 96,
-    borderRadius: 24,
+    borderRadius: 28,
     borderCurve: "continuous" as const,
     backgroundColor: colors.light.card,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: spacing.xl,
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+    boxShadow: "0 12px 28px rgba(50, 61, 46, 0.10)",
     borderWidth: 1,
     borderColor: colors.light.border,
   },
+  logo: {
+    width: 70,
+    height: 70,
+  },
+  wordmark: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 12,
+    color: colors.light.forest,
+    letterSpacing: 2.6,
+    marginBottom: spacing.lg,
+  },
   title: {
     fontFamily: fonts.sansBold,
-    fontSize: 32,
+    fontSize: 34,
     color: colors.light.foreground,
-    letterSpacing: -0.5,
     marginBottom: spacing.sm,
+    textAlign: "center",
   },
   subtitle: {
     fontFamily: fonts.sansMedium,

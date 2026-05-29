@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { APP_IFRAME_SANDBOX } from "../../shell/src/components/AppViewer.js";
+import {
+  APP_IFRAME_SANDBOX,
+  injectBridgeIntoAppHtml,
+} from "../../shell/src/components/AppViewer.js";
 
 // These tests verify the AppViewer decision logic without rendering React components.
 // The actual AppViewer.tsx modification is tested here by verifying the URL construction
@@ -132,10 +135,20 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
   });
 
   describe("iframe sandbox", () => {
-    it("allows default apps to use same-origin browser APIs", () => {
+    it("keeps app iframes scriptable without granting same-origin escape", () => {
       expect(APP_IFRAME_SANDBOX).toContain("allow-scripts");
-      expect(APP_IFRAME_SANDBOX).toContain("allow-same-origin");
       expect(APP_IFRAME_SANDBOX).toContain("allow-forms");
+      expect(APP_IFRAME_SANDBOX).not.toContain("allow-same-origin");
+    });
+
+    it("injects MatrixOS bridge into srcdoc html without same-origin DOM access", () => {
+      const html = "<!doctype html><html><head><title>Notes</title></head><body><div id=\"root\"></div></body></html>";
+      const result = injectBridgeIntoAppHtml(html, "notes", {}, "/apps/notes/");
+
+      expect(result).toContain('<base href="/apps/notes/">');
+      expect(result).toContain("Content-Security-Policy");
+      expect(result).toContain("window.MatrixOS");
+      expect(result).toContain("os:bridge-fetch");
     });
   });
 });

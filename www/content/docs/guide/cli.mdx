@@ -40,7 +40,7 @@ matrix whoami                # confirms handle, gateway, token expiry
 matrix shell new main        # creates and attaches to your "main" session
 ```
 
-`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell attach main`.
+`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell connect main`.
 
 ## Profiles
 
@@ -76,7 +76,8 @@ matrix shell ls                         # list sessions
 matrix shell new code                   # create + attach
 matrix shell new code --layout dev      # use a saved layout
 matrix shell new agent --cmd "claude"   # spawn an inline command in the session
-matrix shell attach code                # reattach to an existing session
+matrix shell connect code               # reattach to an existing session
+matrix shell connect -c review          # create if missing, then connect
 matrix shell rm code --force            # destroy a session
 ```
 
@@ -132,23 +133,6 @@ Scope sync to a subtree of your instance with `--folder`:
 
 ```bash
 matrix sync ~/work-projects --folder projects
-```
-
-## SSH
-
-`matrix ssh` connects to your instance via the bastion at `ssh.matrix-os.com:2222` and auto-attaches a tmux session.
-
-```bash
-matrix ssh                  # your own instance
-matrix ssh @hamed           # someone else (requires their permission)
-```
-
-Add a public key for SSH access:
-
-```bash
-matrix keys add ~/.ssh/id_ed25519.pub
-matrix keys ls
-matrix keys rm <key-id>
 ```
 
 ## Instance ops
@@ -210,7 +194,9 @@ Disk              ok      23G available
 ## Shell completions
 
 ```bash
-matrix completion
+matrix completion zsh > ~/.zfunc/_matrix
+matrix completion bash > ~/.local/share/bash-completion/completions/matrix
+matrix completion fish > ~/.config/fish/completions/matrix.fish
 ```
 
 ## Troubleshooting
@@ -223,13 +209,13 @@ The sync daemon is installed but not running. Start it with `matrix sync start`.
 
 Your token expired. Run `matrix login` again. Tokens are valid for the duration set by the platform (typically a few hours).
 
-**`matrix shell attach` shows a blank screen**
+**`matrix shell connect` shows a blank screen**
 
 Usually means the zellij session exited on your instance. Check `matrix shell ls` — if the session is in the `exited` state, recreate it with `matrix shell new <name>`.
 
-**`session "foo" not found` when attaching**
+**`session "foo" not found` when connecting**
 
-The session does not exist on your instance. `matrix shell attach` is intentionally strict — it never auto-creates. Use `matrix shell new foo` to create it.
+The session does not exist on your instance. `matrix shell connect` is intentionally strict unless you pass `-c`. Use `matrix shell new foo` or `matrix shell connect -c foo` to create it.
 
 **Local stack returns connection refused**
 

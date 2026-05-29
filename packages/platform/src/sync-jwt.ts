@@ -8,6 +8,7 @@ export interface SyncJwtClaims extends JWTPayload {
   sub: string; // clerkUserId
   handle: string;
   gateway_url: string;
+  runtime_slot?: string;
   aud?: string | string[];
   iat: number;
   exp: number;
@@ -19,6 +20,7 @@ export interface IssueOpts {
   clerkUserId: string;
   handle: string;
   gatewayUrl: string;
+  runtimeSlot?: string;
   expiresInSec?: number;
   now?: number; // epoch seconds; defaults to current time
 }
@@ -56,6 +58,7 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
     sub: opts.clerkUserId,
     handle: opts.handle,
     gateway_url: opts.gatewayUrl,
+    ...(opts.runtimeSlot ? { runtime_slot: opts.runtimeSlot } : {}),
     aud: SYNC_JWT_AUDIENCE,
     iat: now,
     exp,
@@ -94,6 +97,7 @@ export async function verifySyncJwt(
     typeof payload.handle !== 'string' ||
     payload.handle.length === 0 ||
     typeof payload.gateway_url !== 'string' ||
+    (payload.runtime_slot !== undefined && typeof payload.runtime_slot !== 'string') ||
     typeof payload.iat !== 'number' ||
     typeof payload.exp !== 'number'
   ) {

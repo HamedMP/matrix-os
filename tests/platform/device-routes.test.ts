@@ -3,11 +3,12 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 import {
   type PlatformDB,
   insertContainer,
+  insertUserMachine,
 } from "../../packages/platform/src/db.js";
 import { createOrchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
-import { verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
+import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -268,6 +269,66 @@ describe("device routes", () => {
       expect(claims.sub).toBe("user_alice");
       expect(claims.handle).toBe("alice");
     });
+
+    it("returns a token for VPS-native users stored only in user_machines", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_bob",
+        clerkUserId: "user_bob",
+        handle: "bob",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+
+      const approveRes = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-bob",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf,
+        }).toString(),
+      });
+      expect(approveRes.status).toBe(200);
+
+      const tokenRes = await app.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceCode: code.deviceCode,
+          clientId: "matrixos-cli",
+        }),
+      });
+
+      expect(tokenRes.status).toBe(200);
+      const body = await tokenRes.json();
+      expect(body).toMatchObject({
+        accessToken: expect.any(String),
+        userId: "user_bob",
+        handle: "bob",
+        expiresAt: expect.any(Number),
+      });
+
+      const claims = await verifySyncJwt(body.accessToken, { secret: JWT_SECRET });
+      expect(claims.sub).toBe("user_bob");
+      expect(claims.handle).toBe("bob");
+    });
   });
 
   describe("POST /auth/device/approve", () => {
@@ -296,6 +357,46 @@ describe("device routes", () => {
         body: new URLSearchParams({ userCode: code.userCode, csrf }).toString(),
       });
       expect(res.status).toBe(401);
+    });
+
+    it("leaves the device code pending when approval only carries the CSRF cookie", async () => {
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+
+      const approveRes = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({ userCode: code.userCode, csrf }).toString(),
+      });
+      expect(approveRes.status).toBe(401);
+
+      const tokenRes = await app.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceCode: code.deviceCode,
+          clientId: "matrixos-cli",
+        }),
+      });
+      expect(tokenRes.status).toBe(428);
+      await expect(tokenRes.json()).resolves.toEqual({
+        error: "authorization_pending",
+      });
     });
 
     it("rejects with 403 when CSRF cookie does not match form field", async () => {
@@ -377,6 +478,39 @@ describe("device routes", () => {
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
+      const html = await res.text();
+      expect(html).toContain("shell connect -c main");
+      expect(html).toContain("run -it -- claude");
+      expect(html).toContain('id="instance-line"');
+    });
+
+    it("submits approval with an explicit Clerk bearer token", async () => {
+      const res = await app.request("/auth/device?user_code=BCDF-GHJK");
+      const html = await res.text();
+
+      expect(html).toContain("window.Clerk.session.getToken()");
+      expect(html).toContain("Authorization: `Bearer ${token}`");
+      expect(html).toContain("new URLSearchParams");
+      expect(html).toContain("userCode");
+      expect(html).toContain("csrf");
+      expect(html).toContain("if (!window.Clerk) return;");
+      expect(html.indexOf("if (!window.Clerk) return;")).toBeLessThan(
+        html.indexOf("event.preventDefault();"),
+      );
+      expect(html).toContain(
+        '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">',
+      );
+      expect(html).toContain("var html = await res.text();");
+      expect(html.indexOf("var html = await res.text();")).toBeLessThan(
+        html.indexOf("document.open();"),
+      );
+      expect(html).toContain('id="confirm-button"');
+      expect(html).toContain('id="clerk-script"');
+      expect(html).not.toContain('onload="initClerk()"');
+      expect(html).toContain("forceRedirectUrl: approvalUrl");
+      expect(html).toContain("fallbackRedirectUrl: approvalUrl");
+      expect(html).toContain("signUpForceRedirectUrl: approvalUrl");
+      expect(html).not.toContain("afterSignInUrl");
     });
 
     it("escapes the Clerk publishable key in the approval page", async () => {
@@ -439,6 +573,103 @@ describe("device routes", () => {
       const me = await meRes.json();
       expect(me.handle).toBe("alice");
       expect(me.gatewayUrl).toBe("https://app.matrix-os.com");
+    });
+
+    it("resolves /api/me for VPS-native users stored only in user_machines", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_bob",
+        clerkUserId: "user_bob",
+        handle: "bob",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+
+      await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-bob",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf,
+        }).toString(),
+      });
+      const tokenBody = await app
+        .request("/api/auth/device/token", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            deviceCode: code.deviceCode,
+            clientId: "matrixos-cli",
+          }),
+        })
+        .then((r) => r.json());
+
+      const meRes = await app.request("/api/me", {
+        headers: { authorization: `Bearer ${tokenBody.accessToken}` },
+      });
+
+      expect(meRes.status).toBe(200);
+      await expect(meRes.json()).resolves.toMatchObject({
+        userId: "user_bob",
+        handle: "bob",
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+    });
+
+    it("rejects a sync JWT whose subject does not own the claimed container handle", async () => {
+      const issued = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_mallory",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+
+      const res = await app.request("/api/me", {
+        headers: { authorization: `Bearer ${issued.token}` },
+      });
+
+      expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual({ error: "unauthorized" });
+    });
+
+    it("rejects a sync JWT whose subject does not own the claimed VPS-native handle", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_bob",
+        clerkUserId: "user_bob",
+        handle: "bob",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const issued = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_mallory",
+        handle: "bob",
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+
+      const res = await app.request("/api/me", {
+        headers: { authorization: `Bearer ${issued.token}` },
+      });
+
+      expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual({ error: "unauthorized" });
     });
 
     it("returns 401 when Authorization header is missing", async () => {

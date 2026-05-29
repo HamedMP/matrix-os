@@ -16,6 +16,7 @@ import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
+import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -66,6 +67,12 @@ function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: strin
   return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
 }
 
+function displayCwd(cwd: string): string {
+  if (cwd === "projects") return "~/projects";
+  if (cwd.startsWith("projects/")) return `~/${cwd}`;
+  return cwd;
+}
+
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
   | { type: "output"; data: string; seq: number | null }
@@ -74,6 +81,21 @@ type TerminalServerMessage =
   | { type: "replay-end" }
   | { type: "exit"; code: number | null }
   | { type: "error"; message: string };
+
+const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+
+export function isLegacyPtySessionId(sessionId: string): boolean {
+  return LEGACY_PTY_SESSION_ID_PATTERN.test(sessionId);
+}
+
+export function isCanonicalShellSessionId(sessionId: string): boolean {
+  return CANONICAL_SHELL_SESSION_NAME_PATTERN.test(sessionId);
+}
+
+export function terminalWebSocketPathForSession(sessionId: string | null): "/ws/terminal" | "/ws/terminal/session" {
+  return sessionId && isCanonicalShellSessionId(sessionId) ? "/ws/terminal/session" : "/ws/terminal";
+}
 
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -97,16 +119,22 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
 
   const msg = parsed as Record<string, unknown>;
   switch (msg.type) {
-    case "attached":
-      if (typeof msg.sessionId !== "string" || (msg.state !== "running" && msg.state !== "exited")) {
+    case "attached": {
+      const sessionId = typeof msg.sessionId === "string"
+        ? msg.sessionId
+        : typeof msg.session === "string"
+          ? msg.session
+          : null;
+      if (!sessionId || (msg.state !== "running" && msg.state !== "exited")) {
         return null;
       }
       return {
         type: "attached",
-        sessionId: msg.sessionId,
+        sessionId,
         state: msg.state,
         exitCode: toFiniteNumber(msg.exitCode),
       };
+    }
     case "output":
       if (typeof msg.data !== "string") {
         return null;
@@ -277,6 +305,7 @@ export function TerminalPane({
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
+    (termRef.current as { focus?: () => void } | null)?.focus?.();
   }, [paneId, onFocus]);
 
   useEffect(() => {
@@ -288,6 +317,22 @@ export function TerminalPane({
       sessionIdRef.current = initialSessionId;
     }
   }, [initialSessionId]);
+
+  // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
+  // window event with the target paneId; we forward to this pane's PTY if it
+  // matches.
+  useEffect(() => {
+    const onKey = (e: Event) => {
+      const detail = (e as CustomEvent<TerminalInputEventDetail>).detail;
+      if (!detail || detail.paneId !== paneId) return;
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data: detail.data }));
+      }
+    };
+    window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
+    return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
+  }, [paneId]);
 
   useEffect(() => {
     let disposed = false;
@@ -353,45 +398,31 @@ export function TerminalPane({
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
 
-      const attachWebglContextLostHandler = () => {
-        detachWebglContextLostHandler();
-        const canvas = container.querySelector("canvas");
-        if (!(canvas instanceof HTMLCanvasElement)) {
+      const refitAndFocus = () => {
+        if (disposed) {
           return;
         }
-
-        const onWebglContextLost = async () => {
-          if (disposed) {
-            return;
+        try {
+          fitAddon.fit();
+          if (isFocusedRef.current) {
+            term.focus();
           }
+        } catch (err: unknown) {
+          log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
+        }
+      };
 
-          try {
-            (webglAddon as { dispose?: () => void } | null)?.dispose?.();
-          } catch (_err: unknown) {
-            // Ignore disposal errors and fall back to 2D rendering.
-          }
-
-          try {
-            const { WebglAddon } = await import("@xterm/addon-webgl");
-            if (disposed) {
-              return;
-            }
-            const nextWebglAddon = new WebglAddon();
-            term.loadAddon(nextWebglAddon);
-            webglAddon = nextWebglAddon;
-          } catch (_err: unknown) {
-            // Canvas 2D fallback is acceptable if WebGL re-init fails.
-          }
-        };
-
-        webglCanvasRef.current = canvas;
-        webglContextLostHandlerRef.current = onWebglContextLost;
-        canvas.addEventListener("webglcontextlost", onWebglContextLost);
+      const scheduleStableFit = () => {
+        requestAnimationFrame(refitAndFocus);
+        window.setTimeout(refitAndFocus, 80);
+        window.setTimeout(refitAndFocus, 250);
       };
 
       if (canReuseCachedTerminal && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
         if (termElement) {
+          termElement.style.width = "100%";
+          termElement.style.height = "100%";
           container.appendChild(termElement);
         }
         term = cached.terminal;
@@ -405,6 +436,7 @@ export function TerminalPane({
         wsRef.current = cached.ws;
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
+        scheduleStableFit();
       } else {
         // Cache miss — create fresh terminal
         const { Terminal: XTerm } = await import("@xterm/xterm");
@@ -435,6 +467,8 @@ export function TerminalPane({
         xterm.open(container);
         const xtermElement = (xterm as { element?: HTMLElement }).element;
         if (xtermElement) {
+          xtermElement.style.width = "100%";
+          xtermElement.style.height = "100%";
           xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
         }
         nextFitAddon.fit();
@@ -443,14 +477,7 @@ export function TerminalPane({
         fitAddon = nextFitAddon;
         termRef.current = xterm;
         fitAddonRef.current = nextFitAddon;
-
-        // WebGL addon
-        try {
-          const { WebglAddon } = await import("@xterm/addon-webgl");
-          const addon = new WebglAddon();
-          xterm.loadAddon(addon);
-          webglAddon = addon;
-        } catch (_e: unknown) { /* canvas 2D fallback */ }
+        scheduleStableFit();
 
         // Search addon
         try {
@@ -537,7 +564,6 @@ export function TerminalPane({
         }
       }
 
-      attachWebglContextLostHandler();
       if (isFocusedRef.current) {
         requestAnimationFrame(() => {
           if (!disposed) {
@@ -554,16 +580,22 @@ export function TerminalPane({
         });
 
         const sendAttach = () => {
-          const attachMode = sessionIdRef.current ? "reattach" : "create";
+          const currentSessionId = sessionIdRef.current;
+          const isCanonicalShellSession = Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
+          const attachMode = currentSessionId ? (isCanonicalShellSession ? "canonical" : "reattach") : "create";
           log("send-attach", {
             attachMode,
-            attachSessionId: sessionIdRef.current,
+            attachSessionId: currentSessionId,
             fromSeq: lastSeqRef.current,
           });
-          if (sessionIdRef.current) {
+          if (isCanonicalShellSession) {
+            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            return;
+          }
+          if (currentSessionId) {
             ws.send(JSON.stringify({
               type: "attach",
-              sessionId: sessionIdRef.current,
+              sessionId: currentSessionId,
               fromSeq: lastSeqRef.current,
             }));
           } else {
@@ -752,7 +784,7 @@ export function TerminalPane({
             case "error": {
               const safeMsg = stripTerminalControls(msg.message);
               log("server-error", { message: safeMsg });
-              if (safeMsg === "Session not found" && sessionIdRef.current) {
+              if (safeMsg === "Session not found" && sessionIdRef.current && isLegacyPtySessionId(sessionIdRef.current)) {
                 log("session-not-found-reset");
                 sessionIdRef.current = null;
                 lastSeqRef.current = 0;
@@ -773,25 +805,34 @@ export function TerminalPane({
       }
 
       function connectWs() {
-        const query =
-          sessionIdRef.current || !cwd
+        const currentSessionId = sessionIdRef.current;
+        const wsPath = terminalWebSocketPathForSession(currentSessionId);
+        const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
+          ? { session: currentSessionId, fromSeq: String(lastSeqRef.current) }
+          : currentSessionId || !cwd
             ? undefined
             : { cwd };
+        const queryCwd = query && "cwd" in query ? query.cwd : null;
+        const querySession = query && "session" in query ? query.session : null;
         log("connect-ws", {
-          queryCwd: query?.cwd ?? null,
+          wsPath,
+          queryCwd,
+          querySession,
           reconnectAttempt: reconnectAttemptRef.current,
         });
 
-        void buildAuthenticatedWebSocketUrl("/ws/terminal", {
-          cwd: query?.cwd,
-        })
+        void buildAuthenticatedWebSocketUrl(wsPath, query)
           .catch((err: unknown) => {
             console.warn(
               "[terminal] Falling back to unauthenticated terminal websocket URL:",
               err instanceof Error ? err.message : err,
             );
-            const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
-            return query?.cwd ? `${baseWs}?cwd=${encodeURIComponent(query.cwd)}` : baseWs;
+            const baseWs = getGatewayWs().replace("/ws", wsPath);
+            const url = new URL(baseWs);
+            for (const [key, value] of Object.entries(query ?? {})) {
+              if (value) url.searchParams.set(key, value);
+            }
+            return url.toString();
           })
           .then((wsUrl) => {
             if (disposed || isClosingRef.current) {
@@ -931,7 +972,7 @@ export function TerminalPane({
       });
 
       const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit();
+        requestAnimationFrame(refitAndFocus);
       });
       resizeObserver.observe(container);
 
@@ -1059,8 +1100,24 @@ export function TerminalPane({
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
       }}
+      onPointerDown={handleFocus}
       onClick={handleFocus}
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-2 top-1 z-10 flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] leading-none text-foreground shadow-sm backdrop-blur-sm"
+      >
+        <span>{displayCwd(cwd)}</span>
+        <span
+          className={isFocused ? "opacity-100" : "opacity-45"}
+          style={{
+            display: "inline-block",
+            width: 5,
+            height: 10,
+            background: "currentColor",
+          }}
+        />
+      </div>
       {authUrl && (
         <div
           style={{

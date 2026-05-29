@@ -53,6 +53,7 @@ interface WindowManagerState {
       default sort when the user hasn't manually reordered. In-memory only
       for now -- survives navigation but not full reload. */
   appLaunchTimes: Record<string, number>;
+  fullscreenWindowId: string | null;
 }
 
 interface WindowManagerActions {
@@ -72,6 +73,8 @@ interface WindowManagerActions {
   setWindows: (updater: AppWindow[] | ((prev: AppWindow[]) => AppWindow[])) => void;
   setApps: (updater: AppEntry[] | ((prev: AppEntry[]) => AppEntry[])) => void;
   cascadeWindows: (startX: number, startY: number, gap: number) => void;
+  toggleFullscreen: (id: string) => void;
+  exitFullscreen: () => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -106,9 +109,9 @@ function debouncedSave(state: WindowManagerState) {
     }
 
     fetch(`${gatewayUrl}/api/layout`, {
+      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
       body: JSON.stringify({ windows: layoutWindows }),
     }).catch((err: unknown) => {
       console.warn("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
@@ -151,6 +154,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     apps: [],
     focusedWindowId: null,
     appLaunchTimes: {},
+    fullscreenWindowId: null,
 
     openWindow: (name, path, dockXOffset) => {
       set((state) => {
@@ -242,6 +246,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           closedPaths: newClosed,
           closedLayouts: newLayouts,
           focusedWindowId: state.focusedWindowId === id ? null : state.focusedWindowId,
+          fullscreenWindowId: state.fullscreenWindowId === id ? null : state.fullscreenWindowId,
         };
       });
     },
@@ -387,6 +392,17 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           y: startY + i * gap,
         })),
       }));
+    },
+
+    toggleFullscreen: (id) => {
+      set((state) => ({
+        fullscreenWindowId: state.fullscreenWindowId === id ? null : id,
+        focusedWindowId: id,
+      }));
+    },
+
+    exitFullscreen: () => {
+      set({ fullscreenWindowId: null });
     },
   })),
 );

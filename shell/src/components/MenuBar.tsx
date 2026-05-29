@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
-import { SearchIcon, UserIcon } from "lucide-react";
+import { SearchIcon, ServerIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
@@ -56,9 +56,14 @@ function MenuBarClock() {
 }
 
 function MenuBarUser() {
+  const [mounted, setMounted] = useState(false);
   const { isLoaded, isSignedIn } = useAuth();
 
-  if (!isLoaded || !isSignedIn) {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted || !isLoaded || !isSignedIn) {
     return (
       <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
         <UserIcon className="size-[14px] text-foreground/70" />
@@ -76,7 +81,15 @@ function MenuBarUser() {
           },
         }}
         afterSignOutUrl="https://app.matrix-os.com/sign-in"
-      />
+      >
+        <ClerkUserButton.MenuItems>
+          <ClerkUserButton.Link
+            label="Switch computer"
+            labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
+            href="/runtime"
+          />
+        </ClerkUserButton.MenuItems>
+      </ClerkUserButton>
     </div>
   );
 }
@@ -184,7 +197,6 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   const openAppSettings = useCallback(() => {
     setAppSettingsOpen(true);
   }, []);
-
   const appItems: MenuEntry[] = [
     { label: "Settings…", shortcut: "⌘,", action: openAppSettings },
   ];
@@ -209,7 +221,12 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
       if (sel?.toString()) await navigator.clipboard.writeText(sel.toString());
     }},
     { label: "Paste", shortcut: "⌘V", action: async () => {
-      try { const text = await navigator.clipboard.readText(); document.execCommand("insertText", false, text); } catch { /* denied */ }
+      try {
+        const text = await navigator.clipboard.readText();
+        document.execCommand("insertText", false, text);
+      } catch (err: unknown) {
+        console.warn("[menu] Clipboard paste was denied or unavailable:", err);
+      }
     }},
     { separator: true },
     { label: "Select All", shortcut: "⌘A", action: () => document.execCommand("selectAll") },
@@ -224,8 +241,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
     { separator: true },
     { label: "Enter Full Screen", shortcut: "⌃⌘F", action: () => {
       if (!focusedWindow) return;
-      const el = document.querySelector(`[data-window-id="${focusedWindow.id}"]`) as HTMLElement | null;
-      if (el) el.requestFullscreen?.();
+      useWindowManager.getState().toggleFullscreen(focusedWindow.id);
     }},
     { separator: true },
     { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },

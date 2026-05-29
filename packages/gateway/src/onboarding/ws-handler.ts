@@ -2,7 +2,13 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createStateMachine, type StateMachineSnapshot } from "./state-machine.js";
-import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "./gemini-live.js";
+import {
+  createGeminiLiveClient,
+  hasGeminiLiveConnection,
+  type GeminiLiveClient,
+  type GeminiEvent,
+  type GeminiLiveConnection,
+} from "./gemini-live.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "./api-key.js";
 import {
   MAX_AUDIO_SESSION_BYTES,
@@ -13,12 +19,17 @@ import {
   type OnboardingStage,
   type OnboardingState,
 } from "./types.js";
+import type { OnboardingGoalId } from "./activation-contracts.js";
+import { stepsForGoals, type ReadinessService } from "./readiness-service.js";
 import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {
   homePath: string;
-  geminiApiKey: string;
+  geminiApiKey?: string;
+  geminiConnection?: GeminiLiveConnection;
   geminiModel: string;
+  readinessService?: Pick<ReadinessService, "getReadiness" | "selectGoals">;
+  ownerId?: string;
 }
 
 type SendFn = (msg: GatewayToShell) => void;
@@ -52,6 +63,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   let audioMode = false;
   let toolCallThisTurn = false;
   let audioBytesReceived = 0;
+  let goalSelectionQueue = Promise.resolve();
   const profileBuilder = createProfileBuilder();
 
   async function isOnboardingComplete(): Promise<boolean> {
@@ -246,14 +258,16 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       });
     }
 
-    console.log("[onboarding] Sending stage:", sm.current, "audioMode:", audioMode, "hasKey:", !!deps.geminiApiKey);
+    const geminiConnection = deps.geminiConnection ?? deps.geminiApiKey ?? "";
+    const hasVoiceConnection = hasGeminiLiveConnection(geminiConnection);
+    console.log("[onboarding] Sending stage:", sm.current, "audioMode:", audioMode, "hasVoiceConnection:", hasVoiceConnection);
     send({ type: "stage", stage: sm.current, audioSource: audioMode ? "gemini_live" : undefined });
 
-    if (audioMode && deps.geminiApiKey) {
+    if (audioMode && hasVoiceConnection) {
       let client: GeminiLiveClient | null = null;
       try {
         console.log("[onboarding] Connecting to Gemini Live...");
-        client = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel);
+        client = createGeminiLiveClient(geminiConnection, deps.geminiModel);
         gemini = client;
         setupGeminiHandlers(client);
         await client.connect();
@@ -272,7 +286,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         audioMode = false;
       }
     } else {
-      console.log("[onboarding] No voice mode — geminiApiKey:", deps.geminiApiKey ? "set" : "MISSING");
+      console.log("[onboarding] No voice mode — Gemini Live connection:", hasVoiceConnection ? "set" : "MISSING");
       audioMode = false;
       send({ type: "mode_change", mode: "text" });
     }
@@ -323,8 +337,22 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         // Text mode: could use Gemini REST for chat (future)
         break;
 
+      case "select_goal":
+        await handleSelectGoal(msg.goalId);
+        break;
+
+      // Deferred scope: durable step completion, retries, and capability
+      // approvals are handled by REST routes in the paid beta flow. The
+      // websocket only carries the legacy voice interview until those
+      // mutations are intentionally promoted into realtime commands.
+      case "complete_step":
+      case "skip_step":
+      case "retry_gate":
+      case "approve_capability":
+        break;
+
       case "choose_activation":
-        if (msg.path === "claude_code") {
+        if (msg.path === "claude_code" || msg.path === "hermes" || msg.path === "codex") {
           sm.transition("done");
           await writeComplete();
           await saveState();
@@ -389,6 +417,40 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       }
       default:
         return null;
+    }
+  }
+
+  async function handleSelectGoal(goalId: OnboardingGoalId): Promise<void> {
+    const queued = goalSelectionQueue.then(
+      () => persistSelectGoal(goalId),
+      () => persistSelectGoal(goalId),
+    );
+    goalSelectionQueue = queued.catch((err: unknown) => {
+      console.warn("[onboarding] goal selection queue failed:", err instanceof Error ? err.message : String(err));
+      return undefined;
+    });
+    await queued;
+  }
+
+  async function persistSelectGoal(goalId: OnboardingGoalId): Promise<void> {
+    try {
+      const selectedGoalIds = deps.readinessService && deps.ownerId
+        ? (await deps.readinessService.getReadiness(deps.ownerId)).goals
+          .filter((goal) => goal.selected)
+          .map((goal) => goal.id)
+        : [];
+      const nextGoalIds = Array.from(new Set([...selectedGoalIds, goalId]));
+      const persisted = deps.readinessService && deps.ownerId
+        ? await deps.readinessService.selectGoals(deps.ownerId, nextGoalIds)
+        : null;
+      send({
+        type: "goal_selected",
+        goalId,
+        steps: persisted?.steps ?? stepsForGoals(nextGoalIds),
+      });
+    } catch (err: unknown) {
+      console.warn("[onboarding] select_goal persistence failed:", err instanceof Error ? err.message : String(err));
+      send({ type: "error", code: "internal", stage: sm.current, message: "Could not update setup goal", retryable: true });
     }
   }
 

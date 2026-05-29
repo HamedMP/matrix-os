@@ -112,7 +112,7 @@
 - [x] T039 [US2] Implement IPC server in `packages/sync-client/src/daemon/ipc-server.ts` (Unix socket at ~/.matrixos/daemon.sock, newline-delimited JSON protocol, handle status/pause/resume/peers commands from CLI, PID file at ~/.matrixos/daemon.pid)
 - [x] T040 [US2] Implement daemon entry point in `packages/sync-client/src/daemon/index.ts` (initialize pino logger with pino-roll rotation 10MB/5 files to ~/.matrixos/logs/sync.log, start IPC server, start WS client, start file watcher, initial sync: fetch manifest -> download all files -> begin watching, graceful shutdown on SIGTERM/SIGINT)
 - [x] T041 [US2] Implement launchd/systemd service file generation in `packages/sync-client/src/daemon/service.ts` (macOS: write plist to ~/Library/LaunchAgents/com.matrixos.sync.plist with KeepAlive, Linux: write unit to ~/.config/systemd/user/matrixos-sync.service with Restart=on-failure, start/stop/enable commands)
-- [x] T042 [US2] Implement CLI entry point with citty in `packages/sync-client/src/cli/index.ts` (main command: matrixos, subcommands: login, logout, sync, peers, keys, ssh)
+- [x] T042 [US2] Implement CLI entry point with citty in `packages/sync-client/src/cli/index.ts` (main command: matrixos, subcommands: login, logout, sync, peers, shell, profile, whoami, status, doctor, instance, completion)
 - [~] T043 [P] [US2] Implement `matrixos login` command in `packages/sync-client/src/cli/commands/login.ts` (invoke OAuth device flow, store token, print success) -- file exists but fails at runtime; needs Phase 9 server endpoints. Workaround: stub `~/.matrixos/auth.json` per `docs/dev/sync-testing.md`.
 - [x] T044 [P] [US2] Implement `matrixos logout` command in `packages/sync-client/src/cli/commands/logout.ts` (clear auth.json, stop daemon if running)
 - [x] T045 [US2] Implement `matrixos sync` command in `packages/sync-client/src/cli/commands/sync.ts` (positional path arg default ~/matrixos, subcommands: status/pause/resume, start daemon or send IPC command, write service file + enable on first run) -- citty subcommand routing fix applied (parent `run` guards against subcommand names)
@@ -148,25 +148,25 @@
 
 ---
 
-## Phase 6: User Story 4 -- Remote Access / SSH (Priority: P4)
+## Phase 6: User Story 4 -- Shell Access (Priority: P4)
 
-**Goal**: SSH into cloud Matrix OS instances. SSH key management via CLI. Shared tmux sessions between web terminal and SSH.
+**Goal**: Attach to cloud Matrix OS shell sessions through the authenticated gateway terminal WebSocket. `matrixos shell` is the supported CLI terminal path.
 
-**Independent Test**: Run `matrixos keys add ~/.ssh/id_ed25519.pub`, then `matrixos ssh` connects to cloud instance. Open web shell, start tmux -- SSH session attaches to same tmux.
+**Independent Test**: Run `matrixos shell new main`, then `matrixos shell attach main` connects to the same zellij-backed session visible from Matrix shell surfaces.
 
 **Depends on**: Phase 4 (US2) for auth
 
 ### Tests for US4
 
-- [x] T055 [P] [US4] Unit tests for SSH key management in `packages/sync-client/tests/unit/keys.test.ts` (parse public key, validate key format, write to ~/system/authorized_keys, reject invalid keys)
+- [x] T055 [P] [US4] Unit tests for shell command routing and attach behavior in `tests/cli/shell.test.ts` and `tests/cli/shell-client.test.ts`
 
 ### Implementation for US4
 
-- [x] T056 [US4] Implement `matrixos keys add` command in `packages/sync-client/src/cli/commands/keys.ts` (read public key file, validate format, POST to gateway or write to ~/system/authorized_keys via sync)
-- [x] T057 [US4] Implement `matrixos ssh` command in `packages/sync-client/src/cli/commands/ssh.ts` (resolve handle to container host:port via platform API, spawn ssh process to ssh.matrix-os.com:2222, pass through stdio, optional handle argument for shared instances)
-- [x] T058 [US4] Document container-side sshd setup in `specs/066-file-sync/ssh-setup.md` (OpenSSH config for port 2222, authorized_keys sync from ~/system/authorized_keys, tmux auto-attach, platform proxy routing)
+- [x] T056 [US4] Implement `matrixos shell` command namespace in `packages/sync-client/src/cli/commands/shell.ts`
+- [x] T057 [US4] Implement gateway zellij shell routes and terminal WebSocket attach flow
+- [x] T058 [US4] Document the CLI shell flow in `www/content/docs/guide/cli.mdx`
 
-**Checkpoint**: SSH into cloud instance works. Keys managed via CLI. tmux sessions shared.
+**Checkpoint**: CLI shell attach works through zellij sessions. SSH-backed CLI access is not part of the supported surface.
 
 ---
 
@@ -446,7 +446,7 @@ Task: T042 "CLI entry" -> T043 "login" + T044 "logout" + T046 "peers" (parallel)
 2. Phase 3 (US1): Gateway sync API works (MVP!)
 3. Phase 4 (US2): CLI + daemon make it usable for real sync workflows
 4. Phase 5 (US3): Sharing adds collaboration
-5. Phase 6 (US4): SSH adds remote access
+5. Phase 6 (US4): Shell access adds authenticated terminal attach
 6. Phase 7 (US5): Menu bar app adds native macOS UX
 7. Each phase adds value without breaking previous phases
 

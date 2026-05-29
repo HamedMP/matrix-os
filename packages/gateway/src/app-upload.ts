@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { mkdirSync, existsSync, rmSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve, relative } from "node:path";
 import { AppManifestSchema } from "./app-manifest.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
@@ -26,6 +26,18 @@ function slugify(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function resolveUploadPath(appDir: string, filePath: string): string | null {
+  if (filePath === "" || filePath.startsWith("/") || filePath.includes("\0")) {
+    return null;
+  }
+  const resolved = resolve(appDir, filePath);
+  const rel = relative(appDir, resolved);
+  if (rel === "" || rel.startsWith("..")) {
+    return null;
+  }
+  return resolved;
 }
 
 export function handleAppUpload(
@@ -70,14 +82,21 @@ export function handleAppUpload(
 
   const appsDir = join(homePath, "apps");
   const appDir = join(appsDir, slug);
+  const resolvedFiles: Array<{ fullPath: string; content: string }> = [];
+  for (const [path, content] of Object.entries(files)) {
+    const fullPath = resolveUploadPath(appDir, path);
+    if (!fullPath) {
+      return { success: false, error: `Invalid upload path: ${path}` };
+    }
+    resolvedFiles.push({ fullPath, content });
+  }
 
   if (existsSync(appDir)) {
     rmSync(appDir, { recursive: true, force: true });
   }
   mkdirSync(appDir, { recursive: true });
 
-  for (const [path, content] of Object.entries(files)) {
-    const fullPath = join(appDir, path);
+  for (const { fullPath, content } of resolvedFiles) {
     const dir = dirname(fullPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });

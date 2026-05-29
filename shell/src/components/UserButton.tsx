@@ -1,12 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserIcon } from "lucide-react";
+import { ServerIcon, UserIcon } from "lucide-react";
 
 function Placeholder() {
   return (
@@ -24,6 +25,20 @@ function Placeholder() {
 }
 
 export function UserButton() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return <Placeholder />;
+  }
+
+  return <MountedUserButton />;
+}
+
+function MountedUserButton() {
   const { isLoaded, isSignedIn } = useAuth();
 
   if (!isLoaded || !isSignedIn) {
@@ -39,6 +54,14 @@ export function UserButton() {
         },
       }}
       afterSignOutUrl="https://app.matrix-os.com/sign-in"
-    />
+    >
+      <ClerkUserButton.MenuItems>
+        <ClerkUserButton.Link
+          label="Switch computer"
+          labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
+          href="/runtime"
+        />
+      </ClerkUserButton.MenuItems>
+    </ClerkUserButton>
   );
 }

@@ -21,6 +21,15 @@ export function capturePostHogException(error: unknown, properties: ClientProper
   }
 }
 
+export function capturePostHogEvent(event: string, properties: ClientProperties = {}) {
+  if (!config) return;
+  try {
+    posthog.capture(event, sanitizeProperties(properties));
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to capture client event:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
 function sanitizeProperties(properties: ClientProperties): Record<string, string | number | boolean> {
   const sanitized: Record<string, string | number | boolean> = {};
   for (const [key, value] of Object.entries(properties)) {

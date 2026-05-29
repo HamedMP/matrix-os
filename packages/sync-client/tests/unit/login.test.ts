@@ -2,15 +2,36 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // These mocks intercept the filesystem + device-flow side effects so we can
 // assert exactly which auth/config writes happen for each `/api/me` outcome.
-const clearAuthMock = vi.fn().mockResolvedValue(undefined);
-const saveAuthMock = vi.fn().mockResolvedValue(undefined);
-const saveConfigMock = vi.fn().mockResolvedValue(undefined);
-const loadConfigMock = vi.fn().mockResolvedValue(null);
-const loginFn = vi.fn();
+const {
+  clearProfileAuthMock,
+  saveProfileAuthMock,
+  saveConfigMock,
+  loadConfigMock,
+  loadProfilesMock,
+  saveProfilesMock,
+  loginFn,
+} = vi.hoisted(() => ({
+  clearProfileAuthMock: vi.fn().mockResolvedValue(undefined),
+  saveProfileAuthMock: vi.fn().mockResolvedValue(undefined),
+  saveConfigMock: vi.fn().mockResolvedValue(undefined),
+  loadConfigMock: vi.fn().mockResolvedValue(null),
+  loadProfilesMock: vi.fn().mockResolvedValue({
+    active: "cloud",
+    profiles: {
+      cloud: {
+        platformUrl: "https://platform.example",
+        gatewayUrl: "https://gateway.example",
+      },
+    },
+  }),
+  saveProfilesMock: vi.fn().mockResolvedValue(undefined),
+  loginFn: vi.fn(),
+}));
 
 vi.mock("../../src/auth/token-store.js", () => ({
-  clearAuth: clearAuthMock,
-  saveAuth: saveAuthMock,
+  authFilePathForProfile: (profileName: string) => `/tmp/${profileName}/auth.json`,
+  clearProfileAuth: clearProfileAuthMock,
+  saveProfileAuth: saveProfileAuthMock,
 }));
 
 vi.mock("../../src/auth/oauth.js", () => ({
@@ -24,6 +45,11 @@ vi.mock("../../src/lib/config.js", () => ({
   generatePeerId: () => "peer-test",
   loadConfig: loadConfigMock,
   saveConfig: saveConfigMock,
+}));
+
+vi.mock("../../src/lib/profiles.js", () => ({
+  loadProfiles: loadProfilesMock,
+  saveProfiles: saveProfilesMock,
 }));
 
 const PLATFORM_URL = "https://platform.example";
@@ -41,10 +67,12 @@ async function runLogin(): Promise<void> {
 }
 
 beforeEach(() => {
-  clearAuthMock.mockClear();
-  saveAuthMock.mockClear();
+  clearProfileAuthMock.mockClear();
+  saveProfileAuthMock.mockClear();
   saveConfigMock.mockClear();
   loadConfigMock.mockClear();
+  loadProfilesMock.mockClear();
+  saveProfilesMock.mockClear();
   loginFn.mockReset();
   loginFn.mockResolvedValue(AUTH);
   vi.resetModules();
@@ -69,7 +97,8 @@ describe("loginCommand /api/me handling", () => {
     await runLogin();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(clearAuthMock).toHaveBeenCalledTimes(1);
+    expect(clearProfileAuthMock).toHaveBeenCalledTimes(1);
+    expect(clearProfileAuthMock).toHaveBeenCalledWith("cloud");
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
@@ -83,7 +112,7 @@ describe("loginCommand /api/me handling", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // Critical: auth token stays on disk so user can retry after transient fix.
-    expect(clearAuthMock).not.toHaveBeenCalled();
+    expect(clearProfileAuthMock).not.toHaveBeenCalled();
     // Critical: no half-provisioned config with a guessed gatewayUrl.
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
@@ -95,7 +124,7 @@ describe("loginCommand /api/me handling", () => {
     await runLogin();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(clearAuthMock).not.toHaveBeenCalled();
+    expect(clearProfileAuthMock).not.toHaveBeenCalled();
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
@@ -107,7 +136,7 @@ describe("loginCommand /api/me handling", () => {
 
     await runLogin();
 
-    expect(clearAuthMock).not.toHaveBeenCalled();
+    expect(clearProfileAuthMock).not.toHaveBeenCalled();
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
@@ -145,7 +174,7 @@ describe("loginCommand /api/me handling", () => {
 
     await runLogin();
 
-    expect(clearAuthMock).not.toHaveBeenCalled();
+    expect(clearProfileAuthMock).not.toHaveBeenCalled();
     expect(saveConfigMock).toHaveBeenCalledTimes(1);
     const written = saveConfigMock.mock.calls[0]![0];
     expect(written.platformUrl).toBe(PLATFORM_URL);

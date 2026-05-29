@@ -1,0 +1,327 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f6f7f9;
+  color: #17202a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button {
+  font: inherit;
+}
+
+.messages-app {
+  min-height: 100vh;
+  padding: 24px;
+  background: #f6f7f9;
+  color: #17202a;
+}
+
+.messages-topbar,
+.section-title,
+.network-heading,
+.conversation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.messages-topbar {
+  margin-bottom: 24px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 17px;
+}
+
+h3 {
+  font-size: 15px;
+}
+
+p,
+time {
+  color: #667085;
+  font-size: 13px;
+}
+
+.icon-button,
+.primary-button,
+.segmented button {
+  border: 1px solid #d0d5dd;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+.primary-button {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 8px;
+  font-weight: 650;
+}
+
+.primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.network-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.network-card,
+.setup-panel,
+.conversation-section,
+.notice {
+  border: 1px solid #d0d5dd;
+  background: #ffffff;
+  border-radius: 8px;
+}
+
+.network-card {
+  display: grid;
+  gap: 18px;
+  padding: 16px;
+}
+
+.network-card.blue {
+  border-top: 4px solid #2f80ed;
+}
+
+.network-card.green {
+  border-top: 4px solid #16a163;
+}
+
+.status-pill {
+  border-radius: 999px;
+  border: 1px solid #d0d5dd;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 8px;
+}
+
+.status-pill.connected {
+  border-color: #a6d8be;
+  color: #087443;
+  background: #effaf4;
+}
+
+.notice {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-color: #f3b0a2;
+  background: #fff4f0;
+}
+
+.notice span {
+  color: #7a2e20;
+  font-size: 13px;
+}
+
+.setup-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.setup-panel code,
+.setup-panel a {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: #111827;
+  color: #f8fafc;
+  padding: 12px;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.conversation-section {
+  padding: 16px;
+}
+
+.section-title {
+  margin-bottom: 12px;
+}
+
+.segmented {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #f2f4f7;
+}
+
+.segmented button {
+  min-width: 76px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.segmented button.active {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 10%);
+}
+
+.empty-state {
+  display: grid;
+  min-height: 140px;
+  place-items: center;
+  border: 1px dashed #d0d5dd;
+  border-radius: 8px;
+  color: #667085;
+  font-size: 14px;
+}
+
+.conversation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.conversation-row,
+.draft-row {
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  background: #fcfcfd;
+}
+
+.draft-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conversation-row > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.network-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.network-dot.blue {
+  background: #2f80ed;
+}
+
+.network-dot.green {
+  background: #16a163;
+}
+
+.permission-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.permission-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #344054;
+  font-size: 12px;
+}
+
+.permission-toggles input {
+  width: 14px;
+  height: 14px;
+}
+
+.drafts-section {
+  margin-top: 16px;
+}
+
+.automation-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.automation-create label {
+  display: grid;
+  gap: 5px;
+  color: #344054;
+  font-size: 12px;
+}
+
+.automation-create input {
+  min-height: 38px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+@media (max-width: 640px) {
+  .automation-create {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .messages-app {
+    padding: 16px;
+  }
+
+  .messages-topbar,
+  .section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .segmented {
+    width: 100%;
+  }
+
+  .segmented button {
+    min-width: 0;
+  }
+}

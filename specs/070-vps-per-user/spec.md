@@ -39,7 +39,7 @@ This is the architecture Matrix OS has been pointing at since the "personal clou
 
 ```
 Cloudflare DNS
-   {handle}.matrix-os.com -> tunnel -> control-plane VPS
+   app.matrix-os.com / code.matrix-os.com -> tunnel -> control-plane VPS
 
 Control-plane VPS (this box, Hetzner project "matrix-os-infra")
    platform:9000      orchestrator, provisioner, router
@@ -279,9 +279,9 @@ Once we have ~10+ customer VPSes this becomes painful and we add an in-place upd
 **Phase 1.1 — host services + routing**
 - Bundle the gateway + shell into a tarball published to R2 by CI on each main merge.
 - Cloud-init pulls and installs as systemd units.
-- Subdomain router branch in `profile-routing.ts`.
+- Session router branch for `app.matrix-os.com` / `code.matrix-os.com`.
 - TLS via Let's Encrypt on first boot.
-- End-to-end test: provisioned VPS responds at `{handle}.matrix-os.com`.
+- End-to-end test: provisioned VPS is reachable through `app.matrix-os.com` for the authenticated user.
 
 **Phase 1.2 — R2 sync + DB backup**
 - Sync agent systemd unit, restore-or-fresh boot logic.
@@ -314,4 +314,4 @@ After phase 1 stabilizes, phase 2 (separate spec) covers idle suspend, R2-then-d
 - **R2 sync correctness is load-bearing.** Phase 1 doesn't delete anything, so the worst case here is "data not yet uploaded when VPS dies." Mitigated by hourly DB backups + continuous file sync. Become much more dangerous in phase 2 when delete-after-sync is real.
 - **Cloud-init drift.** A `apt-get install` step that installed v1.2 last month silently installs v1.3 today. Pin every package version in `cloud-init.yaml`. Any unpinned version is a future "works on my machine" incident.
 - **Provisioner failure mid-create.** A row in `provisioning` with no Hetzner server (or vice versa). Reconciliation job: every 5 min, walk `provisioning`+`recovering` rows older than 10 min, ask Hetzner what state the server is in, reconcile or mark `failed`.
-- **TLS hostname mismatch.** `{handle}.matrix-os.com` cert + control-plane proxy + customer VPS public IP — three places hostname can be wrong. Add an end-to-end smoke test that hits the public URL on every provision.
+- **TLS/proxy hostname mismatch.** `app.matrix-os.com` / `code.matrix-os.com`, control-plane proxy, and customer VPS public IP must agree. Add an end-to-end smoke test that hits the managed public URL on every provision.

@@ -109,6 +109,7 @@ describe('platform/customer-vps-routes', () => {
       recover: vi.fn().mockResolvedValue({
         oldMachineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
         machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+        runtimeSlot: 'staging',
         status: 'recovering',
         etaSeconds: 120,
       }),
@@ -131,20 +132,29 @@ describe('platform/customer-vps-routes', () => {
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ error: 'Invalid request' });
 
+    const invalidSlot = await app.request('/vps/recover', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123', runtimeSlot: 'staging-' }),
+    });
+    expect(invalidSlot.status).toBe(400);
+    expect(await invalidSlot.json()).toEqual({ error: 'Invalid request' });
+
     const recover = await app.request('/vps/recover', {
       method: 'POST',
       headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ clerkUserId: 'user_123', allowEmpty: true }),
+      body: JSON.stringify({ clerkUserId: 'user_123', runtimeSlot: 'staging', allowEmpty: true }),
     });
 
     expect(recover.status).toBe(202);
     expect(await recover.json()).toEqual({
       oldMachineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      runtimeSlot: 'staging',
       status: 'recovering',
       etaSeconds: 120,
     });
-    expect(service.recover).toHaveBeenCalledWith({ clerkUserId: 'user_123', allowEmpty: true });
+    expect(service.recover).toHaveBeenCalledWith({ clerkUserId: 'user_123', runtimeSlot: 'staging', allowEmpty: true });
   });
 
   it('rejects invalid request bodies with generic validation errors', async () => {
@@ -157,6 +167,61 @@ describe('platform/customer-vps-routes', () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Invalid request' });
+  });
+
+  it('deploys by channel through the route contract', async () => {
+    const service = {
+      deploy: vi.fn().mockResolvedValue({ triggered: 1, failed: 0, results: [] }),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const res = await app.request('/vps/deploy', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'dev' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(service.deploy).toHaveBeenCalledWith({ channel: 'dev' });
+  });
+
+  it('deploys to a named VPS through the route contract', async () => {
+    const service = {
+      deploy: vi.fn().mockResolvedValue({ triggered: 1, failed: 0, results: [] }),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const res = await app.request('/vps/deploy', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 'v083-elixir-symphony-202605261600-4c421d32', handle: 'hamedmp-elixir' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(service.deploy).toHaveBeenCalledWith({
+      version: 'v083-elixir-symphony-202605261600-4c421d32',
+      handle: 'hamedmp-elixir',
+    });
+  });
+
+  it('rejects ambiguous deploy targets', async () => {
+    const service = {
+      deploy: vi.fn(),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const res = await app.request('/vps/deploy', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 'main-969a192-20260512142352', channel: 'dev' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(service.deploy).not.toHaveBeenCalled();
   });
 
   it('rejects mutating bodies over 4096 bytes before parsing', async () => {
@@ -305,6 +370,43 @@ describe('platform/customer-vps-routes', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it('GET /fleet includes runtime probe metrics when available', async () => {
+      const service = {
+        listAllMachines: vi.fn().mockResolvedValue(sampleMachines),
+      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+      const probeMachineRuntime = vi.fn().mockResolvedValue({
+        healthy: true,
+        probeLatencyMs: 87,
+        load1: 0.32,
+        cpuCount: 2,
+        memoryTotalBytes: 4 * 1024 * 1024 * 1024,
+        memoryFreeBytes: 1024 * 1024 * 1024,
+        diskTotalBytes: 40 * 1024 * 1024 * 1024,
+        diskFreeBytes: 30 * 1024 * 1024 * 1024,
+      });
+      const app = new Hono();
+      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret, probeMachineRuntime }));
+
+      const res = await app.request('/vps/fleet', {
+        headers: { authorization: `Bearer ${platformSecret}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(probeMachineRuntime).toHaveBeenCalledTimes(1);
+      expect(body.machines[0]).toMatchObject({
+        handle: 'alice',
+        healthy: true,
+        probeLatencyMs: 87,
+        load1: 0.32,
+        cpuCount: 2,
+        memoryTotalBytes: 4294967296,
+        memoryFreeBytes: 1073741824,
+        diskTotalBytes: 42949672960,
+        diskFreeBytes: 32212254720,
+      });
     });
 
   });

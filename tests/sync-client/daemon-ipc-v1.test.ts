@@ -6,6 +6,7 @@ import {
   parseDaemonRequest,
 } from "../../packages/sync-client/src/daemon/types.js";
 import { createIpcHandler } from "../../packages/sync-client/src/daemon/ipc-handler.js";
+import { createDaemonShellControlClient } from "../../packages/sync-client/src/daemon/shell-control-client.js";
 
 describe("daemon IPC v1 envelopes", () => {
   it("requires protocol version 1 and bounded command names", () => {
@@ -92,6 +93,7 @@ describe("daemon IPC v1 envelopes", () => {
   });
 
   it("dispatches tab, pane, layout, and sync v1 aliases", async () => {
+    const splitPane = vi.fn(async () => ({ paneId: "pane-2" }));
     const handler = createIpcHandler({
       config: baseConfig(),
       syncState: baseSyncState(),
@@ -105,7 +107,7 @@ describe("daemon IPC v1 envelopes", () => {
         createTab: async () => ({ ok: true }),
         switchTab: async () => ({ ok: true }),
         closeTab: async () => ({ ok: true }),
-        splitPane: async () => ({ paneId: "pane-2" }),
+        splitPane,
         closePane: async () => ({ ok: true }),
         listLayouts: async () => [{ name: "dev" }],
         showLayout: async () => ({ name: "dev", kdl: "layout {}" }),
@@ -117,10 +119,57 @@ describe("daemon IPC v1 envelopes", () => {
 
     await expect(handler("tab.list", { session: "main" })).resolves.toEqual({ tabs: [{ idx: 0, name: "main" }] });
     await expect(handler("pane.split", { session: "main", direction: "right" })).resolves.toEqual({ paneId: "pane-2" });
+    await expect(handler("pane.split", { session: "main", direction: "down" })).resolves.toEqual({ paneId: "pane-2" });
+    await expect(handler("pane.split", { session: "main" })).resolves.toEqual({ paneId: "pane-2" });
+    expect(splitPane).toHaveBeenNthCalledWith(1, "main", { direction: "right" });
+    expect(splitPane).toHaveBeenNthCalledWith(2, "main", { direction: "down" });
+    expect(splitPane).toHaveBeenNthCalledWith(3, "main", { direction: "right" });
     await expect(handler("layout.list", {})).resolves.toEqual({ layouts: [{ name: "dev" }] });
     await expect(handler("sync.status", {})).resolves.toMatchObject({ syncing: true, fileCount: 0 });
     await expect(handler("sync.pause", {})).resolves.toEqual({ paused: true });
     await expect(handler("sync.resume", {})).resolves.toEqual({ paused: false });
+  });
+
+  it("rejects invalid pane split directions before dispatch", async () => {
+    const shell = {
+      splitPane: vi.fn(async () => ({ paneId: "pane-2" })),
+    };
+    const handler = createIpcHandler({
+      config: baseConfig(),
+      syncState: baseSyncState(),
+      logger: { info: () => undefined },
+      saveConfig: async () => undefined,
+      persistPauseState: async () => undefined,
+      clearAuth: async () => undefined,
+      exit: () => undefined,
+      shell,
+    });
+
+    await expect(handler("pane.split", { session: "main", direction: "sideways" })).rejects.toThrow("invalid_request");
+    expect(shell.splitPane).not.toHaveBeenCalled();
+  });
+
+  it("keeps daemon shell-control pane direction errors typed", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ paneId: "pane-2" })));
+    vi.stubGlobal("fetch", fetchImpl);
+    const client = createDaemonShellControlClient({
+      config: baseConfig(),
+      loadAuth: async () => ({
+        accessToken: "tok",
+        expiresAt: 4102444800000,
+        userId: "user_1",
+        handle: "neo",
+      }),
+    });
+
+    try {
+      await expect(client.splitPane("main", { direction: "sideways" })).rejects.toMatchObject({
+        code: "invalid_request",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

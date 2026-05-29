@@ -134,6 +134,50 @@ describe("smart syncTemplate", () => {
     expect(readFileSync(join(homeDir, "system", "soul.md"), "utf-8")).toBe("my custom soul");
   });
 
+  it("never updates protected user preference files from the template", async () => {
+    const smartSync = await importSync();
+
+    mkdirSync(join(templateDir, "system"), { recursive: true });
+    writeFileSync(join(templateDir, "system", "desktop.json"), '{"background":{"name":"new.jpg"}}');
+
+    writeManifest(templateDir, {
+      "system/desktop.json": sha256('{"background":{"name":"new.jpg"}}'),
+    });
+
+    mkdirSync(join(homeDir, "system"), { recursive: true });
+    writeFileSync(join(homeDir, "system", "desktop.json"), '{"background":{"name":"old-user.jpg"}}');
+    writeManifest(homeDir, {
+      "system/desktop.json": sha256('{"background":{"name":"old-user.jpg"}}'),
+    });
+
+    const report = smartSync(homeDir, templateDir);
+
+    expect(report.skipped).toContain("system/desktop.json");
+    expect(report.added).toEqual([]);
+    expect(report.updated).toEqual([]);
+    expect(readFileSync(join(homeDir, "system", "desktop.json"), "utf-8")).toBe(
+      '{"background":{"name":"old-user.jpg"}}',
+    );
+  });
+
+  it("does not add protected user asset files to an existing home during upgrade", async () => {
+    const smartSync = await importSync();
+
+    mkdirSync(join(templateDir, "system", "wallpapers"), { recursive: true });
+    writeFileSync(join(templateDir, "system", "wallpapers", "moraine-lake.jpg"), "bundled wallpaper");
+
+    writeManifest(templateDir, {
+      "system/wallpapers/moraine-lake.jpg": sha256("bundled wallpaper"),
+    });
+
+    const report = smartSync(homeDir, templateDir);
+
+    expect(report.skipped).toContain("system/wallpapers/moraine-lake.jpg");
+    expect(report.added).toEqual([]);
+    expect(report.updated).toEqual([]);
+    expect(existsSync(join(homeDir, "system", "wallpapers", "moraine-lake.jpg"))).toBe(false);
+  });
+
   it("handles first boot (no installed manifest) - all files added", async () => {
     const smartSync = await importSync();
 

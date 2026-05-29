@@ -28,7 +28,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
 - Use Matrix theme variables and iframe-safe sizing.
-- For UI, use the `matrix-design-system` skill: shadcn-style primitives, lucide-react icons, stable control dimensions, and no marketing landing pages.
+- For UI, ALWAYS load and follow the `matrix-design-system` skill. Key rules: Forest/Cream/Ember/Deep palette, gradient backgrounds (sand washes not flat), Orbitron H1/H2 only, Inter for everything else, capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stagger animations on mount. No exceptions.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 

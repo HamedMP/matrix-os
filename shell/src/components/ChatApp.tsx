@@ -33,8 +33,12 @@ import {
   PanelLeftIcon,
   SearchIcon,
   MessageSquareIcon,
-  MoreHorizontalIcon,
-  TrashIcon,
+  BotIcon,
+  CalendarIcon,
+  CheckIcon,
+  GithubIcon,
+  MailIcon,
+  Settings2Icon,
 } from "lucide-react";
 
 interface ConversationMeta {
@@ -42,6 +46,38 @@ interface ConversationMeta {
   preview: string;
   messageCount: number;
   updatedAt: number;
+}
+
+const DEFAULT_HERMES_MODEL = "Hermes default";
+const DEFAULT_HERMES_CHANNELS = ["shell"];
+const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
+
+function readHermesSetup() {
+  if (typeof window === "undefined") {
+    return { model: DEFAULT_HERMES_MODEL, channels: DEFAULT_HERMES_CHANNELS };
+  }
+  try {
+    const raw = window.localStorage.getItem(HERMES_SETUP_STORAGE_KEY);
+    if (!raw) return { model: DEFAULT_HERMES_MODEL, channels: DEFAULT_HERMES_CHANNELS };
+    const parsed = JSON.parse(raw) as { model?: unknown; channels?: unknown };
+    return {
+      model: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model : DEFAULT_HERMES_MODEL,
+      channels: Array.isArray(parsed.channels)
+        ? parsed.channels.filter((channel): channel is string => typeof channel === "string").slice(0, 8)
+        : DEFAULT_HERMES_CHANNELS,
+    };
+  } catch (err: unknown) {
+    console.warn("[chat] Failed to load Hermes setup:", err instanceof Error ? err.message : String(err));
+    return { model: DEFAULT_HERMES_MODEL, channels: DEFAULT_HERMES_CHANNELS };
+  }
+}
+
+function writeHermesSetup(model: string, channels: string[]) {
+  try {
+    window.localStorage.setItem(HERMES_SETUP_STORAGE_KEY, JSON.stringify({ model, channels }));
+  } catch (err: unknown) {
+    console.warn("[chat] Failed to save Hermes setup:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 interface ChatAppProps {
@@ -52,7 +88,12 @@ interface ChatAppProps {
   conversations: ConversationMeta[];
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
-  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
+  onSubmit: (
+    text: string,
+    files?: Array<{ name: string; type: string; data: string }>,
+    options?: { displayText?: string; promptText?: string },
+  ) => void;
+  mobile?: boolean;
 }
 
 function groupConversationsByTime(conversations: ConversationMeta[]) {
@@ -91,10 +132,30 @@ export function ChatApp({
   onNewChat,
   onSwitchConversation,
   onSubmit,
+  mobile = false,
 }: ChatAppProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
+  const [setupOpen, setSetupOpen] = useState(false);
+  const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
+  const getInitialHermesSetup = () => {
+    initialHermesSetupRef.current ??= readHermesSetup();
+    return initialHermesSetupRef.current;
+  };
+  const [model, setModel] = useState(() => getInitialHermesSetup().model);
+  const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const grouped = useMemo(() => groupMessages(messages), [messages]);
+  const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);
+  useEffect(() => {
+    writeHermesSetup(model, selectedChannels);
+  }, [model, selectedChannels]);
+  const submitWithHermesSetup = useCallback(
+    (text: string, files?: Array<{ name: string; type: string; data: string }>) => {
+      const promptText = createHermesConfiguredPrompt(text, model, selectedChannels);
+      onSubmit(text, files, promptText === text ? { displayText: text } : { displayText: text, promptText });
+    },
+    [model, onSubmit, selectedChannels],
+  );
 
   const filteredConversations = useMemo(() => {
     if (!searchQuery.trim()) return conversations;
@@ -122,11 +183,13 @@ export function ChatApp({
   const isEmpty = messages.length === 0 && !busy;
 
   return (
-    <div className="flex h-full bg-background">
+    <div className="relative flex h-full bg-background">
       {/* Sidebar */}
       <aside
-        className={`flex flex-col border-r border-border/50 bg-muted/30 transition-all duration-200 ease-out ${
-          sidebarOpen ? "w-[260px]" : "w-0 overflow-hidden"
+        className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
+          sidebarOpen
+            ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
+            : "w-0 overflow-hidden"
         }`}
       >
         <div className="flex items-center justify-between p-3 pb-2">
@@ -202,7 +265,7 @@ export function ChatApp({
       {/* Main content */}
       <main className="flex flex-1 flex-col min-w-0">
         {/* Top bar */}
-        <header className="flex h-11 items-center gap-2 border-b border-border/30 px-3">
+        <header className="flex min-h-12 items-center gap-2 border-b border-border/30 px-3">
           {!sidebarOpen && (
             <>
               <Button
@@ -224,21 +287,59 @@ export function ChatApp({
               </Button>
             </>
           )}
-          <div className="flex-1" />
-          <span className="text-xs font-medium text-foreground/60">Matrix OS</span>
-          <div className="flex-1" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-center gap-2">
+              <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <BotIcon className="size-3.5" aria-hidden="true" />
+              </span>
+              <div className="min-w-0 text-center">
+                <p className="truncate text-sm font-semibold leading-4 text-foreground">Hermes</p>
+                <p className="truncate text-[10px] leading-3 text-muted-foreground">Matrix system agent</p>
+              </div>
+            </div>
+          </div>
+          <Button
+            variant={setupOpen ? "secondary" : "ghost"}
+            size="sm"
+            className="h-8 gap-1.5 px-2.5 text-xs"
+            onClick={() => setSetupOpen((value) => !value)}
+          >
+            <Settings2Icon className="size-3.5" aria-hidden="true" />
+            Setup
+          </Button>
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
+        {setupOpen && (
+          <HermesSetupPanel
+            model={model}
+            onModelChange={setModel}
+            channels={channels}
+            onToggleChannel={(channel) => {
+              setChannels((prev) => {
+                const next = new Set(prev);
+                if (next.has(channel)) next.delete(channel);
+                else next.add(channel);
+                return next;
+              });
+            }}
+          />
+        )}
 
         {/* Empty state or conversation */}
         {isEmpty ? (
-          <EmptyState onSubmit={onSubmit} connected={connected} suggestions={suggestions} />
+          <EmptyState
+            onSubmit={submitWithHermesSetup}
+            connected={connected}
+            suggestions={suggestions}
+            mobile={mobile}
+            model={model}
+          />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
             <Conversation>
-              <ConversationContent className="gap-5 px-4 py-6 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
                 {grouped.map((group, i) => {
                   if (group.type === "tool_group") {
                     return <ToolCallGroup key={`tg-${i}`} tools={group.messages} />;
@@ -257,7 +358,7 @@ export function ChatApp({
                           {msg.content}
                         </div>
                       ) : (
-                        <AssistantBubble content={msg.content} onAction={onSubmit} />
+                    <AssistantBubble content={msg.content} onAction={submitWithHermesSetup} />
                       )}
                     </div>
                   );
@@ -277,16 +378,16 @@ export function ChatApp({
             </Conversation>
 
             {/* Suggestions + Input */}
-            <div className="mx-auto w-full max-w-[720px] px-4 md:px-0 pb-4 pt-2">
+            <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
               {!busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
                     suggestions={suggestions}
-                    onSelect={(text) => onSubmit(text)}
+                    onSelect={(text) => submitWithHermesSetup(text)}
                   />
                 </div>
               )}
-              <ChatInput connected={connected} busy={busy} onSubmit={onSubmit} />
+              <ChatInput connected={connected} busy={busy} onSubmit={submitWithHermesSetup} />
             </div>
           </div>
         )}
@@ -295,14 +396,36 @@ export function ChatApp({
   );
 }
 
+export function createHermesConfiguredPrompt(text: string, _model: string, _channels: string[]) {
+  const normalizedChannels = [..._channels].sort();
+  const isDefaultSetup =
+    _model === DEFAULT_HERMES_MODEL &&
+    normalizedChannels.length === DEFAULT_HERMES_CHANNELS.length &&
+    normalizedChannels.every((channel, index) => channel === DEFAULT_HERMES_CHANNELS[index]);
+  if (isDefaultSetup) return text;
+
+  const enabledChannels = normalizedChannels.length > 0 ? normalizedChannels.join(", ") : "none";
+  return [
+    "Use this Hermes setup for this response only:",
+    `Agent mode: ${_model}`,
+    `Enabled channels: ${enabledChannels}`,
+    "",
+    text,
+  ].join("\n");
+}
+
 function EmptyState({
   onSubmit,
   connected,
   suggestions,
+  mobile,
+  model,
 }: {
   onSubmit: (text: string) => void;
   connected: boolean;
   suggestions: string[];
+  mobile: boolean;
+  model: string;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4">
@@ -310,12 +433,13 @@ function EmptyState({
         {/* Greeting */}
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What can I help you with?
+            What should Hermes do?
           </h1>
+          <p className="text-sm text-muted-foreground">Using {model}</p>
         </div>
 
         {/* Input */}
-        <ChatInput connected={connected} busy={false} onSubmit={onSubmit} autoFocus />
+        <ChatInput connected={connected} busy={false} onSubmit={onSubmit} autoFocus={!mobile} />
 
         {/* Suggestions */}
         {suggestions.length > 0 && (
@@ -333,6 +457,77 @@ function EmptyState({
         )}
       </div>
     </div>
+  );
+}
+
+function HermesSetupPanel({
+  model,
+  onModelChange,
+  channels,
+  onToggleChannel,
+}: {
+  model: string;
+  onModelChange: (model: string) => void;
+  channels: Set<string>;
+  onToggleChannel: (channel: string) => void;
+}) {
+  const models = ["Hermes default", "Claude specialist", "Codex coding", "Bring your own"];
+  const channelOptions = [
+    { id: "shell", label: "Shell", icon: MessageSquareIcon },
+    { id: "email", label: "Email", icon: MailIcon },
+    { id: "calendar", label: "Calendar", icon: CalendarIcon },
+    { id: "github", label: "GitHub", icon: GithubIcon },
+  ];
+
+  return (
+    <section className="border-b border-border/30 bg-muted/30 px-3 py-3">
+      <div className="mx-auto grid w-full max-w-[720px] gap-3 md:grid-cols-[1fr_1.1fr]">
+        <div>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Model</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {models.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onModelChange(option)}
+                className={`flex min-h-9 items-center justify-between rounded-md border px-2.5 text-left text-xs transition ${
+                  model === option
+                    ? "border-primary/35 bg-primary/10 text-foreground"
+                    : "border-border/50 bg-background/55 text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span className="truncate">{option}</span>
+                {model === option && <CheckIcon className="size-3.5 shrink-0 text-primary" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Channels</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {channelOptions.map((option) => {
+              const Icon = option.icon;
+              const selected = channels.has(option.id);
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => onToggleChannel(option.id)}
+                  className={`flex min-h-9 items-center gap-2 rounded-md border px-2.5 text-xs transition ${
+                    selected
+                      ? "border-primary/35 bg-primary/10 text-foreground"
+                      : "border-border/50 bg-background/55 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="size-3.5" aria-hidden="true" />
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

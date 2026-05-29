@@ -84,7 +84,7 @@ describe("ProcessManager", () => {
       expect(record.lastUsedAt).toBeGreaterThanOrEqual(before);
     }, 15_000);
 
-    it("passes DATABASE_URL only to node apps that declare Postgres", async () => {
+    it("rejects Postgres apps unless a scoped app database URL resolver is configured", async () => {
       const originalDatabaseUrl = process.env.DATABASE_URL;
       process.env.DATABASE_URL = "postgres://matrix@127.0.0.1/matrix";
 
@@ -131,19 +131,83 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
       await mkdir(join(tmpHome, "data", "db-app"), { recursive: true });
 
       try {
-        const record = await pm.ensureRunning("db-app");
-        const res = await fetch(`http://127.0.0.1:${record.port}/api/env`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        await expect(res.json()).resolves.toEqual({
-          databaseUrl: "postgres://matrix@127.0.0.1/matrix",
-        });
+        await expect(pm.ensureRunning("db-app")).rejects.toThrow(
+          /requires a scoped Postgres database URL/,
+        );
       } finally {
         if (originalDatabaseUrl === undefined) {
           delete process.env.DATABASE_URL;
         } else {
           process.env.DATABASE_URL = originalDatabaseUrl;
         }
+      }
+    }, 15_000);
+
+    it("passes only the scoped app database URL returned by the resolver", async () => {
+      process.env.DATABASE_URL = "postgres://matrix@127.0.0.1/shared";
+
+      const scopedPm = new ProcessManagerCtor({
+        homeDir: tmpHome,
+        portPool: new PortPoolCtor({ min: 50000, max: 50010 }),
+        maxProcesses: 10,
+        reaperIntervalMs: 0,
+        appDatabaseUrlResolver: (slug) =>
+          slug === "db-app" ? "postgres://app_user:secret@127.0.0.1/app_db" : undefined,
+      });
+
+      const dbDir = join(tmpHome, "apps", "db-app");
+      await mkdir(dbDir, { recursive: true });
+      await writeFile(
+        join(dbDir, "matrix.json"),
+        JSON.stringify({
+          name: "DB App",
+          slug: "db-app",
+          version: "1.0.0",
+          runtime: "node",
+          runtimeVersion: "^1.0.0",
+          database: "postgres",
+          build: { command: "echo ok", output: "dist" },
+          serve: {
+            start: "node server.js",
+            healthCheck: "/api/health",
+            startTimeout: 10,
+            idleShutdown: 300,
+          },
+        }),
+      );
+      await writeFile(
+        join(dbDir, "server.js"),
+        `import { createServer } from "node:http";
+const server = createServer((req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  if (req.url === "/api/health") {
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (req.url === "/api/env") {
+    res.end(JSON.stringify({ databaseUrl: process.env.DATABASE_URL ?? null }));
+    return;
+  }
+  res.statusCode = 404;
+  res.end(JSON.stringify({ error: "not_found" }));
+});
+server.listen(Number(process.env.PORT), "127.0.0.1");
+`,
+      );
+      await writeFile(join(dbDir, "package.json"), JSON.stringify({ type: "module" }));
+      await mkdir(join(tmpHome, "data", "db-app"), { recursive: true });
+
+      try {
+        const record = await scopedPm.ensureRunning("db-app");
+        const res = await fetch(`http://127.0.0.1:${record.port}/api/env`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        await expect(res.json()).resolves.toEqual({
+          databaseUrl: "postgres://app_user:secret@127.0.0.1/app_db",
+        });
+      } finally {
+        delete process.env.DATABASE_URL;
+        await scopedPm.shutdownAll();
       }
     }, 15_000);
 

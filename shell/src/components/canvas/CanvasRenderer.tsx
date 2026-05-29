@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useCallback } from "react";
+import type { ReactNode } from "react";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasGroups } from "@/stores/canvas-groups";
@@ -16,7 +17,11 @@ import { CanvasMinimap } from "./CanvasMinimap";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
-export function CanvasRenderer() {
+interface CanvasRendererProps {
+  children?: ReactNode;
+}
+
+export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   const windows = useWindowManager((s) => s.windows);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const clearFocus = useWindowManager((s) => s.clearFocus);
@@ -40,10 +45,11 @@ export function CanvasRenderer() {
         wm.moveWindow(wins[i].id, x, y);
       }
       const arranged = useWindowManager.getState().windows;
+      const cRect = useCanvasTransform.getState().containerRect;
       fitAll(
         arranged.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-        window.innerWidth,
-        window.innerHeight,
+        cRect?.width ?? window.innerWidth,
+        cRect?.height ?? window.innerHeight,
       );
     },
     [fitAll],
@@ -81,10 +87,11 @@ export function CanvasRenderer() {
 
   const handleFitAll = useCallback(() => {
     const wins = useWindowManager.getState().windows.filter((w) => !w.minimized);
+    const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
       wins.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-      window.innerWidth,
-      window.innerHeight,
+      cRect?.width ?? window.innerWidth,
+      cRect?.height ?? window.innerHeight,
     );
   }, [fitAll]);
 
@@ -138,6 +145,7 @@ export function CanvasRenderer() {
             </p>
           </div>
         )}
+        {children}
         {windows.map((win) => (
           <CanvasWindow key={win.id} win={win} hidden={win.minimized} />
         ))}

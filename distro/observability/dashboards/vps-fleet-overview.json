@@ -1,408 +1,187 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Open selected VPS detail",
+      "tooltip": "Open detailed runtime panels for the selected VPS",
+      "type": "dashboard",
+      "uid": "matrix-vps-detail"
+    }
+  ],
   "panels": [
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 0
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
       "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        }
-      },
-      "title": "Total",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "count(matrix_vps_info)",
-          "refId": "A"
-        }
-      ]
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count(matrix_vps_info)", "refId": "A" }],
+      "title": "Total VPSes",
+      "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 0
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
       "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        }
-      },
-      "title": "Healthy",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "count(matrix_vps_healthy == 1)",
-          "refId": "A"
-        }
-      ]
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count(matrix_vps_healthy == 1)", "refId": "A" }],
+      "title": "Control Reachable",
+      "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 0
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.4 }, { "color": "red", "value": 1.5 }] }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
       "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        }
-      },
-      "title": "Unhealthy",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "count(matrix_vps_healthy == 0)",
-          "refId": "A"
-        }
-      ]
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["max"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(matrix_vps_probe_latency_seconds)", "refId": "A" }],
+      "title": "Slowest Probe",
+      "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 0
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.75 }, { "color": "red", "value": 1 }] }, "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
       "id": 4,
-      "options": {
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "legend": {
-          "displayMode": "table",
-          "placement": "right"
-        }
-      },
-      "title": "Version Distribution",
-      "type": "piechart",
-      "targets": [
-        {
-          "expr": "count by (version) (matrix_vps_info)",
-          "legendFormat": "{{version}}",
-          "refId": "A"
-        }
-      ]
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["max"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(1 - (matrix_vps_memory_free_bytes / matrix_vps_memory_total_bytes))", "refId": "A" }],
+      "title": "Peak Memory Used",
+      "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.75 }, { "color": "red", "value": 0.9 }] }, "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["max"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(1 - (matrix_vps_disk_free_bytes / matrix_vps_disk_total_bytes))", "refId": "A" }],
+      "title": "Peak Disk Used",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "table", "placement": "right" }, "pieType": "pie", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count by (version) (matrix_vps_runtime_info)", "legendFormat": "{{version}}", "refId": "A" }],
+      "title": "Runtime Release Distribution",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "filterable": true
-          }
-        },
+        "defaults": { "custom": { "filterable": true } },
         "overrides": [
           {
-            "matcher": {
-              "id": "byName",
-              "options": "healthy"
-            },
+            "matcher": { "id": "byName", "options": "status" },
             "properties": [
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 1
-                    }
-                  ]
-                }
-              },
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "type": "value",
-                    "options": {
-                      "0": {
-                        "text": "DOWN",
-                        "color": "red"
-                      },
-                      "1": {
-                        "text": "OK",
-                        "color": "green"
-                      }
-                    }
-                  }
-                ]
-              }
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "mappings", "value": [{ "options": { "running": { "color": "green", "text": "running" }, "provisioning": { "color": "yellow", "text": "provisioning" }, "recovering": { "color": "yellow", "text": "recovering" }, "failed": { "color": "red", "text": "failed" } }, "type": "value" }] }
             ]
           },
           {
-            "matcher": {
-              "id": "byName",
-              "options": "status"
-            },
+            "matcher": { "id": "byName", "options": "handle" },
             "properties": [
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "type": "value",
-                    "options": {
-                      "running": {
-                        "text": "running",
-                        "color": "green"
-                      },
-                      "provisioning": {
-                        "text": "provisioning",
-                        "color": "yellow"
-                      },
-                      "failed": {
-                        "text": "failed",
-                        "color": "red"
-                      }
-                    }
-                  }
-                ]
-              }
+              { "id": "links", "value": [{ "title": "Open VPS detail", "url": "/d/matrix-vps-detail/vps-detail?var-handle=${__value.raw}" }] }
             ]
           }
         ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 4
-      },
-      "id": 5,
-      "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "displayName": "handle"
-          }
-        ]
-      },
-      "title": "Machine List",
-      "type": "table",
-      "targets": [
-        {
-          "expr": "matrix_vps_info",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        },
-        {
-          "expr": "matrix_vps_healthy",
-          "format": "table",
-          "instant": true,
-          "refId": "B"
-        }
-      ],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "id": 7,
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "handle" }] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_info", "format": "table", "instant": true, "refId": "A" }],
+      "title": "Provisioned VPS Inventory",
       "transformations": [
-        {
-          "id": "merge",
-          "options": {}
-        },
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "instance": true,
-              "Value #A": true
-            },
-            "renameByName": {
-              "Value #B": "healthy"
-            }
+            "excludeByName": { "Time": true, "Value": true, "__name__": true, "instance": true, "job": true },
+            "indexByName": { "handle": 0, "status": 1, "version": 2, "machine_id": 3 },
+            "renameByName": { "machine_id": "machine_id" }
           }
         }
-      ]
+      ],
+      "type": "table"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 20,
-            "stacking": {
-              "mode": "normal"
-            }
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 12 },
+      "id": 10,
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "handle" }] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_runtime_info", "format": "table", "instant": true, "refId": "A" }],
+      "title": "Runtime Releases Reported by Reachable VPSes",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Value": true, "__name__": true, "instance": true, "job": true },
+            "indexByName": { "handle": 0, "version": 1 }
           }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 12
-      },
-      "id": 6,
-      "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
         }
-      },
-      "title": "Health Over Time",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "count(matrix_vps_healthy == 1)",
-          "legendFormat": "Healthy",
-          "refId": "A"
-        },
-        {
-          "expr": "count(matrix_vps_healthy == 0)",
-          "legendFormat": "Unhealthy",
-          "refId": "B"
-        }
-      ]
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": false, "stacking": { "mode": "none" } } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "id": 8,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_load1{handle=\"$handle\"}", "legendFormat": "$handle", "refId": "A" }],
+      "title": "Selected VPS Load",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": false, "stacking": { "mode": "none" } }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "id": 9,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "matrix_vps_probe_latency_seconds{handle=\"$handle\"}", "legendFormat": "$handle", "refId": "A" }],
+      "title": "Selected VPS Probe Latency",
+      "type": "timeseries"
     }
   ],
   "schemaVersion": 39,
-  "tags": [
-    "matrix-os",
-    "vps",
-    "fleet"
-  ],
+  "tags": ["matrix-os", "vps", "fleet"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(matrix_vps_info, handle)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "VPS",
+        "multi": false,
+        "name": "handle",
+        "options": [],
+        "query": { "query": "label_values(matrix_vps_info, handle)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
+  "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "VPS Fleet Overview",
   "uid": "matrix-vps-fleet",
-  "version": 3
+  "version": 6
 }

@@ -178,6 +178,15 @@ describe("T1450-T1454: Skill registry", () => {
       expect(result.reason).toMatch(/not found/i);
     });
 
+    it("rejects skill names that would escape the skills directory", async () => {
+      const registry = createSkillRegistry(TEST_HOME);
+      const result = await registry.install("../evil");
+
+      expect(result.installed).toBe(false);
+      expect(result.reason).toMatch(/invalid.*skill/i);
+      expect(existsSync(join(TEST_HOME, ".agents", "evil"))).toBe(false);
+    });
+
     it("detects duplicate install", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
@@ -201,6 +210,11 @@ describe("T1450-T1454: Skill registry", () => {
     it("returns null for unknown skill", async () => {
       const registry = createSkillRegistry(TEST_HOME);
       await expect(registry.get("nonexistent")).resolves.toBeNull();
+    });
+
+    it("returns null for invalid skill names", async () => {
+      const registry = createSkillRegistry(TEST_HOME);
+      await expect(registry.get("../evil")).resolves.toBeNull();
     });
   });
 

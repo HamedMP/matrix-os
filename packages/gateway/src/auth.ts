@@ -84,7 +84,9 @@ const APP_IFRAME_PREFIXES = ["/apps/"];
 const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
-const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/onboarding", "/ws/vocal"];
+const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
+const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
+const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
 const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran
@@ -104,7 +106,8 @@ function timingSafeCompare(a: string, b: string): boolean {
   const paddedB = Buffer.alloc(maxLen);
   aBuf.copy(paddedA);
   bBuf.copy(paddedB);
-  return aBuf.length === bBuf.length && timingSafeEqual(paddedA, paddedB);
+  const equal = timingSafeEqual(paddedA, paddedB);
+  return aBuf.length === bBuf.length && equal;
 }
 
 const rateLimiter = createRateLimiter({
@@ -143,14 +146,6 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
-    // Original semantics: no MATRIX_AUTH_TOKEN means the gateway runs in
-    // open mode (dev convenience). PLATFORM_JWT_SECRET on its own does NOT
-    // enforce auth -- it just enables the JWT acceptance path WHEN auth is
-    // already required by MATRIX_AUTH_TOKEN. To enforce auth in dev, set
-    // MATRIX_AUTH_TOKEN to any value (and optionally PLATFORM_JWT_SECRET to
-    // also accept platform-issued JWTs).
-    if (!token) return nextWithReady(c, next);
-
     // Read JWT config + handle per-call so env-var changes during tests
     // are picked up without recreating the middleware.
     const jwtKey = await readJwtKeyConfig();
@@ -166,6 +161,18 @@ export function authMiddleware(
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    // Matrix bridge/appservice callbacks and Hermes reply delivery use scoped
+    // internal tokens checked by their route handlers. Bypass bearer auth only
+    // for those token-bearing paths, while still rate-limiting failed attempts.
+    const hasHermesReplyToken = Boolean(c.req.header("X-Matrix-OS-Hermes-Capability"));
+    if (normalizedPath.startsWith(MESSAGE_APPSERVICE_PREFIX) || (MESSAGE_HERMES_REPLY_PATH.test(normalizedPath) && hasHermesReplyToken)) {
+      const ip = getClientIp(c);
+      if (!webhookRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
       return nextWithReady(c, next);
     }
 
@@ -195,6 +202,14 @@ export function authMiddleware(
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);
+    }
+
+    if (!token) {
+      if (process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV === "1") {
+        return nextWithReady(c, next);
+      }
+      console.error("[auth] MATRIX_AUTH_TOKEN is not configured; rejecting protected request");
+      return unauthorized(c);
     }
 
     const authHeader = c.req.header("Authorization");

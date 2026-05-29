@@ -149,6 +149,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Follow TDD approach**: Execute test tasks before their corresponding implementation tasks
    - **File-based coordination**: Tasks affecting the same files must run sequentially
    - **Validation checkpoints**: Verify each phase completion before proceeding
+   - **Stack boundaries**: For Matrix OS repositories with `docs/dev/stacked-prs.md`, preserve completed phases as reviewable Graphite stack layers. Commit at each phase checkpoint and avoid mixing unrelated future-phase work into that layer.
 
 7. Implementation execution rules:
    - **Setup first**: Initialize project structure, dependencies, configuration
@@ -164,6 +165,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Provide clear error messages with context for debugging
    - Suggest next steps if implementation cannot proceed
    - **IMPORTANT** For completed tasks, make sure to mark the task off as [X] in the tasks file.
+   - If the user asks to publish PRs, use the Graphite stack plan from tasks.md and `docs/dev/stacked-prs.md`: create/update phase branches with `gt create` or `gt modify`, restack with `gt restack`, and submit with `gt submit --stack`. Do not submit one oversized PR when tasks.md defines multiple stack layers.
 
 9. Completion validation:
    - Verify all required tasks are completed

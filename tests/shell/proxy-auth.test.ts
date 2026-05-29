@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { isPublicShellPath } from "../../shell/src/lib/proxy-routes";
+import {
+  isPlatformMobileAppSessionRequest,
+  isPublicShellPath,
+} from "../../shell/src/lib/proxy-routes";
 
 /**
  * Unit tests for the proxy.ts auth logic.
@@ -127,6 +130,50 @@ describe("proxy auth: Layer 2 owner verification", () => {
 
   it("allows null user (pre-auth state)", () => {
     expect(isOwnerMatch(null, "user_abc")).toBe(true);
+  });
+});
+
+describe("proxy auth: platform mobile app sessions", () => {
+  it("allows mobile app launch requests with a bounded session query token", () => {
+    expect(isPlatformMobileAppSessionRequest(
+      "/apps/calculator/",
+      "?session=mobile.session-token_1",
+      null,
+    )).toBe(true);
+  });
+
+  it("allows mobile app asset requests with the matching app session cookie", () => {
+    expect(isPlatformMobileAppSessionRequest(
+      "/apps/calculator/assets/index.js",
+      "",
+      "matrix_app_route=alice; matrix_app_session__calculator=session-cookie",
+    )).toBe(true);
+  });
+
+  it("rejects app requests without a session token or matching session cookie", () => {
+    expect(isPlatformMobileAppSessionRequest(
+      "/apps/calculator/assets/index.js",
+      "",
+      "matrix_app_route=alice",
+    )).toBe(false);
+    expect(isPlatformMobileAppSessionRequest(
+      "/apps/calculator/assets/index.js",
+      "",
+      "matrix_app_session__calculator=",
+    )).toBe(false);
+  });
+
+  it("does not treat API paths or unsafe slugs as mobile app session requests", () => {
+    expect(isPlatformMobileAppSessionRequest(
+      "/api/apps/calculator/session-token",
+      "?session=mobile.session-token_1",
+      null,
+    )).toBe(false);
+    expect(isPlatformMobileAppSessionRequest(
+      "/apps/-calculator/",
+      "?session=mobile.session-token_1",
+      null,
+    )).toBe(false);
   });
 });
 

@@ -1,37 +1,194 @@
 name: Docker Tests
 
 on:
+  workflow_dispatch:
+  schedule:
+    # Keep the full Docker scenario matrix exercised even when PRs only run smoke.
+    - cron: "17 3 * * *"
+  merge_group:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [labeled, ready_for_review]
 
 concurrency:
-  group: docker-test-${{ github.ref }}
+  group: docker-test-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Docker-relevant changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should_run: ${{ steps.changed.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect source changes
+        id: changed
+        env:
+          PR_ACTION: ${{ github.event.action || '' }}
+          PR_LABEL_NAME: ${{ github.event.label.name || '' }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Docker relevant changes: true"
+            exit 0
+          fi
+
+          should_run_trigger=true
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            should_run_trigger=false
+            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; }; then
+              should_run_trigger=true
+            fi
+          fi
+
+          if [ "$should_run_trigger" != "true" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Docker trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually."
+            exit 0
+          fi
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+            changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
+          else
+            zero_sha="0000000000000000000000000000000000000000"
+            if [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "$GITHUB_EVENT_BEFORE" != "$zero_sha" ] && git cat-file -e "${GITHUB_EVENT_BEFORE}^{commit}" 2>/dev/null; then
+              changed_files="$(git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA")"
+            else
+              changed_files="$(git show --pretty= --name-only "$GITHUB_SHA")"
+            fi
+          fi
+
+          should_run=false
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              docs/*|specs/*|www/*|*.md) ;;
+              *) should_run=true; break ;;
+            esac
+          done <<EOF
+          $changed_files
+          EOF
+
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          echo "Docker relevant changes: $should_run"
+
   docker-build:
     name: Build Docker Test Image
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Skip Docker build for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No Docker-relevant source changes detected; skipping image build."
+
+      - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        if: needs.changes.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v4
 
       - name: Populate dev image cache
-        uses: docker/build-push-action@v6
+        if: needs.changes.outputs.should_run == 'true'
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.dev
           cache-from: type=gha,scope=dev-image
           cache-to: type=gha,mode=max,scope=dev-image
 
+  docker-smoke:
+    name: Docker Smoke Test
+    needs: [changes, docker-build]
+    if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Skip Docker smoke for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No Docker-relevant source changes detected; skipping smoke scenario."
+
+      - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
+
+      - name: Set up Docker Buildx
+        if: needs.changes.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build dev image
+        if: needs.changes.outputs.should_run == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.dev
+          load: true
+          tags: matrix-os-dev:ci
+          cache-from: type=gha,scope=dev-image
+
+      - name: Create CI env file
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          echo "ANTHROPIC_API_KEY=test-not-used-in-docker-scenarios" > .env.docker
+
+      - name: Create CI compose override
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          cat > docker-compose.ci.yml <<'EOF'
+          services:
+            dev:
+              image: matrix-os-dev:ci
+              build: null
+              environment:
+                MATRIX_DOCKER_CHOWN_SOURCE: "true"
+                MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
+          EOF
+
+      - name: Create external volumes
+        if: needs.changes.outputs.should_run == 'true'
+        run: docker volume create matrixos-ai-auth
+
+      - name: Run scenario tests
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          chmod +x scripts/docker-test/*.sh
+          ./scripts/docker-test/fresh-install.sh
+        env:
+          COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
+          DOCKER_HEALTH_TIMEOUT: "300"
+
+      - name: Collect container logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/docker-test-logs
+          docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml logs --tail 100 > /tmp/docker-test-logs/compose.log 2>&1 || true
+          docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml ps -a > /tmp/docker-test-logs/containers.log 2>&1 || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-test-logs-fresh-install
+          path: /tmp/docker-test-logs/
+          retention-days: 7
+
   docker-scenarios:
     name: Docker Scenario Tests (${{ matrix.scenario }})
-    needs: docker-build
+    needs: [changes, docker-build]
+    if: needs.changes.outputs.should_run == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -47,13 +204,13 @@ jobs:
           - recovery
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build dev image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.dev
@@ -74,6 +231,7 @@ jobs:
               build: null
               environment:
                 MATRIX_DOCKER_CHOWN_SOURCE: "true"
+                MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
           EOF
 
       - name: Create external volumes
@@ -96,7 +254,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: docker-test-logs-${{ matrix.scenario }}
           path: /tmp/docker-test-logs/

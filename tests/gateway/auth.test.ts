@@ -6,7 +6,7 @@ import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalEr
 const WEBHOOK_PROVIDERS = new Set(["twilio", "mock"]);
 const TEST_TOKEN = "test-bearer-token-for-auth-tests";
 
-function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string) {
+function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string, headers: Record<string, string> = {}) {
   const url = queryToken
     ? `http://localhost:4000${path}?token=${queryToken}`
     : `http://localhost:4000${path}`;
@@ -18,6 +18,7 @@ function mockContext(path: string, authHeader?: string, queryToken?: string, ip?
         const lower = name.toLowerCase();
         if (name === "Authorization") return authHeader;
         if ((name === "X-Forwarded-For" || lower === "x-forwarded-for") && ip) return ip;
+        return headers[name] ?? headers[lower];
         return undefined;
       },
     },
@@ -45,11 +46,29 @@ function createTestApp() {
 }
 
 describe("T133: Auth token middleware", () => {
-  it("allows all requests when no token configured", async () => {
+  it("rejects protected requests when no token is configured", async () => {
     const mw = authMiddleware(undefined);
     let nextCalled = false;
-    await mw(mockContext("/api/message"), async () => { nextCalled = true; });
-    expect(nextCalled).toBe(true);
+    const result = await mw(mockContext("/api/message"), async () => { nextCalled = true; });
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
+  it("allows explicit local insecure mode when no token is configured", async () => {
+    const original = process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+    process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = "1";
+    const mw = authMiddleware(undefined);
+    let nextCalled = false;
+    try {
+      await mw(mockContext("/api/message"), async () => { nextCalled = true; });
+      expect(nextCalled).toBe(true);
+    } finally {
+      if (original === undefined) {
+        delete process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV;
+      } else {
+        process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV = original;
+      }
+    }
   });
 
   it("allows health endpoint without token", async () => {
@@ -112,6 +131,37 @@ describe("T133: Auth token middleware", () => {
     expect(result?.body).toHaveProperty("error");
   });
 
+  it("allows Matrix appservice callbacks with route-scoped token auth", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(mockContext("/api/messages/appservice/whatsapp/events"), async () => { nextCalled = true; });
+    expect(nextCalled).toBe(true);
+  });
+
+  it("allows Hermes reply delivery only when a capability header is present", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext(
+        "/api/messages/conversations/!room%3Amatrixos.local/reply",
+        undefined,
+        undefined,
+        undefined,
+        { "X-Matrix-OS-Hermes-Capability": "capability" },
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const result = await mw(
+      mockContext("/api/messages/conversations/!room%3Amatrixos.local/reply"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
   it("allows voice webhook without auth token", async () => {
     const mw = authMiddleware("secret-token", { webhookProviders: WEBHOOK_PROVIDERS });
     let nextCalled = false;
@@ -153,6 +203,16 @@ describe("T133: Auth token middleware", () => {
     let nextCalled = false;
     await mw(
       mockContext("/ws/terminal", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
+  it("allows /ws/terminal/session with query token", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/ws/terminal/session", undefined, "secret-token", "10.0.0.1"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);

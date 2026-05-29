@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BREW_BIN="${HOMEBREW_BIN:-/home/linuxbrew/.linuxbrew/bin/brew}"
+BREW_PREFIX="${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
+INSTALLER_URL="${HOMEBREW_INSTALLER_URL:-https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh}"
+
+retry() {
+  local max_attempts="$1"
+  local delay_seconds="$2"
+  shift 2
+  local attempt=1
+  until "$@"; do
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      return 1
+    fi
+    echo "matrix-install-linux-tools: attempt ${attempt} failed, retrying in ${delay_seconds}s" >&2
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}
+
+if [ "$(id -u)" = "0" ]; then
+  echo "matrix-install-linux-tools: run as the matrix user, not root" >&2
+  exit 1
+fi
+
+if command -v apt-get >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential procps curl file git
+fi
+
+cd "${HOME:-/home/matrix}"
+
+if [ ! -x "$BREW_BIN" ]; then
+  tmp_installer="$(mktemp)"
+  trap 'rm -f "${tmp_installer:-}"' EXIT
+  retry 3 15 curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 "$INSTALLER_URL" -o "$tmp_installer"
+  retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"
+  rm -f "$tmp_installer"
+  trap - EXIT
+fi
+
+eval "$("$BREW_BIN" shellenv bash)"
+
+if ! "$BREW_BIN" list --versions graphite >/dev/null 2>&1; then
+  retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite
+fi
+
+if ! "$BREW_BIN" list --versions gh >/dev/null 2>&1; then
+  retry 3 30 timeout 600 "$BREW_BIN" install gh
+fi
+
+sudo install -d -o root -g root -m 0755 /etc/profile.d
+printf '%s\n' \
+  '# Homebrew on Linux' \
+  'if [ -n "${PWD:-}" ] && [ ! -r "${PWD}" ]; then' \
+  '  cd "${HOME:-/home/matrix}" || true' \
+  'fi' \
+  "eval \"\$(${BREW_BIN} shellenv bash)\"" \
+  | sudo tee /etc/profile.d/homebrew.sh >/dev/null
+sudo chmod 0644 /etc/profile.d/homebrew.sh
+
+sudo ln -sf "$BREW_BIN" /usr/local/bin/brew
+if [ -x "$BREW_PREFIX/bin/gt" ]; then
+  sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt
+fi
+if [ -x "$BREW_PREFIX/bin/gh" ]; then
+  sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh
+fi
+
+"$BREW_BIN" --version
+if [ -x "$BREW_PREFIX/bin/gt" ]; then
+  "$BREW_PREFIX/bin/gt" --version
+fi
+if [ -x "$BREW_PREFIX/bin/gh" ]; then
+  "$BREW_PREFIX/bin/gh" --version
+fi

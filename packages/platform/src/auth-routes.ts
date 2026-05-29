@@ -13,7 +13,12 @@ import {
 } from './sync-jwt.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 import type { PlatformDB } from './db.js';
-import { getContainer, getContainerByClerkId } from './db.js';
+import {
+  getActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
+  getContainer,
+  getContainerByClerkId,
+} from './db.js';
 import type { ClerkAuth } from './clerk-auth.js';
 
 const DEVICE_BODY_LIMIT = 4096;
@@ -118,10 +123,10 @@ function approvalPage(
   scriptNonce: string,
 ): string {
   // Renders an HTML page that lets a Clerk-authenticated user confirm the
-  // device pairing. The Clerk widget is loaded for sign-in if needed; once
-  // a session exists, the form POSTs to /auth/device/approve. The CSRF
-  // value is also written as a cookie via Set-Cookie on this response so
-  // POST /auth/device/approve can verify the double-submit.
+  // device pairing. The Clerk widget is loaded for sign-in if needed; once a
+  // session exists, JS sends an explicit bearer token to /auth/device/approve.
+  // The CSRF value is also written as a cookie via Set-Cookie on this response
+  // so POST /auth/device/approve can verify the double-submit.
   const escapedCode = userCode.replace(/[^A-Z0-9-]/gi, '');
   const escapedCsrf = csrf.replace(/[^a-f0-9]/gi, '');
   const escapedPublishableKey = publishableKey
@@ -129,24 +134,139 @@ function approvalPage(
     : null;
   const clerkScript = publishableKey
     ? `
+  <script nonce="${scriptNonce}">
+    var userCode = "${escapedCode}";
+    var csrf = "${escapedCsrf}";
+    var approvalUrl = window.location.href;
+
+    function setStatus(message) {
+      var status = document.getElementById('status');
+      if (status) status.textContent = message;
+    }
+
+    function setBusy(isBusy) {
+      var button = document.getElementById('confirm-button');
+      if (button) {
+        button.disabled = isBusy;
+        button.textContent = isBusy ? 'authorizing...' : 'approve login';
+      }
+    }
+
+    function updateSignedInInstance() {
+      var instance = document.getElementById('instance-line');
+      if (!instance || !window.Clerk || !window.Clerk.user) return;
+      var user = window.Clerk.user;
+      var handle = user.username || user.primaryEmailAddress?.emailAddress || user.id;
+      instance.textContent = 'signed in: @' + handle + ' on app.matrix-os.com';
+    }
+
+    async function submitApproval(event) {
+      if (!window.Clerk) return;
+      event.preventDefault();
+      setStatus('');
+      setBusy(true);
+
+      try {
+        if (!window.Clerk.session) {
+          setStatus('Sign in before authorizing this device.');
+          showSignIn();
+          return;
+        }
+
+        var token = await window.Clerk.session.getToken();
+        if (!token) {
+          setStatus('Sign in before authorizing this device.');
+          showSignIn();
+          return;
+        }
+
+        var body = new URLSearchParams({ userCode: userCode, csrf: csrf });
+        var res = await fetch('/auth/device/approve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Authorization: \`Bearer \${token}\`,
+          },
+          body: body,
+          credentials: 'same-origin',
+        });
+
+        if (res.ok) {
+          var html = await res.text();
+          document.open();
+          document.write(html);
+          document.close();
+          return;
+        }
+
+        setStatus('Could not authorize this device. Refresh and try again.');
+      } catch (_) {
+        setStatus('Could not authorize this device. Refresh and try again.');
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function showConfirm() {
+      var signin = document.getElementById('signin-area');
+      var confirm = document.getElementById('confirm-area');
+      if (signin) signin.style.display = 'none';
+      if (confirm) confirm.style.display = 'block';
+    }
+
+    function showSignIn() {
+      var signin = document.getElementById('signin-area');
+      var confirm = document.getElementById('confirm-area');
+      if (signin) signin.style.display = 'block';
+      if (confirm) confirm.style.display = 'block';
+      if (signin && !signin.dataset.mounted) {
+        signin.dataset.mounted = 'true';
+        window.Clerk.mountSignIn(signin, {
+          forceRedirectUrl: approvalUrl,
+          fallbackRedirectUrl: approvalUrl,
+          signUpForceRedirectUrl: approvalUrl,
+          signUpFallbackRedirectUrl: approvalUrl,
+          oauthFlow: 'redirect',
+        });
+      }
+    }
+
+    function initClerk() {
+      window.Clerk.load().then(function() {
+        updateSignedInInstance();
+        if (window.Clerk.user && window.Clerk.session) {
+          showConfirm();
+        } else {
+          showSignIn();
+        }
+      }).catch(function() {
+        setStatus('Could not load sign-in. Refresh and try again.');
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      var form = document.getElementById('confirm-area');
+      var clerkScript = document.getElementById('clerk-script');
+      if (form) form.addEventListener('submit', submitApproval);
+      if (window.Clerk) {
+        initClerk();
+      } else if (clerkScript) {
+        clerkScript.addEventListener('load', initClerk);
+        clerkScript.addEventListener('error', function() {
+          setStatus('Could not load sign-in. Refresh and try again.');
+        });
+      }
+    });
+  </script>`
+    : '';
+  const clerkLoader = publishableKey
+    ? `
   <script
+    id="clerk-script"
     nonce="${scriptNonce}"
     async crossorigin="anonymous"
     data-clerk-publishable-key="${escapedPublishableKey}"
-    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
-    onload="initClerk()"></script>
-  <script nonce="${scriptNonce}">
-    function initClerk() {
-      window.Clerk.load().then(function() {
-        var hasSession = !!window.Clerk.user;
-        document.getElementById('signin-area').style.display = hasSession ? 'none' : 'block';
-        document.getElementById('confirm-area').style.display = hasSession ? 'block' : 'none';
-        if (!hasSession) {
-          window.Clerk.mountSignIn(document.getElementById('signin-area'));
-        }
-      });
-    }
-  </script>`
+    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>`
     : '';
   return `<!DOCTYPE html>
 <html lang="en">
@@ -155,25 +275,129 @@ function approvalPage(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authorize device -- Matrix OS</title>
   <style>
-    body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #eee; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .card { max-width: 420px; padding: 2rem; background: #141414; border: 1px solid #222; border-radius: 8px; text-align: center; }
-    h1 { margin: 0 0 1rem; font-size: 1.25rem; }
-    .code { font-family: monospace; font-size: 1.5rem; letter-spacing: 0.1em; padding: 0.5rem 1rem; background: #1f1f1f; border-radius: 6px; margin: 1rem 0; }
-    button { background: #3b82f6; color: white; border: 0; padding: 0.6rem 1.2rem; font-size: 1rem; border-radius: 6px; cursor: pointer; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101312;
+      color: #e8efe7;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 24px;
+    }
+    main {
+      width: min(920px, 100%);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 20px;
+      align-items: stretch;
+    }
+    .terminal {
+      min-height: 480px;
+      background: #070908;
+      border: 1px solid #2b3a34;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.38);
+    }
+    .bar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      background: #151a18;
+      border-bottom: 1px solid #2b3a34;
+      color: #9aa8a1;
+      font-size: 13px;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 999px; background: #5f6b65; }
+    .dot.ok { background: #66d19e; }
+    .screen {
+      padding: 28px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .prompt { color: #8fbfa3; }
+    .muted { color: #8a968f; }
+    .code {
+      display: inline-block;
+      margin: 12px 0 18px;
+      padding: 10px 14px;
+      border: 1px solid #385247;
+      border-radius: 6px;
+      background: #101714;
+      color: #f4f7f1;
+      font-size: 24px;
+      letter-spacing: 0.08em;
+    }
+    .panel {
+      background: #f6f2e8;
+      color: #25332d;
+      border: 1px solid #ddd4c3;
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    p { margin: 0; color: #516158; line-height: 1.5; }
+    button {
+      width: 100%;
+      background: #25332d;
+      color: #fffdf6;
+      border: 0;
+      padding: 0.75rem 1rem;
+      font-size: 0.95rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.65; cursor: wait; }
+    .status { min-height: 1.25rem; color: #9f2d2d; }
+    #signin-area { min-width: 0; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      .terminal { min-height: 360px; }
+      .screen { padding: 20px; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Authorize this device</h1>
-    <p>You're approving:</p>
-    <div class="code">${escapedCode}</div>
-    <div id="signin-area" style="display:none"></div>
-    <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
-      <input type="hidden" name="userCode" value="${escapedCode}">
-      <input type="hidden" name="csrf" value="${escapedCsrf}">
-      <button type="submit">Confirm</button>
-    </form>
-  </div>
+  <main>
+    <section class="terminal" aria-label="Matrix CLI login preview">
+      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>matrix login</span></div>
+      <div class="screen">
+        <div><span class="prompt">matrix</span> login</div>
+        <div class="muted">open app.matrix-os.com/auth/device</div>
+        <div>verification code</div>
+        <div class="code">${escapedCode}</div>
+        <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
+        <br>
+        <div><span class="prompt">matrix</span> whoami</div>
+        <div class="muted">@handle on app.matrix-os.com</div>
+        <div><span class="prompt">matrix</span> shell connect -c main</div>
+        <div><span class="prompt">matrix</span> run -it -- claude</div>
+        <div><span class="prompt">matrix</span> doctor</div>
+      </div>
+    </section>
+    <section class="panel">
+      <div>
+        <h1>Approve Matrix CLI</h1>
+        <p>Authorize this terminal to connect to your Matrix OS cloud computer.</p>
+      </div>
+      <div id="signin-area" style="display:none"></div>
+      <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
+        <input type="hidden" name="userCode" value="${escapedCode}">
+        <input type="hidden" name="csrf" value="${escapedCsrf}">
+        <button id="confirm-button" type="submit">approve login</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
+    </section>
+  </main>
+  ${clerkLoader}
   ${clerkScript}
 </body>
 </html>`;
@@ -200,6 +424,21 @@ function applyNoFrameHeaders(
   );
 }
 
+function logDeviceApprovalAuthFailure(
+  c: import('hono').Context,
+  reason: string,
+  tokenPresent: boolean,
+  clerkVerified?: boolean,
+): void {
+  console.warn('[device/approve] auth failed:', {
+    reason,
+    authHeaderPresent: Boolean(c.req.header('authorization')),
+    cookieHeaderPresent: Boolean(c.req.header('cookie')),
+    tokenPresent,
+    clerkVerified,
+  });
+}
+
 export function createAuthRoutes(config: AuthRoutesConfig): Hono {
   const app = new Hono();
   const rateLimit = createRateLimiter();
@@ -210,20 +449,22 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     now: config.now,
     issueToken: async ({ clerkUserId }) => {
       const container = await getContainerByClerkId(config.db, clerkUserId);
-      if (!container) {
-        throw new Error('No container provisioned for this Clerk user');
+      const machine = container ? undefined : await getActiveUserMachineByClerkId(config.db, clerkUserId);
+      const handle = container?.handle ?? machine?.handle;
+      if (!handle) {
+        throw new Error('No runtime provisioned for this Clerk user');
       }
-      const gatewayUrl = config.gatewayUrlForHandle(container.handle);
+      const gatewayUrl = config.gatewayUrlForHandle(handle);
       const issued = await issueSyncJwt({
         secret: config.jwtSecret,
         clerkUserId,
-        handle: container.handle,
+        handle,
         gatewayUrl,
       });
       return {
         token: issued.token,
         expiresAt: issued.expiresAt,
-        handle: container.handle,
+        handle,
       };
     },
   });
@@ -353,10 +594,12 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         c.req.header('cookie'),
       );
       if (!token) {
+        logDeviceApprovalAuthFailure(c, 'missing_token', false);
         return c.json({ error: 'unauthorized' }, 401);
       }
       const verifyResult = await config.clerkAuth.verify(token);
       if (!verifyResult.authenticated || !verifyResult.userId) {
+        logDeviceApprovalAuthFailure(c, 'verify_failed', true, false);
         return c.json({ error: 'unauthorized' }, 401);
       }
 
@@ -424,13 +667,19 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       return c.json({ error: 'unauthorized' }, 401);
     }
     const container = await getContainer(config.db, claims.handle);
-    if (!container) {
+    const machine = container ? undefined : await getActiveUserMachineByHandle(config.db, claims.handle);
+    const ownerClerkUserId = container?.clerkUserId ?? machine?.clerkUserId;
+    const handle = container?.handle ?? machine?.handle;
+    if (!ownerClerkUserId || !handle) {
       return c.json({ error: 'unknown_handle' }, 404);
+    }
+    if (ownerClerkUserId !== claims.sub) {
+      return c.json({ error: 'unauthorized' }, 401);
     }
     return c.json({
       userId: claims.sub,
-      handle: container.handle,
-      gatewayUrl: config.gatewayUrlForHandle(container.handle),
+      handle,
+      gatewayUrl: config.gatewayUrlForHandle(handle),
     });
   });
 

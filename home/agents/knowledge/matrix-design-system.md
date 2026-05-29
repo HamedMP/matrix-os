@@ -1,6 +1,8 @@
 # Matrix OS Design System
 
-Comprehensive design token reference for building apps, modules, and UI within Matrix OS. This is the single source of truth for visual language -- every app, game, and tool should draw from these tokens.
+Comprehensive design token reference for building apps, modules, and UI within Matrix OS. This is the single source of truth for visual language -- every app, game, and tool must follow these tokens and patterns.
+
+Brand: "Technology that understands you." Warm, calm, personal. The visual language draws from natural materials (forest, sand, ember).
 
 ## CSS Variable Reference
 
@@ -8,563 +10,327 @@ The shell injects `--matrix-*` variables into app iframes via the bridge. Apps t
 
 ### Core Colors
 
-| Variable                | Default   | Description                                               |
-| ----------------------- | --------- | --------------------------------------------------------- |
-| `--matrix-bg`           | `#ece5f0` | Page/canvas background (lavender)                         |
-| `--matrix-fg`           | `#1c1917` | Primary text (warm black)                                 |
-| `--matrix-card`         | `#ffffff` | Card/panel surfaces                                       |
-| `--matrix-card-fg`      | `#1c1917` | Text on cards                                             |
-| `--matrix-primary`      | `#c2703a` | Primary accent -- terracotta. Buttons, links, focus rings |
-| `--matrix-primary-fg`   | `#ffffff` | Text on primary-colored elements                          |
-| `--matrix-secondary`    | `#f0eaf4` | Secondary surfaces (light lavender tint)                  |
-| `--matrix-secondary-fg` | `#44403c` | Text on secondary surfaces                                |
-| `--matrix-muted`        | `#f0eaf4` | Muted/subtle backgrounds                                  |
-| `--matrix-muted-fg`     | `#78716c` | De-emphasized text (warm gray)                            |
-| `--matrix-border`       | `#d8d0de` | Borders, dividers (lavender tint)                         |
-| `--matrix-input`        | `#d8d0de` | Input field borders                                       |
-| `--matrix-ring`         | `#c2703a` | Focus ring color (matches primary)                        |
-| `--matrix-accent`       | `#f0eaf4` | Highlight/hover backgrounds                               |
-| `--matrix-accent-fg`    | `#44403c` | Text on accent backgrounds                                |
-| `--matrix-popover`      | `#ffffff` | Dropdown/tooltip surfaces                                 |
-| `--matrix-popover-fg`   | `#1c1917` | Text in popovers                                          |
+| Variable                | Default   | Description                                  |
+| ----------------------- | --------- | -------------------------------------------- |
+| `--matrix-bg`           | `#FAFAF5` | Page background (warm off-white)             |
+| `--matrix-fg`           | `#32352E` | Primary text (Deep -- never pure black)      |
+| `--matrix-card`         | `#FFFFFF` | Card/panel surfaces                          |
+| `--matrix-card-fg`      | `#32352E` | Text on cards                                |
+| `--matrix-primary`      | `#434E3F` | Primary brand (Forest). Buttons, structure   |
+| `--matrix-primary-fg`   | `#FAFAF5` | Text on primary elements                     |
+| `--matrix-secondary`    | `#E0E1CA` | Secondary surfaces (Cream). Warm fills       |
+| `--matrix-secondary-fg` | `#32352E` | Text on secondary surfaces                   |
+| `--matrix-muted`        | `#F0EDE4` | Muted backgrounds, disabled states           |
+| `--matrix-muted-fg`     | `#7A7768` | De-emphasized text                           |
+| `--matrix-border`       | `#D6D3C8` | Borders, dividers (warm gray)                |
+| `--matrix-input`        | `#D6D3C8` | Input field borders                          |
+| `--matrix-ring`         | `#434E3F` | Focus ring color (Forest)                    |
+| `--matrix-accent`       | `#D06F25` | Accent / CTA (Ember). ONE per view max       |
+| `--matrix-accent-fg`    | `#FFFFFF` | Text on accent elements                      |
+| `--matrix-popover`      | `#FFFFFF` | Dropdown/tooltip surfaces                    |
+| `--matrix-popover-fg`   | `#32352E` | Text in popovers                             |
+
+### Sand Shades (for gradient depth)
+
+| Variable                | Default   | Description                          |
+| ----------------------- | --------- | ------------------------------------ |
+| `--matrix-sand-light`   | `#F7F1E7` | Gradient backgrounds, light end      |
+| `--matrix-sand-mid`     | `#F3EAE0` | Gradient backgrounds, mid tone       |
+| `--matrix-sand-warm`    | `#D6AB8B` | Warm gradient endpoints, accents     |
 
 ### Semantic Colors
 
 | Variable               | Default   | Description                    |
 | ---------------------- | --------- | ------------------------------ |
-| `--matrix-destructive` | `#ef4444` | Errors, delete actions, danger |
-| `--matrix-success`     | `#22c55e` | Positive states, confirmations |
-| `--matrix-warning`     | `#eab308` | Warnings, caution states       |
+| `--matrix-destructive` | `#C4342D` | Errors, delete actions, danger |
+| `--matrix-success`     | `#3A7D44` | Positive states, confirmations |
+| `--matrix-warning`     | `#D49B2A` | Warnings, caution states       |
 
-### Surface Hierarchy
+### Color Rules
 
-Three levels of elevation, from lowest to highest:
+1. **One Ember accent per view.** Multiple Ember elements = visual noise.
+2. **Forest is structural.** Headers, primary buttons, nav active states, icons.
+3. **Cream is warmth.** Secondary fills, hover states, sidebar backgrounds.
+4. **Deep is text.** Never use pure black `#000000`.
+5. **Backgrounds are GRADIENT, not flat.** Blend sand shades for warmth.
+6. **Shadows use Deep-tinted** `rgba(50,53,46,X)`, never pure black.
 
-1. **Background** (`--matrix-bg`): The canvas. Lavender `#ece5f0` by default.
-2. **Card** (`--matrix-card`): Content panels sitting on the canvas. White `#ffffff`.
-3. **Elevated/Popover** (`--matrix-popover`): Floating elements -- tooltips, dropdowns, modals. White with `backdrop-blur` and shadow.
-
-Use increasing shadow depth to reinforce the hierarchy:
-
-- Background: no shadow
-- Card: `box-shadow: 0 1px 3px rgba(0,0,0,0.08)`
-- Elevated: `box-shadow: 0 10px 25px rgba(0,0,0,0.12)`
-
-### Typography
-
-| Variable             | Default                          | Description          |
-| -------------------- | -------------------------------- | -------------------- |
-| `--matrix-font-sans` | `"Inter", system-ui, sans-serif` | Body and UI text     |
-| `--matrix-font-mono` | `"JetBrains Mono", monospace`    | Code, data, terminal |
-| `--matrix-radius`    | `0.75rem`                        | Base border-radius   |
-
-### Radius Tokens
-
-| Token                | Value                              | Usage                          |
-| -------------------- | ---------------------------------- | ------------------------------ |
-| `--matrix-radius-sm` | `calc(var(--matrix-radius) - 4px)` | Small chips, tags              |
-| `--matrix-radius-md` | `calc(var(--matrix-radius) - 2px)` | Inputs, small buttons          |
-| `--matrix-radius-lg` | `var(--matrix-radius)`             | Cards, panels                  |
-| `--matrix-radius-xl` | `calc(var(--matrix-radius) + 4px)` | Feature cards, floating panels |
-
-## Color System
-
-### Primary: Terracotta `#c2703a`
-
-The signature color. Use for primary actions (buttons, links), focus rings, and accent highlights. Conveys warmth and distinction -- this is NOT a generic blue.
-
-Terracotta glow for badges and highlights:
+### Gradient Backgrounds
 
 ```css
-background: rgba(194, 112, 58, 0.15);
+/* App page background — warm sand wash (DEFAULT for all apps) */
+background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%);
+
+/* Section with depth */
+background: linear-gradient(165deg, #E0E1CA 0%, #FAFAF5 50%, rgba(208,111,37,0.05) 100%);
+
+/* Dark section / hero card */
+background: linear-gradient(135deg, #32352E 0%, #434E3F 40%, #D6AB8B 100%);
 ```
-
-### Background: Lavender `#ece5f0`
-
-The canvas color. Soft, warm, organic. All content floats on this surface. Never replace with white or dark gray as the base.
-
-### Foreground: Warm Black `#1c1917`
-
-Not pure `#000000`. The warm undertone prevents harshness and matches the organic palette.
-
-### Cards: White `#ffffff`
-
-Clean card surfaces with subtle shadow create depth against the lavender canvas.
-
-### Border: Lavender Tint `#d8d0de`
-
-Subtle, not harsh. Borders should be barely visible -- structure without distraction.
-
-### Semantic Rules
-
-- **Success** (`#22c55e`): Use for completed states, confirmations, positive values
-- **Warning** (`#eab308`): Use for caution states, approaching limits, attention needed
-- **Error/Destructive** (`#ef4444`): Use for errors, delete confirmations, critical alerts
-- Never use semantic colors as primary UI chrome -- they are for status communication only
 
 ## Typography
 
-### Font Choices
+### Font Stack
 
-The OS ships with Inter for UI text and JetBrains Mono for code. These are loaded via `next/font/google` in the shell with zero layout shift.
+| Variable                 | Default                             | Description                                    |
+| ------------------------ | ----------------------------------- | ---------------------------------------------- |
+| `--matrix-font-sans`     | `"Inter", system-ui, sans-serif`    | Body, UI, labels, subtitles, card titles       |
+| `--matrix-font-display`  | `"Orbitron", system-ui, sans-serif` | H1/H2 display headings and large stat numbers  |
+| `--matrix-font-mono`     | `"JetBrains Mono", monospace`       | Code, data, terminal                           |
 
-When building apps that load their own fonts (standalone HTML or Vite apps), use characterful alternatives. The following are BANNED as primary fonts because they produce generic, undifferentiated UI:
+### Orbitron Rules (CRITICAL)
 
-- Inter (already the shell font -- apps should inherit, not re-declare)
-- Roboto
-- Arial
-- Helvetica
-- Open Sans
+Orbitron is the Matrix OS brand typeface. Use it **minimally**:
 
-For display headings in apps, consider distinctive options:
-
-- **DM Serif Display** -- refined serif with personality
-- **Space Grotesk** -- geometric sans with character
-- **Sora** -- modern, warm, distinctive
-- **Fraunces** -- soft serif, organic feel matching the palette
-- **Outfit** -- geometric, clean, slightly playful
-
-For body text, inherit `var(--matrix-font-sans)` or use:
-
-- **Source Sans 3** -- professional, readable
-- **Nunito Sans** -- rounded, friendly
-- **Work Sans** -- geometric, versatile
+- **Use for:** H1, H2 display headings, large metric/stat numbers (1.5rem+)
+- **NEVER use for:** subtitles (H3+), card titles, descriptions, button labels, navigation, form labels, body text, or anything below 16px
+- **H3 and below are ALWAYS Inter weight 600.**
 
 ### Type Scale
 
-| Name        | Size            | Weight  | Usage                               |
-| ----------- | --------------- | ------- | ----------------------------------- |
-| `text-xs`   | 0.75rem (12px)  | 400     | Fine print, timestamps, metadata    |
-| `text-sm`   | 0.875rem (14px) | 400-500 | Labels, secondary text, table cells |
-| `text-base` | 1rem (16px)     | 400     | Body text, default                  |
-| `text-lg`   | 1.125rem (18px) | 500     | Emphasized body, card titles        |
-| `text-xl`   | 1.25rem (20px)  | 600     | Section subheadings                 |
-| `text-2xl`  | 1.5rem (24px)   | 600-700 | Section headings                    |
-| `text-3xl`  | 1.875rem (30px) | 700     | Page headings                       |
-| `text-4xl`  | 2.25rem (36px)  | 700     | Large headings                      |
-| `text-5xl`  | 3rem (48px)     | 700-800 | Hero text                           |
-| `text-6xl`  | 3.75rem (60px)  | 800     | Display/splash text                 |
+| Level      | Font     | Size      | Weight | Usage                            |
+| ---------- | -------- | --------- | ------ | -------------------------------- |
+| Display    | Orbitron | 3rem+     | 700-800| Hero headlines only              |
+| H1         | Orbitron | 2.25rem   | 600    | Page titles                      |
+| H2         | Orbitron | 1.75rem   | 600    | Section headings                 |
+| H3         | Inter    | 1.25rem   | 600    | Subtitles, subsections           |
+| H4         | Inter    | 1.125rem  | 600    | Card titles, group labels        |
+| Body       | Inter    | 1rem      | 400    | Paragraphs, descriptions         |
+| Small      | Inter    | 0.875rem  | 400    | Secondary text, metadata         |
+| Caption    | Inter    | 0.75rem   | 400    | Timestamps, footnotes            |
+| Label      | Inter    | 0.65rem   | 600    | Uppercase tags, section markers  |
 
-### Semantic Weights
+Labels: `letter-spacing: 0.15-0.25em; text-transform: uppercase`.
 
-- **Regular (400)**: Body text, descriptions
-- **Medium (500)**: Labels, emphasized text, navigation items
-- **Semibold (600)**: Headings, button text, card titles
-- **Bold (700)**: Page headings, strong emphasis
-- **Extrabold (800)**: Hero/display text only
+### Loading Fonts (in standalone apps)
 
-### Monospace Labels
-
-For technical indicators, status badges, and data labels:
-
-```css
-font-family: var(--matrix-font-mono);
-font-size: 0.75rem;
-letter-spacing: 0.05em;
-text-transform: uppercase;
+```html
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 ```
 
-## Spacing
+## Shapes
 
-Based on a 4px grid. All spacing values are multiples of 4.
+| Element   | Border Radius | Notes                        |
+|-----------|---------------|------------------------------|
+| Buttons   | 50px          | Full capsule, always         |
+| Inputs    | 50px          | Full capsule                 |
+| Cards     | 22px          | Soft rounded                 |
+| Inner UI  | 14-16px       | Nested elements, icon bgs    |
+| Badges    | 9999px        | Perfect pill                 |
 
-| Token | Value         | Usage                                               |
-| ----- | ------------- | --------------------------------------------------- |
-| `xs`  | 4px (0.25rem) | Tight gaps: icon-to-label, badge padding            |
-| `sm`  | 8px (0.5rem)  | Small gaps: between related elements, input padding |
-| `md`  | 16px (1rem)   | Standard gaps: card padding, section spacing        |
-| `lg`  | 24px (1.5rem) | Large gaps: between cards, section padding          |
-| `xl`  | 32px (2rem)   | Extra-large: page margins, major sections           |
-| `2xl` | 48px (3rem)   | Hero spacing, page-level vertical rhythm            |
+No sharp corners anywhere in Matrix OS.
 
-### Rules
+### Shadows
 
-- Inner padding: `md` (16px) for cards, `sm` (8px) for inputs and compact elements
-- Gap between siblings: `sm` (8px) for tight lists, `md` (16px) for card grids
-- Section spacing: `lg` (24px) to `xl` (32px)
-- Page margins: `md` (16px) on mobile, `xl` (32px) on desktop
+| Level | Value                                    | Use For                |
+|-------|------------------------------------------|------------------------|
+| sm    | `0 2px 4px rgba(50,53,46,0.06)`         | Cards at rest          |
+| md    | `0 4px 12px rgba(50,53,46,0.08)`        | Hover, dropdowns       |
+| lg    | `0 8px 24px rgba(50,53,46,0.10)`        | Floating panels        |
 
-## Layout Patterns
+### Glass-morphism
 
-### Card Grid
-
-Responsive card layout that fills available space:
+For cards and floating elements:
 
 ```css
-display: grid;
-grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-gap: 16px;
-padding: 16px;
+background: rgba(255, 255, 255, 0.55);
+backdrop-filter: blur(12px);
+border: 1px solid rgba(214, 211, 200, 0.35);
+border-radius: 22px;
 ```
 
-For smaller cards (tiles, thumbnails):
+## Icons
 
-```css
-grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-```
+Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-### Sidebar Layout
+Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 
-Fixed sidebar with scrollable content:
+| Purpose          | Set            | Prefix           | Examples                             |
+|------------------|----------------|------------------|--------------------------------------|
+| UI controls      | Lucide         | `lucide:`        | `lucide:search`, `lucide:plus`, `lucide:x` |
+| Weather          | Meteocons      | `meteocons:`     | `meteocons:clear-day-fill`, `meteocons:rain` |
+| Loading/spinners | SVG Spinners   | `svg-spinners:`  | `svg-spinners:ring-resize`           |
+| Brand logos      | Simple Icons   | `simple-icons:`  | `simple-icons:gmail`, `simple-icons:github` |
+| File types       | Catppuccin     | `catppuccin:`    | `catppuccin:typescript`              |
+| Flags            | Circle Flags   | `circle-flags:`  | `circle-flags:se`                    |
+| Decorative       | Fluent Emoji   | `fluent-emoji:`  | `fluent-emoji:waving-hand`           |
 
-```css
-.layout {
-  display: flex;
-  height: 100%;
-}
-.sidebar {
-  width: 260px;
-  border-right: 1px solid var(--matrix-border);
-  overflow-y: auto;
-}
-.content {
-  flex: 1;
-  overflow-y: auto;
-}
-```
+Default to simple line-style SVGs for all UI icons. Only use specialist bundled assets when the domain is obvious.
 
-### Overlay/Modal
-
-Centered overlay with backdrop:
-
-```css
-.overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  z-index: 50;
-}
-.dialog {
-  background: var(--matrix-card);
-  border-radius: var(--matrix-radius-xl);
-  padding: 24px;
-  max-width: 480px;
-  width: 90%;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-}
-```
-
-### Responsive Breakpoints
-
-| Breakpoint | Width  | Target                                    |
-| ---------- | ------ | ----------------------------------------- |
-| Mobile min | 320px  | Smallest supported width                  |
-| Mobile     | 640px  | Phones (stack layouts, single column)     |
-| Tablet     | 768px  | Tablets, small laptops (2-column layouts) |
-| Desktop    | 1024px | Full desktop (multi-column, sidebars)     |
-
-### Rules
-
-- Design mobile-first: stack vertically, then expand
-- Minimum app window: 300x200px
-- Test at 320px width
-- Use `min()` and `clamp()` for fluid sizing
-- Touch targets: 44x44px minimum on mobile
+**NEVER use text characters as icons.** No `+`, `×`, `→`, `✓`, `⚙`. Text characters have unpredictable baselines and never center properly. Use inline SVG or a bundled local asset.
 
 ## Animation
 
 ### Timing
 
-| Type  | Duration  | Easing      | Usage                                   |
-| ----- | --------- | ----------- | --------------------------------------- |
-| Micro | 100ms     | ease-out    | Button press, toggle, checkbox          |
-| Enter | 150ms     | ease-out    | Panel open, tooltip appear, fade-in     |
-| Exit  | 100ms     | ease-in     | Panel close, tooltip dismiss            |
-| Move  | 200-300ms | ease-in-out | Window reposition, slide transitions    |
-| Page  | 300ms     | ease-out    | Route transitions, full-screen overlays |
+| Type  | Duration  | Easing                                    | Usage                                |
+| ----- | --------- | ----------------------------------------- | ------------------------------------ |
+| Micro | 100-150ms | ease                                      | Button press, toggle                 |
+| Enter | 200-300ms | ease-out                                  | Panel open, fade-in                  |
+| Exit  | 150-200ms | ease-in                                   | Panel close, dismiss                 |
+| Move  | 200-300ms | cubic-bezier(0.25, 0.46, 0.45, 0.94)    | Reposition, slide                    |
 
-### Rules
+Never exceed 500ms. Always respect `prefers-reduced-motion`.
 
-- Only animate `transform` and `opacity` for performance (triggers compositing, not layout)
-- Never exceed 500ms
-- Never use `linear` easing for UI transitions
-- Respect `prefers-reduced-motion`: fall back to simple opacity fade
-
-### Orchestrated Page Load
-
-Stagger child elements on page mount for a polished entrance:
+### Page Mount — Staggered Fade Up (signature animation)
 
 ```css
-.card {
-  animation: fadeSlideUp 0.3s ease-out backwards;
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.card:nth-child(1) {
-  animation-delay: 0ms;
-}
-.card:nth-child(2) {
-  animation-delay: 50ms;
-}
-.card:nth-child(3) {
-  animation-delay: 100ms;
-}
-.card:nth-child(4) {
-  animation-delay: 150ms;
-}
-
-@keyframes fadeSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+.animate-in { animation: fadeUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
+/* Stagger: 60ms gap between siblings */
+.stagger > :nth-child(1) { animation-delay: 0s; }
+.stagger > :nth-child(2) { animation-delay: 0.06s; }
+.stagger > :nth-child(3) { animation-delay: 0.12s; }
+.stagger > :nth-child(4) { animation-delay: 0.18s; }
+.stagger > :nth-child(5) { animation-delay: 0.24s; }
 ```
 
-### Scroll-Triggered Reveals
-
-Use IntersectionObserver to trigger animations as elements scroll into view:
-
-```javascript
-const observer = new IntersectionObserver(
-  (entries) => {
-    entries.forEach((e) => {
-      if (e.isIntersecting) {
-        e.target.classList.add('visible');
-        observer.unobserve(e.target);
-      }
-    });
-  },
-  { threshold: 0.1 },
-);
-```
-
-### Hover Micro-interactions
-
-Subtle scale and shadow on interactive cards:
+### Hover Lift (all clickable elements)
 
 ```css
-.card {
-  transition:
-    transform 0.15s ease-out,
-    box-shadow 0.15s ease-out;
-}
-.card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+.hoverable { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.hoverable:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(50,53,46,0.08); }
+.hoverable:active { transform: translateY(0); transition-duration: 0.1s; }
+```
+
+### Skeleton Loading — Warm Shimmer
+
+```css
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton {
+  background: linear-gradient(90deg, var(--matrix-muted) 25%, #F7F1E7 50%, var(--matrix-muted) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: 10px;
 }
 ```
+
+Use warm sand tones in the shimmer, not gray or white.
+
+### Progress Bars
+
+```css
+.progress-fill { transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+```
+
+Animate width from 0 to target on mount.
+
+### Animation Rules
+
+- Page load = one orchestrated wave (stagger all top-level elements)
+- Hover lift on every clickable card and button
+- Loading always uses warm-tinted skeletons, never blank space
+- Spinners: use a local CSS/SVG spinner, never a remote script
+- Reduced motion fallback is mandatory
 
 ## Component Patterns
 
 ### Buttons
 
-Four variants following the shell convention:
-
-**Primary** (main actions):
+Capsule-shaped with clear hierarchy:
 
 ```css
-background: var(--matrix-primary);
-color: var(--matrix-primary-fg);
-border: none;
-border-radius: var(--matrix-radius-md);
-padding: 8px 20px;
-font-weight: 600;
-cursor: pointer;
-transition: opacity 0.1s ease-out;
+button {
+  padding: 10px 24px;
+  border-radius: 50px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(50,53,46,0.1); }
 ```
 
-**Secondary/Outline** (secondary actions):
+| Variant    | Background                  | Text              |
+|------------|-----------------------------|--------------------|
+| Primary    | `var(--matrix-primary)`     | `var(--matrix-primary-fg)` |
+| Accent CTA | `var(--matrix-accent)`     | white              |
+| Secondary  | transparent + border        | `var(--matrix-fg)` |
+| Ghost      | transparent                 | `var(--matrix-fg)` |
+| Cream      | `var(--matrix-secondary)`   | `var(--matrix-fg)` |
+
+### Cards
+
+Glass card with gradient background showing through:
 
 ```css
-background: transparent;
-color: var(--matrix-fg);
-border: 1px solid var(--matrix-border);
-border-radius: var(--matrix-radius-md);
-padding: 8px 20px;
+.card {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(214, 211, 200, 0.35);
+  border-radius: 22px;
+  padding: 20px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(50,53,46,0.06); }
 ```
 
-**Ghost** (tertiary, contextual):
-
-```css
-background: transparent;
-color: var(--matrix-fg);
-border: none;
-padding: 8px 20px;
-```
-
-On hover: `background: var(--matrix-accent);`
-
-**Destructive** (danger actions):
-
-```css
-background: var(--matrix-destructive);
-color: #ffffff;
-```
+**Stat cards must use horizontal layout** — icon container (46px, gradient bg, 14px radius) + text block (label, value, subtitle) side by side. Never stack vertically with empty whitespace.
 
 ### Inputs
 
 ```css
-input,
-select,
-textarea {
-  padding: 8px 12px;
-  background: var(--matrix-card);
-  color: var(--matrix-fg);
-  border: 1px solid var(--matrix-input);
-  border-radius: var(--matrix-radius-md);
-  font-size: 0.875rem;
-  font-family: var(--matrix-font-sans);
-  transition: border-color 0.15s ease-out;
-}
-input:focus {
-  outline: none;
-  border-color: var(--matrix-ring);
-  box-shadow: 0 0 0 2px rgba(194, 112, 58, 0.2);
-}
-```
-
-### Cards
-
-```css
-.card {
-  background: var(--matrix-card);
-  border: 1px solid var(--matrix-border);
-  border-radius: var(--matrix-radius-lg);
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-```
-
-Glass-morphism variant for floating cards:
-
-```css
-.card-glass {
+input, select {
   background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--matrix-border);
-  border-radius: var(--matrix-radius-xl);
+  border: 1.5px solid rgba(214, 211, 200, 0.6);
+  border-radius: 50px;
+  padding: 13px 22px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem;
+  outline: none;
+  transition: all 0.2s;
+}
+input:focus, select:focus {
+  border-color: var(--matrix-primary);
+  box-shadow: 0 0 0 3px rgba(67, 78, 63, 0.06);
+  background: rgba(255, 255, 255, 0.95);
 }
 ```
 
-### Modals / Dialogs
+### Icon Buttons
 
-- Dark overlay backdrop with blur
-- Centered dialog with `--matrix-radius-xl` corners
-- Title + content + actions footer
-- Close via X button, Escape key, and backdrop click
-- Focus trap within the dialog
-- Entry: fade + scale from 0.95
-- Exit: fade + scale to 0.95
-
-### Empty States
-
-Every view must handle the empty case. Pattern:
-
-```html
-<div
-  style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:48px 24px; text-align:center; color:var(--matrix-muted-fg);"
->
-  <svg><!-- icon, 48x48, stroke style --></svg>
-  <h3 style="margin:16px 0 8px; color:var(--matrix-fg); font-weight:600;">
-    No items yet
-  </h3>
-  <p style="margin:0 0 16px; max-width:280px;">
-    Get started by creating your first item.
-  </p>
-  <button class="btn-primary">Create Item</button>
-</div>
-```
-
-### Loading States
-
-**Skeleton/shimmer**: For content that is loading:
+Always use flexbox centering and inline SVG or bundled local icons:
 
 ```css
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--matrix-muted) 25%,
-    var(--matrix-secondary) 50%,
-    var(--matrix-muted) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: var(--matrix-radius-md);
-}
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
-```
-
-**Spinner**: For actions in progress:
-
-```css
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--matrix-border);
-  border-top-color: var(--matrix-primary);
+.icon-btn {
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-```
-
-## Accessibility
-
-### Focus Visible
-
-Use `:focus-visible` for keyboard-only focus rings (not on mouse click):
-
-```css
-:focus-visible {
-  outline: 2px solid var(--matrix-ring);
-  outline-offset: 2px;
-}
-```
-
-### Touch Targets
-
-Minimum 44x44px for all interactive elements on mobile. Use padding to increase hit area without increasing visual size:
-
-```css
-.touch-target {
-  min-width: 44px;
-  min-height: 44px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--matrix-primary);
+  color: var(--matrix-primary-fg);
+  border: none;
+  cursor: pointer;
 }
 ```
 
-### Contrast
+```html
+<button class="icon-btn" aria-label="Add">
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+</button>
+```
 
-- Body text on background: 4.5:1 minimum (WCAG AA)
-- Large text (18px+ bold or 24px+): 3:1 minimum
-- The default palette meets these ratios: `#1c1917` on `#ece5f0` = 10.2:1
-- Interactive elements: ensure sufficient contrast in all states (default, hover, active, disabled)
+## Common Pitfalls (non-negotiable)
 
-### Keyboard Navigation
-
-- All interactive elements reachable via Tab
-- Escape closes modals, popovers, overlays
-- Enter/Space activates buttons
-- Arrow keys for list navigation, tab switching
-- Focus management: focus moves to opened panel, returns to trigger on close
-
-### ARIA
-
-- Use semantic HTML (`button`, `nav`, `main`, `dialog`)
-- Add `aria-label` for icon-only buttons
-- Use `role="dialog"` and `aria-modal="true"` for modals
-- Use `aria-expanded` for toggle buttons
-- Use `aria-live="polite"` for dynamic content updates
+1. **Never use text characters as icons.** `+`, `×`, `→`, `✓` never center. Use inline SVG or bundled local assets.
+2. **Always center icon buttons with flexbox.** `display:flex; align-items:center; justify-content:center`.
+3. **Components must fill space intentionally.** No empty whitespace corners. Use horizontal layouts for compact stat/info cards.
+4. **Touch targets: minimum 36×36px.** Even if the icon is 16px.
+5. **Text overflow:** `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` on single-line text.
+6. **All inputs need visible focus states.** Never just `outline:none` with no replacement.
+7. **All buttons need hover + active states.** No flat state-free buttons.
+8. **Don't mix border-radius values** on adjacent elements.
+9. **Backgrounds must be gradient**, not flat. Use the sand wash as default.
+10. **Orbitron only for H1/H2.** Subtitles, card titles, and everything else use Inter.
 
 ## Bridge API Patterns
 
@@ -573,85 +339,22 @@ Minimum 44x44px for all interactive elements on mobile. Use padding to increase 
 Apps with `storage.tables` in `matrix.json` use `MatrixOS.db`:
 
 ```javascript
-// Find rows
 const rows = await MatrixOS.db.find('tasks', { filter: { done: false }, orderBy: { created_at: 'desc' } });
-
-// Insert
 const { id } = await MatrixOS.db.insert('tasks', { text: 'Buy milk', done: false });
-
-// Update
 await MatrixOS.db.update('tasks', id, { done: true });
-
-// Delete
 await MatrixOS.db.delete('tasks', id);
-
-// Count
-const { count } = await MatrixOS.db.count('tasks', { done: false });
-
-// Listen for changes
 MatrixOS.db.onChange('tasks', () => loadData());
-```
-
-### Legacy KV Data (deprecated for new apps)
-
-```javascript
-async function readData(app, key) {
-  const res = await fetch(`/api/bridge/data`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'read', app, key }),
-  });
-  return res.json();
-}
-```
 ```
 
 ### Theme Integration
 
-Apps receive theme variables via the bridge. Access current values:
+Apps receive theme variables via the bridge:
 
 ```javascript
 const theme = window.MatrixOS?.theme;
-// { bg: '#ece5f0', fg: '#1c1917', accent: '#c2703a', ... }
-```
-
-Listen for theme changes:
-
-```javascript
 window.addEventListener('message', (e) => {
   if (e.data?.type === 'os:theme-update') {
     // Variables already updated in injected <style>
-    // Use this to update canvas renders or non-CSS visuals
   }
 });
 ```
-
-### Opening Other Apps
-
-```javascript
-window.MatrixOS?.openApp('calculator', '/files/apps/calculator/index.html');
-```
-
-## Anti-Patterns
-
-### NEVER Do These
-
-1. **Generic fonts**: Do not use Inter, Roboto, Arial, Helvetica, or Open Sans as a deliberate font choice in apps. Inherit `--matrix-font-sans` or choose a distinctive alternative.
-
-2. **Hardcoded colors**: Never write `color: #c2703a` or `background: #ece5f0` directly. Always use `var(--matrix-primary)` / `var(--matrix-bg)`. Hardcoded values break when the user changes their theme.
-
-3. **Purple gradients on white**: This was the old design. The current palette is warm (lavender + terracotta), not cool (purple + white).
-
-4. **Dark backgrounds by default**: Matrix OS is light-mode by default (`#ece5f0` canvas). Do not set `background: #0a0a0a` or similar dark values.
-
-5. **Cookie-cutter layouts**: Avoid identical card grids with no visual hierarchy. Use size variation, featured items, asymmetric layouts, and editorial spacing.
-
-6. **Missing empty states**: Every view must handle zero items gracefully. A blank screen is a failure.
-
-7. **No animations**: Apps should have entrance animations, hover micro-interactions, and smooth transitions. Static apps feel lifeless.
-
-8. **Sharp corners**: The design language uses rounded corners throughout. Never use `border-radius: 0`.
-
-9. **Heavy drop shadows on cards**: The window chrome already has a shadow. Cards inside windows use subtle `shadow-sm` only.
-
-10. **Ignoring reduced motion**: Always wrap non-essential animations in a `prefers-reduced-motion` check.

@@ -13,6 +13,138 @@ export type OnboardingStage =
   | "done";
 
 export type VoiceState = "idle" | "listening" | "speaking" | "thinking";
+export type OnboardingGoalId = "coding" | "app_building" | "company_brain" | "assistant";
+
+export interface ReadinessGateSummary {
+  id: string;
+  category: string;
+  criticality: "release_critical" | "goal_required" | "recommended" | "optional";
+  status: "unknown" | "checking" | "pass" | "fail" | "blocked" | "skipped";
+  message: string;
+  remediation: string | null;
+  owner: "user" | "operator" | "matrix";
+  lastCheckedAt: string | null;
+  evidence?: string[];
+}
+
+export interface OnboardingGoalSummary {
+  id: OnboardingGoalId;
+  selected: boolean;
+  label: string;
+  description: string;
+}
+
+export interface OnboardingStepSummary {
+  id: string;
+  required: boolean;
+  title: string;
+  unlocks: string[];
+}
+
+export interface OnboardingReadiness {
+  overallStatus: "ready" | "degraded" | "blocked" | "checking";
+  goals: OnboardingGoalSummary[];
+  gates: ReadinessGateSummary[];
+  systemAgent: "hermes";
+  activeAgents: Array<"claude" | "codex" | "hermes">;
+  codingHandoffStatus: "idle" | "running" | "needs_input" | "ready" | "failed" | null;
+}
+
+const READINESS_STATUSES = new Set<ReadinessGateSummary["status"]>(["unknown", "checking", "pass", "fail", "blocked", "skipped"]);
+const READINESS_CRITICALITIES = new Set<ReadinessGateSummary["criticality"]>(["release_critical", "goal_required", "recommended", "optional"]);
+const READINESS_OWNERS = new Set<ReadinessGateSummary["owner"]>(["user", "operator", "matrix"]);
+const READINESS_OVERALL_STATUSES = new Set<OnboardingReadiness["overallStatus"]>(["ready", "degraded", "blocked", "checking"]);
+const ONBOARDING_GOAL_IDS = new Set<OnboardingGoalId>(["coding", "app_building", "company_brain", "assistant"]);
+const AGENT_IDS = new Set<OnboardingReadiness["activeAgents"][number]>(["claude", "codex", "hermes"]);
+const CODING_HANDOFF_STATUSES = new Set<NonNullable<OnboardingReadiness["codingHandoffStatus"]>>(["idle", "running", "needs_input", "ready", "failed"]);
+
+function isOnboardingGoalId(value: unknown): value is OnboardingGoalId {
+  return typeof value === "string" && ONBOARDING_GOAL_IDS.has(value as OnboardingGoalId);
+}
+
+function coerceGoalIds(value: unknown, fallback: OnboardingGoalId[] = []): OnboardingGoalId[] {
+  if (!Array.isArray(value)) return fallback;
+  const next = Array.from(new Set(value.filter(isOnboardingGoalId)));
+  return next.length > 0 ? next : fallback;
+}
+
+function coerceActiveAgents(value: unknown): OnboardingReadiness["activeAgents"] {
+  if (!Array.isArray(value)) return ["hermes"];
+  const agents = Array.from(new Set(value.filter((agent): agent is OnboardingReadiness["activeAgents"][number] =>
+    typeof agent === "string" && AGENT_IDS.has(agent as OnboardingReadiness["activeAgents"][number])
+  )));
+  return agents.length > 0 ? agents : ["hermes"];
+}
+
+export function coerceReadinessOverallStatus(value: unknown): OnboardingReadiness["overallStatus"] {
+  return typeof value === "string" && READINESS_OVERALL_STATUSES.has(value as OnboardingReadiness["overallStatus"])
+    ? value as OnboardingReadiness["overallStatus"]
+    : "degraded";
+}
+
+function coerceCodingHandoffStatus(value: unknown): OnboardingReadiness["codingHandoffStatus"] {
+  if (typeof value !== "string") return null;
+  return CODING_HANDOFF_STATUSES.has(value as NonNullable<OnboardingReadiness["codingHandoffStatus"]>)
+    ? value as NonNullable<OnboardingReadiness["codingHandoffStatus"]>
+    : null;
+}
+
+export function coerceReadinessGates(value: unknown): ReadinessGateSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((gate): gate is ReadinessGateSummary => {
+    if (!gate || typeof gate !== "object") return false;
+    const candidate = gate as Partial<ReadinessGateSummary>;
+    return typeof candidate.id === "string" &&
+      typeof candidate.category === "string" &&
+      typeof candidate.message === "string" &&
+      (candidate.remediation === null || typeof candidate.remediation === "string") &&
+      (candidate.lastCheckedAt === null || typeof candidate.lastCheckedAt === "string") &&
+      typeof candidate.status === "string" &&
+      READINESS_STATUSES.has(candidate.status as ReadinessGateSummary["status"]) &&
+      typeof candidate.criticality === "string" &&
+      READINESS_CRITICALITIES.has(candidate.criticality as ReadinessGateSummary["criticality"]) &&
+      typeof candidate.owner === "string" &&
+      READINESS_OWNERS.has(candidate.owner as ReadinessGateSummary["owner"]);
+  });
+}
+
+export function coerceReadinessGoals(value: unknown): OnboardingGoalSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((goal): goal is OnboardingGoalSummary => {
+    if (!goal || typeof goal !== "object") return false;
+    const candidate = goal as Partial<OnboardingGoalSummary>;
+    return isOnboardingGoalId(candidate.id) &&
+      typeof candidate.selected === "boolean" &&
+      typeof candidate.label === "string" &&
+      typeof candidate.description === "string";
+  });
+}
+
+export function coerceOnboardingSteps(value: unknown): OnboardingStepSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((step): step is OnboardingStepSummary => {
+    if (!step || typeof step !== "object") return false;
+    const candidate = step as Partial<OnboardingStepSummary>;
+    return typeof candidate.id === "string" &&
+      typeof candidate.required === "boolean" &&
+      typeof candidate.title === "string" &&
+      Array.isArray(candidate.unlocks) &&
+      candidate.unlocks.every((workflow) => typeof workflow === "string");
+  });
+}
+
+export function coerceReadinessResponse(value: unknown): OnboardingReadiness {
+  const candidate = value && typeof value === "object" ? value as Partial<OnboardingReadiness> : {};
+  const goals = coerceReadinessGoals(candidate.goals);
+  return {
+    overallStatus: coerceReadinessOverallStatus(candidate.overallStatus),
+    goals,
+    gates: coerceReadinessGates(candidate.gates),
+    systemAgent: "hermes",
+    activeAgents: coerceActiveAgents(candidate.activeAgents),
+    codingHandoffStatus: coerceCodingHandoffStatus(candidate.codingHandoffStatus),
+  };
+}
 
 interface Transcript {
   speaker: "ai" | "user";
@@ -41,10 +173,15 @@ export interface OnboardingHook {
   apiKeyResult: { valid: boolean; error?: string } | null;
   currentSubtitle: string;
   contextualContent: ContentDisplay;
+  readiness: OnboardingReadiness | null;
+  selectedGoalIds: OnboardingGoalId[];
+  onboardingSteps: OnboardingStepSummary[];
   start: (useVoice: boolean) => void;
   sendText: (text: string) => void;
   sendApiKey: (key: string) => void;
   confirmApps: (apps: string[]) => void;
+  selectGoal: (goalId: OnboardingGoalId) => void;
+  refreshReadiness: () => void;
   chooseClaudeCode: () => void;
   finishInterview: () => void;
 }
@@ -60,6 +197,9 @@ export function useOnboarding(): OnboardingHook {
   const [apiKeyResult, setApiKeyResult] = useState<{ valid: boolean; error?: string } | null>(null);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [contextualContent, setContextualContent] = useState<ContentDisplay>(null);
+  const [readiness, setReadiness] = useState<OnboardingReadiness | null>(null);
+  const [selectedGoalIds, setSelectedGoalIds] = useState<OnboardingGoalId[]>([]);
+  const [onboardingSteps, setOnboardingSteps] = useState<OnboardingStepSummary[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const micCtxRef = useRef<AudioContext | null>(null);
@@ -69,6 +209,10 @@ export function useOnboarding(): OnboardingHook {
   const isPlayingRef = useRef(false);
   const nextStartTimeRef = useRef(0);
   const playGainRef = useRef<GainNode | null>(null);
+  const goalSelectionSeqRef = useRef(0);
+  const readinessRefreshSeqRef = useRef(0);
+  const readinessRef = useRef<OnboardingReadiness | null>(null);
+  const pendingActiveAgentsRef = useRef<OnboardingReadiness["activeAgents"] | null>(null);
   // Tracks whether the hook is still mounted so async mic setup can bail
   // out cleanly if the user dismisses onboarding while the mic permission
   // prompt or audioWorklet module load is in flight. Without this, the
@@ -181,6 +325,32 @@ export function useOnboarding(): OnboardingHook {
     }
     setCurrentSubtitle("");
   }, []);
+
+  const refreshReadiness = useCallback(() => {
+    const requestSeq = readinessRefreshSeqRef.current + 1;
+    readinessRefreshSeqRef.current = requestSeq;
+    void fetch("/api/onboarding/readiness", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("readiness request failed");
+        return coerceReadinessResponse(await res.json());
+      })
+      .then((next) => {
+        if (!mountedRef.current || requestSeq !== readinessRefreshSeqRef.current) return;
+        const activeAgents = pendingActiveAgentsRef.current;
+        setReadiness(activeAgents ? { ...next, activeAgents } : next);
+        setSelectedGoalIds(next.goals.filter((goal) => goal.selected).map((goal) => goal.id));
+      })
+      .catch((err: unknown) => {
+        console.warn("[onboarding] readiness refresh failed:", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  useEffect(() => {
+    readinessRef.current = readiness;
+  }, [readiness]);
 
   // Send JSON message to gateway
   const send = useCallback((msg: Record<string, unknown>) => {
@@ -321,6 +491,39 @@ export function useOnboarding(): OnboardingHook {
         }
         break;
       }
+      case "readiness_update":
+        if (!readinessRef.current) {
+          refreshReadiness();
+          break;
+        }
+        setReadiness((prev) => {
+          const current = prev ?? readinessRef.current;
+          if (!current) return prev;
+          return {
+            overallStatus: coerceReadinessOverallStatus(msg.overallStatus),
+            goals: current.goals,
+            gates: coerceReadinessGates(msg.checklist),
+            systemAgent: current.systemAgent,
+            activeAgents: current.activeAgents,
+            codingHandoffStatus: current.codingHandoffStatus,
+          };
+        });
+        break;
+      case "goal_selected":
+        if (!isOnboardingGoalId(msg.goalId)) break;
+        const selectedGoalId = msg.goalId;
+        readinessRefreshSeqRef.current += 1;
+        setSelectedGoalIds((prev) => prev.includes(selectedGoalId) ? prev : [...prev, selectedGoalId]);
+        setOnboardingSteps(coerceOnboardingSteps(msg.steps));
+        break;
+      case "agent_status":
+        pendingActiveAgentsRef.current = coerceActiveAgents(msg.activeAgents);
+        setReadiness((prev) => prev ? {
+          ...prev,
+          systemAgent: "hermes",
+          activeAgents: pendingActiveAgentsRef.current ?? ["hermes"],
+        } : prev);
+        break;
       case "mode_change":
         setIsVoiceMode(msg.mode === "voice");
         if (msg.mode === "text") setVoiceState("idle");
@@ -335,7 +538,7 @@ export function useOnboarding(): OnboardingHook {
         setError(msg.message as string);
         break;
     }
-  }, [playAudio]);
+  }, [playAudio, refreshReadiness]);
 
   const connect = useCallback(async (): Promise<WebSocket | null> => {
     const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");
@@ -357,6 +560,7 @@ export function useOnboarding(): OnboardingHook {
   // Cleanup on unmount
   useEffect(() => {
     mountedRef.current = true;
+    refreshReadiness();
     return () => {
       mountedRef.current = false;
       wsRef.current?.close();
@@ -365,7 +569,7 @@ export function useOnboarding(): OnboardingHook {
       playCtxRef.current?.close();
       if (revealIntervalRef.current) clearInterval(revealIntervalRef.current);
     };
-  }, []);
+  }, [refreshReadiness]);
 
   // Public API
   const start = useCallback((useVoice: boolean) => {
@@ -419,6 +623,41 @@ export function useOnboarding(): OnboardingHook {
     send({ type: "confirm_apps", apps });
   }, [send]);
 
+  const selectGoal = useCallback((goalId: OnboardingGoalId) => {
+    const requestSeq = goalSelectionSeqRef.current + 1;
+    goalSelectionSeqRef.current = requestSeq;
+    const previousGoalIds = selectedGoalIds;
+    const nextGoalIds = selectedGoalIds.includes(goalId)
+      ? selectedGoalIds.filter((id) => id !== goalId)
+      : [...selectedGoalIds, goalId];
+    const normalizedGoalIds = nextGoalIds.length > 0 ? nextGoalIds : [goalId];
+    readinessRefreshSeqRef.current += 1;
+    setSelectedGoalIds(normalizedGoalIds);
+    void fetch("/api/onboarding/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ goalIds: normalizedGoalIds }),
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("goal selection failed");
+        return await res.json() as { goalIds?: unknown; steps?: unknown };
+      })
+      .then((body) => {
+        if (!mountedRef.current || requestSeq !== goalSelectionSeqRef.current) return;
+        setSelectedGoalIds(coerceGoalIds(body.goalIds, normalizedGoalIds));
+        setOnboardingSteps(coerceOnboardingSteps(body.steps));
+        refreshReadiness();
+      })
+      .catch((err: unknown) => {
+        console.warn("[onboarding] goal selection failed:", err instanceof Error ? err.message : String(err));
+        if (mountedRef.current && requestSeq === goalSelectionSeqRef.current) {
+          setSelectedGoalIds(previousGoalIds);
+          setError("Could not update setup goal");
+        }
+      });
+  }, [refreshReadiness, selectedGoalIds]);
+
   const chooseClaudeCode = useCallback(() => {
     send({ type: "choose_activation", path: "claude_code" });
   }, [send]);
@@ -438,10 +677,15 @@ export function useOnboarding(): OnboardingHook {
     apiKeyResult,
     currentSubtitle,
     contextualContent,
+    readiness,
+    selectedGoalIds,
+    onboardingSteps,
     start,
     sendText,
     sendApiKey,
     confirmApps,
+    selectGoal,
+    refreshReadiness,
     chooseClaudeCode,
     finishInterview,
   };

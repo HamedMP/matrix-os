@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { DEFAULT_GATEWAY_URL, DEFAULT_PLATFORM_URL } from "./config.js";
 
-const PROFILE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
+const PROFILE_SLUG = /^[A-Za-z][A-Za-z0-9_-]{0,30}$/;
 
 export const ProfileSchema = z.object({
   platformUrl: z.url(),
@@ -22,6 +22,23 @@ export type ProfilesFile = z.infer<typeof ProfilesFileSchema>;
 
 export interface LoadProfilesOptions {
   configDir?: string;
+  migrateLegacyFiles?: boolean;
+}
+
+function profileNameConflictError(): Error & { code: string } {
+  return Object.assign(new Error("profile_name_conflict"), { code: "profile_name_conflict" });
+}
+
+function assertNoCaseCollidingProfileNames(profiles: ProfilesFile): void {
+  const seen = new Map<string, string>();
+  for (const name of Object.keys(profiles.profiles)) {
+    const normalized = name.toLowerCase();
+    const existing = seen.get(normalized);
+    if (existing) {
+      throw profileNameConflictError();
+    }
+    seen.set(normalized, name);
+  }
 }
 
 function defaultConfigDir(): string {
@@ -84,7 +101,10 @@ export async function loadProfiles(
     }
   }
 
-  await migrateLegacyProfileFiles(configDir);
+  if (options.migrateLegacyFiles !== false) {
+    await migrateLegacyProfileFiles(configDir);
+  }
+  assertNoCaseCollidingProfileNames(profiles);
   return profiles;
 }
 
@@ -93,21 +113,9 @@ export async function saveProfiles(
   configDir = defaultConfigDir(),
 ): Promise<void> {
   const parsed = ProfilesFileSchema.parse(profiles);
+  assertNoCaseCollidingProfileNames(parsed);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await writeUtf8FileAtomic(join(configDir, "profiles.json"), JSON.stringify(parsed, null, 2), 0o600);
-}
-
-export async function setActiveProfile(
-  name: string,
-  configDir = defaultConfigDir(),
-): Promise<ProfilesFile> {
-  const profiles = await loadProfiles({ configDir });
-  if (!profiles.profiles[name]) {
-    throw new Error("profile_not_found");
-  }
-  const next = { ...profiles, active: name };
-  await saveProfiles(next, configDir);
-  return next;
 }
 
 async function migrateLegacyProfileFiles(configDir: string): Promise<void> {
@@ -127,6 +135,18 @@ async function moveIfPresent(from: string, to: string): Promise<void> {
         (err as NodeJS.ErrnoException).code === "EEXIST")
     ) {
       return;
+    }
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      ["EACCES", "EPERM", "EROFS"].includes(String((err as NodeJS.ErrnoException).code))
+    ) {
+      try {
+        await readFile(to, "utf-8");
+        return;
+      } catch (_readErr: unknown) {
+        throw err;
+      }
     }
     if (
       err instanceof Error &&

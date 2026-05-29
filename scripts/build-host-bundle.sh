@@ -17,10 +17,14 @@ CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_
 ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.1}"
 ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
 ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
+GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"
+GH_DIST="gh_${GH_VERSION}_linux_amd64"
+GH_ARCHIVE="${GH_DIST}.tar.gz"
+GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 
 rm -rf "$DIST_DIR"
-mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime"
+mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd"
 
 pnpm install --frozen-lockfile
 pnpm rebuild node-pty
@@ -41,6 +45,9 @@ if [ "${HOST_BUNDLE_SKIP_SHELL_BUILD:-false}" = "true" ]; then
   }
 else
   pnpm --filter './shell' exec next build --webpack
+  if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$ROOT_DIR" restore -- shell/next-env.d.ts 2>/dev/null || true
+  fi
 fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
@@ -58,6 +65,9 @@ mv "$STAGE_DIR/runtime/$CODE_SERVER_DIST" "$STAGE_DIR/runtime/code-server"
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
 chmod 0755 "$STAGE_DIR/bin/zellij"
+curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
+tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
+install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
 cat > "$STAGE_DIR/runtime/node/bin/code-server" <<'EOS'
 #!/usr/bin/env sh
 exec /opt/matrix/runtime/code-server/bin/code-server "$@"
@@ -76,11 +86,13 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/zellij"
+chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
+install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
@@ -94,9 +106,15 @@ if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi
 
+# Keep the host bundle runtime-only. These directories are generated or
+# build-time dependency stores; carrying them to every VPS bloats R2 artifacts
+# and slows upgrades without changing runtime behavior.
+rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
+find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+
 # Writes release.json into the bundle and manifest.json beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime release.json
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd release.json
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

@@ -11,14 +11,51 @@ import {
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
-import { vpsInfo, vpsHealthy } from './metrics.js';
+import { refreshVpsMetrics, refreshVpsRuntimeMetrics } from './metrics.js';
+import type { VpsRuntimeMetricInput } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
+
+export interface MessagingResourceShape {
+  vcpu: number;
+  memoryGiB: number;
+  diskGiB: number;
+}
+
+const MESSAGING_RESOURCE_FLOOR = {
+  default: { vcpu: 2, memoryGiB: 4, diskGiB: 40 },
+  synapse: { vcpu: 2, memoryGiB: 6, diskGiB: 60 },
+} as const;
+
+export function meetsMessagingResourceFloor(
+  resources: MessagingResourceShape,
+  profile: keyof typeof MESSAGING_RESOURCE_FLOOR = 'synapse',
+): boolean {
+  const floor = MESSAGING_RESOURCE_FLOOR[profile];
+  return resources.vcpu >= floor.vcpu && resources.memoryGiB >= floor.memoryGiB && resources.diskGiB >= floor.diskGiB;
+}
 
 export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;
   probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
+  probeMachineRuntime?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<{
+    healthy: boolean;
+    runtimeVersion?: string | null;
+    probeLatencyMs?: number;
+    load1?: number | null;
+    cpuCount?: number | null;
+    memoryTotalBytes?: number | null;
+    memoryFreeBytes?: number | null;
+    diskTotalBytes?: number | null;
+    diskFreeBytes?: number | null;
+  }>;
+  recordRuntimeMetrics?: (machines: Array<VpsRuntimeMetricInput & {
+    machineId: string;
+    status: string;
+    publicIPv4: string | null;
+    imageVersion: string | null;
+  }>) => void;
 }
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
@@ -134,7 +171,7 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       if (!parsed.success) {
         return c.json({ error: 'Invalid request' }, 400);
       }
-      return c.json(await deps.service.deploy(parsed.data.version), 200);
+      return c.json(await deps.service.deploy(parsed.data), 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/deploy');
     }
@@ -147,10 +184,17 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       const statuses = await deps.service.listAllMachines();
       const probed = await Promise.allSettled(
         statuses.map(async (s): Promise<FleetMachineView> => {
-          if (s.status !== 'running' || !s.publicIPv4 || !deps.probeMachineHealth) {
+          if (s.status !== 'running' || !s.publicIPv4 || (!deps.probeMachineHealth && !deps.probeMachineRuntime)) {
             return { ...s, healthy: false };
           }
-          const healthy = await deps.probeMachineHealth(s).catch((err: unknown) => {
+          if (deps.probeMachineRuntime) {
+            const runtime = await deps.probeMachineRuntime(s).catch((err: unknown) => {
+              logCustomerVpsError(`fleet runtime probe failed for ${s.handle}`, err);
+              return { healthy: false };
+            });
+            return { ...s, ...runtime, healthy: runtime.healthy };
+          }
+          const healthy = await deps.probeMachineHealth!(s).catch((err: unknown) => {
             logCustomerVpsError(`fleet probe failed for ${s.handle}`, err);
             return false;
           });
@@ -161,12 +205,9 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
         .filter((r): r is PromiseFulfilledResult<FleetMachineView> => r.status === "fulfilled")
         .map(r => r.value);
 
-      vpsInfo.reset();
-      vpsHealthy.reset();
-      for (const m of machines) {
-        vpsInfo.set({ handle: m.handle, version: m.imageVersion ?? "unknown", status: m.status }, 1);
-        vpsHealthy.set({ handle: m.handle }, m.healthy ? 1 : 0);
-      }
+      refreshVpsMetrics(machines);
+      refreshVpsRuntimeMetrics(machines);
+      deps.recordRuntimeMetrics?.(machines);
 
       const FLEET_LIMIT = 500;
       return c.json({ fleet: buildFleetSummary(machines), machines, truncated: machines.length >= FLEET_LIMIT });

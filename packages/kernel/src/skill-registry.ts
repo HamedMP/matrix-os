@@ -18,6 +18,8 @@ interface RegistryData {
   skills: SkillRegistryEntry[];
 }
 
+const SAFE_SKILL_NAME = /^[a-zA-Z0-9_-]{1,96}$/;
+
 export interface SkillRegistry {
   publish(skillName: string): Promise<SkillRegistryEntry>;
   install(skillName: string): Promise<{ installed: boolean; reason?: string }>;
@@ -46,6 +48,7 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function localSkillPath(homePath: string, skillName: string): Promise<string | null> {
+  if (!SAFE_SKILL_NAME.test(skillName)) return null;
   const directoryPath = join(homePath, ".agents", "skills", skillName, "SKILL.md");
   if (await pathExists(directoryPath)) return directoryPath;
 
@@ -98,6 +101,9 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
 
   return {
     async publish(skillName: string): Promise<SkillRegistryEntry> {
+      if (!SAFE_SKILL_NAME.test(skillName)) {
+        throw new Error("Invalid skill name");
+      }
       const data = await getData();
       const filePath = await localSkillPath(homePath, skillName);
       if (!filePath) {
@@ -133,6 +139,9 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
     },
 
     async install(skillName: string): Promise<{ installed: boolean; reason?: string }> {
+      if (!SAFE_SKILL_NAME.test(skillName)) {
+        return { installed: false, reason: "Invalid skill name" };
+      }
       const data = await getData();
       const entry = data.skills.find((s) => s.name === skillName);
       if (!entry) {
@@ -168,6 +177,7 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
     },
 
     async get(name: string): Promise<SkillRegistryEntry | null> {
+      if (!SAFE_SKILL_NAME.test(name)) return null;
       const data = await getData();
       return data.skills.find((s) => s.name === name) ?? null;
     },

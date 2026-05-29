@@ -12,11 +12,32 @@ import {
 } from "@/lib/os-bridge";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
+import { capturePostHogEvent } from "@/lib/posthog-client";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
-export const APP_IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
+const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
+  "2048",
+  "backgammon",
+  "chess",
+  "minesweeper",
+  "snake",
+  "solitaire",
+  "tetris",
+]);
+export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups";
+const APP_IFRAME_CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+].join("; ");
 
 interface AppViewerProps {
   path: string;
@@ -32,14 +53,16 @@ function appNameFromPath(path: string): string {
 }
 
 export function extractSlug(path: string): string | null {
-  // Only treat a path as a slug-route when it targets the top-level app
-  // directory: "apps/{slug}", "apps/{slug}/", or "apps/{slug}/index.html".
-  // Nested paths like "apps/games/2048/index.html" must fall back to the
-  // legacy /files/ route -- they share a parent slug but are not runtime-
-  // managed apps, so routing them through /apps/:slug/ would serve the
-  // parent app's index.html instead of the requested file.
-  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
-  return match ? match[1] : null;
+  const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
+  if (topLevel) return topLevel[1];
+
+  // Older saved layouts used filesystem paths for migrated bundled games. Only
+  // rewrite known migrated slugs; other nested paths still load as files.
+  const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
+  if (nestedIndex && LEGACY_NESTED_RUNTIME_APP_SLUGS.has(nestedIndex[1])) {
+    return nestedIndex[1];
+  }
+  return null;
 }
 
 export function shouldRenderAppIframe(path: string): boolean {
@@ -52,8 +75,58 @@ function readCurrentTheme(): ThemeVars {
   return getThemeVariables(style);
 }
 
+export function injectBridgeIntoAppHtml(
+  html: string,
+  appName: string,
+  themeVars: ThemeVars,
+  baseHref: string,
+): string {
+  const bridgeScript = buildBridgeScript(appName, themeVars)
+    + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
+  const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
+  const injection = [
+    `<base href="${escapedBaseHref}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${APP_IFRAME_CSP.replace(/"/g, "&quot;")}">`,
+    `<script>${bridgeScript}</script>`,
+  ].join("");
+
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
+  }
+  return `<!doctype html><html><head>${injection}</head><body>${html}</body></html>`;
+}
+
+async function handleBridgeFetch(payload: unknown, port: MessagePort): Promise<void> {
+  try {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Invalid bridge fetch payload");
+    }
+    const { url, init } = payload as { url?: unknown; init?: unknown };
+    if (typeof url !== "string" || !url.startsWith("/api/bridge/")) {
+      throw new Error("Blocked bridge fetch URL");
+    }
+    const requestInit = init && typeof init === "object" ? init as RequestInit : {};
+    const response = await fetch(url, {
+      method: requestInit.method,
+      headers: requestInit.headers,
+      body: requestInit.body,
+      signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+    });
+    const body = await response.json().catch((err: unknown) => {
+      console.warn("[app-viewer] bridge fetch JSON parse failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    });
+    port.postMessage({ ok: response.ok, status: response.status, body });
+  } catch (err: unknown) {
+    port.postMessage({ ok: false, error: err instanceof Error ? err.message : "Bridge fetch failed" });
+  } finally {
+    port.close();
+  }
+}
+
 export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
+  const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   const appName = appNameFromPath(path);
@@ -69,16 +142,19 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     ),
   );
 
-  // Inject bridge script with theme variables on iframe load
+  // Legacy file paths can only receive the bridge when same-origin DOM access is
+  // available. Runtime apps use srcdoc injection below so the sandbox can omit
+  // allow-same-origin.
   useEffect(() => {
     const iframe = iframeRef.current;
-    if (!iframe) return;
+    const slug = extractSlug(path);
+    if (!iframe || slug) return;
 
     const onLoad = () => {
       try {
         const themeVars = readCurrentTheme();
         const script = buildBridgeScript(appName, themeVars);
-        // Inject bridge directly into iframe DOM (same-origin), then trigger reload
+        // Inject bridge directly into iframe DOM, then trigger reload.
         const doc = iframe.contentDocument;
         if (doc) {
           const el = doc.createElement("script");
@@ -87,6 +163,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
             + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`
             + `\n;`;
           doc.head.appendChild(el);
+        } else {
+          console.warn("[app-viewer] bridge injection skipped: iframe document is not accessible");
         }
       } catch (err) {
         // Cross-origin iframe -- bridge injection isn't possible.
@@ -99,7 +177,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
     iframe.addEventListener("load", onLoad);
     return () => iframe.removeEventListener("load", onLoad);
-  }, [appName, refreshKey]);
+  }, [appName, path, refreshKey]);
 
   // Observe theme changes and broadcast to iframe (T2071)
   useEffect(() => {
@@ -149,12 +227,27 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     };
 
     const onMessage = (event: MessageEvent) => {
-      handleBridgeMessage(event, handler);
+      const data = event.data;
+      if (
+        data?.type === "os:bridge-fetch"
+        && event.source === iframeRef.current?.contentWindow
+        && (event.origin === window.location.origin || event.origin === "null")
+        && data.app === appName
+        && event.ports[0]
+      ) {
+        void handleBridgeFetch(data.payload, event.ports[0]);
+        return;
+      }
+      handleBridgeMessage(event, handler, {
+        expectedSource: iframeRef.current?.contentWindow,
+        expectedOrigins: new Set([window.location.origin, "null"]),
+        expectedApp: appName,
+      });
     };
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [send, sessionId, onOpenApp]);
+  }, [send, sessionId, onOpenApp, appName]);
 
   // Forward data:change events to iframe for auto-update
   useEffect(() => {
@@ -185,6 +278,13 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const lastRefreshAtRef = useRef(0);
   const refreshInFlightRef = useRef(false);
 
+  useEffect(() => {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_APP_OPENED, {
+      app: slug ?? appName,
+      runtime: slug ? "vite" : "file",
+    });
+  }, [appName, slug]);
+
   // Spec 063 session bootstrap: set the matrix_app_session__{slug} cookie
   // before the iframe ever navigates to /apps/{slug}/. Skipping this step
   // forces the browser to load the 401 interstitial first and recover via
@@ -207,6 +307,35 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       cancelled = true;
     };
   }, [slug]);
+
+  useEffect(() => {
+    if (!slug || !sessionReady) {
+      setIframeHtml(null);
+      return;
+    }
+
+    let cancelled = false;
+    const baseHref = `/apps/${slug}/`;
+    fetch(baseHref, { signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS) })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((html) => {
+        if (!cancelled) {
+          setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref));
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.warn("[app-viewer] app html bootstrap failed:", slug, err instanceof Error ? err.message : String(err));
+        setIframeHtml(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, sessionReady, appName, refreshKey]);
 
   // Cookie-expiry recovery: listen for matrix-os:session-expired from the
   // gateway's 401 interstitial HTML. Bumping refreshKey remounts the iframe
@@ -245,7 +374,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   // Hold the iframe on about:blank until the session cookie is minted.
   const iframeSrc = !slug
     ? `/files/${path}`
-    : sessionReady
+    : sessionReady && !iframeHtml
       ? `/apps/${slug}/`
       : "about:blank";
 
@@ -258,6 +387,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       ref={iframeRef}
       key={refreshKey}
       src={iframeSrc}
+      srcDoc={slug && iframeHtml ? iframeHtml : undefined}
       className="h-full w-full border-0"
       sandbox={APP_IFRAME_SANDBOX}
       title={path}

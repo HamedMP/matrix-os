@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
+import { Inter, JetBrains_Mono, Cormorant_Garamond, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -7,6 +7,8 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/fira-code/400.css";
 import "@fontsource/fira-code/500.css";
 import "./globals.css";
+import { PwaRegister } from "@/components/pwa/PwaRegister";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -22,6 +24,12 @@ const cormorant = Cormorant_Garamond({
   variable: "--font-serif",
   subsets: ["latin"],
   weight: ["300", "400", "500"],
+});
+
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
@@ -55,9 +63,13 @@ export async function generateMetadata(): Promise<Metadata> {
     manifest: "/manifest.json",
     appleWebApp: {
       capable: true,
-      statusBarStyle: "default",
+      statusBarStyle: "black-translucent",
       title: "Matrix OS",
+      // `startupImage` requires per-device {url, media} entries matching real
+      // iPhone/iPad pixel dimensions; iOS ignores a single PNG. Omit until
+      // proper per-device splash images are generated.
     },
+    formatDetection: { telephone: false, email: false, address: false },
     openGraph: {
       title,
       description,
@@ -79,6 +91,11 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f4ede0" },
+    { media: "(prefers-color-scheme: dark)", color: "#3f4a3a" },
+  ],
 };
 
 export default function RootLayout({
@@ -89,8 +106,10 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable}`}>
+        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
+          <PwaRegister />
+          <InstallPrompt />
         </body>
       </html>
     </ClerkProvider>

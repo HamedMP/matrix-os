@@ -1,18 +1,29 @@
 // @vitest-environment jsdom
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MenuBar } from "../../shell/src/components/MenuBar.js";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
+let MenuBar: typeof import("../../shell/src/components/MenuBar.js").MenuBar;
+
 vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ isLoaded: true, isSignedIn: false }),
-  UserButton: () => null,
+  useAuth: () => ({ isLoaded: true, isSignedIn: true }),
+  UserButton: Object.assign(
+    ({ children }: { children?: React.ReactNode }) => <div data-testid="clerk-user-button">{children}</div>,
+    {
+      MenuItems: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+      Link: ({ href, label }: { href: string; label: string; labelIcon?: React.ReactElement }) => <a href={href}>{label}</a>,
+    },
+  ),
 }));
 
 vi.mock("../../shell/src/components/AppSettingsDialog.js", () => ({
   AppSettingsDialog: () => null,
 }));
+
+beforeAll(async () => {
+  ({ MenuBar } = await import("../../shell/src/components/MenuBar.js"));
+});
 
 function resetStore() {
   useWindowManager.setState({
@@ -58,5 +69,16 @@ describe("MenuBar focus display", () => {
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
     expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
     expect(screen.queryByRole("button", { name: "Matrix OS" })).toBeNull();
+  });
+
+  it("puts switch-computer under the Clerk user button instead of the top menu", () => {
+    render(
+      <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}}>
+        <button type="button">Fit</button>
+      </MenuBar>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Computer" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Switch computer" }).getAttribute("href")).toBe("/runtime");
   });
 });

@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { getConfigDir } from "../lib/config.js";
 import { DAEMON_IPC_VERSION } from "../daemon/types.js";
 
+export const IPC_MAX_RESPONSE_BYTES = 256 * 1024;
+
 function socketPath(): string {
   return join(getConfigDir(), "daemon.sock");
 }
@@ -43,13 +45,29 @@ export async function sendCommand(
   const sock = socketPath();
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error("IPC request timed out"));
-    }, timeout);
-
     const socket = createConnection(sock);
+    let settled = false;
     let buffer = "";
+
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(err);
+    };
+
+    const finish = (result: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.end();
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      fail(new Error("IPC request timed out"));
+    }, timeout);
 
     socket.on("connect", () => {
       const id = crypto.randomUUID();
@@ -58,11 +76,13 @@ export async function sendCommand(
 
     socket.on("data", (data) => {
       buffer += data.toString();
+      if (Buffer.byteLength(buffer, "utf8") > IPC_MAX_RESPONSE_BYTES) {
+        fail(new Error("IPC response too large"));
+        return;
+      }
       const idx = buffer.indexOf("\n");
       if (idx !== -1) {
-        clearTimeout(timer);
         const line = buffer.slice(0, idx);
-        socket.end();
         try {
           const msg = JSON.parse(line) as {
             v?: number;
@@ -73,23 +93,22 @@ export async function sendCommand(
             const code = typeof msg.error === "object" && typeof msg.error.code === "string"
               ? msg.error.code
               : String(msg.error);
-            reject(new Error(code));
+            fail(new Error(code));
           } else {
-            resolve(msg.result ?? {});
+            finish(msg.result ?? {});
           }
         } catch (err: unknown) {
           if (err instanceof SyntaxError) {
-            reject(new Error("Invalid response from daemon"));
+            fail(new Error("Invalid response from daemon"));
           } else {
-            reject(err instanceof Error ? err : new Error(String(err)));
+            fail(err instanceof Error ? err : new Error(String(err)));
           }
         }
       }
     });
 
     socket.on("error", (err) => {
-      clearTimeout(timer);
-      reject(
+      fail(
         new Error(
           `Cannot connect to daemon. Is it running? (${err.message})`,
         ),

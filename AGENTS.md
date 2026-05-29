@@ -4,7 +4,7 @@ Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social +
 
 ## Constitution
 
-Read `.specify/memory/constitution.md`: the 9 core principles. Re-read after compaction.
+Read `.specify/memory/constitution.md`: the 10 core principles. **Re-read at the start of every session and after compaction** — the constitution is the source of truth for non-negotiable rules.
 
 Key principles:
 
@@ -179,6 +179,23 @@ bun run docker:build      # full rebuild (no cache)
 **IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
 
+## Release Procedure
+
+Production customer runtime ships as VPS-native host bundles. R2 stores immutable tarball bytes, platform Postgres stores release metadata and channel pointers, and each VPS keeps the installed release at `/opt/matrix/release.json`.
+
+- **Package safety**: pnpm is pinned to 10.33.4 and `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` (7 days). Keep `pnpm install --frozen-lockfile` in CI/release paths; do not bypass the lockfile or downgrade pnpm below 10.16.
+- **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
+- **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
+- **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
+- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. EU PostHog uses `https://eu.i.posthog.com`.
+- **User data invariant**: updates may replace `/opt/matrix/app` only. Never overwrite owner data under `$MATRIX_HOME` (`/home/matrix/home`), especially `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, identity/profile/session/state files, logs, memory, or conversations. Template sync may add/upgrade OS-owned files, but protected user paths must be skipped.
+- **Local emergency build**: `set -a; source .env; set +a; HOST_BUNDLE_VERSION=<version> HOST_BUNDLE_CHANNEL=<channel> MATRIX_BUILD_SHA=$(git rev-parse HEAD) MATRIX_BUILD_REF=main ./scripts/build-host-bundle.sh`.
+- **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
+- **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
+- **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
+- **Feature test VMs**: for risky shell/onboarding/platform changes, prefer a disposable test VPS over the user's primary computer. Use the same Clerk login, switch via `https://app.matrix-os.com/runtime` or explicit `https://app.matrix-os.com/vm/<handle>`, deploy exact bundle versions, and ask the user whether to delete the test VM after validation to avoid extra Hetzner charges.
+- **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
+
 ## Shell Gotchas
 
 - **Canvas mode is the primary shell experience**: users may only see Canvas in the sidebar. Build and verify new shell features in Canvas first, then Desktop. Desktop compatibility still matters, but Canvas is the main product surface.
@@ -236,6 +253,16 @@ bun run test                # unit tests
 
 - **> 3000 additions or > 50 files**: split the PR
 - Split along: gateway, platform, sync-client, shell, docs/deploy
+- For multi-slice features, prefer Graphite stacked PRs over one oversized PR.
+  Follow `docs/dev/stacked-prs.md`: initialize with `gt init`, create each
+  layer with `gt create --all --message "<conventional commit>"`, update
+  layers with `gt modify --all` or `gt modify --commit --all --message`,
+  restack with `gt restack`, sync with `gt sync`, publish with
+  `gt submit --stack` or `gt ss -np`, and open the stack with `gt pr`.
+  Prefer Graphite commands over raw git/gh equivalents for stack operations.
+  If `gt` is missing or unauthenticated, treat that as an environment blocker
+  for stack work instead of silently falling back. Do not flatten a stack unless
+  explicitly asked.
 
 ### PR Body: Mandatory Invariants
 
@@ -257,6 +284,9 @@ Do not request review while still pushing commits. Either declare a review commi
 
 ### Hard Rules (never violate)
 
+- **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
+- **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
+- **Do not spam Greptile re-review comments** -- Greptile is configured to review every new commit. If the score/footer is stale after a push, it means the review is still running; wait and poll instead of repeatedly mentioning it.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
@@ -270,6 +300,7 @@ Do not request review while still pushing commits. Either declare a review commi
 Read these on demand, not every session:
 
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
+- `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
@@ -277,14 +308,14 @@ Read these on demand, not every session:
 - `docs/dev/releases.md` -- when tagging a release or managing versions
 - `specs/quality-gates.md` -- when writing a new spec or reviewing a PR
 - `specs/ux-guide.md` -- when working on shell/frontend UI
-- `.specify/memory/constitution.md` -- when making architectural decisions (re-read after compaction)
+- `.specify/memory/constitution.md` -- re-read at the start of every session and after compaction (10 core principles, source of truth for non-negotiable rules)
 
 ## Swarm / Multi-Agent Rules
 
-- **NEVER use worktree isolation** (`isolation: "worktree"` is BANNED) -- worktrees lose uncommitted changes
+- **NEVER use Agent-tool `isolation: "worktree"`** -- that parameter creates an ephemeral worktree that discards uncommitted changes. This is distinct from the required **manual `git worktree add`** workflow (see Hard Rules), which is the canonical way every change ships.
 - **Agents MUST commit progress** after each phase/feature
 - **NEVER call TeamDelete** -- team files are cheap, lost work is expensive
-- Agents work on current branch in parallel, no feature branches
+- Sub-agents spawned for parallel exploration share the parent's worktree; they must commit before exiting.
 
 ## Active Technologies
 - TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
@@ -293,12 +324,19 @@ Read these on demand, not every session:
 - Files under the owner-controlled Matrix home (`~/system/shell-sessions.json`, `~/system/layouts/*.kdl`) plus local CLI files under `~/.matrixos/profiles.json` and `~/.matrixos/profiles/<name>/` (068-zellij-cli)
 - TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, Zod 4 via `zod/v4`, existing `jose` JWT validation, Vitest (072-request-principal)
 - No new persistence; request principal is request-scoped. Existing consumers continue to use owner-controlled PostgreSQL/Kysely and sync R2/object storage through existing repositories. (072-request-principal)
+- TypeScript strict, ES modules, Node.js 24+ for gateway; React 19, React Native 0.83, Expo Router 55 for mobile shell + Hono gateway, Zod 4 via `zod/v4`, existing terminal stack (`node-pty`, `@xterm/xterm` on web), Expo Router, React Native WebView, Clerk Expo, AsyncStorage/SecureStore (075-mobile-shell)
+- Owner-controlled Matrix home files for shell/terminal session metadata (`~/system/terminal-sessions.json`, terminal layout files) plus existing owner Postgres where current workspace/app data already lives. No new embedded database or ORM. (075-mobile-shell)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono gateway routes, Zod 4 via `zod/v4`, Kysely/Postgres, Matrix homeserver appservice support, self-hosted Telegram and WhatsApp bridge runtimes, existing Matrix OS shell/app bridge, Hermes/Claude Agent SDK V1 `query()` path (077-matrix-messaging-bridge)
+- Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
+- Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
 
 ## Recent Changes
 
+- 077-matrix-messaging-bridge: Planned owner-controlled Matrix messaging bridge for Telegram and WhatsApp first, with homeserver/appservice spike gates, per-room Hermes permissions, and separate owner-local bridge/homeserver/permission storage.
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 ## Agent skills
@@ -316,5 +354,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/072-request-principal/plan.md`.
+Current Spec Kit plan: `specs/082-paid-beta-readiness/plan.md`.
 <!-- SPECKIT END -->

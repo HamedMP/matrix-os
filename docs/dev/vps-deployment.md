@@ -24,7 +24,6 @@ Internet
   |
   +-- app.matrix-os.com ----+  Clerk session -> platform resolves current user
   +-- code.matrix-os.com ---+  Clerk session -> platform resolves current user
-  +-- {handle}.matrix-os.com   handle route -> platform resolves machine
                             |
                      Cloudflare Tunnel
                             |
@@ -68,7 +67,7 @@ Internet
   +-- app.matrix-os.com ----+  (session-based: Clerk JWT -> container shell)
   +-- code.matrix-os.com ---+  (session-based: Clerk JWT -> container code-server)
   +-- api.matrix-os.com ----+
-  +-- *.matrix-os.com ------+  (handle-based: {handle}.matrix-os.com -> container)
+  +-- legacy wildcard ------+  (archived handle-based container routing only)
                             |
                      Cloudflare Tunnel
                             |
@@ -221,9 +220,8 @@ cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
 | CNAME | api  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | app  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | code | `<tunnel-id>.cfargotunnel.com` | Yes   |
-| CNAME | *    | `<tunnel-id>.cfargotunnel.com` | Yes   |
 
-Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains handle session-based routing (Clerk JWT -> customer VPS). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
+Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains handle session-based routing (Clerk JWT -> customer VPS). Do not create user-facing per-handle Matrix subdomains for the managed product.
 
 ## Step 3: Environment Variables
 
@@ -436,12 +434,65 @@ curl https://api.matrix-os.com/health
 6. code.matrix-os.com -> same Clerk session -> proxy to the user's VPS code gateway
 ```
 
-`/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `clerk_user_id`, so repeated onboarding calls reuse the same active VPS for that user.
+`/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `(clerk_user_id, runtime_slot)`, so repeated onboarding calls reuse the same active VPS for that user and slot.
 
-**Two routing modes:**
-- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's active VPS by `clerkUserId`. No handle in URL. Redirects to `/login` if no session.
+**Routing modes:**
+- `app.matrix-os.com` -- session-based default computer. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's primary active VPS. Plain `/` must not depend on a sticky staging/runtime cookie.
+- `app.matrix-os.com/runtime` -- switch-computer picker. It lists the signed-in user's active VPSes with handle, slot, bundle version, status, CPU, RAM, and disk strength.
+- `app.matrix-os.com/vm/<handle>` -- explicit computer route. Use this for test VMs and bookmarks. The platform verifies that `<handle>` belongs to the signed-in Clerk user, proxies the named VPS, and keeps API/WebSocket calls on that computer without changing where plain `/` lands.
 - `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway. No handle, SSH, or server IP is exposed.
-- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain and proxies to the running customer VPS. No auth required (public access).
+
+### Feature Test VMs
+
+For breaking features, onboarding changes, shell routing changes, migrations, or
+anything that might corrupt a user's working desktop, prefer a disposable test
+VM over testing on the user's primary VPS. Ask before creating a billable VPS
+unless the user has explicitly requested it, name the VM clearly, and always
+offer to delete it after validation to avoid extra Hetzner charges.
+
+Provision a separate runtime slot for the same Clerk user and use the same login
+to switch:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST "$PLATFORM_PUBLIC_URL/vps/provision" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"clerkUserId":"user_xxx","handle":"alice-staging","runtimeSlot":"staging"}'
+```
+
+Open `https://app.matrix-os.com/runtime` to switch computers, or go directly to
+`https://app.matrix-os.com/vm/alice-staging`. Open
+`https://app.matrix-os.com/` to return to the default primary computer. Do not
+use `?runtime=staging` as the durable test link; it is request-scoped only and
+must not make staging sticky on plain `/`.
+
+Deploy branch host bundles to the test VM by exact version; do not use
+`/vps/deploy` unless you intend to fan out to every running VPS. Verify the VM
+before handing it to a tester:
+
+```bash
+curl --fail --silent --show-error \
+  "$PLATFORM_PUBLIC_URL/vps/<machineId>/status" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+When testing is done, ask the user whether to delete the test VM. If they
+approve, delete it through the platform so provider cleanup and deletion
+metadata stay consistent:
+
+```bash
+curl --fail --silent --show-error \
+  -X DELETE "$PLATFORM_PUBLIC_URL/vps/<machineId>" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+If the staging VPS needs to be replaced, recover the same slot explicitly so the
+primary runtime remains untouched:
+
+```bash
+matrixctl recover user_xxx --slot staging --allow-empty
+```
 
 Legacy fallback code may exist only to keep historical records reachable during migration. New and production customer runtime should not be provisioned as containers.
 
@@ -500,7 +551,7 @@ Legacy shared-container lifecycle:
 - **Provision**: image pulled, ports allocated, volume mounted at `/data/users/{handle}/matrixos`
 - **Running**: 256MB memory, 0.5 CPU, restart unless-stopped
 - **Idle**: lifecycle manager checks every 5 min, stops after 30 min inactive
-- **Wake**: subdomain request -> platform detects stopped -> auto-starts -> proxy
+- **Wake**: `app.matrix-os.com` request -> platform resolves the signed-in user -> detects stopped runtime -> auto-starts -> proxies
 - **Destroy**: container removed, ports released, DB record deleted (data volume kept)
 
 ## Database
@@ -539,7 +590,7 @@ system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
 system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
 ```
 
-Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users:
+Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users. The normal path is the GitHub Actions release workflow on `main`; local builds are for break-glass verification or emergency release preparation.
 
 ```bash
 set -a
@@ -552,7 +603,19 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish both generated files to R2 under `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`. New VPS provisions use that key automatically. Existing VPSes do not update themselves yet; refresh them in place by copying the tarball to the host, extracting it under `/opt/matrix`, and restarting `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
+Publish with `./scripts/publish-release.sh <version> --channel <channel>` or let `.github/workflows/host-bundle-release.yml` do it on `main`. The publish step uploads immutable R2 objects and registers the release in platform Postgres; platform Postgres is the source of truth for release metadata and channel pointers.
+
+Existing VPSes update through platform fan-out:
+
+```bash
+curl --fail --silent --show-error \
+  -X POST https://app.matrix-os.com/vps/deploy \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"version":"v2026.05.12-43"}'
+```
+
+Do not SSH-copy bundles except for break-glass recovery. The sync agent downloads the registered bundle through platform, verifies the SHA-256, stages extraction, keeps `/opt/matrix/app.rollback`, swaps `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts services.
 
 Operational rules:
 
@@ -562,11 +625,15 @@ Operational rules:
 - During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
 - Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, pi, and uv update themselves through the Matrix runtime prefix; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`. Hermes installs for the `matrix` user through `/opt/matrix/bin/matrix-install-hermes`.
 - Preserve `/opt/matrix/env`, `/home/matrix/home`, and the local Postgres data directory during in-place refreshes.
-- Record the checksum in `specs/070-vps-per-user/changelog.md` after publishing and mention which customer VPSes were refreshed.
+- Host bundle sync may replace `/opt/matrix/app` only. It must not overwrite owner files under `/home/matrix/home`; protected template paths such as `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, configs, layouts, sessions, logs, conversations, memory, and state are user data.
+- Record the checksum/release version after publishing and mention which customer VPSes were refreshed.
 
 Verification after deploying a host bundle:
 
 ```bash
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
+systemctl is-active matrix-gateway matrix-shell matrix-sync-agent
 curl -fsS http://127.0.0.1:4000/health
 
 source /opt/matrix/env/host.env
@@ -593,7 +660,7 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish the generated tarball and checksum to R2 under `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh the target VPSes in place and restart their Matrix systemd units.
+Publish with `./scripts/publish-release.sh <version> --channel <channel>`, then trigger `/vps/deploy` for the tested version or promoted channel. Manual SSH extraction is reserved for break-glass recovery.
 
 ## Archived Legacy Horizontal Scaling
 
@@ -733,7 +800,7 @@ function pickNode(): string {
 ```
 
 **Routing change:**
-The subdomain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
+The session/app-domain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
 ```typescript
 // Instead of:
 fetch(`http://localhost:${record.shellPort}${path}`)
@@ -750,7 +817,7 @@ fetch(`http://${host}:${record.shellPort}${path}`)
 - [ ] Add `node_id` column to `containers` table
 - [ ] Update orchestrator to accept multiple Docker hosts
 - [ ] Add node selection logic (least-loaded)
-- [ ] Update subdomain proxy to route to correct node IP
+- [ ] Update session/app-domain proxy to route to correct node IP
 - [ ] Add `/nodes` admin API endpoints (register, deregister, status)
 - [ ] Build image on each worker (or set up private registry)
 
@@ -770,10 +837,9 @@ Understanding the request flow is critical for debugging:
 Current customer VPS route:
 
 ```
-Browser -> app.matrix-os.com / code.matrix-os.com / {handle}.matrix-os.com
+Browser -> app.matrix-os.com / code.matrix-os.com
   -> Cloudflare Tunnel -> platform :9000
     -> session-based: Clerk JWT -> running customer VPS by clerkUserId
-    -> handle-based: subdomain -> running customer VPS by handle
       -> HTTPS customer VPS gateway with per-host token
         -> nginx on customer VPS
           -> matrix-shell.service :3000 for shell paths
@@ -784,10 +850,9 @@ Browser -> app.matrix-os.com / code.matrix-os.com / {handle}.matrix-os.com
 Legacy shared-container route:
 
 ```
-Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
+Browser -> app.matrix-os.com
   -> Cloudflare Tunnel -> platform :9000
     -> session-based: Clerk JWT -> getContainerByClerkId -> proxy
-    -> handle-based: subdomain -> getContainer -> proxy
       -> http://matrixos-{handle}:3000 (Next.js shell, non-API paths)
       -> http://matrixos-{handle}:4000 (gateway, /api/*, /ws*, /files/*, /modules/*)
         -> shell proxy.ts middleware rewrites remaining API paths
@@ -795,8 +860,7 @@ Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
 ```
 
 **Key points:**
-- Platform has two routing middlewares: `app.matrix-os.com` (session-based, Clerk JWT) and `{handle}.matrix-os.com` (handle-based, no auth)
-- Both resolve to the same container -- different entry points, same destination
+- Platform routes the managed shell through `app.matrix-os.com` using session-based Clerk identity.
 - The session-based route auto-starts stopped containers on access
 - The shell's `proxy.ts` middleware rewrites API/file/WebSocket requests to the gateway (port 4000)
 - Both shell and gateway run inside the same container (started by `docker-entrypoint.sh`)
@@ -804,9 +868,9 @@ Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
 - If the shell crashes, the container stays up (gateway still running) but HTTP returns 502
 - Container memory is set to 512MB (gateway + Next.js shell together need ~200-300MB)
 
-### Clerk Auth (subdomain cookies)
+### Clerk Auth
 
-Clerk session cookies must be scoped to `.matrix-os.com` for `app.matrix-os.com` routing to work. Configure in Clerk Dashboard > Domains:
+Clerk session cookies must work on `app.matrix-os.com` for session routing. Configure in Clerk Dashboard > Domains:
 - Primary domain: `matrix-os.com`
 - Cookie domain: `.matrix-os.com`
 
@@ -816,7 +880,7 @@ The `app.matrix-os.com` route extracts the Clerk session from either:
 
 If no valid session is found, the user is redirected to `matrix-os.com/login`. If the user has no container provisioned, they are redirected to `matrix-os.com/dashboard`.
 
-The `{handle}.matrix-os.com` route does **not** require Clerk auth -- it proxies directly based on the subdomain handle. This means handle-based subdomains are publicly accessible to anyone with the URL.
+Do not add user-facing per-handle Matrix subdomains. Managed users enter through `app.matrix-os.com`.
 
 ## Observability Stack
 
@@ -977,7 +1041,7 @@ Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`
 
 1. **Icon not generated yet**: Check if the PNG exists on disk. If not, trigger generation:
    ```bash
-   curl -X POST https://{handle}.matrix-os.com/api/apps/{slug}/icon
+   curl -X POST https://app.matrix-os.com/api/apps/{slug}/icon
    ```
 
 2. **Module manifest has invalid icon field**: Some `module.json`/`manifest.json` files use emojis or icon names instead of file paths. The shell ignores `meta.icon` and always uses the generated PNG at `/files/system/icons/{slug}.png`. If you see 404s for emoji URLs (e.g. `%F0%9F%94%A5`), the module manifest has `"icon": "emoji"` -- this is harmless, the generated PNG will be used instead.

@@ -154,7 +154,7 @@ this after successful login to discover where its daemon should connect.
 {
   userId: string,    // Clerk userId
   handle: string,    // "alice"
-  gatewayUrl: string // "https://alice.matrix-os.com" or per GATEWAY_URL_TEMPLATE in dev
+  gatewayUrl: string // "https://app.matrix-os.com" or per GATEWAY_URL_TEMPLATE in dev
 }
 ```
 

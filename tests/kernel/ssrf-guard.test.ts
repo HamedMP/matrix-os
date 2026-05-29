@@ -47,6 +47,7 @@ describe("isPrivateIp", () => {
 
   it("blocks ::1 (IPv6 loopback)", () => {
     expect(isPrivateIp("::1")).toBe(true);
+    expect(isPrivateIp("[::1]")).toBe(true);
   });
 
   it("blocks fe80:: (IPv6 link-local)", () => {
@@ -57,6 +58,7 @@ describe("isPrivateIp", () => {
   it("blocks fc/fd (IPv6 unique local)", () => {
     expect(isPrivateIp("fc00::1")).toBe(true);
     expect(isPrivateIp("fd12::1")).toBe(true);
+    expect(isPrivateIp("[fd12::1]")).toBe(true);
   });
 
   it("blocks ::ffff:127.0.0.1 (mapped IPv4)", () => {
@@ -117,6 +119,15 @@ describe("validateUrl", () => {
   it("throws for private IPs in URL", async () => {
     await expect(
       validateUrl("http://10.0.0.1/admin")
+    ).rejects.toThrow(SsrfBlockedError);
+  });
+
+  it("throws for bracketed private IPv6 literals in URLs", async () => {
+    await expect(
+      validateUrl("http://[::1]/admin")
+    ).rejects.toThrow(SsrfBlockedError);
+    await expect(
+      validateUrl("http://[fd12::1]/admin")
     ).rejects.toThrow(SsrfBlockedError);
   });
 

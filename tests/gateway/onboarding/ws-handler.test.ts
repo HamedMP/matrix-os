@@ -22,6 +22,15 @@ const geminiMock = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../packages/gateway/src/onboarding/gemini-live.js", () => ({
+  hasGeminiLiveConnection: vi.fn((connection: unknown) => {
+    if (!connection) return false;
+    if (typeof connection === "string") return connection.length > 0;
+    if (typeof connection === "object" && "proxy" in connection) {
+      const proxy = (connection as { proxy?: { platformUrl?: string; handle?: string; token?: string } }).proxy;
+      return Boolean(proxy?.platformUrl && proxy.handle && proxy.token);
+    }
+    return false;
+  }),
   createGeminiLiveClient: vi.fn(() => {
     const client = {
       on: vi.fn(),
@@ -54,11 +63,18 @@ describe("onboarding websocket handler", () => {
     vi.unstubAllEnvs();
   });
 
-  function handler(geminiApiKey = "") {
+  function handler(
+    geminiApiKey = "",
+    readinessService?: Parameters<typeof createOnboardingHandler>[0]["readinessService"],
+    ownerId?: string,
+  ) {
+    const resolvedOwnerId = arguments.length >= 3 ? ownerId : readinessService ? "owner_1" : undefined;
     const h = createOnboardingHandler({
       homePath,
       geminiApiKey,
       geminiModel: "test-model",
+      readinessService,
+      ownerId: resolvedOwnerId,
     });
     return h;
   }
@@ -83,6 +99,129 @@ describe("onboarding websocket handler", () => {
 
     expect(sent).toContainEqual({ type: "stage", stage: "done" });
     expect(existsSync(join(homePath, "system/onboarding-complete.json"))).toBe(true);
+  });
+
+  it("returns goal steps for websocket goal selection", async () => {
+    const readinessService = {
+      getReadiness: vi.fn(async () => ({
+        goals: [],
+      })),
+      selectGoals: vi.fn(async () => ({
+        goalIds: ["coding" as const],
+        steps: [
+          { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding" as const] },
+          { id: "project.selected", required: true, title: "Choose a project", unlocks: ["coding" as const] },
+        ],
+      })),
+    };
+    const h = handler("", readinessService);
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" }));
+
+    expect(readinessService.getReadiness).toHaveBeenCalledWith("owner_1");
+    expect(readinessService.selectGoals).toHaveBeenCalledWith("owner_1", ["coding"]);
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "goal_selected",
+      goalId: "coding",
+      steps: expect.arrayContaining([
+        expect.objectContaining({ id: "github.connected" }),
+        expect.objectContaining({ id: "project.selected" }),
+      ]),
+    }));
+  });
+
+  it("does not persist websocket goal selection without a resolved owner", async () => {
+    const readinessService = {
+      getReadiness: vi.fn(async () => ({
+        goals: [],
+      })),
+      selectGoals: vi.fn(async () => ({
+        goalIds: ["coding" as const],
+        steps: [],
+      })),
+    };
+    const h = handler("", readinessService, undefined);
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" }));
+
+    expect(readinessService.getReadiness).not.toHaveBeenCalled();
+    expect(readinessService.selectGoals).not.toHaveBeenCalled();
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "goal_selected",
+      goalId: "coding",
+      steps: expect.arrayContaining([
+        expect.objectContaining({ id: "github.connected" }),
+      ]),
+    }));
+  });
+
+  it("preserves previously selected goals when websocket goal selection persists", async () => {
+    const readinessService = {
+      getReadiness: vi.fn(async () => ({
+        goals: [
+          { id: "assistant" as const, selected: true },
+          { id: "coding" as const, selected: false },
+        ],
+      })),
+      selectGoals: vi.fn(async () => ({
+        goalIds: ["assistant" as const, "coding" as const],
+        steps: [
+          { id: "integrations.capabilities", required: true, title: "Approve assistant capabilities", unlocks: ["assistant" as const] },
+          { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding" as const] },
+        ],
+      })),
+    };
+    const h = handler("", readinessService);
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" }));
+
+    expect(readinessService.selectGoals).toHaveBeenCalledWith("owner_1", ["assistant", "coding"]);
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: "goal_selected",
+      goalId: "coding",
+      steps: expect.arrayContaining([
+        expect.objectContaining({ id: "integrations.capabilities" }),
+        expect.objectContaining({ id: "github.connected" }),
+      ]),
+    }));
+  });
+
+  it("serializes rapid websocket goal selections so later writes include earlier goals", async () => {
+    let selected: Array<"assistant" | "coding"> = [];
+    const readinessService = {
+      getReadiness: vi.fn(async () => ({
+        goals: [
+          { id: "assistant" as const, selected: selected.includes("assistant") },
+          { id: "coding" as const, selected: selected.includes("coding") },
+        ],
+      })),
+      selectGoals: vi.fn(async (_ownerId: string, goalIds: Array<"assistant" | "coding">) => {
+        selected = goalIds;
+        return {
+          goalIds,
+          steps: goalIds.map((id) => ({
+            id: `${id}.step`,
+            required: true,
+            title: id,
+            unlocks: [id],
+          })),
+        };
+      }),
+    };
+    const h = handler("", readinessService);
+    await h.onOpen((msg) => sent.push(msg));
+
+    await Promise.all([
+      h.onMessage(JSON.stringify({ type: "select_goal", goalId: "assistant" })),
+      h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" })),
+    ]);
+
+    expect(readinessService.selectGoals).toHaveBeenNthCalledWith(1, "owner_1", ["assistant"]);
+    expect(readinessService.selectGoals).toHaveBeenNthCalledWith(2, "owner_1", ["assistant", "coding"]);
+    expect(sent.filter((msg) => msg.type === "goal_selected")).toHaveLength(2);
   });
 
   it("closes an existing Gemini client before handling a duplicate start", async () => {

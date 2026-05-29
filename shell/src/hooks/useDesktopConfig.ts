@@ -153,3 +153,28 @@ export async function saveDesktopConfig(config: DesktopConfig): Promise<void> {
     body: JSON.stringify(config),
   });
 }
+
+export async function saveDesktopConfigPatch(
+  patch: Partial<DesktopConfig>,
+): Promise<void> {
+  const gatewayUrl = getGatewayUrl();
+  const url = `${gatewayUrl}/api/settings/desktop`;
+  const getRes = await fetch(url, {
+    signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+  });
+  const config = getRes.ok
+    ? (await getRes.json()) as Record<string, unknown>
+    : {};
+  const definedPatch = Object.fromEntries(
+    Object.entries(patch).filter(([, value]) => value !== undefined),
+  );
+  const putRes = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+    body: JSON.stringify({ ...config, ...definedPatch }),
+  });
+  if (!putRes.ok) {
+    throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
+  }
+}

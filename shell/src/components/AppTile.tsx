@@ -1,5 +1,6 @@
 "use client";
 import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "lucide-react";
+import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -20,8 +21,9 @@ interface AppTileProps {
   onRemoveFromCanvas?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl: _iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
+  const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
   const tile = (
     <button
@@ -32,13 +34,17 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl: _
       <div className="relative">
         <div
           data-app-icon
-          className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all ${
+          className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all overflow-hidden ${
             isOpen
               ? "bg-primary/10 border border-primary/40 text-primary shadow-primary/20 shadow-md"
               : "bg-card border border-border/60 text-foreground group-hover:shadow-md"
           }`}
         >
-          {initial}
+          {showImage ? (
+            <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
+          ) : (
+            initial
+          )}
         </div>
         {onTogglePin && (
           <span

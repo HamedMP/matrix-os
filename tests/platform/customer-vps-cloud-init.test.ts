@@ -14,8 +14,10 @@ describe('platform/customer-vps-cloud-init', () => {
     machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
     clerkUserId: 'user_123',
     handle: 'alice',
-    imageVersion: 'matrix-os-host-2026.04.26-1',
-    hostBundleUrl: 'https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+    runtimeSlot: 'staging',
+    imageVersion: 'stable',
+    updateChannel: 'stable',
+    hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
@@ -27,6 +29,10 @@ describe('platform/customer-vps-cloud-init', () => {
     r2Bucket: 'matrixos-sync',
     r2Prefix: 'matrixos-sync/user_123/',
     postgresPassword: 'postgres-secret',
+    posthogToken: 'phc_public',
+    posthogProjectToken: 'phc_project',
+    posthogHost: 'https://eu.i.posthog.com',
+    posthogApiHost: '/ingest',
   };
 
   it('renders required host variables into the cloud-init template', () => {
@@ -48,8 +54,11 @@ describe('platform/customer-vps-cloud-init', () => {
     const rendered = renderCloudInitTemplate(cloudInit, input);
 
     expect(rendered).toContain(
-      'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+      'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
+    expect(rendered).toContain('MATRIX_RUNTIME_SLOT=staging');
+    expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
+    expect(rendered).toContain('MATRIX_IMAGE_VERSION=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
 
@@ -76,6 +85,20 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).toContain("R2_ENDPOINT='https://r2.example'");
     expect(rendered).not.toContain("AWS_ACCESS_KEY_ID=''\n");
     expect(rendered).not.toContain("AWS_SECRET_ACCESS_KEY=''\n");
+  });
+
+  it('renders public PostHog project-key telemetry into customer host env', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const rendered = renderCloudInitTemplate(cloudInit, input);
+
+    expect(rendered).toContain('POSTHOG_TOKEN=phc_public');
+    expect(rendered).toContain('POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(rendered).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
   });
 
   it('renders valid YAML for the production customer cloud-init', () => {
@@ -109,13 +132,31 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
+    expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
+    expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
+    expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
+    expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
+    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
+    expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
+    expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
+    expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
+    expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
     expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
     expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
+  });
+
+  it('keeps installed release metadata readable by the gateway after first boot', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('chown root:matrix /opt/matrix/release.json');
+    expect(cloudInit).toContain('chmod 0644 /opt/matrix/release.json');
   });
 
   it('routes code.matrix-os.com to the customer host code proxy', () => {
@@ -165,15 +206,31 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(buildScript).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix/home/.config /home/matrix/home/.config/systemd /home/matrix/home/.config/systemd/user');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.config/gh');
+    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh');
+    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
-    expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-linux-tools.service');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('Restart=on-failure');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2');
+    expect(cloudInit).not.toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
+    expect(cloudInit).toContain('test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"');
+    expect(gateway).toContain('export PATH="/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
+    expect(cloudInit).not.toContain("printf '%s\\n' \"$MATRIX_IMAGE_VERSION\" >/opt/matrix/app/BUNDLE_VERSION");
+    expect(cloudInit).toContain('bundle_version="$(sed -n');
+    expect(cloudInit).toContain("printf '%s\\n' \"$bundle_version\" >/opt/matrix/app/BUNDLE_VERSION");
+    expect(cloudInit).toContain('chmod -R g+rwX /opt/matrix/app');
   });
 
   it('grants the customer matrix user passwordless sudo for host installers', () => {
@@ -181,7 +238,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
     expect(cloudInit).toContain('sudo');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
@@ -189,6 +246,25 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('loginctl enable-linger matrix');
     expect(cloudInit).toContain('systemctl start "user@$(id -u matrix).service"');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user');
+  });
+
+  it('installs Homebrew, Graphite CLI, and GitHub CLI on customer Linux hosts', () => {
+    const root = process.cwd();
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
+    const bundleScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+
+    expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
+    expect(installer).toContain('retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
+    expect(installer).toContain('cd "${HOME:-/home/matrix}"');
+    expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite');
+    expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install gh');
+    expect(installer).toContain('/etc/profile.d/homebrew.sh');
+    expect(installer).toContain('if [ -n "${PWD:-}" ] && [ ! -r "${PWD}" ]; then');
+    expect(installer).toContain('"eval \\"\\$(${BREW_BIN} shellenv bash)\\""');
+    expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
+    expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
+    expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
+    expect(bundleScript).toContain('matrix-install-linux-tools');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {
@@ -247,6 +323,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(backup).toContain('--format=custom');
     expect(backup).toContain('.dump');
     expect(backup).toContain('timeout');
+    expect(backup).toContain('system/runtime-slots/${runtime_slot}/db/snapshots/${snapshot_name}');
   });
 
   it('keeps restore as a boot gate and refuses failed restores', () => {
@@ -261,6 +338,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(restore).not.toContain('docker compose');
     expect(restore).toContain('pg_restore');
     expect(restore).toContain('exit 1');
+    expect(restore).toContain('system/runtime-slots/${runtime_slot}/db/latest');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
   });
 
@@ -283,11 +361,11 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('permissions: "0750"');
-    expect(cloudInit).toContain('docker.io git postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-linux-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {
@@ -295,12 +373,19 @@ describe('platform/customer-vps-cloud-init', () => {
     const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
-    expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+    expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
+    expect(matrixctl).toContain('local runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
+    expect(matrixctl).toContain('""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid runtime slot"');
+    expect(matrixctl).toContain('system/runtime-slots/${runtime_slot}/db/latest');
+    expect(matrixctl).toContain('payload="$(printf \'{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}\'');
     expect(matrixctl).toContain('${MATRIX_PLATFORM_URL%/}/vps/recover');
     expect(matrixctl).toContain('curl --fail --silent --show-error --max-time 10');
     expect(matrixctl).toContain('set +u');
     expect(matrixctl).toContain('export AWS_ACCESS_KEY_ID=');
     expect(matrixctl).toContain('rm -f "${tmp:-}"');
-    expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+    expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
+    expect(cloudInit).toContain('runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
+    expect(cloudInit).toContain('""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid runtime slot"');
+    expect(cloudInit).toContain('{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}');
   });
 });

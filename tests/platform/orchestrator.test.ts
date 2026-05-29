@@ -72,13 +72,89 @@ describe('platform/orchestrator', () => {
     await orch.provision('alice', 'clerk_1');
 
     const createArgs = docker.createContainer.mock.calls[0][0];
-    expect(createArgs.Env).toContain('DATABASE_URL=postgres://postgres@db:5432/matrixos_alice');
+    const databaseUrl = createArgs.Env.find((value: string) => value.startsWith('DATABASE_URL='));
+    expect(databaseUrl).toMatch(/^DATABASE_URL=postgres:\/\/matrixos_alice_owner:/);
+    expect(databaseUrl).toContain('@db:5432/matrixos_alice');
+    expect(databaseUrl).not.toContain('postgres@db');
     expect(createArgs.Env).toContain('PLATFORM_INTERNAL_URL=http://distro-platform-1:9000');
     expect(createArgs.Env.some((value: string) => value.startsWith('UPGRADE_TOKEN='))).toBe(true);
     expect(createArgs.Env.some((value: string) => value.startsWith('MATRIX_AUTH_TOKEN='))).toBe(true);
     expect(createArgs.Env.some((value: string) => value.startsWith('MATRIX_CODE_PROXY_TOKEN='))).toBe(true);
     expect(createArgs.Env.some((value: string) => value.startsWith('PLATFORM_DATABASE_URL='))).toBe(false);
     clientSpy.mockRestore();
+  });
+
+  it('does not pass platform secrets into tenant containers by default', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+    });
+
+    await orch.provision('alice', 'clerk_1');
+
+    const createArgs = docker.createContainer.mock.calls[0][0];
+    expect(createArgs.Env.some((value: string) => value.startsWith('CLERK_SECRET_KEY='))).toBe(false);
+    expect(createArgs.Env.some((value: string) => value.startsWith('FAL_API_KEY='))).toBe(false);
+  });
+
+  it('passes only explicit public telemetry env into tenant containers', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      publicTelemetryEnv: [
+        'POSTHOG_TOKEN=phc_public',
+        'POSTHOG_PROJECT_TOKEN=phc_project',
+        'POSTHOG_HOST=https://eu.i.posthog.com',
+      ],
+    });
+
+    await orch.provision('alice', 'clerk_1');
+
+    const createArgs = docker.createContainer.mock.calls[0][0];
+    expect(createArgs.Env).toContain('POSTHOG_TOKEN=phc_public');
+    expect(createArgs.Env).toContain('POSTHOG_PROJECT_TOKEN=phc_project');
+    expect(createArgs.Env).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
+    expect(createArgs.Env.some((value: string) => value.startsWith('CLERK_SECRET_KEY='))).toBe(false);
+  });
+
+  it('provisions tenant Postgres with a per-tenant role URL', async () => {
+    const { docker } = createMockDocker();
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockImplementation(async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (sql.includes('FROM pg_database')) return { rows: [] };
+        if (sql.includes('FROM pg_roles')) return { rows: [] };
+        return { rows: [] };
+      }),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://matrixos:admin@db:5432',
+      platformSecret: 'platform-secret-123',
+    });
+
+    try {
+      await orch.provision('alice', 'clerk_1');
+    } finally {
+      clientSpy.mockRestore();
+    }
+
+    const createArgs = docker.createContainer.mock.calls[0][0];
+    const databaseUrl = createArgs.Env.find((value: string) => value.startsWith('DATABASE_URL='));
+    expect(databaseUrl).toMatch(/^DATABASE_URL=postgres:\/\/matrixos_alice_owner:/);
+    expect(databaseUrl).toContain('@db:5432/matrixos_alice');
+    expect(databaseUrl).not.toContain('matrixos:admin');
+    expect(queries.some((q) => q.sql.includes('CREATE ROLE "matrixos_alice_owner" LOGIN PASSWORD'))).toBe(true);
+    expect(queries.some((q) => q.sql.includes('CREATE DATABASE "matrixos_alice" OWNER "matrixos_alice_owner"'))).toBe(true);
   });
 
   it('passes MATRIX_USER_ID on upgrade so home-mirror keeps its R2 prefix', async () => {
@@ -231,7 +307,8 @@ describe('platform/orchestrator', () => {
       connect: vi.fn().mockResolvedValue(undefined),
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({}),
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValue({ rows: [] }),
       end: vi.fn().mockResolvedValue(undefined),
     };
     const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
@@ -257,7 +334,14 @@ describe('platform/orchestrator', () => {
     );
     expect(mockClient.query).toHaveBeenNthCalledWith(
       2,
-      'CREATE DATABASE "matrixos_alice_admin_prod"',
+      'SELECT 1 FROM pg_roles WHERE rolname = $1',
+      ['matrixos_alice_admin_prod_owner'],
+    );
+    expect(mockClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('CREATE ROLE "matrixos_alice_admin_prod_owner" LOGIN PASSWORD'),
+    );
+    expect(mockClient.query).toHaveBeenCalledWith(
+      'CREATE DATABASE "matrixos_alice_admin_prod" OWNER "matrixos_alice_admin_prod_owner"',
     );
 
     clientSpy.mockRestore();
@@ -287,6 +371,7 @@ describe('platform/orchestrator', () => {
       connectionTimeoutMillis: 10_000,
     });
     expect(mockClient.query).toHaveBeenCalledWith('DROP DATABASE IF EXISTS "matrixos_alice"');
+    expect(mockClient.query).toHaveBeenCalledWith('DROP ROLE IF EXISTS "matrixos_alice_owner"');
 
     clientSpy.mockRestore();
   });

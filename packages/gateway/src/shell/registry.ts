@@ -56,22 +56,55 @@ export class ShellRegistry {
   async list(): Promise<ShellSession[]> {
     return this.withMutationLock(async () => {
       const file = await this.read();
-      const live = new Set(await this.options.adapter.listSessions());
+      const live = await this.options.adapter.listSessions();
       let changed = false;
+      const sessions: ShellSession[] = [];
+      const now = new Date().toISOString();
 
-      for (const name of Object.keys(file.sessions)) {
-        if (!live.has(name)) {
-          delete file.sessions[name];
-          await this.cleanupScrollback(name);
+      for (const name of live) {
+        const existing = file.sessions[name];
+        const session = {
+          ...(existing ?? this.adoptSession(name, now)),
+          status: "active" as const,
+          updatedAt: existing?.status === "active" ? existing.updatedAt : now,
+        };
+        sessions.push(session);
+        if (!existing || existing.status !== "active") {
+          file.sessions[name] = session;
           changed = true;
         }
       }
+
+      changed = await this.markMissingMetadataExited(file, new Set(live)) || changed;
 
       if (changed) {
         await this.write(file);
       }
 
-      return Object.values(file.sessions);
+      return sessions;
+    });
+  }
+
+  async get(name: string): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      const live = await this.options.adapter.listSessions();
+      if (!live.includes(safeName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      const now = new Date().toISOString();
+      const existing = file.sessions[safeName];
+      const session = {
+        ...(existing ?? this.adoptSession(safeName, now)),
+        status: "active" as const,
+        updatedAt: existing?.status === "active" ? existing.updatedAt : now,
+      };
+      if (!existing || existing.status !== "active") {
+        file.sessions[safeName] = session;
+        await this.write(file);
+      }
+      return session;
     });
   }
 
@@ -88,17 +121,24 @@ export class ShellRegistry {
       const file = await this.read();
       const live = new Set(await this.options.adapter.listSessions());
 
-      for (const existing of Object.keys(file.sessions)) {
-        if (!live.has(existing)) {
-          delete file.sessions[existing];
-          await this.cleanupScrollback(existing);
-        }
-      }
+      let changed = await this.markMissingMetadataExited(file, live);
 
-      if (file.sessions[name] || live.has(name)) {
-        throw shellError("session_exists", "Session already exists", 409);
+      if (live.has(name)) {
+        const now = new Date().toISOString();
+        const session: ShellSession = {
+          ...(file.sessions[name] ?? this.adoptSession(name, now)),
+          status: "active",
+          updatedAt: now,
+          ...(layoutName ? { layoutName } : {}),
+        };
+        file.sessions[name] = session;
+        await this.write(file);
+        return session;
       }
-      if (Object.keys(file.sessions).length >= this.maxSessions) {
+      if (changed) {
+        await this.write(file);
+      }
+      if (live.size >= this.maxSessions) {
         throw shellError("session_limit", "Session limit reached", 507);
       }
 
@@ -136,13 +176,46 @@ export class ShellRegistry {
       const safeName = validateSessionName(name);
       const file = await this.read();
       if (!file.sessions[safeName]) {
-        throw shellError("session_not_found", "Session not found", 404);
+        if (!options.force) {
+          throw shellError("session_not_found", "Session not found", 404);
+        }
+        const live = new Set(await this.options.adapter.listSessions());
+        if (!live.has(safeName)) {
+          throw shellError("session_not_found", "Session not found", 404);
+        }
       }
       await this.options.adapter.deleteSession(safeName, options);
       delete file.sessions[safeName];
       await this.cleanupScrollback(safeName);
       await this.write(file);
     });
+  }
+
+  private adoptSession(name: string, now: string): ShellSession {
+    return {
+      name,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      tabs: [],
+      attachedClients: 0,
+    };
+  }
+
+  private async markMissingMetadataExited(
+    file: z.infer<typeof RegistryFileSchema>,
+    live: Set<string>,
+  ): Promise<boolean> {
+    let changed = false;
+    const now = new Date().toISOString();
+    for (const [name, session] of Object.entries(file.sessions)) {
+      if (live.has(name) || session.status === "exited") {
+        continue;
+      }
+      file.sessions[name] = { ...session, status: "exited", updatedAt: now };
+      changed = true;
+    }
+    return changed;
   }
 
   private async read(): Promise<z.infer<typeof RegistryFileSchema>> {

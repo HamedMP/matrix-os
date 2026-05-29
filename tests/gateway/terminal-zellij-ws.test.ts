@@ -1,30 +1,52 @@
-import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
   createShellWsHandler,
+  SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+  SHELL_ATTACH_RECENT_REPLAY_EVENTS,
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
 
-class FakeStream extends EventEmitter {
+class FakePty {
   writes: string[] = [];
-
-  write(data: string): boolean {
-    this.writes.push(data);
-    return true;
-  }
-}
-
-class FakeChild extends EventEmitter {
-  stdout = new FakeStream();
-  stderr = new FakeStream();
-  stdin = new FakeStream();
+  resizes: Array<{ cols: number; rows: number }> = [];
   killed = false;
+  private dataListeners = new Set<(data: string) => void>();
+  private exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
 
-  kill(): boolean {
+  write(data: string): void {
+    this.writes.push(data);
+  }
+
+  resize(cols: number, rows: number): void {
+    this.resizes.push({ cols, rows });
+  }
+
+  kill(): void {
     this.killed = true;
-    this.emit("close", 0);
-    return true;
+    this.emitExit({ exitCode: 0 });
+  }
+
+  onData(listener: (data: string) => void) {
+    this.dataListeners.add(listener);
+    return { dispose: () => this.dataListeners.delete(listener) };
+  }
+
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
+    this.exitListeners.add(listener);
+    return { dispose: () => this.exitListeners.delete(listener) };
+  }
+
+  emitData(data: string): void {
+    for (const listener of this.dataListeners) {
+      listener(data);
+    }
+  }
+
+  emitExit(event: { exitCode: number; signal?: number }): void {
+    for (const listener of this.exitListeners) {
+      listener(event);
+    }
   }
 }
 
@@ -43,14 +65,14 @@ function socket(): ShellWsSocket & { sent: unknown[]; closed: boolean } {
 
 describe("zellij terminal WebSocket", () => {
   it("attaches to a named session, replays from seq, forwards input, and cleans up", async () => {
-    const child = new FakeChild();
+    const pty = new FakePty();
     const ws = socket();
     const handler = createShellWsHandler({
       registry: {
         list: vi.fn(async () => [{ name: "main", status: "active" }]),
       },
       adapter: {
-        attachSession: vi.fn(() => child as never),
+        attachSession: vi.fn(() => pty),
       },
       maxReplayBytes: 4096,
     });
@@ -61,15 +83,134 @@ describe("zellij terminal WebSocket", () => {
       fromSeq: 0,
     });
 
-    child.stdout.emit("data", Buffer.from("hello"));
+    pty.emitData("hello");
     await new Promise((resolve) => setTimeout(resolve, 0));
     session.onMessage(JSON.stringify({ type: "input", data: "pwd\r" }));
+    session.onMessage(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
     session.onClose();
 
     expect(ws.sent).toContainEqual({ type: "attached", session: "main", state: "running", fromSeq: 0 });
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "hello" });
-    expect(child.stdin.writes).toEqual(["pwd\r"]);
-    expect(child.killed).toBe(true);
+    expect(pty.writes).toEqual(["pwd\r"]);
+    expect(pty.resizes).toEqual([{ cols: 100, rows: 30 }]);
+    expect(pty.killed).toBe(true);
+  });
+
+  it("sends the existing exit frame when the PTY exits", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitExit({ exitCode: 101 });
+
+    expect(ws.sent).toContainEqual({ type: "exit", code: 101 });
+  });
+
+  it("maps live-tail attach to a bounded recent replay window", async () => {
+    const pty = new FakePty();
+    const secondPty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(pty)
+          .mockReturnValueOnce(secondPty),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const first = await handler.open({ ws, session: "main", fromSeq: 0 });
+    for (let index = 0; index < SHELL_ATTACH_RECENT_REPLAY_EVENTS + 10; index += 1) {
+      pty.emitData(`frame-${index}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    first.onClose();
+
+    const secondWs = socket();
+    const secondHandler = await handler.open({
+      ws: secondWs,
+      session: "main",
+      fromSeq: SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+    });
+    secondHandler.onClose();
+
+    expect(secondWs.sent).toContainEqual({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 10,
+    });
+    expect(secondWs.sent).not.toContainEqual({ type: "output", seq: 0, data: "frame-0" });
+    expect(secondWs.sent).toContainEqual({ type: "output", seq: 10, data: "frame-10" });
+  });
+
+  it("maps cold-start live-tail attach from persisted scrollback instead of replaying from zero", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const readSince = vi.fn(async () => []);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => 99),
+        readSince,
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const session = await handler.open({
+      ws,
+      session: "main",
+      fromSeq: SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+    });
+    session.onClose();
+
+    expect(ws.sent).toContainEqual({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 50,
+    });
+    expect(readSince).toHaveBeenCalledWith("main", 50);
+  });
+
+  it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => {
+          throw new Error("spawn failed");
+        }),
+      },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(ws.sent).toEqual([
+      { type: "error", code: "attach_failed", message: "Shell attach failed" },
+    ]);
+    expect(ws.closed).toBe(true);
   });
 
   it("rejects missing sessions with a stable error", async () => {

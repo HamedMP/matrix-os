@@ -4,11 +4,14 @@ import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
 import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMetricsSeed } from './db.js';
 import { calculateCost } from './cost.js';
 import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
+import { isAuthorizedProxyAdminRequest, parseProxyApiKey } from './auth.js';
 
 const ANTHROPIC_API = process.env.ANTHROPIC_API_URL ?? 'https://api.anthropic.com';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
+const PROXY_ADMIN_TOKEN = process.env.PROXY_ADMIN_TOKEN ?? process.env.PROXY_AUTH_TOKEN ?? process.env.PLATFORM_SECRET;
+const PROXY_SHARED_SECRET = process.env.PROXY_SHARED_SECRET ?? process.env.PLATFORM_SECRET;
 
 const app = new Hono();
 const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
@@ -36,6 +39,20 @@ app.get('/metrics', async (c) => {
 });
 
 // Instance management
+app.use('/instances', async (c, next) => {
+  if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  await next();
+});
+
+app.use('/instances/*', async (c, next) => {
+  if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  await next();
+});
+
 app.post('/instances/register', async (c) => {
   const body = await c.req.json<{ handle: string; gatewayUrl: string; shellPort: number }>();
   instances.set(body.handle, {
@@ -59,6 +76,9 @@ app.delete('/instances/:handle', (c) => {
 
 // Cross-instance messaging: proxy routes message to target instance's gateway
 app.post('/send/:targetHandle', async (c) => {
+  if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const target = instances.get(c.req.param('targetHandle'));
   if (!target) return c.json({ error: 'Instance not found' }, 404);
 
@@ -76,15 +96,24 @@ app.post('/send/:targetHandle', async (c) => {
 
 // Usage endpoints
 app.get('/usage/:userId', (c) => {
+  if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const usage = getUserUsage(c.req.param('userId'));
   return c.json(usage);
 });
 
 app.get('/usage/summary', (c) => {
+  if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   return c.json(getUsageSummary());
 });
 
 app.post('/quotas/:userId', async (c) => {
+  if (!isAuthorizedProxyAdminRequest(c.req.raw.headers, PROXY_ADMIN_TOKEN)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const body = await c.req.json<{ dailyLimitUsd?: number | null; monthlyLimitUsd?: number | null }>();
   setQuota(c.req.param('userId'), body.dailyLimitUsd ?? null, body.monthlyLimitUsd ?? null);
   return c.json({ ok: true });
@@ -94,10 +123,12 @@ app.post('/quotas/:userId', async (c) => {
 app.all('/v1/*', async (c) => {
   // Identify user: explicit header, or extract from proxy API key (sk-proxy-{handle})
   const providedKey = c.req.header('x-api-key') ?? '';
-  const proxyKeyMatch = providedKey.match(/^sk-proxy-(.+)$/);
-  const userId = c.req.header('x-matrix-user')
-    || (proxyKeyMatch ? proxyKeyMatch[1] : null)
-    || 'anonymous';
+  const proxyKey = parseProxyApiKey(providedKey, PROXY_SHARED_SECRET);
+  const hasUserAnthropicKey = providedKey.startsWith('sk-ant-');
+  if (!proxyKey && !hasUserAnthropicKey) {
+    return c.json({ type: 'error', error: { type: 'auth_error', message: 'Unauthorized' } }, 401);
+  }
+  const userId = proxyKey?.handle || c.req.header('x-matrix-user') || 'anonymous';
   const sessionId = c.req.header('x-matrix-session') ?? undefined;
 
   // Check quota
@@ -112,7 +143,7 @@ app.all('/v1/*', async (c) => {
   }
 
   // Use user's key if provided and valid, otherwise use shared key
-  const apiKey = (providedKey && providedKey.startsWith('sk-ant-')) ? providedKey : ANTHROPIC_KEY;
+  const apiKey = hasUserAnthropicKey ? providedKey : ANTHROPIC_KEY;
   if (!apiKey) {
     return c.json({ type: 'error', error: { type: 'auth_error', message: 'No API key configured' } }, 401);
   }

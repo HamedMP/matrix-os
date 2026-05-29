@@ -22,11 +22,13 @@ interface UserMachinesTable {
   machine_id: string;
   clerk_user_id: string;
   handle: string;
+  runtime_slot: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
   public_ipv6: string | null;
   status: string;
   image_version: string | null;
+  server_type: string | null;
   registration_token_hash: string | null;
   registration_token_expires_at: string | null;
   provisioned_at: string;
@@ -34,6 +36,34 @@ interface UserMachinesTable {
   deleted_at: string | null;
   failure_code: string | null;
   failure_at: string | null;
+}
+
+interface HostBundleReleasesTable {
+  version: string;
+  channel: string | null;
+  git_commit: string;
+  git_ref: string | null;
+  build_time: string;
+  bundle_key: string;
+  checksum_key: string | null;
+  sha256: string;
+  size: number;
+  severity: string;
+  update_type: string;
+  changelog: string | null;
+  created_at: string;
+}
+
+interface HostBundleChannelsTable {
+  channel: string;
+  version: string;
+  updated_at: string;
+}
+
+interface HostBundleReleaseChannelsTable {
+  channel: string;
+  version: string;
+  promoted_at: string;
 }
 
 interface ProviderDeletionQueueTable {
@@ -143,6 +173,9 @@ interface SocialFollowsTable {
 export interface PlatformDatabase {
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  host_bundle_releases: HostBundleReleasesTable;
+  host_bundle_channels: HostBundleChannelsTable;
+  host_bundle_release_channels: HostBundleReleaseChannelsTable;
   provider_deletion_queue: ProviderDeletionQueueTable;
   port_assignments: PortAssignmentsTable;
   device_codes: DeviceCodesTable;
@@ -190,11 +223,13 @@ export interface UserMachineRecord {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   hetznerServerId: number | null;
   publicIPv4: string | null;
   publicIPv6: string | null;
   status: string;
   imageVersion: string | null;
+  serverType: string | null;
   registrationTokenHash: string | null;
   registrationTokenExpiresAt: string | null;
   provisionedAt: string;
@@ -202,6 +237,51 @@ export interface UserMachineRecord {
   deletedAt: string | null;
   failureCode: string | null;
   failureAt: string | null;
+}
+
+export interface HostBundleReleaseRecord {
+  version: string;
+  channel: string | null;
+  gitCommit: string;
+  gitRef: string | null;
+  buildTime: string;
+  bundleKey: string;
+  checksumKey: string | null;
+  sha256: string;
+  size: number;
+  severity: string;
+  updateType: string;
+  changelog: string | null;
+  createdAt: string;
+}
+
+export interface NewHostBundleRelease {
+  version: string;
+  channel?: string | null;
+  gitCommit: string;
+  gitRef?: string | null;
+  buildTime: string;
+  bundleKey: string;
+  checksumKey?: string | null;
+  sha256: string;
+  size: number;
+  severity?: string;
+  updateType?: string;
+  changelog?: string | null;
+  createdAt?: string;
+}
+
+export class HostBundleReleaseConflictError extends Error {
+  constructor(version: string) {
+    super(`Host bundle release already exists with different artifact fields: ${version}`);
+    this.name = 'HostBundleReleaseConflictError';
+  }
+}
+
+export interface HostBundleChannelRecord {
+  channel: string;
+  version: string;
+  updatedAt: string;
 }
 
 export interface ProviderDeletionQueueRecord {
@@ -221,11 +301,13 @@ export interface NewUserMachine {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot?: string;
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
   publicIPv6?: string | null;
   status: string;
   imageVersion?: string | null;
+  serverType?: string | null;
   registrationTokenHash?: string | null;
   registrationTokenExpiresAt?: string | null;
   provisionedAt: string;
@@ -289,11 +371,13 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       machine_id TEXT PRIMARY KEY,
       clerk_user_id TEXT NOT NULL,
       handle TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL DEFAULT 'primary',
       hetzner_server_id INTEGER,
       public_ipv4 TEXT,
       public_ipv6 TEXT,
       status TEXT NOT NULL DEFAULT 'provisioning',
       image_version TEXT,
+      server_type TEXT,
       registration_token_hash TEXT,
       registration_token_expires_at TEXT,
       provisioned_at TEXT NOT NULL,
@@ -303,15 +387,82 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       failure_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_clerk_active`.execute(db);
   await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active
-    ON user_machines(clerk_user_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_active
+    ON user_machines(clerk_user_id, runtime_slot)
     WHERE deleted_at IS NULL
   `.execute(db);
+  // A Matrix login can own more than one active VPS slot. Slot-qualified
+  // routing selects the requested runtime; unqualified handle routing resolves
+  // deterministically to primary first in the read helpers below.
+  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_active`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_slot_active`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_handle_slot_active
+    ON user_machines(handle, runtime_slot)
+    WHERE deleted_at IS NULL
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS host_bundle_releases (
+      version TEXT PRIMARY KEY,
+      channel TEXT,
+      git_commit TEXT NOT NULL,
+      git_ref TEXT,
+      build_time TEXT NOT NULL,
+      bundle_key TEXT NOT NULL,
+      checksum_key TEXT,
+      sha256 TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'normal',
+      update_type TEXT NOT NULL DEFAULT 'manual',
+      changelog TEXT,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS channel TEXT`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_channel ON host_bundle_releases(channel)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_created_at ON host_bundle_releases(created_at)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS host_bundle_channels (
+      channel TEXT PRIMARY KEY,
+      version TEXT NOT NULL REFERENCES host_bundle_releases(version),
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_channels_version ON host_bundle_channels(version)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS host_bundle_release_channels (
+      channel TEXT NOT NULL,
+      version TEXT NOT NULL REFERENCES host_bundle_releases(version),
+      promoted_at TEXT NOT NULL,
+      PRIMARY KEY (channel, version)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_release_channels_version ON host_bundle_release_channels(version)`.execute(db);
+  await sql`
+    INSERT INTO host_bundle_release_channels(channel, version, promoted_at)
+    SELECT channel, version, created_at
+    FROM host_bundle_releases
+    WHERE channel IS NOT NULL
+    ON CONFLICT (channel, version) DO NOTHING
+  `.execute(db);
+  await sql`
+    INSERT INTO host_bundle_release_channels(channel, version, promoted_at)
+    SELECT channel, version, updated_at
+    FROM host_bundle_channels
+    ON CONFLICT (channel, version) DO UPDATE SET promoted_at = EXCLUDED.promoted_at
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provider_deletion_queue (
@@ -542,11 +693,13 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     machineId: row.machine_id,
     clerkUserId: row.clerk_user_id,
     handle: row.handle,
+    runtimeSlot: row.runtime_slot,
     hetznerServerId: row.hetzner_server_id,
     publicIPv4: row.public_ipv4,
     publicIPv6: row.public_ipv6,
     status: row.status,
     imageVersion: row.image_version,
+    serverType: row.server_type,
     registrationTokenHash: row.registration_token_hash,
     registrationTokenExpiresAt: row.registration_token_expires_at,
     provisionedAt: row.provisioned_at,
@@ -562,11 +715,13 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     machine_id: record.machineId,
     clerk_user_id: record.clerkUserId,
     handle: record.handle,
+    runtime_slot: record.runtimeSlot ?? 'primary',
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
     public_ipv6: record.publicIPv6 ?? null,
     status: record.status,
     image_version: record.imageVersion ?? null,
+    server_type: record.serverType ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
     registration_token_expires_at: record.registrationTokenExpiresAt ?? null,
     provisioned_at: record.provisionedAt,
@@ -582,11 +737,13 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.machineId !== undefined) update.machine_id = values.machineId;
   if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
   if (values.handle !== undefined) update.handle = values.handle;
+  if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
   if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
   if (values.status !== undefined) update.status = values.status;
   if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
+  if (values.serverType !== undefined) update.server_type = values.serverType;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
   if (values.registrationTokenExpiresAt !== undefined) update.registration_token_expires_at = values.registrationTokenExpiresAt;
   if (values.provisionedAt !== undefined) update.provisioned_at = values.provisionedAt;
@@ -595,6 +752,51 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.failureCode !== undefined) update.failure_code = values.failureCode;
   if (values.failureAt !== undefined) update.failure_at = values.failureAt;
   return update;
+}
+
+function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRecord {
+  return {
+    version: row.version,
+    channel: row.channel,
+    gitCommit: row.git_commit,
+    gitRef: row.git_ref,
+    buildTime: row.build_time,
+    bundleKey: row.bundle_key,
+    checksumKey: row.checksum_key,
+    sha256: row.sha256,
+    size: row.size,
+    severity: row.severity,
+    updateType: row.update_type,
+    changelog: row.changelog,
+    createdAt: row.created_at,
+  };
+}
+
+function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleReleasesTable {
+  const now = new Date().toISOString();
+  return {
+    version: record.version,
+    channel: record.channel ?? null,
+    git_commit: record.gitCommit,
+    git_ref: record.gitRef ?? null,
+    build_time: record.buildTime,
+    bundle_key: record.bundleKey,
+    checksum_key: record.checksumKey ?? null,
+    sha256: record.sha256,
+    size: record.size,
+    severity: record.severity ?? 'normal',
+    update_type: record.updateType ?? 'manual',
+    changelog: record.changelog ?? null,
+    created_at: record.createdAt ?? now,
+  };
+}
+
+function mapHostBundleChannel(row: HostBundleChannelsTable): HostBundleChannelRecord {
+  return {
+    channel: row.channel,
+    version: row.version,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
@@ -703,55 +905,81 @@ export async function getUserMachine(db: PlatformDB, machineId: string): Promise
 export async function getActiveUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getActiveUserMachineByHandle(
   db: PlatformDB,
   handle: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getRunningUserMachineByHandle(
   db: PlatformDB,
   handle: string,
+  runtimeSlot?: string,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('handle', '=', handle)
     .where('status', '=', 'running')
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
 
 export async function getRunningUserMachineByClerkId(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
@@ -771,6 +999,23 @@ export async function listUserMachines(
     query = query.where('deleted_at', 'is', null);
   }
   const rows = await query.execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function listActiveUserMachinesByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('status', 'in', ['running', 'provisioning', 'recovering'])
+    .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+    .orderBy('provisioned_at', 'desc')
+    .execute();
   return rows.map(mapUserMachine);
 }
 
@@ -813,6 +1058,7 @@ export async function completeUserMachineRegistration(
 export async function claimUserMachineRecovery(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot = 'primary',
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
@@ -826,6 +1072,7 @@ export async function claimUserMachineRecovery(
       failure_at: null,
     })
     .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
     .where('deleted_at', 'is', null)
     .where('status', '!=', 'recovering')
     .returningAll()
@@ -910,6 +1157,143 @@ export async function listAllUserMachines(
     .limit(limit)
     .execute();
   return rows.map(mapUserMachine);
+}
+
+export async function upsertHostBundleRelease(
+  db: PlatformDB,
+  record: NewHostBundleRelease,
+): Promise<HostBundleReleaseRecord> {
+  await db.ready;
+  const row = toHostBundleReleaseRow(record);
+  return db.executor.transaction().execute(async (trx) => {
+    const saved = await trx
+      .insertInto('host_bundle_releases')
+      .values(row)
+      .onConflict((oc) =>
+        oc.column('version').doUpdateSet({
+          git_commit: row.git_commit,
+          git_ref: row.git_ref,
+          build_time: row.build_time,
+          severity: row.severity,
+          update_type: row.update_type,
+          changelog: row.changelog,
+        })
+          .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
+          .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
+          .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
+          .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
+      )
+      .returningAll()
+      .executeTakeFirst();
+    if (!saved) {
+      throw new HostBundleReleaseConflictError(row.version);
+    }
+    return mapHostBundleRelease(saved);
+  });
+}
+
+export async function getHostBundleRelease(
+  db: PlatformDB,
+  version: string,
+): Promise<HostBundleReleaseRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_releases')
+    .selectAll()
+    .where('version', '=', version)
+    .executeTakeFirst();
+  return row ? mapHostBundleRelease(row) : undefined;
+}
+
+export async function listHostBundleReleases(
+  db: PlatformDB,
+  limit = 50,
+  channel?: string,
+): Promise<HostBundleReleaseRecord[]> {
+  await db.ready;
+  if (channel) {
+    const rows = await db.executor
+      .selectFrom('host_bundle_release_channels')
+      .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_release_channels.version')
+      .selectAll('host_bundle_releases')
+      .where('host_bundle_release_channels.channel', '=', channel)
+      .orderBy('host_bundle_releases.created_at', 'desc')
+      .limit(limit)
+      .execute();
+    return rows.map(mapHostBundleRelease);
+  }
+  const rows = await db.executor
+    .selectFrom('host_bundle_releases')
+    .selectAll()
+    .orderBy('created_at', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapHostBundleRelease);
+}
+
+export async function promoteHostBundleChannel(
+  db: PlatformDB,
+  channel: string,
+  version: string,
+  updatedAt = new Date().toISOString(),
+): Promise<HostBundleChannelRecord> {
+  await db.ready;
+  return db.executor.transaction().execute(async (trx) => {
+    const release = await trx
+      .selectFrom('host_bundle_releases')
+      .selectAll()
+      .where('version', '=', version)
+      .executeTakeFirst();
+    if (!release) {
+      throw new Error('Cannot promote unknown host bundle release');
+    }
+    const row = await trx
+      .insertInto('host_bundle_channels')
+      .values({ channel, version, updated_at: updatedAt })
+      .onConflict((oc) =>
+        oc.column('channel').doUpdateSet({
+          version,
+          updated_at: updatedAt,
+        }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await trx
+      .insertInto('host_bundle_release_channels')
+      .values({ channel, version, promoted_at: updatedAt })
+      .onConflict((oc) => oc.columns(['channel', 'version']).doUpdateSet({
+        promoted_at: updatedAt,
+      }))
+      .executeTakeFirst();
+    return mapHostBundleChannel(row);
+  });
+}
+
+export async function getHostBundleChannel(
+  db: PlatformDB,
+  channel: string,
+): Promise<HostBundleChannelRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_channels')
+    .selectAll()
+    .where('channel', '=', channel)
+    .executeTakeFirst();
+  return row ? mapHostBundleChannel(row) : undefined;
+}
+
+export async function getHostBundleReleaseByChannel(
+  db: PlatformDB,
+  channel: string,
+): Promise<HostBundleReleaseRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_channels')
+    .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_channels.version')
+    .selectAll('host_bundle_releases')
+    .where('host_bundle_channels.channel', '=', channel)
+    .executeTakeFirst();
+  return row ? mapHostBundleRelease(row) : undefined;
 }
 
 export async function markProviderDeletionCompleted(

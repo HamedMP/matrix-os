@@ -18,7 +18,7 @@ const writeFileNow = fs.writeFileSync as (
   data: string,
 ) => void;
 
-function nameToSlug(name: string): string {
+export function nameToSlug(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

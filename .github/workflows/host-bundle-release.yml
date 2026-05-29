@@ -1,15 +1,14 @@
 # Host Bundle Release
 #
-# Builds, publishes, and optionally deploys the Matrix OS host bundle.
-# Triggered on every push to main (automatic release) or via manual dispatch
-# with severity/changelog inputs.
+# Builds, publishes, and registers the Matrix OS host bundle.
+# Main publishes the dev channel. Tags publish immutable release versions.
 #
 # Version format: v{YYYY.MM.DD}-{run_number} (date-based, monotonically increasing)
 #
 # Flow:
 #   1. test — typecheck + unit tests
 #   2. build — compile gateway, shell, kernel into host bundle tarball
-#   3. publish — upload to R2, write manifest with severity/changelog
+#   3. publish — upload immutable R2 artifacts and register metadata in platform DB
 #   4. (optional) auto-deploy if severity is "security"
 
 name: Host Bundle Release
@@ -17,41 +16,78 @@ name: Host Bundle Release
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
+      channel:
+        description: "Release channel to promote"
+        required: false
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - canary
+          - beta
+          - stable
       severity:
-        description: "Update severity (normal, important, security)"
+        description: "Update severity (normal, security)"
         required: false
         default: "normal"
         type: choice
         options:
           - normal
-          - important
           - security
       changelog:
         description: "Changelog entry (one-line summary of what changed)"
         required: false
         default: ""
         type: string
+      skip_dev_bundle:
+        description: "Skip dev host-bundle build/publish for explicit manual maintenance runs"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: host-bundle-release
+  group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}
   cancel-in-progress: false
 
 jobs:
+  dev-bundle-gate:
+    name: Dev bundle gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decision.outputs.should_build }}
+      reason: ${{ steps.decision.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to build
+        id: decision
+        env:
+          SKIP_DEV_BUNDLE_INPUT: ${{ github.event.inputs.skip_dev_bundle || 'false' }}
+        run: |
+          set -euo pipefail
+          scripts/ci/dev-bundle-gate.sh
+
   test:
     name: Test
+    needs: dev-bundle-gate
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -62,46 +98,84 @@ jobs:
 
       - name: Type check
         run: bun run typecheck
-        continue-on-error: true
 
       - name: Unit tests
         run: bun run test
-        continue-on-error: true
 
   build:
     name: Build host bundle
-    needs: test
+    needs: [dev-bundle-gate, test]
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.i.posthog.com' }}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || 'https://eu.i.posthog.com' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.channel.outputs.channel }}
       bundle_path: ${{ steps.build.outputs.bundle_path }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Validate public build environment
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required for host bundle releases." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to publish a host bundle with the example Clerk publishable key." >&2
+            exit 1
+          fi
+
       - name: Generate version
         id: version
         run: |
           set -euo pipefail
-          VERSION="v$(date -u +%Y.%m.%d)-${{ github.run_number }}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v$(date -u +%Y.%m.%d)-${{ github.run_number }}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Generated version: $VERSION"
+
+      - name: Resolve release channel
+        id: channel
+        run: |
+          set -euo pipefail
+          CHANNEL="${{ inputs.channel || '' }}"
+          if [ -z "$CHANNEL" ]; then
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              CHANNEL="canary"
+            else
+              CHANNEL="dev"
+            fi
+          fi
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Resolved channel: $CHANNEL"
 
       - name: Build host bundle
         id: build
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+          HOST_BUNDLE_CHANNEL: ${{ steps.channel.outputs.channel }}
           MATRIX_BUILD_SHA: ${{ github.sha }}
           MATRIX_BUILD_REF: ${{ github.ref_name }}
           MATRIX_BUILD_DATE: ${{ github.event.head_commit.timestamp }}
@@ -111,7 +185,7 @@ jobs:
           echo "bundle_path=dist/host-bundle/matrix-host-bundle.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Upload bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: host-bundle
           path: dist/host-bundle/
@@ -120,7 +194,8 @@ jobs:
 
   publish:
     name: Publish to R2
-    needs: build
+    needs: [dev-bundle-gate, build]
+    if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -128,12 +203,13 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_BUCKET: ${{ vars.R2_BUCKET || 'matrixos-sync' }}
-      MATRIX_IMAGE_VERSION: matrix-os-host
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download bundle artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: host-bundle
           path: dist/host-bundle/
@@ -160,6 +236,7 @@ jobs:
       - name: Publish release
         env:
           HOST_BUNDLE_DIST_DIR: dist/host-bundle
+          HOST_BUNDLE_CHANNEL: ${{ needs.build.outputs.channel }}
           PUBLISH_VERSION: ${{ needs.build.outputs.version }}
           PUBLISH_SEVERITY: ${{ steps.meta.outputs.severity }}
           PUBLISH_CHANGELOG: ${{ steps.meta.outputs.changelog }}
@@ -178,6 +255,7 @@ jobs:
       - name: Auto-deploy on security severity
         if: ${{ inputs.severity == 'security' }}
         env:
+          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
           PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
         run: |
           set -euo pipefail
@@ -190,7 +268,7 @@ jobs:
           sleep 60
           echo "Triggering deploy for $VERSION..."
           curl --fail --silent --show-error --max-time 30 \
-            -X POST "https://app.matrix-os.com/vps/deploy" \
+            -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
             -H "Authorization: Bearer ${PLATFORM_SECRET}" \
             -H "Content-Type: application/json" \
             -d "{\"version\":\"$VERSION\"}"

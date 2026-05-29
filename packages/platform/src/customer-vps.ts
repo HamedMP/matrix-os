@@ -5,6 +5,7 @@ import {
   claimUserMachineRecovery,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
+  getHostBundleReleaseByChannel,
   getUserMachine,
   insertUserMachine,
   insertProviderDeletion,
@@ -64,6 +65,7 @@ export interface DeleteResponse {
 export interface RecoverResponse {
   oldMachineId: string | null;
   machineId: string;
+  runtimeSlot: string;
   status: 'recovering';
   etaSeconds: number;
 }
@@ -72,6 +74,7 @@ export interface StatusResponse {
   machineId: string;
   clerkUserId: string;
   handle: string;
+  runtimeSlot: string;
   status: CustomerVpsStatus;
   imageVersion: string | null;
   publicIPv4: string | null;
@@ -89,13 +92,19 @@ export interface DeployResult {
   results: Array<{ machineId: string; handle: string; status: 'triggered' | 'failed'; error?: string }>;
 }
 
+export interface DeployTarget {
+  version?: string;
+  channel?: 'stable' | 'canary' | 'beta' | 'dev';
+  handle?: string;
+}
+
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
-  deploy(version?: string): Promise<DeployResult>;
+  deploy(target?: DeployTarget): Promise<DeployResult>;
   listAllMachines(): Promise<StatusResponse[]>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
@@ -121,7 +130,9 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_MACHINE_ID={{machineId}}',
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
+  '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
+  '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
@@ -129,6 +140,13 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_R2_BUCKET={{r2Bucket}}',
   '      MATRIX_R2_PREFIX={{r2Prefix}}',
+  '      POSTHOG_TOKEN={{posthogToken}}',
+  '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
+  '      POSTHOG_HOST={{posthogHost}}',
+  '      NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}',
+  '      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
+  '      NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}',
+  '      NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}',
   '      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix',
   '  - path: /opt/matrix/env/r2.env',
   '    permissions: "0640"',
@@ -168,6 +186,7 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
     machineId: row.machineId,
     clerkUserId: row.clerkUserId,
     handle: row.handle,
+    runtimeSlot: row.runtimeSlot,
     status: row.status as CustomerVpsStatus,
     imageVersion: row.imageVersion,
     publicIPv4: row.publicIPv4,
@@ -190,13 +209,16 @@ function buildHostConfig(
   machineId: string,
   registrationToken: string,
   postgresPassword: string,
+  bundleRef: HostBundleRef,
 ): CustomerHostConfig {
   return {
     machineId,
     clerkUserId: input.clerkUserId,
     handle: input.handle,
-    imageVersion: config.imageVersion,
-    hostBundleUrl: config.hostBundleUrl,
+    runtimeSlot: input.runtimeSlot,
+    imageVersion: bundleRef.imageVersion,
+    updateChannel: config.imageVersion,
+    hostBundleUrl: bundleRef.hostBundleUrl,
     platformRegisterUrl: config.platformRegisterUrl,
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
@@ -208,6 +230,50 @@ function buildHostConfig(
     r2Bucket: config.r2Bucket,
     r2Prefix: `${config.r2PrefixRoot}/${input.clerkUserId}/` as `matrixos-sync/${string}/`,
     postgresPassword,
+    posthogToken: config.posthogToken,
+    posthogProjectToken: config.posthogProjectToken,
+    posthogHost: config.posthogHost,
+    posthogApiHost: config.posthogApiHost,
+  };
+}
+
+const HOST_BUNDLE_CHANNELS = new Set(['stable', 'canary', 'beta', 'dev']);
+
+interface HostBundleRef {
+  imageVersion: string;
+  hostBundleUrl: string;
+}
+
+function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
+  const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
+  const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
+  if (config.hostBundleUrl.includes(currentSegment)) {
+    return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
+  }
+  // Defensive fallback for future URL-template changes. The current generated
+  // URL always contains the encoded image-version segment above.
+  const url = new URL(config.hostBundleUrl);
+  url.pathname = `/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`;
+  return url.toString();
+}
+
+async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): Promise<HostBundleRef> {
+  if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
+    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
+  }
+
+  const release = await getHostBundleReleaseByChannel(db, config.imageVersion);
+  if (!release) {
+    logCustomerVpsError(
+      `host bundle channel missing release channel=${config.imageVersion}`,
+      new Error('falling back to configured host bundle URL without immutable version pin'),
+    );
+    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
+  }
+
+  return {
+    imageVersion: release.version,
+    hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
   };
 }
 
@@ -332,16 +398,28 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
+
+      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
+        deps.db,
+        input.clerkUserId,
+        input.runtimeSlot,
+      );
+      if (existingBeforeBundleResolve) {
+        return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+      }
+
+      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
         input,
         machineId,
         registration.token,
         postgresPassword,
+        bundleRef,
       );
 
       const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
-        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId);
+        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId, input.runtimeSlot);
         if (existing) {
           return { existing };
         }
@@ -349,8 +427,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           machineId,
           clerkUserId: input.clerkUserId,
           handle: input.handle,
+          runtimeSlot: input.runtimeSlot,
           status: 'provisioning',
-          imageVersion: deps.config.imageVersion,
+          imageVersion: bundleRef.imageVersion,
+          serverType: deps.config.serverType,
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
@@ -374,6 +454,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           labels: {
             app: 'matrix-os',
             clerk_user_id: input.clerkUserId,
+            runtime_slot: input.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -478,7 +559,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async recover(input) {
-      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!active) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
@@ -489,12 +570,27 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       // claimUserMachineRecovery WHERE clause below remains the authoritative
       // concurrency guard; keeping the backup check before the claim avoids
       // leaving a machine in recovering state when no snapshot exists.
-      if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
+      if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId, input.runtimeSlot))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
-      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId);
+      const currentTime = now();
+      const machineId = machineIdFactory();
+      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
+      const postgresPassword = postgresPasswordFactory();
+      // Resolve before claiming recovery so bundle lookup failures do not clear
+      // the old provider server id and leave a billable VPS untracked.
+      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+      const hostConfig = buildHostConfig(
+        deps.config,
+        { clerkUserId: active.clerkUserId, handle: active.handle, runtimeSlot: active.runtimeSlot },
+        machineId,
+        registration.token,
+        postgresPassword,
+        bundleRef,
+      );
+      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!existing) {
-        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
         if (latest?.status === 'recovering') {
           throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
         }
@@ -502,17 +598,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       const oldMachineId = existing.machineId;
       const oldServerId = active.hetznerServerId;
-      const currentTime = now();
-      const machineId = machineIdFactory();
-      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
-      const postgresPassword = postgresPasswordFactory();
-      const hostConfig = buildHostConfig(
-        deps.config,
-        { clerkUserId: existing.clerkUserId, handle: existing.handle },
-        machineId,
-        registration.token,
-        postgresPassword,
-      );
 
       let newServerId: number | null = null;
       try {
@@ -526,6 +611,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           labels: {
             app: 'matrix-os',
             clerk_user_id: existing.clerkUserId,
+            runtime_slot: existing.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -537,7 +623,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             hetznerServerId: server.id,
             publicIPv4: server.publicIPv4,
             publicIPv6: server.publicIPv6,
-            imageVersion: deps.config.imageVersion,
+            imageVersion: bundleRef.imageVersion,
+            serverType: deps.config.serverType,
             registrationTokenHash: registration.hash,
             registrationTokenExpiresAt: registration.expiresAt,
             provisionedAt: currentTime.toISOString(),
@@ -593,6 +680,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return {
         oldMachineId,
         machineId,
+        runtimeSlot: existing.runtimeSlot,
         status: 'recovering',
         etaSeconds: deps.config.provisionEtaSeconds,
       };
@@ -633,8 +721,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return machines.map(statusResponse);
     },
 
-    async deploy(version?: string): Promise<DeployResult> {
-      const machines = await listRunningUserMachines(deps.db, 500);
+    async deploy(target?: DeployTarget): Promise<DeployResult> {
+      const runningMachines = await listRunningUserMachines(deps.db, 500);
+      const machines = target?.handle
+        ? runningMachines.filter((machine) => machine.handle === target.handle)
+        : runningMachines;
       const results: DeployResult['results'] = [];
       let triggered = 0;
       let failed = 0;
@@ -646,7 +737,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           return;
         }
         const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
-        const body = version ? JSON.stringify({ version }) : '{}';
+        const body = target?.version
+          ? JSON.stringify({ version: target.version })
+          : target?.channel
+            ? JSON.stringify({ channel: target.channel })
+            : '{}';
         try {
           const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, {
             method: 'POST',

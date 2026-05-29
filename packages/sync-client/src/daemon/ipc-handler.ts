@@ -82,7 +82,7 @@ const ShellTabCreateArgsSchema = z.object({
 }).strict();
 const ShellPaneSplitArgsSchema = z.object({
   session: ShellSessionNameSchema,
-  direction: z.enum(["right", "down"]),
+  direction: z.enum(["right", "down"]).optional().default("right"),
   cwd: ShellCwdSchema.optional(),
   cmd: ShellCommandSchema.optional(),
 }).strict();
@@ -118,10 +118,12 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
           manifestVersion: deps.syncState.manifestVersion,
           lastSyncAt: deps.syncState.lastSyncAt,
           fileCount: Object.keys(deps.syncState.files).length,
+          conflictCount: Object.keys(deps.syncState.conflicts ?? {}).length,
           syncPath: deps.config.syncPath,
           gatewayFolder: deps.config.gatewayFolder ?? "",
           gatewayUrl: deps.config.gatewayUrl,
           platformUrl: deps.config.platformUrl,
+          profile: deps.config.profile,
           peerId: deps.config.peerId,
         };
       case "pause":
@@ -205,6 +207,7 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
           gatewayFolder: deps.config.gatewayFolder ?? "",
           gatewayUrl: deps.config.gatewayUrl,
           platformUrl: deps.config.platformUrl,
+          profile: deps.config.profile,
           peerId: deps.config.peerId,
           pauseSync: deps.config.pauseSync,
         };

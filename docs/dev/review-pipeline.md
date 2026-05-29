@@ -53,6 +53,21 @@ bun run test:e2e                      # e2e tests
 bun run check:patterns                # all files in packages/ and shell/
 ```
 
+## Required GitHub Checks
+
+Branch protection should require the `CI Results` job from
+`.github/workflows/ci.yml`. `CI Results` is the stable aggregate gate for the
+internal CI shards: typecheck, pattern scan, sync-client package checks, unit
+test shards, and e2e tests. Requiring the aggregate keeps branch protection
+stable when shards are split, renamed, or skipped for docs-only PRs.
+
+Do not require each internal shard directly unless branch protection is updated
+at the same time. The shard jobs remain visible for logs and artifacts; the
+aggregate job is the merge gate.
+
+Workflow ownership and optional checks are documented in
+`.github/workflows/README.md`.
+
 ## PR Size Guidelines
 
 | Additions | Files | Recommendation |
@@ -67,6 +82,11 @@ Suggested split boundaries for Matrix OS:
 - **sync-client** daemon + CLI (one PR)
 - **shell** frontend changes (one PR)
 - **docs + deploy** configuration (one PR)
+
+For features that need multiple dependent PRs, use Graphite stacked PRs instead
+of one oversized branch. See `docs/dev/stacked-prs.md` for the command flow.
+Each stack layer still follows the same size limits, gates, PR title rules, and
+backend Invariants requirement.
 
 ## PR Body: Mandatory Invariants Section
 
@@ -189,6 +209,22 @@ Many PR #30 misses were not code-local — they were wiring issues visible only 
 5. **Startup/shutdown ordering**: Does the compose dependency graph match the actual readiness requirements? Health checks present and meaningful?
 
 This pass cannot be done from code alone — it requires mentally (or actually) running the flow end-to-end.
+
+### Pass 5: Launch Readiness Review (paid-beta gates only)
+
+PRs touching onboarding launch readiness, operator reports, or paid entitlement behavior must answer these before review:
+
+1. **Launch gate source of truth**: Which gates come from platform DB state, which gates come from explicit QA evidence, and which gates are intentionally still manual?
+
+2. **Unsafe-by-default behavior**: Does the operator report stay `blocked` when evidence is missing, stale, or unreachable?
+
+3. **Hermes continuity**: Do Claude or Codex credentials add capability without disabling Hermes as the Matrix system agent?
+
+4. **Entitlement data safety**: Does missing, expired, disabled, or changed entitlement block paid-only access without deleting owner files, owner Postgres data, backups, or export paths?
+
+5. **Visual QA evidence**: Are desktop, mobile, reduced-motion, missing-media, no-Claude Hermes, connected Claude/Codex, admin/control, coding, and assistant-integration paths recorded?
+
+6. **Operator remediations**: Does every failing release-critical gate name a safe remediation owner and next action without exposing provider, database, filesystem, or secret details?
 
 ## Adversarial Test Requirements
 

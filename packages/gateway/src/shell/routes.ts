@@ -44,13 +44,13 @@ export interface ShellRouteDeps {
 }
 
 const CreateSessionBodySchema = z.object({
-  name: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/),
   cwd: safeCwdSchema().optional(),
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
-const SafeSessionNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
+const SafeSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);
 const SafeLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const SafeCwdSchema = safeCwdSchema();
 const TabBodySchema = z.object({
@@ -236,6 +236,15 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
+  app.get("/sessions/:name/layout", async (c) => {
+    try {
+      if (!deps.workspace) return unavailable(c, "workspace_unavailable");
+      return c.json({ layout: await deps.workspace.dumpLayout(SafeSessionNameSchema.parse(c.req.param("name"))) });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
   app.get("/sessions/:name/preferences", async (c) => {
     try {
       if (!deps.preferences) {
@@ -280,9 +289,45 @@ function safeError(c: Context, err: unknown) {
     );
   }
   const shellErr = toShellError(err);
-  console.warn("[shell] route failed:", err instanceof Error ? err.message : String(err));
+  if (shellErr.diagnostic) {
+    console.warn("[shell] route failed:", {
+      code: shellErr.code,
+      diagnostic: shellErr.diagnostic,
+      ...describeErrorForLog(shellErr),
+    });
+  } else {
+    console.warn("[shell] route failed:", err instanceof Error ? err.message : String(err));
+  }
   return c.json(
     { error: { code: shellErr.code, message: shellErr.safeMessage } },
     (shellErr.status ?? 500) as 500,
   );
+}
+
+function describeErrorForLog(err: unknown) {
+  if (!(err instanceof Error)) {
+    return { message: String(err) };
+  }
+  const context: {
+    message: string;
+    cause?: string | { message: string; code?: string | number; signal?: string };
+  } = { message: err.message };
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const causeContext: { message: string; code?: string | number; signal?: string } = {
+      message: cause.message,
+    };
+    const code = (cause as NodeJS.ErrnoException).code;
+    const signal = (cause as { signal?: unknown }).signal;
+    if (typeof code === "string" || typeof code === "number") {
+      causeContext.code = code;
+    }
+    if (typeof signal === "string") {
+      causeContext.signal = signal;
+    }
+    context.cause = causeContext;
+  } else if (cause !== undefined) {
+    context.cause = String(cause);
+  }
+  return context;
 }

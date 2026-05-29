@@ -22,6 +22,13 @@ interface WindowRect {
 /** Maximum pan distance from origin in canvas units. Prevents getting lost. */
 const PAN_LIMIT = 8000;
 
+interface ContainerRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 interface CanvasTransformState {
   zoom: number;
   panX: number;
@@ -29,6 +36,7 @@ interface CanvasTransformState {
   isAnimating: boolean;
   /** True while the user is actively scrolling/wheeling the canvas. */
   isScrolling: boolean;
+  containerRect: ContainerRect | null;
 }
 
 interface CanvasTransformActions {
@@ -40,11 +48,13 @@ interface CanvasTransformActions {
   setPan: (x: number, y: number) => void;
   panBy: (dx: number, dy: number) => void;
   setIsScrolling: (v: boolean) => void;
+  setContainerRect: (rect: ContainerRect | null) => void;
   screenToCanvas: (sx: number, sy: number) => { x: number; y: number };
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
   focusOnWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
   setTransform: (zoom: number, panX: number, panY: number) => void;
+  resetForMobileViewport: () => void;
 }
 
 export const useCanvasTransform = create<CanvasTransformState & CanvasTransformActions>()(
@@ -54,6 +64,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     panY: 0,
     isAnimating: false,
     isScrolling: false,
+    containerRect: null,
 
     setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
@@ -65,10 +76,13 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     zoomAtPoint: (newZoom, cx, cy) => {
       const clamped = clampZoom(newZoom);
+      const rect = get().containerRect;
+      const lx = cx - (rect?.left ?? 0);
+      const ly = cy - (rect?.top ?? 0);
       set((s) => ({
         zoom: clamped,
-        panX: s.panX + cx * (1 / clamped - 1 / s.zoom),
-        panY: s.panY + cy * (1 / clamped - 1 / s.zoom),
+        panX: s.panX + lx * (1 / clamped - 1 / s.zoom),
+        panY: s.panY + ly * (1 / clamped - 1 / s.zoom),
       }));
     },
 
@@ -81,19 +95,23 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     setIsScrolling: (v) => { if (get().isScrolling !== v) set({ isScrolling: v }); },
 
+    setContainerRect: (rect) => set({ containerRect: rect }),
+
     screenToCanvas: (sx, sy) => {
-      const { zoom, panX, panY } = get();
+      const { zoom, panX, panY, containerRect } = get();
+      const lx = sx - (containerRect?.left ?? 0);
+      const ly = sy - (containerRect?.top ?? 0);
       return {
-        x: (sx - panX * zoom) / zoom,
-        y: (sy - panY * zoom) / zoom,
+        x: lx / zoom - panX,
+        y: ly / zoom - panY,
       };
     },
 
     canvasToScreen: (cx, cy) => {
-      const { zoom, panX, panY } = get();
+      const { zoom, panX, panY, containerRect } = get();
       return {
-        x: (cx + panX) * zoom,
-        y: (cy + panY) * zoom,
+        x: (cx + panX) * zoom + (containerRect?.left ?? 0),
+        y: (cy + panY) * zoom + (containerRect?.top ?? 0),
       };
     },
 
@@ -135,5 +153,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     },
 
     setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
+
+    resetForMobileViewport: () => set({ zoom: 1, panX: 0, panY: 0, isScrolling: false, isAnimating: false }),
   })),
 );

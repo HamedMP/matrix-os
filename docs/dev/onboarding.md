@@ -159,6 +159,10 @@ fix: resolve WebSocket reconnection bug
 test: add kernel integration tests
 ```
 
+Use Graphite stacked PRs for multi-slice work that would otherwise exceed the
+normal review size. See [Stacked PR Workflow](stacked-prs.md) for the `gt`
+commands and Matrix OS stack rules.
+
 When your PR changes `shell/` files, the Screenshots CI runs Playwright and commits updated snapshots to your branch. Review the image diffs.
 
 ## Docker Commands
@@ -177,7 +181,9 @@ Never run `docker compose down -v` unless you want to destroy all data.
 ## Useful Links
 
 - [Docker Development Guide](docker-development.md) -- volumes, HMR, troubleshooting, branch isolation
-- [Release Process](releases.md) -- versioning and tagging
+- [Release Process](releases.md) -- host-bundle versioning and tagging
+- [CLI Release Process](cli-release.md) -- npm, Homebrew, and MatrixSync installer releases
+- [Stacked PR Workflow](stacked-prs.md) -- Graphite stacks for multi-slice features
 - [VPS Deployment](vps-deployment.md) -- production server
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- code style, CI/CD, PR process
 - [CLAUDE.md](../../CLAUDE.md) -- development rules, mandatory code patterns

@@ -27,7 +27,7 @@ export PORT="$GATEWAY_PORT"
 export GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:${GATEWAY_PORT}}"
 export NEXT_PUBLIC_GATEWAY_URL="${NEXT_PUBLIC_GATEWAY_URL:-http://127.0.0.1:${GATEWAY_PORT}}"
 export NEXT_PUBLIC_GATEWAY_WS="${NEXT_PUBLIC_GATEWAY_WS:-wss://code.matrix-os.com/ws}"
-export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
+export PATH="/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 
 sync_bundled_home_assets() {
   local bundled_home="$APP_DIR/home"
@@ -35,7 +35,12 @@ sync_bundled_home_assets() {
 
   mkdir -p "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
   if [ -d "$bundled_home/system/icons" ]; then
-    find "$bundled_home/system/icons" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \) -exec cp -a {} "$MATRIX_HOME/system/icons/" \;
+    while IFS= read -r icon; do
+      local target
+      target="$MATRIX_HOME/system/icons/$(basename "$icon")"
+      [ -e "$target" ] && continue
+      cp -a "$icon" "$target"
+    done < <(find "$bundled_home/system/icons" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \))
   fi
 
   if [ -d "$bundled_home/apps" ]; then

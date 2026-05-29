@@ -20,6 +20,15 @@ const geminiMock = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../packages/gateway/src/onboarding/gemini-live.js", () => ({
+  hasGeminiLiveConnection: vi.fn((connection: unknown) => {
+    if (!connection) return false;
+    if (typeof connection === "string") return connection.length > 0;
+    if (typeof connection === "object" && "proxy" in connection) {
+      const proxy = (connection as { proxy?: { platformUrl?: string; handle?: string; token?: string } }).proxy;
+      return Boolean(proxy?.platformUrl && proxy.handle && proxy.token);
+    }
+    return false;
+  }),
   createGeminiLiveClient: vi.fn(() => {
     const events = new Map<string, (evt: unknown) => void>();
     const client = {

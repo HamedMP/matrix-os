@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (semver, no leading v — e.g. 0.2.4)"
+        description: "Version to publish (semver, no leading v — e.g. 0.3.0)"
         required: true
         type: string
 
@@ -27,8 +27,14 @@ jobs:
   validate:
     name: Validate version
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Check semver format
         env:
           VERSION: ${{ inputs.version }}
@@ -39,17 +45,42 @@ jobs:
             exit 1
           fi
 
+      - name: Check package version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./packages/sync-client/package.json').version")"
+          if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
+            echo "packages/sync-client/package.json is $PACKAGE_VERSION, expected $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Check release is new
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if npm view "@finnaai/matrix@$VERSION" version >/dev/null 2>&1; then
+            echo "@finnaai/matrix@$VERSION already exists on npm" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/cli-v${VERSION}" >/dev/null 2>&1; then
+            echo "tag cli-v${VERSION} already exists" >&2
+            exit 1
+          fi
+
   test:
     name: Test
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -57,6 +88,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Build sync client
+        run: pnpm --filter @finnaai/matrix build
+
+      - name: Verify sync-client publish shape
+        run: pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
 
       - name: Type check
         run: bun run typecheck
@@ -77,11 +114,11 @@ jobs:
       pkg_path: ${{ steps.build.outputs.pkg_path }}
       pkg_name: ${{ steps.build.outputs.pkg_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -150,7 +187,7 @@ jobs:
         run: ./scripts/notarise-macos.sh "$PKG_PATH"
 
       - name: Upload pkg artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-pkg
           path: ${{ steps.build.outputs.pkg_path }}
@@ -167,11 +204,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -200,17 +237,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download macOS pkg (if built)
         if: ${{ needs.build-macos.result == 'success' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: macos-pkg
           path: dist/macos
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: cli-v${{ inputs.version }}
           name: cli-v${{ inputs.version }}
@@ -228,7 +265,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: FinnaAI/homebrew-tap
           token: ${{ secrets.TAP_PUSH_TOKEN }}

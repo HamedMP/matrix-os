@@ -8,12 +8,12 @@
   "agents/custom/healer.md": "ba9f5bf66f36a84090dcab5921ad6a71475fa20341efb2c9525a731f57afc79f",
   "agents/custom/researcher.md": "008bca9b2cd167aa517617ff1eca4c5fff3e49858bb2f49cc8feb2fcb1bf32b2",
   "agents/heartbeat.md": "cbcd8e02c4f14f5cb13b335be494f93e1a7aeed532cf6d704542e9aee3811738",
-  "agents/knowledge/app-generation.md": "62d998c920d48c67907d032935565d5ac805567f29c567f31a26f3e5c9106614",
+  "agents/knowledge/app-generation.md": "0b93a8b153b31c3606c029f1ab90099ad1505f65dfa65606d621db3b67a5a7ef",
   "agents/knowledge/canvas-mode.md": "86c7139a489bd4e144d3a0ff04515d615480121971573a61bea8143b3c0b65a6",
   "agents/knowledge/channel-routing.md": "3cbaf9d2c941a5fab993aea8fdf130a72ad01786d040b1ba54661474f85edb7f",
   "agents/knowledge/desktop-customization.md": "e4b51a493fa4a286dcbac263d35620fda8a04954bd1c6017a37308047c3647d5",
   "agents/knowledge/healing-strategies.md": "ca22e2fa6e7ee965406752a44112c4d51e55d3180b180c791cf87876b6905a64",
-  "agents/knowledge/matrix-design-system.md": "5c7e2e6b7d2c380252bcb7a6eca2092f6137f2192d4dae44335c2a4998d38d55",
+  "agents/knowledge/matrix-design-system.md": "467b88e88997a3c17a8aaf3c56d73912735a689d17d64ef1cb9dbfeb017d6481",
   "agents/knowledge/module-standard.md": "2c0be1613f3131341451b7c2ea7adc2ddbae81a330472bf69904c051a44b3b59",
   "agents/knowledge/observability.md": "7fe3d96dd59deea2ba6d16535bb271ebfbd62c29a0dba6eaa7763238f864212f",
   "agents/memory/long-term.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -66,7 +66,7 @@
   "apps/whiteboard/scripts/copy-excalidraw-assets.mjs": "799462b28a5c11537f37746e451b333ff07a15cc1aad0327ef248c030d54cc9e",
   "apps/whiteboard/src/App.tsx": "8ad078131303764f499a37a2c685ffe71a8bab7f5166f1dd539999e429e70bc5",
   "apps/whiteboard/src/main.tsx": "ccbefe7be6c69706a1bb01c4c3f20492eb002435af6ba7e5a6d45f7c6aa3a140",
-  "apps/whiteboard/src/styles.css": "65d89779255b0513a684ed1c06ef7f1bfec7a391ec5cc09478db72e5730a8677",
+  "apps/whiteboard/src/styles.css": "f8d45aacc8857655f931b1b2a6ea52bd9efa4ad3e701e394dd4b8e0c0d860e11",
   "apps/whiteboard/tsconfig.json": "b978882a7921547d0f2f64e2a1cf0c68ec2e129968953af2983f912cad1a54fa",
   "apps/whiteboard/vite.config.ts": "5ddb021cb6639d32db3e47b5e20b76cde1fd1877c95f204883609c6aa0c56ba9",
   "apps/vscode/index.html": "018d601c5a7f237b8796692104fec8f97909a831360f0ea30076d814400dc67c",
@@ -81,7 +81,7 @@
   "system/canvas.json": "d3fb42c13909ccd1d2604c89d42f940e6dca2384c5e3bca3394ecab979912260",
   "system/config.json": "ac6a21d32819ea663fca845359c3ae83a76c3d1cc0abc1a45785a46294d282bc",
   "system/cron.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
-  "system/desktop.json": "fa12a85c3911e3b7e19679784b1802167134adcf421e695ea0051ea62713ff8a",
+  "system/desktop.json": "1c9c1a55162983089ebe688f511da71d7f469d26d98432bce6fe02aa60a0ea64",
   "system/handle.json": "34578ed189ce259ffdabf35ca95622f3aa43e3adceef27604e9f2416dd691de0",
   "system/icons/calculator.svg": "706589394cae0cfa885722b1dc323f2f87fdf62671ae239e4f22c327267da173",
   "system/icons/calendar.svg": "f80255065c2847381acec861e8f370fe2bd2f15423485351b1cdc8ecda73f4b0",
@@ -108,5 +108,8 @@
   "system/state.md": "8ac15ff1bb6838de4619849457ea512ff643aa77717fffa67ebef9fe5b2e5231",
   "system/theme.json": "447e28b84ffa67a618f4ccb7ce150f3f4b6d3d651e1be21aa8a7b64e81f0e47e",
   "system/user.md": "e6e32a770ba0c7f272d18d55df3e0748cfd70f518fd0056c71660bdc684a3dff",
-  "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688"
+  "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688",
+  "apps/_shared/default-apps.tsx": "10f6a540ac219424769732b5952b586bcc0029674915eb22af7bb1b5cc9864d9",
+  "apps/_shared/theme.css": "382355577a00e4744b823fda818f1c4cdb40d782609eb90adc9950492bccaa5b"
 }
+

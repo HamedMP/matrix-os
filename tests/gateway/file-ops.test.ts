@@ -5,6 +5,7 @@ import {
   rmSync,
   existsSync,
   readFileSync,
+  symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -41,6 +42,18 @@ describe("fileMkdir", () => {
   it("returns error for path traversal", async () => {
     const result = await fileMkdir(testDir, "../../evil");
     expect(result).toEqual({ ok: false, error: "Invalid path" });
+  });
+
+  it("rejects symlinked parent directories", async () => {
+    const outsideDir = join(tmpdir(), `file-ops-outside-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(testDir, "linked"), "dir");
+
+    const result = await fileMkdir(testDir, "linked/owned");
+
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(outsideDir, "owned"))).toBe(false);
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 
   it("succeeds if directory already exists", async () => {
@@ -96,6 +109,18 @@ describe("fileTouch", () => {
     const result = await fileTouch(testDir, "../../evil.txt");
     expect(result).toEqual({ ok: false, error: "Invalid path" });
   });
+
+  it("rejects writes through symlinked parent directories", async () => {
+    const outsideDir = join(tmpdir(), `file-touch-outside-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(testDir, "linked"), "dir");
+
+    const result = await fileTouch(testDir, "linked/owned.txt", "owned");
+
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(outsideDir, "owned.txt"))).toBe(false);
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
 });
 
 describe("fileRename", () => {
@@ -143,6 +168,20 @@ describe("fileRename", () => {
       status: 409,
     });
   });
+
+  it("rejects moves into symlinked parent directories", async () => {
+    const outsideDir = join(tmpdir(), `file-rename-outside-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(testDir, "linked"), "dir");
+    writeFileSync(join(testDir, "a.md"), "a");
+
+    const result = await fileRename(testDir, "a.md", "linked/a.md");
+
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(testDir, "a.md"))).toBe(true);
+    expect(existsSync(join(outsideDir, "a.md"))).toBe(false);
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
 });
 
 describe("fileCopy", () => {
@@ -180,6 +219,19 @@ describe("fileCopy", () => {
       error: "Source not found",
       status: 404,
     });
+  });
+
+  it("rejects copies into symlinked parent directories", async () => {
+    const outsideDir = join(tmpdir(), `file-copy-outside-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(testDir, "linked"), "dir");
+    writeFileSync(join(testDir, "original.md"), "content");
+
+    const result = await fileCopy(testDir, "original.md", "linked/copy.md");
+
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(outsideDir, "copy.md"))).toBe(false);
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 });
 
@@ -226,5 +278,17 @@ describe("fileDuplicate", () => {
       error: "Source not found",
       status: 404,
     });
+  });
+
+  it("rejects duplicated symlink sources", async () => {
+    const outsideFile = join(tmpdir(), `file-dup-outside-${Date.now()}.md`);
+    writeFileSync(outsideFile, "outside");
+    symlinkSync(outsideFile, join(testDir, "linked.md"));
+
+    const result = await fileDuplicate(testDir, "linked.md");
+
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(testDir, "linked copy.md"))).toBe(false);
+    rmSync(outsideFile, { force: true });
   });
 });

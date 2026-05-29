@@ -3,9 +3,8 @@ import type { TunnelProvider, TunnelConfig } from "./base.js";
 export class CloudflareTunnel implements TunnelProvider {
   readonly name = "cloudflare";
 
-  async start(config: TunnelConfig): Promise<string> {
-    const handle = process.env.MATRIX_HANDLE || "dev";
-    return `https://${handle}.matrix-os.com`;
+  async start(_config: TunnelConfig): Promise<string> {
+    return process.env.MATRIX_PUBLIC_APP_URL || "https://app.matrix-os.com";
   }
 
   async stop(): Promise<void> {
@@ -13,6 +12,6 @@ export class CloudflareTunnel implements TunnelProvider {
   }
 
   async health(): Promise<boolean> {
-    return !!process.env.MATRIX_HANDLE;
+    return true;
   }
 }

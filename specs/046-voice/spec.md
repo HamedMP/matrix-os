@@ -291,18 +291,18 @@ When Telegram/WhatsApp/Discord sends a voice message:
 ### Routing
 
 ```
-Twilio PSTN -> https://{handle}.matrix-os.com/voice/webhook/twilio
+Twilio PSTN -> https://app.matrix-os.com/voice/webhook/twilio?handle={handle}
                |
-               Cloudflare Tunnel (existing per-user tunnel)
+               Platform app-domain webhook proxy
                |
-               Platform reverse proxy -> Gateway :4000
+               Customer VPS gateway :4000
                |
                /voice/webhook/twilio -> TwilioProvider.parseWebhookEvent()
                |
                NormalizedEvent -> CallManager.processEvent()
 ```
 
-Voice webhooks ride on the existing per-user Cloudflare Tunnel subdomain. No new tunnel infrastructure needed.
+Voice webhooks ride on the shared app domain. The platform validates the handle, resolves the running customer VPS, and forwards the signed Twilio request without using per-user Matrix subdomains.
 
 ### Webhook Security (from OpenClaw)
 
@@ -316,7 +316,7 @@ Voice webhooks ride on the existing per-user Cloudflare Tunnel subdomain. No new
 ### Managed Mode (zero-config)
 
 - On user provisioning: allocate Twilio phone number from pool, store in platform DB
-- Configure Twilio webhook URL to `https://{handle}.matrix-os.com/voice/webhook/twilio`
+- Configure Twilio webhook URL to `https://app.matrix-os.com/voice/webhook/twilio?handle={handle}`
 - Inject env vars: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
 - Inject shared API keys: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY` (for TTS/STT)
 - Track voice usage per tenant (minutes, chars, costs) for billing
@@ -392,7 +392,7 @@ interface TunnelProvider {
 
 Only Cloudflare Tunnel shipped initially (already in platform stack). Interface allows future ngrok/Tailscale additions.
 
-For managed mode, voice webhooks use the existing per-user subdomain tunnel. For BYOP/local dev, user configures `publicUrl` manually or uses ngrok.
+For managed mode, voice webhooks use the shared app-domain platform proxy. For BYOP/local dev, user configures `publicUrl` manually or uses ngrok.
 
 ## New Files (35)
 

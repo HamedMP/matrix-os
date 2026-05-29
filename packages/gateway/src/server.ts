@@ -9,7 +9,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
@@ -17,15 +17,21 @@ import { createConversationStore, type ConversationStore } from "./conversations
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
-import { resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  resolveExistingFileApiPath,
+  resolveWithinHome,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
-import { createSymphonyRoutes } from "./symphony-routes.js";
+import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
+import { createAgentLauncher } from "./agent-launcher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -54,6 +60,9 @@ import {
   type KernelEvent,
   loadHandle,
   createImageClient,
+  loadIconStyle,
+  buildIconPrompt,
+  generateIconBatch,
   createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
@@ -63,14 +72,35 @@ import {
 } from "./auth.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
+import { createReadinessService } from "./onboarding/readiness-service.js";
+import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
+import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
+import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
+import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
+import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
+import { createAdminControlService } from "./onboarding/admin-control-service.js";
+import { createAdminControlRoutes } from "./onboarding/admin-control-routes.js";
+import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
+import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
+import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
+import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
+import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
+import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
   checkForSystemUpdate,
-  parseUpdateChannel,
+  listSystemReleases,
+  parseInternalUpgradeTarget,
+  resolveSystemUpdateChannel,
   startSystemUpdate,
-  type UpdateChannel,
+  writeInternalUpgradeTrigger,
 } from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
@@ -124,11 +154,17 @@ import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-cl
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { sanitizePeerId } from "./sync/peer-id.js";
-import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
+import {
+  deriveGatewaySyncUserSeeds,
+  ensureSyncUser,
+  migrateSyncTables,
+  type SyncDatabase,
+} from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
@@ -138,6 +174,8 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { MessagingKyselyRepository } from "./messages/repository.js";
+import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
@@ -155,6 +193,7 @@ import {
   LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
+  createPendingTerminalInputQueue,
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
@@ -170,6 +209,15 @@ const BridgeCallBodySchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const ApiMessageBodySchema = z.object({
+  text: z.string().refine((value) => value.trim().length > 0),
+  sessionId: z.string().optional(),
+  from: z.object({
+    handle: z.string(),
+    displayName: z.string().optional(),
+  }).optional(),
+});
+
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
@@ -177,6 +225,51 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
     return;
   }
   console.info("[terminal-debug][gateway]", event, details);
+}
+
+export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
+
+export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
+
+export function registerTerminalSessionRoutes(
+  app: Hono,
+  options: { homePath: string; sessionRegistry: TerminalSessionRouteRegistry },
+): void {
+  const { homePath, sessionRegistry } = options;
+  const terminalSessionDeleteBodyLimit = bodyLimit({
+    maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  });
+
+  app.get("/api/terminal/pty-sessions", (c) => {
+    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
+      const displayCwd = relative(homePath, session.cwd) || "~";
+      return {
+        sessionId: session.sessionId,
+        cwd: displayCwd,
+        state: session.state,
+        exitCode: session.exitCode,
+        createdAt: session.createdAt,
+        lastAttachedAt: session.lastAttachedAt,
+        attachedClients: session.attachedClients,
+      };
+    });
+    return c.json(publicSessions);
+  });
+
+  app.delete("/api/terminal/pty-sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
+    const id = c.req.param("id");
+    logTerminalDebug("rest-destroy-request", { sessionId: id });
+    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
+    const session = sessionRegistry.getSession(id);
+    if (!session) return c.json({ ok: true }, 200);
+    sessionRegistry.destroy(id);
+    return c.json({ ok: true });
+  });
+}
+
+export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
+  await mkdirAsync(dirname(persistPath), { recursive: true });
+  await writeFileAsync(persistPath, "[]\n");
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
@@ -199,6 +292,7 @@ export interface GatewayConfig {
   port?: number;
   model?: string;
   maxTurns?: number;
+  spawnFn?: SpawnFn;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
@@ -271,8 +365,8 @@ export function buildAllowedOrigins(options: {
       options.proxyOrigin,
       "http://localhost:3000",
       "http://localhost:4001",
-      "http://localhost:4066",
-      "http://127.0.0.1:4066",
+      "http://localhost:4766",
+      "http://127.0.0.1:4766",
       ...symphonyPorts.flatMap((port) => [
         `http://localhost:${port}`,
         `http://127.0.0.1:${port}`,
@@ -319,16 +413,48 @@ export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getC
   }
 }
 
+function parseSymphonyPort(value: string | undefined): number | undefined {
+  if (!value || !/^(?:0|[1-9]\d*)$/.test(value)) return undefined;
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined;
+}
+
+function parseLoopbackOriginPort(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+      return undefined;
+    }
+    return parseSymphonyPort(url.port);
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("[gateway] Ignoring invalid Symphony upstream origin:", err);
+    }
+    return undefined;
+  }
+}
+
+export async function resolveInitialSymphonyPort(
+  runner: Pick<SymphonyRunner, "getConfig">,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number | undefined> {
+  return parseLoopbackOriginPort(env.SYMPHONY_UPSTREAM_ORIGIN) ??
+    parseSymphonyPort(env.SYMPHONY_PORT) ??
+    await readInitialSymphonyPort(runner);
+}
+
+function symphonyUpstreamOriginForPort(port: number | undefined): string | undefined {
+  return port ? `http://127.0.0.1:${port}` : undefined;
+}
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
-  const symphonyRunner = createSymphonyRunner({ homePath });
-  const symphonyPort = await readInitialSymphonyPort(symphonyRunner);
   const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
     proxyOrigin: process.env.PROXY_ORIGIN,
-    symphonyPort,
   });
 
   const app = new Hono();
@@ -337,10 +463,19 @@ export async function createGateway(config: GatewayConfig) {
   });
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
+  const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
+  // PTY session handles are process-local and cannot survive a gateway restart.
+  // Zellij shell sessions are the canonical durable terminal surface; reset this
+  // legacy compatibility list on every boot so old PTY ids cannot diverge from
+  // the zellij session list used by the shell and CLI.
+  await resetVolatilePtySessionList(terminalSessionsPersistPath).catch((err: unknown) => {
+    logBestEffortFailure("Failed to reset volatile PTY terminal sessions", err);
+  });
   const sessionRegistry = new SessionRegistry(homePath, {
     maxSessions: 10,
     bufferSize: 1024 * 1024,
-    persistPath: join(homePath, "system", "terminal-sessions.json"),
+    persistPath: terminalSessionsPersistPath,
+    autoRestore: false,
   });
   const workspaceZellijRuntime = createZellijRuntime({ homePath });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
@@ -358,6 +493,11 @@ export async function createGateway(config: GatewayConfig) {
     maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
   });
+  const symphonyRunner = createSymphonyRunner({ homePath });
+  const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
+  if (initialSymphonyPort) {
+    allowedOriginController.updateSymphonyPort(initialSymphonyPort);
+  }
   const zellijShellWs = createShellWsHandler({
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
@@ -367,12 +507,124 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     model: config.model,
     maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
   });
 
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
+  const readinessRepository = new InMemoryReadinessRepository();
+  const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
+  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
+  const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalHandle = process.env.MATRIX_HANDLE;
+  let platformDb: PlatformDb | null = null;
+  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
+  let internalIntegrationBaseUrl: string | null = null;
+  const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
+  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+  async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
+    if (platformDb) {
+      try {
+        const dbForLookup = platformDb;
+        const services = await withCapabilityLookupTimeout(async () => {
+          const user = await dbForLookup.getUserByClerkId(ownerId);
+          const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
+          if (!platformUserId) return [];
+          return dbForLookup.listConnectedServices(platformUserId);
+        });
+        return capabilityIdsForConnectedServices(services.map((service) => service.service));
+      } catch (err: unknown) {
+        console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));
+        return [];
+      }
+    }
+    if (!internalIntegrationBaseUrl) return [];
+    try {
+      const headers = new Headers({ Accept: "application/json" });
+      if (internalPlatformToken) headers.set("authorization", `Bearer ${internalPlatformToken}`);
+      const response = await fetch(internalIntegrationBaseUrl, {
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return [];
+      const body = await response.json() as unknown;
+      const connections = Array.isArray(body)
+        ? body
+        : body && typeof body === "object" && Array.isArray((body as { connections?: unknown }).connections)
+          ? (body as { connections: unknown[] }).connections
+          : [];
+      return capabilityIdsForConnectedServices(connections.flatMap((connection) =>
+        connection && typeof connection === "object" && typeof (connection as { service?: unknown }).service === "string"
+          ? [(connection as { service: string }).service]
+          : [],
+      ));
+    } catch (err: unknown) {
+      console.warn("[integrations] capability connection lookup failed:", err instanceof Error ? err.message : String(err));
+      return [];
+    }
+  }
+  const agentCredentialService = createAgentCredentialStatusService({
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    probeAgent: async (_ownerId, agent) => {
+      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
+        agentDetectionInFlight = null;
+      });
+      const detected = await agentDetectionInFlight;
+      const status = detected.agents.find((candidate) => candidate.id === agent);
+      return {
+        available: Boolean(status?.installed && status.authState === "ok"),
+        missing: status?.installed === false,
+      };
+    },
+  });
+  const integrationCapabilityService = createIntegrationCapabilityService({
+    getConnectedCapabilityIds,
+    onChange: (ownerId) => readinessCache.delete(ownerId),
+    storagePath: join(homePath, "system", "integration-capabilities.json"),
+  });
+  const agentActionAuditService = createAgentActionAuditService();
+  const companyBrainService = createCompanyBrainReadinessService();
+  const draftActionService = createDraftActionReadinessService();
+  const unavailableCodingSetup: CodingSetupStatus = {
+    githubConnected: false,
+    selectedProject: null,
+    issueSourceConfigured: false,
+    symphonyReady: false,
+    terminalReady: false,
+    activeAgents: ["hermes"],
+    handoffStatus: "idle",
+  };
+  const readinessService = createReadinessService({
+    repository: readinessRepository,
+    cache: readinessCache,
+    agentCredentials: agentCredentialService,
+    integrationCapabilities: integrationCapabilityService,
+    codingSetup: {
+      getCodingSetup: async () => unavailableCodingSetup,
+    },
+  });
+  const adminControlService = createAdminControlService({
+    agentCredentials: agentCredentialService,
+    integrations: integrationCapabilityService,
+    readiness: readinessService,
+  });
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -385,6 +637,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
     try {
@@ -398,6 +651,8 @@ export async function createGateway(config: GatewayConfig) {
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
+      messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
+      await messagingRepository.bootstrap();
       canvasSubscriptionHub = new CanvasSubscriptionHub({
         authorize: async (subscriber) => {
           const record = await canvasRepository?.get(
@@ -493,6 +748,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasRepository = null;
       canvasService = null;
       canvasSubscriptionHub = null;
+      messagingRepository = null;
     }
   }
 
@@ -508,9 +764,10 @@ export async function createGateway(config: GatewayConfig) {
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
-  const internalPlatformToken = process.env.UPGRADE_TOKEN;
-  const internalHandle = process.env.MATRIX_HANDLE;
+  const geminiLiveConnection: GeminiLiveConnection =
+    internalPlatformUrl && internalPlatformToken && internalHandle
+      ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
+      : process.env.GEMINI_API_KEY ?? "";
 
   if (((s3AccessKey && s3SecretKey) || (internalPlatformUrl && internalPlatformToken && internalHandle)) && kyselyInstance) {
     try {
@@ -534,6 +791,9 @@ export async function createGateway(config: GatewayConfig) {
       }
 
       await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
+      for (const seed of deriveGatewaySyncUserSeeds()) {
+        await ensureSyncUser(kyselyInstance as Kysely<SyncDatabase>, seed);
+      }
 
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       syncPeerRegistry = createPeerRegistry();
@@ -589,20 +849,24 @@ export async function createGateway(config: GatewayConfig) {
       // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
       // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
       // identity is plumbed through.
-      const userId =
+      const baseUserId =
         process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
       if (!process.env.MATRIX_USER_ID) {
         console.warn(
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
+      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+        baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       homeMirror = createHomeMirror({
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId,
-        peerId: `gateway-${userId}`,
+        userId: syncUserId,
+        peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
         // commit. Without this the mirror is push-only (container -> R2)
@@ -623,7 +887,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
-  const internalIntegrationBaseUrl =
+  internalIntegrationBaseUrl =
     internalPlatformUrl && internalHandle
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
@@ -707,7 +971,6 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   // Platform DB + Integrations (Pipedream Connect)
-  let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
@@ -1251,12 +1514,23 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
-  app.route("/api", createShellRoutes({
+  app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
+  app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/integrations", createIntegrationCapabilityRoutes({
+    service: integrationCapabilityService,
+    audit: agentActionAuditService,
+  }));
+  app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
+  app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
+  app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
+  const shellRouteDeps = {
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
     layouts: shellLayoutStore,
-  }));
+  };
+  app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route("/api", createShellRoutes(shellRouteDeps));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -1757,7 +2031,7 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "message") {
             clearConversationRunAttachment();
-            pendingText = parsed.text;
+            pendingText = parsed.displayText ?? parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
 
@@ -1846,6 +2120,90 @@ export async function createGateway(config: GatewayConfig) {
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }
+        },
+      };
+    }),
+  );
+
+  app.get(
+    "/ws/terminal/session",
+    upgradeWebSocket((c) => {
+      const namedSession = c.req.query("session");
+      const fromSeqParam = c.req.query("fromSeq");
+      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+      let namedSocketClosed = false;
+      const pendingInput = createPendingTerminalInputQueue();
+
+      return {
+        onOpen(_evt, ws) {
+          if (!namedSession) {
+            ws.send(JSON.stringify({
+              type: "error",
+              code: "invalid_request",
+              message: "Invalid request",
+            }));
+            ws.close();
+            return;
+          }
+          const fromSeq =
+            typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
+              ? Number(fromSeqParam)
+              : 0;
+          void zellijShellWs.open({
+            ws,
+            session: namedSession,
+            fromSeq,
+          }).then((session) => {
+            if (namedSocketClosed) {
+              session.onClose();
+              return;
+            }
+            namedHandle = session;
+            pendingInput.drain((raw) => {
+              session.onMessage(raw);
+            });
+          }).catch((err: unknown) => {
+            console.warn("[shell] terminal session attach failed:", err instanceof Error ? err.message : String(err));
+            pendingInput.clear();
+            if (namedSocketClosed) {
+              return;
+            }
+            try {
+              ws.send(JSON.stringify({
+                type: "error",
+                code: "attach_failed",
+                message: "Shell attach failed",
+              }));
+            } catch (sendErr: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+            }
+            ws.close();
+          });
+        },
+        onMessage(evt, ws) {
+          const raw = typeof evt.data === "string" ? evt.data : "";
+          if (namedHandle) {
+            namedHandle.onMessage(raw);
+            return;
+          }
+          if (!pendingInput.enqueue(raw)) {
+            try {
+              ws.send(JSON.stringify({
+                type: "error",
+                code: "buffer_overflow",
+                message: "Input buffer overflow before session was ready",
+              }));
+            } catch (sendErr: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+            }
+            ws.close();
+          }
+        },
+        onClose() {
+          namedSocketClosed = true;
+          pendingInput.clear();
+          namedHandle?.onClose();
+          namedHandle = null;
         },
       };
     }),
@@ -2124,8 +2482,10 @@ export async function createGateway(config: GatewayConfig) {
   // --- Onboarding WebSocket ---
   const onboardingHandler = createOnboardingHandler({
     homePath,
-    geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+    geminiConnection: geminiLiveConnection,
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+    readinessService,
+    ownerId: process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
   });
 
   app.get(
@@ -2197,7 +2557,7 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => {
       const vocalHandler = createVocalHandler({
         homePath,
-        geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+        geminiConnection: geminiLiveConnection,
         // VOCAL_GEMINI_MODEL keeps Aoede independently configurable from
         // onboarding; fall back to ONBOARDING_GEMINI_MODEL so existing
         // deployments don't regress until operators set the vocal-specific
@@ -2293,6 +2653,7 @@ export async function createGateway(config: GatewayConfig) {
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
   const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
+  let iconRegenerationInProgress = false;
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -2302,13 +2663,8 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
-  app.route("/api/symphony", createSymphonyRoutes({
-    homePath,
-    runner: symphonyRunner,
-    onConfigChange: (nextConfig) => allowedOriginController.updateSymphonyPort(
-      nextConfig.port,
-      nextConfig.runningPort ? [nextConfig.runningPort] : [],
-    ),
+  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
+    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
@@ -2430,73 +2786,63 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.get("/api/terminal/sessions", (c) => {
-    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
-      const displayCwd = relative(homePath, session.cwd) || "~";
-      return {
-        sessionId: session.sessionId,
-        cwd: displayCwd,
-        state: session.state,
-        exitCode: session.exitCode,
-        createdAt: session.createdAt,
-        lastAttachedAt: session.lastAttachedAt,
-        attachedClients: session.attachedClients,
-      };
-    });
-    return c.json(publicSessions);
-  });
-
-  app.delete("/api/terminal/sessions/:id", (c) => {
-    const id = c.req.param("id");
-    logTerminalDebug("rest-destroy-request", { sessionId: id });
-    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
-    const session = sessionRegistry.getSession(id);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-    sessionRegistry.destroy(id);
-    return c.json({ ok: true });
-  });
+  registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
-    const body = await c.req.json<{
-      text: string;
-      sessionId?: string;
-      from?: { handle: string; displayName?: string };
-    }>();
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      console.warn("[gateway] Invalid /api/message JSON:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsedBody = ApiMessageBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid message body" }, 400);
+    }
+    const body = parsedBody.data;
     const events: KernelEvent[] = [];
 
     const context: DispatchContext | undefined = body.from
       ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
       : undefined;
 
-    await dispatcher.dispatch(body.text, body.sessionId, (event) => {
-      events.push(event);
-    }, context);
+    try {
+      await dispatcher.dispatch(body.text, body.sessionId, (event) => {
+        events.push(event);
+      }, context);
+    } catch (err: unknown) {
+      console.error("[gateway] Message dispatch failed:", err);
+      return c.json({ error: "Message dispatch failed" }, 500);
+    }
 
     return c.json({ events });
   });
 
   function resolveServedFilePath(filePath: string): string | null {
-    const fullPath = resolveWithinHome(homePath, filePath);
-    if (!fullPath) {
+    const lexicalPath = resolveWithinHome(homePath, filePath);
+    if (!lexicalPath || isDeniedFileApiPath(homePath, filePath)) {
       return null;
     }
-    if (existsSync(fullPath)) {
-      return fullPath;
+
+    if (existsSync(lexicalPath)) {
+      return resolveExistingFileApiPath(homePath, filePath);
     }
 
     if (!filePath.endsWith("/manifest.json")) {
-      return fullPath;
+      return lexicalPath;
     }
 
-    const dirPath = dirname(fullPath);
+    const dirPath = dirname(lexicalPath);
     const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
     for (const candidate of fallbackCandidates) {
       if (existsSync(candidate)) {
-        return candidate;
+        const relativeCandidate = relative(homePath, candidate);
+        return resolveExistingFileApiPath(homePath, relativeCandidate);
       }
     }
 
-    return fullPath;
+    return lexicalPath;
   }
 
   app.on("HEAD", "/files/*", (c) => {
@@ -2567,7 +2913,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.put("/files/*", fileBodyLimit, async (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveWritableFileApiPath(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
     const content = await c.req.text();
     const dir = dirname(fullPath);
@@ -3093,29 +3439,10 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(await listApps(homePath));
   });
 
-  function resolveSystemIconUrl(requestedFile: string): string | null {
-    const match = requestedFile.match(/^([a-zA-Z0-9_-]+)\.(png|svg)$/);
-    if (!match) return null;
-    const [, stem, requestedExt] = match;
-    const candidates = [
-      `${stem}.${requestedExt}`,
-      `${stem}.png`,
-      `${stem}.svg`,
-      "game-center.png",
-      "game.svg",
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(join(homePath, "system/icons", candidate))) {
-        return `/files/system/icons/${candidate}`;
-      }
-    }
-    return null;
-  }
-
-  const redirectIconRequest = (c: Context) => {
+  const redirectIconRequest = async (c: Context) => {
     const file = c.req.param("file");
     if (!file) return c.text("Icon not found", 404);
-    const target = resolveSystemIconUrl(file);
+    const target = await resolveSystemIconUrl(homePath, file);
     if (!target) return c.text("Icon not found", 404);
     return c.redirect(target, 307);
   };
@@ -3149,10 +3476,18 @@ export async function createGateway(config: GatewayConfig) {
     if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
       return c.json({ error: "Invalid slug" }, 400);
     }
+    const shippedDefaultIcon = await resolveDefaultAppIconUrl(homePath, slug);
+    if (shippedDefaultIcon) {
+      return c.json({
+        iconUrl: shippedDefaultIcon,
+        generated: false,
+        shipped: true,
+      });
+    }
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
       return c.json({
-        iconUrl: resolveSystemIconUrl(`${slug}.png`) ?? "/files/system/icons/game.svg",
+        iconUrl: (await resolveSystemIconUrl(homePath, `${slug}.png`)) ?? "/files/system/icons/game.svg",
         generated: false,
       });
     }
@@ -3167,22 +3502,9 @@ export async function createGateway(config: GatewayConfig) {
         }
       }
 
-      let iconStyle = body.style ?? "";
-      if (!iconStyle) {
-        try {
-          const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
-          iconStyle = desktop.iconStyle ?? "";
-        } catch (err: unknown) {
-          logBestEffortFailure("Failed to read desktop icon style", err);
-        }
-      }
-      if (!iconStyle) {
-        iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
-      }
-
+      const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
-      const name = slug.replace(/-/g, " ").replace(/_/g, " ");
-      const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
+      const prompt = buildIconPrompt(slug, iconStyle);
       const iconsDir = join(homePath, "system/icons");
       const result = await client.generateImage(prompt, {
         aspectRatio: "1:1",
@@ -3205,52 +3527,32 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.post("/api/icons/regenerate-all", async (c) => {
+  app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
+    if (iconRegenerationInProgress) {
+      return c.json({ error: "Regeneration already in progress" }, 409);
+    }
+    iconRegenerationInProgress = true;
+
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [], generated: false });
-    }
-
-    let iconStyle = "";
-    try {
-      const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
-      iconStyle = desktop.iconStyle ?? "";
-    } catch (err: unknown) {
-      logBestEffortFailure("Failed to read desktop icon style", err);
-    }
-    if (!iconStyle) {
-      iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
     }
 
     const iconsDir = join(homePath, "system/icons");
     if (!existsSync(iconsDir)) {
+      iconRegenerationInProgress = false;
       return c.json({ regenerated: 0, failed: [] });
     }
 
-    const pngFiles = readdirSync(iconsDir).filter((f: string) => f.endsWith(".png"));
-    const client = createImageClient(geminiKey);
-    let regenerated = 0;
-    const failed: string[] = [];
+    const apps = await listApps(homePath);
+    const slugs: string[] = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
 
-    for (const file of pngFiles) {
-      const slug = file.replace(/\.png$/, "");
-      const name = slug.replace(/-/g, " ").replace(/_/g, " ");
-      const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
-      try {
-        await client.generateImage(prompt, {
-          aspectRatio: "1:1",
-          imageDir: iconsDir,
-          saveAs: `${slug}.png`,
-        });
-        regenerated++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        console.error(`Icon regeneration failed for "${slug}":`, msg);
-        failed.push(slug);
-      }
-    }
-
-    return c.json({ regenerated, failed });
+    generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
+      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
+      .catch((err) => console.error("[icons] Regeneration error:", err))
+      .finally(() => { iconRegenerationInProgress = false; });
+    return c.json({ accepted: true, total: slugs.length }, 202);
   });
 
   app.get("/api/cron", (c) => {
@@ -3336,18 +3638,13 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
-  function resolveUpdateChannel(value: unknown): UpdateChannel | null {
-    return parseUpdateChannel(
-      typeof value === "string" && value.length > 0
-        ? value
-        : process.env.MATRIX_UPDATE_CHANNEL ?? "stable",
-    );
-  }
-
   app.get("/api/system/update", async (c) => {
-    const channel = resolveUpdateChannel(c.req.query("channel"));
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
     const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
     const result = await checkForSystemUpdate({
       installed: info.release ?? {
         version: info.version,
@@ -3355,6 +3652,20 @@ export async function createGateway(config: GatewayConfig) {
         gitRef: info.build.ref,
         buildTime: info.build.date,
       },
+      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
+      channel,
+    });
+    return c.json(result);
+  });
+
+  app.get("/api/system/releases", async (c) => {
+    const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    const result = await listSystemReleases({
       platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
       channel,
     });
@@ -3385,13 +3696,27 @@ export async function createGateway(config: GatewayConfig) {
     }
     const requestedChannel =
       body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
-    const channel = resolveUpdateChannel(requestedChannel);
+    const info = getSystemInfo(homePath);
+    const channel = resolveSystemUpdateChannel(requestedChannel, {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+      installedChannel: info.release?.channel,
+    });
     if (!channel) return c.json({ error: "Invalid update channel" }, 400);
 
     const result = await startSystemUpdate({ channel });
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
+    void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
+      distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
+      properties: {
+        channel,
+        handle: process.env.MATRIX_HANDLE,
+      },
+    }).catch((err: unknown) => {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[posthog] Failed to queue system update event: ${kind}`);
+    });
     return c.json({ ok: true, status: result.status, channel }, 202);
   }
 
@@ -3440,6 +3765,19 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
+
+  if (messagingRepository) {
+    app.route("/api/messages", createMessagingRoutes({
+      repository: messagingRepository,
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      appserviceToken: process.env.MATRIX_MESSAGING_APPSERVICE_TOKEN,
+      appserviceOwnerId: process.env.MATRIX_MESSAGING_APPSERVICE_OWNER_ID ?? process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
+      hermesCapabilitySecret: process.env.MATRIX_MESSAGING_HERMES_CAPABILITY_SECRET,
+    }));
+  } else {
+    app.all("/api/messages/*", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
+    app.all("/api/messages", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
+  }
 
   if (canvasService) {
     // Global authMiddleware is mounted before route registration; routes still resolve user IDs defensively.
@@ -3607,14 +3945,28 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
 
-  app.post("/api/internal/upgrade", async (c) => {
+  app.post("/api/internal/upgrade", upgradeBodyLimit, async (c) => {
     const upgradeToken = process.env.UPGRADE_TOKEN;
     if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
     const auth = c.req.header("authorization");
     const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
     if (!timingSafeStringEquals(token, upgradeToken)) return c.json({ error: "Unauthorized" }, 401);
-    await writeFileAsync("/opt/matrix/app/.update-now", "");
-    return c.json({ status: "upgrading" }, 202);
+
+    let body: unknown = {};
+    const raw = await c.req.text();
+    if (raw.trim()) {
+      try {
+        body = JSON.parse(raw);
+      } catch (err: unknown) {
+        logUnexpectedJsonParseFailure("Failed to parse internal upgrade payload", err);
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+    }
+
+    const result = await writeInternalUpgradeTrigger({ body });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+
+    return c.json({ status: "upgrading", target: result.target }, 202);
   });
 
   // Load plugins and mount their HTTP routes
@@ -3697,7 +4049,6 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
-      await symphonyRunner.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

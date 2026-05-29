@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createWatcherIgnored } from "../../packages/gateway/src/watcher.js";
+import {
+  createWatcherIgnored,
+  createWatcherPaths,
+} from "../../packages/gateway/src/watcher.js";
 
 describe("gateway home watcher", () => {
   it("ignores large development and cache directories by default", () => {
@@ -43,5 +46,25 @@ describe("gateway home watcher", () => {
 
     expect(ignored("/home/user/apps/node_modules_info.txt")).toBe(false);
     expect(ignored("/home/user/apps/my-projects-list.md")).toBe(false);
+  });
+
+  it("only treats matrix database names as ignored file names", () => {
+    const ignored = createWatcherIgnored({ watchProjects: true });
+
+    expect(ignored("/home/user/system/matrix.db")).toBe(true);
+    expect(ignored("/home/user/system/matrix.db-wal")).toBe(true);
+    expect(ignored("/home/user/apps/matrix.db-backups/config.json")).toBe(false);
+  });
+
+  it("watches bounded Matrix-owned roots instead of the whole home", () => {
+    expect(createWatcherPaths("/home/matrix/home")).toEqual(expect.arrayContaining([
+      "/home/matrix/home/apps",
+      "/home/matrix/home/data",
+      "/home/matrix/home/system",
+      "/home/matrix/home/.matrix-version",
+    ]));
+    expect(createWatcherPaths("/home/matrix/home")).not.toContain("/home/matrix/home");
+    expect(createWatcherPaths("/home/matrix/home")).not.toContain("/home/matrix/home/projects");
+    expect(createWatcherPaths("/home/matrix/home")).not.toContain("/home/matrix/home/matrix-os");
   });
 });
