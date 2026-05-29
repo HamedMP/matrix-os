@@ -35,7 +35,8 @@ export function HomeView({
 }) {
   const narrow = columns < 80;
   const wide = columns >= 92;
-  const stageWidth = Math.max(40, Math.min(columns, wide ? 96 : 76));
+  const extraWide = columns >= 124;
+  const stageWidth = Math.max(40, Math.min(columns, extraWide ? 120 : wide ? 96 : 76));
   const sessionLabel = `${snapshot.sessions.count} ${snapshot.sessions.count === 1 ? "session" : "sessions"}`;
   const status = `${stateLabel(snapshot)} · ${snapshot.profile.name} · ${snapshot.gateway.label} · ${sessionLabel}`;
   const color = noColor ? undefined : stateColor(snapshot);
@@ -54,6 +55,12 @@ export function HomeView({
           <Text bold color={noColor ? undefined : "cyan"}>MATRIX OS</Text>
         )}
       </Box>
+
+      {!narrow && !extraWide && (
+        <Box marginBottom={1} justifyContent="center">
+          <Mascot state={snapshot.overall} noColor={noColor} />
+        </Box>
+      )}
 
       <Box width="100%" justifyContent="center">
         <Box flexDirection="column" width={wide ? 64 : "100%"}>
@@ -74,13 +81,8 @@ export function HomeView({
               <Text color={noColor ? undefined : "yellow"}>{`Next: /${snapshot.blockingActions[0]}`}</Text>
             )}
           </Box>
-          {!wide && !narrow && (
-            <Box marginTop={1} justifyContent="center">
-              <Mascot state={snapshot.overall} noColor={noColor} />
-            </Box>
-          )}
         </Box>
-        {wide && (
+        {extraWide && (
           <Box marginLeft={3}>
             <Mascot state={snapshot.overall} noColor={noColor} />
           </Box>
