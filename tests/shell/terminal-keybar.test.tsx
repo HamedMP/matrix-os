@@ -5,6 +5,17 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalKeyBar } from "../../shell/src/components/terminal/TerminalKeyBar.js";
 
+const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
+const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
+
+function restoreWindowProperty(name: "innerHeight" | "visualViewport", descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(window, name, descriptor);
+    return;
+  }
+  Reflect.deleteProperty(window, name);
+}
+
 function installVisualViewportMock(input: { height: number; offsetTop: number }) {
   const listeners = new Map<string, Set<() => void>>();
   const viewport = {
@@ -30,6 +41,8 @@ function installVisualViewportMock(input: { height: number; offsetTop: number })
 describe("TerminalKeyBar", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    restoreWindowProperty("innerHeight", originalInnerHeight);
+    restoreWindowProperty("visualViewport", originalVisualViewport);
   });
 
   it("uses virtual keyboard env inset when visualViewport has no keyboard overlap", () => {
