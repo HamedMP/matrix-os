@@ -50,7 +50,7 @@ export const doctorCommand = defineCommand({
 
     if (profile) {
       try {
-        const res = await fetch(`${profile.gatewayUrl}/api/health`, {
+        const res = await fetch(`${profile.gatewayUrl}/health`, {
           headers: profile.token ? { Authorization: `Bearer ${profile.token}` } : undefined,
           signal: AbortSignal.timeout(10_000),
         });

@@ -12,6 +12,15 @@ interface ProfileView extends Profile {
   active: boolean;
 }
 
+const PROFILE_SUBCOMMANDS = new Set(["ls", "show", "use", "set"]);
+
+function hasProfileSubCommand(rawArgs: string[] | undefined): boolean {
+  if (!Array.isArray(rawArgs)) {
+    return false;
+  }
+  return rawArgs.some((arg) => PROFILE_SUBCOMMANDS.has(arg));
+}
+
 function profileView(name: string, profile: Profile, active: string): ProfileView {
   return {
     name,
@@ -157,7 +166,9 @@ export const profileCommand = defineCommand({
       }),
     }),
   },
-  run: () => {
-    console.log("Usage: matrix profile ls|show|use|set");
+  run: ({ rawArgs }) => {
+    if (!hasProfileSubCommand(rawArgs)) {
+      console.log("Usage: matrix profile ls|show|use|set");
+    }
   },
 });

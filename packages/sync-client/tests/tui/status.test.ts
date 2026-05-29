@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTuiSafeError } from "../../src/cli/tui/errors.js";
 import { aggregateTuiStatusSnapshot } from "../../src/cli/tui/status.js";
 
 describe("TUI status aggregation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("builds a healthy snapshot from profile, auth, gateway, daemon, and sessions", async () => {
     const snapshot = await aggregateTuiStatusSnapshot({
       now: () => new Date("2026-05-28T12:00:00Z"),
@@ -118,6 +123,33 @@ describe("TUI status aggregation", () => {
     expect(snapshot.profile.state).toBe("unknown");
     expect(snapshot.gateway.state).toBe("degraded");
     expect(snapshot.safeError?.code).toBe("profile_not_found");
+  });
+
+  it("checks the gateway public health endpoint by default", async () => {
+    const seenUrls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      seenUrls.push(String(url));
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: String(url).endsWith("/health") ? 200 : 401,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+
+    const snapshot = await aggregateTuiStatusSnapshot({
+      resolveProfile: async () => ({
+        name: "local",
+        gatewayUrl: "http://localhost:4100",
+        platformUrl: "http://localhost:9000",
+        token: "dev-token",
+      }),
+      loadAuth: async () => ({ authenticated: true, expired: false, handle: "dev" }),
+      checkDaemon: async () => ({ state: "healthy", label: "running" }),
+      listShellSessions: async () => [],
+    });
+
+    expect(seenUrls).toContain("http://localhost:4100/health");
+    expect(seenUrls).not.toContain("http://localhost:4100/api/health");
+    expect(snapshot.gateway.state).toBe("healthy");
   });
 
 });

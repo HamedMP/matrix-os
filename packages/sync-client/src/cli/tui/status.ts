@@ -128,7 +128,7 @@ export async function aggregateTuiStatusSnapshot(deps: TuiStatusDeps = {}): Prom
   const checkGatewayStatus = async (): Promise<TuiSubsystemStatus> => deps.checkGateway
     ? deps.checkGateway()
     : profile.gatewayUrl !== "unknown"
-      ? createTuiGatewayClient({ gatewayUrl: profile.gatewayUrl, token }).requestJson("/api/health").then(() => ({ state: "healthy", label: "ok" }))
+      ? createTuiGatewayClient({ gatewayUrl: profile.gatewayUrl, token }).requestJson("/health").then(() => ({ state: "healthy", label: "ok" }))
       : { state: "unknown", label: "gateway unknown" };
 
   const checkDaemonStatus = async (): Promise<TuiSubsystemStatus> => deps.checkDaemon
