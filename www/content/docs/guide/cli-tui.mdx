@@ -1,0 +1,56 @@
+---
+title: CLI TUI
+description: Use the Matrix CLI terminal UI for quick actions, command search, shell sessions, setup, and local diagnostics.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Matrix CLI TUI is the interactive control surface behind `matrix tui`. It is designed for terminal-first workflows where you want to inspect your local profile, run common Matrix commands, and manage shell sessions without switching to the web shell.
+
+<Callout type="info">
+The TUI runs on your laptop, but some actions need a reachable Matrix OS gateway. Local profile, setup, and diagnostic actions should stay clear about what can run locally and what needs the gateway.
+</Callout>
+
+## Run It
+
+```bash
+pnpm --filter @finnaai/matrix exec matrix tui
+pnpm --filter @finnaai/matrix exec matrix tui --no-color
+```
+
+Use `--no-color` when you want deterministic output for tests, screenshots, or terminals with limited color support.
+
+## Home
+
+The home screen prioritizes the actions developers use most:
+
+- New shell session
+- Shell sessions
+- Setup coding agents
+- Run doctor
+- Login or switch account
+
+The home screen also keeps profile, auth, gateway, and session status visible so local laptop testing does not hide missing prerequisites.
+
+## Command Palette
+
+Press `/` to open command search. Palette results come from the registered Matrix TUI action registry, not from arbitrary shell text, so selecting a result runs a trusted action path.
+
+## Shell Sessions
+
+Shell session actions use the same Matrix shell-session backend as the CLI and web shell. A healthy gateway is required for listing, creating, attaching, and stopping persistent sessions.
+
+## Setup
+
+The setup wizard guides coding-agent selection and optional local config migration for Codex and Claude. Migration is opt-in and should preview what will be copied before any write occurs.
+
+## Local Testing
+
+For local source development, run the gateway and CLI from the repo root, then launch the TUI:
+
+```bash
+bun run dev:gateway
+pnpm --filter @finnaai/matrix exec matrix tui --no-color
+```
+
+If the gateway is not running, gateway-backed actions should show a clear unavailable state and keep recovery actions such as login, doctor, and setup reachable.

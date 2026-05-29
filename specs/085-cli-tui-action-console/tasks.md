@@ -17,12 +17,12 @@
 
 **Purpose**: Prepare the branch, docs, and test scaffolding for implementation.
 
-- [ ] T001 Stack or merge PR #249 TUI foundation into `packages/sync-client/src/cli/tui/app.tsx`, `packages/sync-client/src/cli/tui/actions.ts`, and `packages/sync-client/tests/tui/command-palette.test.tsx`
-- [ ] T002 [P] Add CLI TUI public docs stub in `www/content/docs/guide/cli-tui.mdx`
-- [ ] T003 [P] Register the CLI TUI docs page in `www/content/docs/guide/meta.json`
-- [ ] T004 [P] Add shared TUI test fixture helpers in `packages/sync-client/tests/tui/test-utils.tsx`
-- [ ] T005 [P] Add shell-session test fixtures in `packages/sync-client/tests/tui/session-fixtures.ts`
-- [ ] T006 [P] Add setup wizard test fixtures in `packages/sync-client/tests/tui/setup-fixtures.ts`
+- [X] T001 Stack or merge PR #249 TUI foundation into `packages/sync-client/src/cli/tui/app.tsx`, `packages/sync-client/src/cli/tui/actions.ts`, and `packages/sync-client/tests/tui/command-palette.test.tsx`
+- [X] T002 [P] Add CLI TUI public docs stub in `www/content/docs/guide/cli-tui.mdx`
+- [X] T003 [P] Register the CLI TUI docs page in `www/content/docs/guide/meta.json`
+- [X] T004 [P] Add shared TUI test fixture helpers in `packages/sync-client/tests/tui/test-utils.tsx`
+- [X] T005 [P] Add shell-session test fixtures in `packages/sync-client/tests/tui/session-fixtures.ts`
+- [X] T006 [P] Add setup wizard test fixtures in `packages/sync-client/tests/tui/setup-fixtures.ts`
 
 ---
 
