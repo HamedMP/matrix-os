@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shouldUseAlternateScreen } from "../../src/cli/tui/app.js";
 import { resolveTuiLaunchMode } from "../../src/cli/tui/launch.js";
 
 describe("TUI launch routing", () => {
@@ -48,5 +49,24 @@ describe("TUI launch routing", () => {
     for (const argv of [["--help"], ["help"], ["--version"], ["status"], ["shell", "ls"], ["status", "--json"]]) {
       expect(resolveTuiLaunchMode({ argv, stdinIsTTY: true, stdoutIsTTY: true }).mode).toBe("direct");
     }
+  });
+
+  it("uses fullscreen alternate screen only for capable TTYs", () => {
+    expect(shouldUseAlternateScreen({
+      stdout: { isTTY: true } as NodeJS.WriteStream & { isTTY: boolean },
+      env: { TERM: "xterm-256color" },
+    })).toBe(true);
+    expect(shouldUseAlternateScreen({
+      stdout: { isTTY: true } as NodeJS.WriteStream & { isTTY: boolean },
+      env: { TERM: "dumb" },
+    })).toBe(false);
+    expect(shouldUseAlternateScreen({
+      stdout: { isTTY: true } as NodeJS.WriteStream & { isTTY: boolean },
+      env: { TERM: "xterm-256color", MATRIX_TUI_FULLSCREEN: "0" },
+    })).toBe(false);
+    expect(shouldUseAlternateScreen({
+      stdout: { isTTY: false } as NodeJS.WriteStream & { isTTY: boolean },
+      env: { TERM: "xterm-256color" },
+    })).toBe(false);
   });
 });

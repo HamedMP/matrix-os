@@ -2,6 +2,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { TuiOverallState } from "../status.js";
 
+const MATRIX_GREEN = "#00ff41";
+
 const RABBIT_ART = [
   "                      .@@.",
   "                        .@@@@.",
@@ -32,10 +34,8 @@ const RABBIT_ART = [
 
 const COMPACT_RABBIT = "rabbit: .@@. @@@";
 
-function mascotColor(state: TuiOverallState): "green" | "yellow" | "cyan" {
-  if (state === "healthy") return "green";
-  if (state === "degraded" || state === "unauthenticated") return "yellow";
-  return "cyan";
+function mascotColor(_state: TuiOverallState): string {
+  return MATRIX_GREEN;
 }
 
 export function Mascot({ state, noColor, compact = false }: { state: TuiOverallState; noColor?: boolean; compact?: boolean }) {

@@ -2,6 +2,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { TuiAction } from "../actions.js";
 
+const MATRIX_GREEN = "#00ff41";
+
 function actionDescription(action: TuiAction): string {
   return action.intents[0] ?? action.aliases[0] ?? action.group;
 }
@@ -27,15 +29,15 @@ export function CommandPalette({
   const titleColumnWidth = Math.min(34, Math.max(1, Math.floor((width - 4) / 2)));
 
   return (
-    <Box borderStyle="single" borderColor={noColor ? undefined : "cyan"} flexDirection="column" paddingX={1} paddingY={1} width={width}>
+    <Box borderStyle="single" borderColor={noColor ? undefined : MATRIX_GREEN} flexDirection="column" paddingX={1} paddingY={1} width={width}>
       <Box justifyContent="space-between">
-        <Text bold color={noColor ? undefined : "cyan"}>MATRIX COMMANDS</Text>
+        <Text bold color={noColor ? undefined : MATRIX_GREEN}>MATRIX COMMANDS</Text>
         <Text color={noColor ? undefined : "gray"}>esc closes</Text>
       </Box>
       <Text color={noColor ? undefined : "gray"}>{`/${query}`}</Text>
       {results.map((action, index) => (
         <Box key={action.id} marginTop={1} flexDirection="column">
-          <Text color={noColor ? undefined : index === selectedIndex ? "yellow" : undefined}>
+          <Text color={noColor ? undefined : index === selectedIndex ? MATRIX_GREEN : undefined}>
             {index === selectedIndex ? "> " : "  "}{paddedTitle(action.title, titleColumnWidth)}{action.group}
           </Text>
           <Text color={noColor ? undefined : "gray"}>

@@ -41,6 +41,13 @@ describe("HomeView", () => {
     expect(output).not.toContain("\u001B[");
   });
 
+  it("fills tall terminals as a fullscreen launcher", () => {
+    const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} rows={40} noColor />);
+
+    expect(output.split("\n").length).toBeGreaterThanOrEqual(40);
+    expect(output).toContain("Ask Matrix");
+  });
+
   it("keeps large rabbit art readable on normal-width terminals", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={80} noColor />);
 
