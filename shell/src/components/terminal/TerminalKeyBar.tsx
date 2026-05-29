@@ -26,6 +26,7 @@ interface KeyDef {
 const KEYS: KeyDef[] = [
   { label: "Esc", data: "\x1b", primary: true, ariaLabel: "Escape" },
   { label: "Tab", data: "\t", primary: true, ariaLabel: "Tab" },
+  { label: "Enter", data: "\r", primary: true, ariaLabel: "Enter" },
   { label: "Ctrl+C", data: "\x03", primary: true, ariaLabel: "Control C" },
   { label: "↑", data: "\x1b[A", primary: true, ariaLabel: "Up arrow" },
   { label: "↓", data: "\x1b[B", primary: true, ariaLabel: "Down arrow" },
@@ -46,6 +47,21 @@ const KEYS: KeyDef[] = [
   { label: "Ctrl+A", data: "\x01", ariaLabel: "Control A" },
   { label: "Ctrl+E", data: "\x05", ariaLabel: "Control E" },
   { label: "Ctrl+R", data: "\x12", ariaLabel: "Control R" },
+];
+
+const KEYBOARD_ROWS: KeyDef[][] = [
+  "qwertyuiop".split("").map((letter) => ({ label: letter, data: letter, ariaLabel: `letter ${letter}` })),
+  "asdfghjkl".split("").map((letter) => ({ label: letter, data: letter, ariaLabel: `letter ${letter}` })),
+  [
+    ...("zxcvbnm".split("").map((letter) => ({ label: letter, data: letter, ariaLabel: `letter ${letter}` }))),
+    { label: "⌫", data: "\x7f", ariaLabel: "Backspace" },
+  ],
+  [
+    { label: "Space", data: " ", ariaLabel: "Space" },
+    { label: ".", data: "." },
+    { label: "_", data: "_" },
+    { label: "Enter", data: "\r", ariaLabel: "Enter" },
+  ],
 ];
 
 interface TerminalKeyBarProps {
@@ -91,7 +107,7 @@ export function TerminalKeyBar({
   const [expanded, setExpanded] = useState(false);
   const keyboardInset = useVisualViewportKeyboardInset();
 
-  const visible = expanded ? KEYS : KEYS.filter((k) => k.primary);
+  const visible = KEYS.filter((k) => expanded || k.primary);
   const buttonBackground = `color-mix(in srgb, ${foreground} 10%, transparent)`;
   const buttonBorder = `color-mix(in srgb, ${foreground} 18%, transparent)`;
   const mutedForeground = `color-mix(in srgb, ${foreground} 66%, transparent)`;
@@ -105,7 +121,8 @@ export function TerminalKeyBar({
       style={{
         "--matrix-terminal-keybar-bottom": bottomInset,
         display: "flex",
-        alignItems: "center",
+        alignItems: "stretch",
+        flexDirection: "column",
         gap: 4,
         padding: "6px 4px max(6px, env(safe-area-inset-bottom))",
         position: "sticky",
@@ -113,59 +130,122 @@ export function TerminalKeyBar({
         zIndex: 5,
         background,
         borderTop: `1px solid ${buttonBorder}`,
-        overflowX: "auto",
+        overflow: "hidden",
         flexShrink: 0,
-        touchAction: "pan-x",
+        touchAction: "none",
         WebkitOverflowScrolling: "touch",
         boxShadow: `0 -10px 20px color-mix(in srgb, ${background} 70%, transparent)`,
       } as CSSProperties & Record<"--matrix-terminal-keybar-bottom", string>}
     >
-      {visible.map((k) => (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          overflowX: "auto",
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        {visible.map((k) => (
+          <TerminalKeyButton
+            key={k.label}
+            keyDef={k}
+            onSend={onSend}
+            background={buttonBackground}
+            foreground={foreground}
+            border={buttonBorder}
+          />
+        ))}
         <button
-          key={k.label}
           type="button"
-          aria-label={k.ariaLabel ?? k.label}
-          onPointerDown={(e) => {
-            // Send on pointer-down for responsiveness (matches Termius). Block
-            // the default to keep the xterm from losing focus to the bar.
-            e.preventDefault();
-            onSend(k.data);
-          }}
+          aria-label={expanded ? "Show fewer keys" : "Show more keys"}
+          onClick={() => setExpanded((v) => !v)}
           style={{
             fontSize: 13,
-            lineHeight: 1,
             padding: "8px 10px",
-            background: buttonBackground,
-            color: foreground,
-            border: `1px solid ${buttonBorder}`,
+            background: "transparent",
+            color: mutedForeground,
+            border: `1px dashed ${accent}`,
             borderRadius: 6,
             minWidth: 36,
             flexShrink: 0,
-            fontFamily: "var(--font-mono, ui-monospace, monospace)",
-            cursor: "pointer",
+            marginLeft: "auto",
           }}
         >
-          {k.label}
+          {expanded ? "Less" : "More"}
         </button>
-      ))}
-      <button
-        type="button"
-        aria-label={expanded ? "Show fewer keys" : "Show more keys"}
-        onClick={() => setExpanded((v) => !v)}
-        style={{
-          fontSize: 13,
-          padding: "8px 10px",
-          background: "transparent",
-          color: mutedForeground,
-          border: `1px dashed ${accent}`,
-          borderRadius: 6,
-          minWidth: 36,
-          flexShrink: 0,
-          marginLeft: "auto",
-        }}
-      >
-        {expanded ? "Less" : "More"}
-      </button>
+      </div>
+      {expanded && (
+        <div style={{ display: "grid", gap: 4 }}>
+          {KEYBOARD_ROWS.map((row, index) => (
+            <div
+              key={index}
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                gap: 4,
+                minWidth: 0,
+              }}
+            >
+              {row.map((k) => (
+                <TerminalKeyButton
+                  key={k.ariaLabel ?? k.label}
+                  keyDef={k}
+                  onSend={onSend}
+                  background={buttonBackground}
+                  foreground={foreground}
+                  border={buttonBorder}
+                  wide={k.label === "Space"}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function TerminalKeyButton({
+  keyDef,
+  onSend,
+  background,
+  foreground,
+  border,
+  wide,
+}: {
+  keyDef: KeyDef;
+  onSend: (data: string) => void;
+  background: string;
+  foreground: string;
+  border: string;
+  wide?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={keyDef.ariaLabel ?? keyDef.label}
+      onPointerDown={(e) => {
+        // Send on pointer-down for responsiveness (matches Termius). Block
+        // the default to keep xterm focus and prevent the native keyboard.
+        e.preventDefault();
+        onSend(keyDef.data);
+      }}
+      style={{
+        fontSize: 13,
+        lineHeight: 1,
+        padding: "8px 10px",
+        background,
+        color: foreground,
+        border: `1px solid ${border}`,
+        borderRadius: 6,
+        minWidth: wide ? 112 : 36,
+        flex: wide ? "0 1 160px" : "0 0 auto",
+        fontFamily: "var(--font-mono, ui-monospace, monospace)",
+        cursor: "pointer",
+      }}
+    >
+      {keyDef.label}
+    </button>
   );
 }

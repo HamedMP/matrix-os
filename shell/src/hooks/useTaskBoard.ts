@@ -51,11 +51,15 @@ export function useTaskBoard() {
   useEffect(() => {
     fetch(`${GATEWAY_URL}/api/tasks`, { signal: AbortSignal.timeout(10_000) })
       .then((res) => res.json())
-      .then((data: TaskItem[]) => {
+      .then((data: unknown) => {
+        if (!Array.isArray(data)) {
+          setTasks([]);
+          return;
+        }
         setTasks(
           data.map((t) => ({
-            ...t,
-            appName: parseAppName(t.input),
+            ...(t as TaskItem),
+            appName: parseAppName((t as TaskItem).input),
           })),
         );
       })

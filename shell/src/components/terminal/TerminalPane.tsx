@@ -67,12 +67,6 @@ function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: strin
   return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
 }
 
-function displayCwd(cwd: string): string {
-  if (cwd === "projects") return "~/projects";
-  if (cwd.startsWith("projects/")) return `~/${cwd}`;
-  return cwd;
-}
-
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
   | { type: "output"; data: string; seq: number | null }
@@ -215,6 +209,19 @@ function terminalDebug(event: string, details: Record<string, unknown>): void {
   console.info("[terminal-debug][pane]", event, details);
 }
 
+function suppressXtermNativeKeyboard(container: HTMLElement): void {
+  const helper = container.querySelector("textarea.xterm-helper-textarea");
+  if (!(helper instanceof HTMLTextAreaElement)) {
+    return;
+  }
+  helper.inputMode = "none";
+  helper.readOnly = true;
+  helper.autocomplete = "off";
+  helper.autocapitalize = "none";
+  helper.spellcheck = false;
+  helper.setAttribute("aria-hidden", "true");
+}
+
 function describeReadyState(ws: WebSocket | null): string {
   if (!ws) {
     return "null";
@@ -247,6 +254,8 @@ interface TerminalPaneProps {
   isClosing?: boolean;
   shouldCacheOnUnmount?: (paneId: string) => boolean;
   shouldDestroyOnUnmount?: (paneId: string) => boolean;
+  allowRemoteResize?: boolean;
+  suppressNativeKeyboard?: boolean;
 }
 
 export function TerminalPane({
@@ -262,6 +271,8 @@ export function TerminalPane({
   isClosing,
   shouldCacheOnUnmount,
   shouldDestroyOnUnmount,
+  allowRemoteResize = true,
+  suppressNativeKeyboard = false,
 }: TerminalPaneProps) {
   const terminalThemeId = useTerminalSettings((s) => s.themeId);
   const terminalFontSize = useTerminalSettings((s) => s.fontSize);
@@ -279,6 +290,7 @@ export function TerminalPane({
   const lastSeqRef = useRef<number>(0);
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectLinesWrittenRef = useRef<number>(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
@@ -297,11 +309,13 @@ export function TerminalPane({
   const isClosingRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
   const isFocusedRef = useRef(isFocused);
+  const allowRemoteResizeRef = useRef(allowRemoteResize);
 
   onSessionAttachedRef.current = onSessionAttached;
   shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
   shouldDestroyOnUnmountRef.current = shouldDestroyOnUnmount;
   isFocusedRef.current = isFocused;
+  allowRemoteResizeRef.current = allowRemoteResize;
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
@@ -360,6 +374,13 @@ export function TerminalPane({
         if (reconnectTimerRef.current) {
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
+        }
+      };
+
+      const clearPendingReconnectBanner = () => {
+        if (pendingReconnectBannerTimerRef.current) {
+          clearTimeout(pendingReconnectBannerTimerRef.current);
+          pendingReconnectBannerTimerRef.current = null;
         }
       };
 
@@ -424,6 +445,9 @@ export function TerminalPane({
           termElement.style.width = "100%";
           termElement.style.height = "100%";
           container.appendChild(termElement);
+          if (suppressNativeKeyboard) {
+            suppressXtermNativeKeyboard(container);
+          }
         }
         term = cached.terminal;
         fitAddon = cached.fitAddon;
@@ -465,6 +489,9 @@ export function TerminalPane({
         const nextFitAddon = new FitAddon();
         xterm.loadAddon(nextFitAddon);
         xterm.open(container);
+        if (suppressNativeKeyboard) {
+          suppressXtermNativeKeyboard(container);
+        }
         const xtermElement = (xterm as { element?: HTMLElement }).element;
         if (xtermElement) {
           xtermElement.style.width = "100%";
@@ -589,7 +616,9 @@ export function TerminalPane({
             fromSeq: lastSeqRef.current,
           });
           if (isCanonicalShellSession) {
-            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            if (allowRemoteResizeRef.current) {
+              ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            }
             return;
           }
           if (currentSessionId) {
@@ -602,7 +631,9 @@ export function TerminalPane({
             ws.send(JSON.stringify({ type: "attach", cwd }));
           }
 
-          ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+          if (allowRemoteResizeRef.current) {
+            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+          }
 
           const startup = sessionIdRef.current
             ? null
@@ -619,6 +650,7 @@ export function TerminalPane({
         ws.onopen = () => {
           reconnectAttemptRef.current = 0;
           clearReconnectTimer();
+          clearPendingReconnectBanner();
           if (reconnectLinesWrittenRef.current > 0) {
             // Erase the "[Reconnecting in Ns...]" lines we appended while
             // disconnected so the scrollback stays clean after recovery.
@@ -674,8 +706,14 @@ export function TerminalPane({
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
             reconnectAttemptRef.current = attempt + 1;
             log("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
-            term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
-            reconnectLinesWrittenRef.current += 2;
+            clearPendingReconnectBanner();
+            pendingReconnectBannerTimerRef.current = setTimeout(() => {
+              pendingReconnectBannerTimerRef.current = null;
+              if (!disposed && !isClosingRef.current && wsRef.current?.readyState !== WebSocket.OPEN) {
+                term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
+                reconnectLinesWrittenRef.current += 2;
+              }
+            }, 750);
             reconnectTimerRef.current = setTimeout(() => {
               reconnectTimerRef.current = null;
               if (!disposed && !isClosingRef.current) {
@@ -884,6 +922,9 @@ export function TerminalPane({
 
       onResizeDisposableRef.current?.dispose();
       onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+        if (!allowRemoteResizeRef.current) {
+          return;
+        }
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "resize", cols, rows }));
@@ -981,6 +1022,7 @@ export function TerminalPane({
         resizeObserver.disconnect();
         clearAuthDetectTimer();
         clearReconnectTimer();
+        clearPendingReconnectBanner();
         heartbeatRef.current?.stop();
         detachWebglContextLostHandler();
         onDataDisposableRef.current?.dispose();
@@ -1047,7 +1089,9 @@ export function TerminalPane({
   }, [
     claudeMode,
     cwd,
+    allowRemoteResize,
     paneId,
+    suppressNativeKeyboard,
   ]);
 
   useEffect(() => {
@@ -1103,21 +1147,6 @@ export function TerminalPane({
       onPointerDown={handleFocus}
       onClick={handleFocus}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-2 top-1 z-10 flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] leading-none text-foreground shadow-sm backdrop-blur-sm"
-      >
-        <span>{displayCwd(cwd)}</span>
-        <span
-          className={isFocused ? "opacity-100" : "opacity-45"}
-          style={{
-            display: "inline-block",
-            width: 5,
-            height: 10,
-            background: "currentColor",
-          }}
-        />
-      </div>
       {authUrl && (
         <div
           style={{

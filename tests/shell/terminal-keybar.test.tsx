@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalKeyBar } from "../../shell/src/components/terminal/TerminalKeyBar.js";
 
@@ -66,5 +66,26 @@ describe("TerminalKeyBar", () => {
     });
 
     expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
+  });
+
+  it("sends enter from the primary mobile key row", () => {
+    const onSend = vi.fn();
+
+    render(<TerminalKeyBar onSend={onSend} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Enter" }));
+
+    expect(onSend).toHaveBeenCalledWith("\r");
+  });
+
+  it("shows a full English keyboard when expanded", () => {
+    render(<TerminalKeyBar onSend={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more keys" }));
+
+    expect(screen.getByRole("button", { name: "letter q" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "letter m" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Space" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Backspace" })).toBeTruthy();
   });
 });

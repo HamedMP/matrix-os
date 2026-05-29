@@ -95,7 +95,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("keeps the active cwd visible in the mobile terminal chrome", async () => {
+  it("keeps the mobile terminal chrome clear of cwd badges that overlap zellij tabs", async () => {
     render(<TerminalApp mobile />);
 
     await act(async () => {
@@ -103,7 +103,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("~/projects")).toBeTruthy();
+    expect(screen.queryByText("~/projects")).toBeNull();
     expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
   });
 
@@ -121,6 +121,82 @@ describe("TerminalApp", () => {
     expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
     expect(keyBar.style.background).toContain("16, 24, 32");
     expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("240, 239, 231");
+    expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
+  });
+
+  it("does not let mobile terminal clients take ownership of the remote zellij size", async () => {
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      allowRemoteResize: false,
+      suppressNativeKeyboard: true,
+    });
+  });
+
+  it("fully removes the sidebar from layout flow when hidden", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTitle("Hide sidebar (Ctrl+Shift+B)"));
+
+    const openButton = screen.getByTitle("Open sidebar (Ctrl+Shift+B)");
+    expect(openButton.parentElement?.style.position).toBe("absolute");
+    expect(openButton.parentElement?.style.width).not.toBe("44px");
+  });
+
+  it("copies a local CLI attach command when clicking a shell session name", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active", attachedClients: 1, tabs: [] }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy attach command for main" }));
+      await Promise.resolve();
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("matrix shell connect main");
   });
 
   it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {
