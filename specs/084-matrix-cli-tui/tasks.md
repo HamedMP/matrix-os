@@ -17,12 +17,12 @@
 
 **Purpose**: Prepare the published CLI package and docs/spec references for the TUI work.
 
-- [ ] T001 Add Ink, React, and required React typings to `packages/sync-client/package.json`
-- [ ] T002 Run root `pnpm install` to update `pnpm-lock.yaml`
-- [ ] T003 Create TUI source directories under `packages/sync-client/src/cli/tui/`
-- [ ] T004 Create TUI test directories under `packages/sync-client/tests/tui/`
-- [ ] T005 [P] Add initial public CLI docs placeholder for TUI behavior in `www/content/docs/guide/cli.mdx`
-- [ ] T006 [P] Add exported TUI module barrel in `packages/sync-client/src/cli/tui/index.ts`
+- [X] T001 Add Ink, React, and required React typings to `packages/sync-client/package.json`
+- [X] T002 Run root `pnpm install` to update `pnpm-lock.yaml`
+- [X] T003 Create TUI source directories under `packages/sync-client/src/cli/tui/`
+- [X] T004 Create TUI test directories under `packages/sync-client/tests/tui/`
+- [X] T005 [P] Add initial public CLI docs placeholder for TUI behavior in `www/content/docs/guide/cli.mdx`
+- [X] T006 [P] Add exported TUI module barrel in `packages/sync-client/src/cli/tui/index.ts`
 
 ---
 
@@ -34,20 +34,20 @@
 
 ### Tests for Foundation
 
-- [ ] T007 [P] Add action registry coverage tests in `packages/sync-client/tests/tui/actions.test.ts`
-- [ ] T008 [P] Add safe gateway client timeout/error tests in `packages/sync-client/tests/tui/gateway-client.test.ts`
-- [ ] T009 [P] Add TUI preference read/write recovery tests in `packages/sync-client/tests/tui/preferences.test.ts`
-- [ ] T010 [P] Add confirmation policy tests in `packages/sync-client/tests/tui/confirmations.test.ts`
+- [X] T007 [P] Add action registry coverage tests in `packages/sync-client/tests/tui/actions.test.ts`
+- [X] T008 [P] Add safe gateway client timeout/error tests in `packages/sync-client/tests/tui/gateway-client.test.ts`
+- [X] T009 [P] Add TUI preference read/write recovery tests in `packages/sync-client/tests/tui/preferences.test.ts`
+- [X] T010 [P] Add confirmation policy tests in `packages/sync-client/tests/tui/confirmations.test.ts`
 
 ### Implementation for Foundation
 
-- [ ] T011 Implement typed TUI action registry in `packages/sync-client/src/cli/tui/actions.ts`
-- [ ] T012 Implement shared timeout-bound gateway client helpers in `packages/sync-client/src/cli/tui/gateway-client.ts`
-- [ ] T013 Implement safe daemon/status adapter helpers in `packages/sync-client/src/cli/tui/daemon-client.ts`
-- [ ] T014 Implement owner-readable TUI preference loader with malformed-file recovery in `packages/sync-client/src/cli/tui/preferences.ts`
-- [ ] T015 Implement confirmation policy helpers in `packages/sync-client/src/cli/tui/confirmations.ts`
-- [ ] T016 Implement safe error normalization helpers in `packages/sync-client/src/cli/tui/errors.ts`
-- [ ] T017 Implement terminal capability helpers for TTY/no-color/80x24 detection in `packages/sync-client/src/cli/tui/terminal.ts`
+- [X] T011 Implement typed TUI action registry in `packages/sync-client/src/cli/tui/actions.ts`
+- [X] T012 Implement shared timeout-bound gateway client helpers in `packages/sync-client/src/cli/tui/gateway-client.ts`
+- [X] T013 Implement safe daemon/status adapter helpers in `packages/sync-client/src/cli/tui/daemon-client.ts`
+- [X] T014 Implement owner-readable TUI preference loader with malformed-file recovery in `packages/sync-client/src/cli/tui/preferences.ts`
+- [X] T015 Implement confirmation policy helpers in `packages/sync-client/src/cli/tui/confirmations.ts`
+- [X] T016 Implement safe error normalization helpers in `packages/sync-client/src/cli/tui/errors.ts`
+- [X] T017 Implement terminal capability helpers for TTY/no-color/80x24 detection in `packages/sync-client/src/cli/tui/terminal.ts`
 
 **Checkpoint**: Foundation ready; each user story can use common registry, client, preference, confirmation, error, and terminal helpers.
 
@@ -61,18 +61,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T018 [P] [US1] Add CLI launch routing tests in `packages/sync-client/tests/tui/launch.test.ts`
-- [ ] T019 [P] [US1] Add status aggregation tests for healthy/degraded/logged-out states in `packages/sync-client/tests/tui/status.test.ts`
-- [ ] T020 [P] [US1] Add Ink render tests for prompt-first home, no-color, and 80x24 layout in `packages/sync-client/tests/tui/home-render.test.tsx`
+- [X] T018 [P] [US1] Add CLI launch routing tests in `packages/sync-client/tests/tui/launch.test.ts`
+- [X] T019 [P] [US1] Add status aggregation tests for healthy/degraded/logged-out states in `packages/sync-client/tests/tui/status.test.ts`
+- [X] T020 [P] [US1] Add Ink render tests for prompt-first home, no-color, and 80x24 layout in `packages/sync-client/tests/tui/home-render.test.tsx`
 
 ### Implementation for User Story 1
 
-- [ ] T021 [US1] Add `tui` subcommand and bare interactive launch routing in `packages/sync-client/src/cli/index.ts`
-- [ ] T022 [US1] Implement TUI entrypoint and render lifecycle in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T023 [US1] Implement status snapshot aggregation in `packages/sync-client/src/cli/tui/status.ts`
-- [ ] T024 [US1] Implement prompt-first home view in `packages/sync-client/src/cli/tui/views/HomeView.tsx`
-- [ ] T025 [US1] Implement compact stateful mascot component in `packages/sync-client/src/cli/tui/views/Mascot.tsx`
-- [ ] T026 [US1] Wire refresh, help, quit, and safe fallback states in `packages/sync-client/src/cli/tui/state.ts`
+- [X] T021 [US1] Add `tui` subcommand and bare interactive launch routing in `packages/sync-client/src/cli/index.ts`
+- [X] T022 [US1] Implement TUI entrypoint and render lifecycle in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T023 [US1] Implement status snapshot aggregation in `packages/sync-client/src/cli/tui/status.ts`
+- [X] T024 [US1] Implement prompt-first home view in `packages/sync-client/src/cli/tui/views/HomeView.tsx`
+- [X] T025 [US1] Implement compact stateful mascot component in `packages/sync-client/src/cli/tui/views/Mascot.tsx`
+- [X] T026 [US1] Wire refresh, help, quit, and safe fallback states in `packages/sync-client/src/cli/tui/state.ts`
 
 **Checkpoint**: User Story 1 works independently; `matrix` opens TUI interactively and direct/non-TTY behavior is protected.
 
@@ -86,18 +86,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T027 [P] [US2] Add command palette search tests in `packages/sync-client/tests/tui/command-palette.test.tsx`
-- [ ] T028 [P] [US2] Add dangerous action confirmation render tests in `packages/sync-client/tests/tui/confirmation-render.test.tsx`
-- [ ] T029 [P] [US2] Add action registry command-family completeness tests in `packages/sync-client/tests/tui/action-coverage.test.ts`
+- [X] T027 [P] [US2] Add command palette search tests in `packages/sync-client/tests/tui/command-palette.test.tsx`
+- [X] T028 [P] [US2] Add dangerous action confirmation render tests in `packages/sync-client/tests/tui/confirmation-render.test.tsx`
+- [X] T029 [P] [US2] Add action registry command-family completeness tests in `packages/sync-client/tests/tui/action-coverage.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T030 [US2] Implement command palette model and fuzzy filtering in `packages/sync-client/src/cli/tui/palette.ts`
-- [ ] T031 [US2] Implement command palette view in `packages/sync-client/src/cli/tui/views/CommandPalette.tsx`
-- [ ] T032 [US2] Implement confirmation overlay view in `packages/sync-client/src/cli/tui/views/ConfirmationOverlay.tsx`
-- [ ] T033 [US2] Wire global `/`, shortcut, Escape, Enter, and modal key handling in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T034 [US2] Populate all command-family actions in `packages/sync-client/src/cli/tui/actions.ts`
-- [ ] T035 [US2] Add help/about/completion utility views in `packages/sync-client/src/cli/tui/views/UtilityViews.tsx`
+- [X] T030 [US2] Implement command palette model and fuzzy filtering in `packages/sync-client/src/cli/tui/palette.ts`
+- [X] T031 [US2] Implement command palette view in `packages/sync-client/src/cli/tui/views/CommandPalette.tsx`
+- [X] T032 [US2] Implement confirmation overlay view in `packages/sync-client/src/cli/tui/views/ConfirmationOverlay.tsx`
+- [X] T033 [US2] Wire global `/`, shortcut, Escape, Enter, and modal key handling in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T034 [US2] Populate all command-family actions in `packages/sync-client/src/cli/tui/actions.ts`
+- [X] T035 [US2] Add help/about/completion utility views in `packages/sync-client/src/cli/tui/views/UtilityViews.tsx`
 
 **Checkpoint**: User Story 2 works independently; all command families are discoverable through the palette.
 
@@ -111,20 +111,20 @@
 
 ### Tests for User Story 3
 
-- [ ] T036 [P] [US3] Add shell session client tests in `packages/sync-client/tests/tui/shell-session-client.test.ts`
-- [ ] T037 [P] [US3] Add coding session client tests in `packages/sync-client/tests/tui/coding-session-client.test.ts`
-- [ ] T038 [P] [US3] Add session cockpit render/navigation tests in `packages/sync-client/tests/tui/session-cockpit.test.tsx`
-- [ ] T039 [P] [US3] Add attach/observe/takeover action tests in `packages/sync-client/tests/tui/session-actions.test.ts`
+- [X] T036 [P] [US3] Add shell session client tests in `packages/sync-client/tests/tui/shell-session-client.test.ts`
+- [X] T037 [P] [US3] Add coding session client tests in `packages/sync-client/tests/tui/coding-session-client.test.ts`
+- [X] T038 [P] [US3] Add session cockpit render/navigation tests in `packages/sync-client/tests/tui/session-cockpit.test.tsx`
+- [X] T039 [P] [US3] Add attach/observe/takeover action tests in `packages/sync-client/tests/tui/session-actions.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T040 [US3] Implement shell session TUI client adapter in `packages/sync-client/src/cli/tui/shell-sessions.ts`
-- [ ] T041 [US3] Implement coding session TUI client adapter in `packages/sync-client/src/cli/tui/coding-sessions.ts`
-- [ ] T042 [US3] Implement unified session cockpit view in `packages/sync-client/src/cli/tui/views/SessionsView.tsx`
-- [ ] T043 [US3] Implement session detail view for timeline/status/context in `packages/sync-client/src/cli/tui/views/SessionDetailView.tsx`
-- [ ] T044 [US3] Implement shell tab/pane/layout manager views in `packages/sync-client/src/cli/tui/views/ShellRuntimeViews.tsx`
-- [ ] T045 [US3] Implement external attach/observe/takeover handoff and detach return flow in `packages/sync-client/src/cli/tui/session-actions.ts`
-- [ ] T046 [US3] Implement create session and remote run forms in `packages/sync-client/src/cli/tui/views/SessionForms.tsx`
+- [X] T040 [US3] Implement shell session TUI client adapter in `packages/sync-client/src/cli/tui/shell-sessions.ts`
+- [X] T041 [US3] Implement coding session TUI client adapter in `packages/sync-client/src/cli/tui/coding-sessions.ts`
+- [X] T042 [US3] Implement unified session cockpit view in `packages/sync-client/src/cli/tui/views/SessionsView.tsx`
+- [X] T043 [US3] Implement session detail view for timeline/status/context in `packages/sync-client/src/cli/tui/views/SessionDetailView.tsx`
+- [X] T044 [US3] Implement shell tab/pane/layout manager views in `packages/sync-client/src/cli/tui/views/ShellRuntimeViews.tsx`
+- [X] T045 [US3] Implement external attach/observe/takeover handoff and detach return flow in `packages/sync-client/src/cli/tui/session-actions.ts`
+- [X] T046 [US3] Implement create session and remote run forms in `packages/sync-client/src/cli/tui/views/SessionForms.tsx`
 
 **Checkpoint**: User Story 3 works independently; `/sessions` delivers the polished zellij-backed Matrix session manager.
 
@@ -138,18 +138,18 @@
 
 ### Tests for User Story 4
 
-- [ ] T047 [P] [US4] Add first-run flow tests in `packages/sync-client/tests/tui/first-run.test.tsx`
-- [ ] T048 [P] [US4] Add account/profile flow tests in `packages/sync-client/tests/tui/account-profile.test.tsx`
-- [ ] T049 [P] [US4] Add sync setup flow tests in `packages/sync-client/tests/tui/sync-flow.test.tsx`
+- [X] T047 [P] [US4] Add first-run flow tests in `packages/sync-client/tests/tui/first-run.test.tsx`
+- [X] T048 [P] [US4] Add account/profile flow tests in `packages/sync-client/tests/tui/account-profile.test.tsx`
+- [X] T049 [P] [US4] Add sync setup flow tests in `packages/sync-client/tests/tui/sync-flow.test.tsx`
 
 ### Implementation for User Story 4
 
-- [ ] T050 [US4] Implement account/profile TUI adapters in `packages/sync-client/src/cli/tui/account.ts`
-- [ ] T051 [US4] Implement login/logout/profile views in `packages/sync-client/src/cli/tui/views/AccountViews.tsx`
-- [ ] T052 [US4] Implement first-run orchestration view in `packages/sync-client/src/cli/tui/views/FirstRunView.tsx`
-- [ ] T053 [US4] Implement sync setup/status views in `packages/sync-client/src/cli/tui/views/SyncViews.tsx`
-- [ ] T054 [US4] Implement instance status/logs/restart views in `packages/sync-client/src/cli/tui/views/InstanceViews.tsx`
-- [ ] T055 [US4] Wire post-login and post-sync refresh behavior in `packages/sync-client/src/cli/tui/state.ts`
+- [X] T050 [US4] Implement account/profile TUI adapters in `packages/sync-client/src/cli/tui/account.ts`
+- [X] T051 [US4] Implement login/logout/profile views in `packages/sync-client/src/cli/tui/views/AccountViews.tsx`
+- [X] T052 [US4] Implement first-run orchestration view in `packages/sync-client/src/cli/tui/views/FirstRunView.tsx`
+- [X] T053 [US4] Implement sync setup/status views in `packages/sync-client/src/cli/tui/views/SyncViews.tsx`
+- [X] T054 [US4] Implement instance status/logs/restart views in `packages/sync-client/src/cli/tui/views/InstanceViews.tsx`
+- [X] T055 [US4] Wire post-login and post-sync refresh behavior in `packages/sync-client/src/cli/tui/state.ts`
 
 **Checkpoint**: User Story 4 works independently; a first-run user can reach login and sync setup without CLI help.
 
@@ -163,17 +163,17 @@
 
 ### Tests for User Story 5
 
-- [ ] T056 [P] [US5] Add direct-command regression tests in `packages/sync-client/tests/tui/direct-command-compat.test.ts`
-- [ ] T057 [P] [US5] Add JSON/non-TTY compatibility tests in `packages/sync-client/tests/tui/non-interactive-compat.test.ts`
-- [ ] T058 [P] [US5] Add CLI docs expectation tests if docs tooling supports them in `packages/sync-client/tests/tui/docs-compat.test.ts`
+- [X] T056 [P] [US5] Add direct-command regression tests in `packages/sync-client/tests/tui/direct-command-compat.test.ts`
+- [X] T057 [P] [US5] Add JSON/non-TTY compatibility tests in `packages/sync-client/tests/tui/non-interactive-compat.test.ts`
+- [X] T058 [P] [US5] Add CLI docs expectation tests if docs tooling supports them in `packages/sync-client/tests/tui/docs-compat.test.ts`
 
 ### Implementation for User Story 5
 
-- [ ] T059 [US5] Harden direct command bypasses in `packages/sync-client/src/cli/index.ts`
-- [ ] T060 [US5] Ensure non-TTY fallback copy and exit behavior in `packages/sync-client/src/cli/tui/launch.ts`
-- [ ] T061 [US5] Update release/package validation expectations in `packages/sync-client/scripts/check-publish.mjs`
-- [ ] T062 [US5] Update CLI documentation for TUI/default/direct behavior in `www/content/docs/guide/cli.mdx`
-- [ ] T063 [US5] Update CLI README with default TUI behavior in `packages/sync-client/README.md`
+- [X] T059 [US5] Harden direct command bypasses in `packages/sync-client/src/cli/index.ts`
+- [X] T060 [US5] Ensure non-TTY fallback copy and exit behavior in `packages/sync-client/src/cli/tui/launch.ts`
+- [X] T061 [US5] Update release/package validation expectations in `packages/sync-client/scripts/check-publish.mjs`
+- [X] T062 [US5] Update CLI documentation for TUI/default/direct behavior in `www/content/docs/guide/cli.mdx`
+- [X] T063 [US5] Update CLI README with default TUI behavior in `packages/sync-client/README.md`
 
 **Checkpoint**: User Story 5 works independently; scripts and direct commands remain compatible.
 
@@ -183,15 +183,15 @@
 
 **Purpose**: Complete remaining full-spec command families beyond the MVP/session/first-run flows.
 
-- [ ] T064 [P] Add workspace client tests for projects/worktrees in `packages/sync-client/tests/tui/projects-client.test.ts`
-- [ ] T065 [P] Add workspace client tests for reviews/tasks/previews/events/export/delete in `packages/sync-client/tests/tui/workspace-client.test.ts`
-- [ ] T066 [P] Add workspace view render tests in `packages/sync-client/tests/tui/workspace-views.test.tsx`
-- [ ] T067 Implement projects/worktrees TUI client in `packages/sync-client/src/cli/tui/projects.ts`
-- [ ] T068 Implement reviews/tasks/previews/workspace data client in `packages/sync-client/src/cli/tui/workspace.ts`
-- [ ] T069 Implement projects and worktrees views in `packages/sync-client/src/cli/tui/views/ProjectViews.tsx`
-- [ ] T070 Implement reviews and tasks views in `packages/sync-client/src/cli/tui/views/ReviewTaskViews.tsx`
-- [ ] T071 Implement previews and workspace data views in `packages/sync-client/src/cli/tui/views/WorkspaceDataViews.tsx`
-- [ ] T072 Wire workspace actions into `packages/sync-client/src/cli/tui/actions.ts`
+- [X] T064 [P] Add workspace client tests for projects/worktrees in `packages/sync-client/tests/tui/projects-client.test.ts`
+- [X] T065 [P] Add workspace client tests for reviews/tasks/previews/events/export/delete in `packages/sync-client/tests/tui/workspace-client.test.ts`
+- [X] T066 [P] Add workspace view render tests in `packages/sync-client/tests/tui/workspace-views.test.tsx`
+- [X] T067 Implement projects/worktrees TUI client in `packages/sync-client/src/cli/tui/projects.ts`
+- [X] T068 Implement reviews/tasks/previews/workspace data client in `packages/sync-client/src/cli/tui/workspace.ts`
+- [X] T069 Implement projects and worktrees views in `packages/sync-client/src/cli/tui/views/ProjectViews.tsx`
+- [X] T070 Implement reviews and tasks views in `packages/sync-client/src/cli/tui/views/ReviewTaskViews.tsx`
+- [X] T071 Implement previews and workspace data views in `packages/sync-client/src/cli/tui/views/WorkspaceDataViews.tsx`
+- [X] T072 Wire workspace actions into `packages/sync-client/src/cli/tui/actions.ts`
 
 ---
 
@@ -199,16 +199,16 @@
 
 **Purpose**: Final quality, performance, docs, and release readiness.
 
-- [ ] T073 [P] Add accessibility/no-color snapshot coverage in `packages/sync-client/tests/tui/accessibility.test.tsx`
-- [ ] T074 [P] Add malformed preference and partial status failure regression tests in `packages/sync-client/tests/tui/resilience.test.ts`
-- [ ] T075 Run and fix `pnpm --filter @finnaai/matrix test`
-- [ ] T076 Run and fix `pnpm --filter @finnaai/matrix build`
-- [ ] T077 Run and fix root `bun run typecheck`
-- [ ] T078 Run and fix root `bun run check:patterns`
-- [ ] T079 Run relevant gateway session tests from `tests/gateway/workspace-routes.test.ts`, `tests/gateway/session-runtime-bridge.test.ts`, and `tests/gateway/terminal-zellij-ws.test.ts`
-- [ ] T080 Validate quickstart scenarios from `specs/084-matrix-cli-tui/quickstart.md`
-- [ ] T081 Update release notes in `docs/dev/cli-release.md`
-- [ ] T082 Review PR body invariants and stack notes against `docs/dev/review-pipeline.md`
+- [X] T073 [P] Add accessibility/no-color snapshot coverage in `packages/sync-client/tests/tui/accessibility.test.tsx`
+- [X] T074 [P] Add malformed preference and partial status failure regression tests in `packages/sync-client/tests/tui/resilience.test.ts`
+- [X] T075 Run and fix `pnpm --filter @finnaai/matrix test`
+- [X] T076 Run and fix `pnpm --filter @finnaai/matrix build`
+- [X] T077 Run and fix root `bun run typecheck`
+- [X] T078 Run and fix root `bun run check:patterns`
+- [X] T079 Run relevant gateway session tests from `tests/gateway/workspace-routes.test.ts`, `tests/gateway/session-runtime-bridge.test.ts`, and `tests/gateway/terminal-zellij-ws.test.ts`
+- [X] T080 Validate quickstart scenarios from `specs/084-matrix-cli-tui/quickstart.md`
+- [X] T081 Update release notes in `docs/dev/cli-release.md`
+- [X] T082 Review PR body invariants and stack notes against `docs/dev/review-pipeline.md`
 
 ---
 

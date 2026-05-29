@@ -2,7 +2,7 @@
 
 **Feature Branch**: `084-matrix-cli-tui`  
 **Created**: 2026-05-28  
-**Status**: Ready for implementation  
+**Status**: Implemented  
 **Input**: User description: "Create an OpenCode-inspired Matrix OS terminal UI opened by matrix/matrixos/mos, using the supplied Matrix CLI TUI draft plus chat decisions: full command-family coverage, prompt-first status-aware home, zellij-backed session cockpit, Ink + React implementation direction, and bare matrix opens TUI in interactive terminals."
 
 ## User Scenarios & Testing *(mandatory)*
