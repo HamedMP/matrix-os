@@ -52,7 +52,18 @@ export interface ShellAttachOptions {
 }
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
-const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l";
+export const SHELL_ATTACH_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
+const LOCAL_TERMINAL_INPUT_RESET = [
+  "\u001b[?1000l",
+  "\u001b[?1002l",
+  "\u001b[?1003l",
+  "\u001b[?1006l",
+  "\u001b[?1015l",
+  "\u001b[?1004l",
+  "\u001b[?2004l",
+  "\u001b[>4;0m",
+  "\u001b[<1u",
+].join("");
 const MAX_PENDING_MOUSE_SEQUENCE_CHARS = 128;
 const STALE_MOUSE_FOCUS_GUARD_MS = 5_000;
 const FOCUS_MOUSE_SUPPRESS_MS = 1_000;
@@ -325,7 +336,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       }
 
       const headers = options.token ? { Authorization: `Bearer ${options.token}` } : undefined;
-      const ws = new WebSocketImpl(createAttachUrl(name, attachOptions), { headers });
+      const ws = new WebSocketImpl(createAttachUrl(name, {
+        ...attachOptions,
+        fromSeq: attachOptions.fromSeq ?? SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+      }), { headers });
       const output = attachOptions.output ?? process.stdout;
       const errorOutput = attachOptions.errorOutput ?? process.stderr;
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;

@@ -49,7 +49,7 @@ describe("status CLI command", () => {
 
     await statusCommand.run!({ args: { json: true } } as never);
 
-    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/health", {
+    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/system/info", {
       headers: { Authorization: "Bearer cloud-token" },
       signal: expect.any(AbortSignal),
     });
@@ -66,6 +66,29 @@ describe("status CLI command", () => {
         },
       },
     });
+  });
+
+  it("falls back to root health for older gateways without system info", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/system/info")) {
+        return new Response("missing", { status: 404 });
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs = captureLogs();
+
+    await statusCommand.run!({ args: { json: true } } as never);
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "https://app.matrix-os.com/api/system/info", {
+      headers: { Authorization: "Bearer cloud-token" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "https://app.matrix-os.com/health", {
+      headers: { Authorization: "Bearer cloud-token" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(JSON.parse(logs[0]!).data.gateway).toEqual({ reachable: true, status: "ok" });
   });
 
   it("surfaces recovering VPS status instead of flattening it to unreachable", async () => {

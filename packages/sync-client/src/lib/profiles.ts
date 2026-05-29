@@ -139,6 +139,18 @@ async function moveIfPresent(from: string, to: string): Promise<void> {
     if (
       err instanceof Error &&
       "code" in err &&
+      ["EACCES", "EPERM", "EROFS"].includes(String((err as NodeJS.ErrnoException).code))
+    ) {
+      try {
+        await readFile(to, "utf-8");
+        return;
+      } catch (_readErr: unknown) {
+        throw err;
+      }
+    }
+    if (
+      err instanceof Error &&
+      "code" in err &&
       (err as NodeJS.ErrnoException).code === "EXDEV"
     ) {
       const raw = await readFile(from, "utf-8");

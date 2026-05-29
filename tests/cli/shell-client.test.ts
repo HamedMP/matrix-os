@@ -2,8 +2,11 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
   createShellClient,
+  SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
   SHELL_ATTACH_MAX_QUEUED_BYTES,
 } from "../../packages/sync-client/src/cli/shell-client.js";
+
+const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l\u001b[?2004l\u001b[>4;0m\u001b[<1u";
 
 class ControlledWebSocket {
   static last: ControlledWebSocket | null = null;
@@ -174,10 +177,32 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).resolves.toEqual({ detached: true });
-    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main");
+    expect(ControlledWebSocket.lastUrl).toBe(
+      `ws://gateway/ws/terminal/session?session=main&fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`,
+    );
     expect(ControlledWebSocket.lastOptions).toEqual({
       headers: { Authorization: "Bearer tok" },
     });
+  });
+
+  it("honors explicit replay cursors for terminal attach", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      fromSeq: 0,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=0");
   });
 
   it("queues stdin frames until the websocket is open", async () => {
@@ -296,7 +321,7 @@ describe("shell REST client", () => {
 
     await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
     expect((input as unknown as FakeTtyInput).rawModes).toEqual([true, false]);
-    expect(output.write).toHaveBeenCalledWith("\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l");
+    expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
   });
 
   it("drops mouse escape sequences when no-mouse attach mode is enabled", async () => {
@@ -366,7 +391,7 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).resolves.toEqual({ detached: true });
-    expect(output.write).toHaveBeenCalledWith("\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l");
+    expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "x" },
