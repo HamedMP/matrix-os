@@ -11,6 +11,7 @@ import {
   PuzzleIcon,
   MonitorIcon,
   CableIcon,
+  CreditCardIcon,
 } from "lucide-react";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
@@ -21,6 +22,7 @@ import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
+import { BillingSection } from "./settings/sections/BillingSection";
 
 
 const sections = [
@@ -30,6 +32,7 @@ const sections = [
   { id: "integrations", label: "Integrations", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
+  { id: "billing", label: "Billing", icon: CreditCardIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
   { id: "plugins", label: "Plugins", icon: PuzzleIcon },
   { id: "system", label: "System", icon: MonitorIcon },
@@ -178,6 +181,7 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}
+              {activeSection === "billing" && <BillingSection />}
               {activeSection === "plugins" && <PluginsSection />}
               {activeSection === "system" && <SystemSection />}
             </main>
