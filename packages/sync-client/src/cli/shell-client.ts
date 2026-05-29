@@ -1,3 +1,5 @@
+import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
+
 export interface ShellClientOptions {
   gatewayUrl: string;
   token?: string;
@@ -52,7 +54,7 @@ export interface ShellAttachOptions {
 }
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
-export const SHELL_ATTACH_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
+export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[?1000l",
   "\u001b[?1002l",
@@ -483,8 +485,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         const onResize = () => {
           sendResizeFrame();
         };
-        const onSignal = () => {
-          if (!remoteAttached) {
+        const onSignal = (signal?: NodeJS.Signals) => {
+          if (signal === "SIGTERM" || !remoteAttached) {
             detachLocal();
             return;
           }

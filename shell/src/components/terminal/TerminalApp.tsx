@@ -1023,6 +1023,23 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
+interface TerminalSessionSummary {
+  name: string;
+  status?: "active" | "exited" | "degraded";
+  backend?: string;
+  attachedClients?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
+  metadata?: {
+    projectSlug?: string;
+    worktreeId?: string;
+    taskId?: string;
+    pr?: number;
+    workspaceSessionId?: string;
+  };
+}
+
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
   const theme = useTheme();
@@ -1033,6 +1050,7 @@ function LocalTerminalSidebar() {
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
+  const [terminalSessions, setTerminalSessions] = useState<TerminalSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [rootPath, setRootPath] = useState("projects");
@@ -1071,19 +1089,32 @@ function LocalTerminalSidebar() {
     setSessionsLoading(true);
     setSessionsError(null);
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
+      const [terminalRes, workspaceRes] = await Promise.all([
+        fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+          signal: AbortSignal.timeout(10_000),
+        }),
+        fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
+          signal: AbortSignal.timeout(10_000),
+        }),
+      ]);
+      if (!terminalRes.ok) {
         setSessionsError("Failed to load sessions");
+        setTerminalSessions([]);
         setSessions([]);
         return;
       }
-      const data = (await res.json()) as { sessions?: WorkspaceSessionSummary[] };
-      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+      const terminalData = (await terminalRes.json()) as { sessions?: TerminalSessionSummary[] };
+      setTerminalSessions(Array.isArray(terminalData.sessions) ? terminalData.sessions : []);
+      if (workspaceRes.ok) {
+        const workspaceData = (await workspaceRes.json()) as { sessions?: WorkspaceSessionSummary[] };
+        setSessions(Array.isArray(workspaceData.sessions) ? workspaceData.sessions : []);
+      } else {
+        setSessions([]);
+      }
     } catch (err: unknown) {
-      console.warn("Failed to load workspace sessions:", err instanceof Error ? err.message : err);
+      console.warn("Failed to load terminal sessions:", err instanceof Error ? err.message : err);
       setSessionsError("Could not reach gateway");
+      setTerminalSessions([]);
       setSessions([]);
     } finally {
       setSessionsLoading(false);
@@ -1151,6 +1182,38 @@ function LocalTerminalSidebar() {
       session.transcriptPath,
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
     : sessions;
+  const filteredTerminalSessions = normalizedFilter
+    ? terminalSessions.filter((session) => [
+      session.name,
+      session.status,
+      session.backend,
+      session.metadata?.projectSlug,
+      session.metadata?.taskId,
+      session.metadata?.worktreeId,
+      session.metadata?.workspaceSessionId,
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
+    : terminalSessions;
+
+  const openTerminalSession = (session: TerminalSessionSummary) => {
+    ctx.addSessionTab(session.name, session.name);
+  };
+
+  const deleteTerminalSession = async (sessionName: string) => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}?force=1`, {
+        method: "DELETE",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setSessionsError("Failed to delete terminal session");
+        return;
+      }
+      await fetchSessions();
+    } catch (err: unknown) {
+      console.warn("Failed to delete terminal session:", err instanceof Error ? err.message : err);
+      setSessionsError("Could not delete terminal session");
+    }
+  };
 
   const openWorkspaceTransport = async (session: WorkspaceSessionSummary, mode: "observe" | "takeover") => {
     try {
@@ -1374,9 +1437,27 @@ function LocalTerminalSidebar() {
                 {sessionsError}
               </div>
             )}
-            {!sessionsLoading && !sessionsError && filteredSessions.length === 0 && (
+            {!sessionsLoading && !sessionsError && filteredTerminalSessions.length === 0 && filteredSessions.length === 0 && (
               <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-                {filter ? "No sessions match" : "No coding sessions"}
+                {filter ? "No sessions match" : "No terminal sessions"}
+              </div>
+            )}
+            {!sessionsLoading && filteredTerminalSessions.length > 0 && (
+              <div className="px-3 py-1.5 text-[10px]" style={{ color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Terminal sessions
+              </div>
+            )}
+            {!sessionsLoading && filteredTerminalSessions.map((session) => (
+              <TerminalSessionCard
+                key={session.name}
+                session={session}
+                onOpen={() => openTerminalSession(session)}
+                onDelete={() => void deleteTerminalSession(session.name)}
+              />
+            ))}
+            {!sessionsLoading && filteredSessions.length > 0 && (
+              <div className="px-3 py-1.5 text-[10px]" style={{ color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Workspace sessions
               </div>
             )}
             {!sessionsLoading && filteredSessions.map((session) => (
@@ -1491,6 +1572,56 @@ function SessionCard({
         <SessionActionBtn label="Take over" sessionId={session.id} onClick={onTakeover} />
         <SessionActionBtn label="Duplicate" sessionId={session.id} onClick={onDuplicate} />
         <SessionActionBtn label="Kill" sessionId={session.id} onClick={onKill} danger />
+      </div>
+    </div>
+  );
+}
+
+function TerminalSessionCard({
+  session,
+  onOpen,
+  onDelete,
+}: {
+  session: TerminalSessionSummary;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const status = session.status ?? "active";
+  return (
+    <div
+      style={{
+        margin: "3px 8px",
+        padding: "8px 10px 6px",
+        borderRadius: 6,
+        border: "1px solid var(--border)",
+        background: "var(--background)",
+      }}
+    >
+      <div className="flex items-center gap-1.5" style={{ marginBottom: 4 }}>
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: status === "active" ? "var(--success)" : "var(--muted-foreground)",
+            flexShrink: 0,
+          }}
+        />
+        <span className="text-[12px] truncate flex-1" style={{ color: "var(--foreground)", fontWeight: 500 }}>
+          {session.name}
+        </span>
+      </div>
+      <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
+        {[status, session.backend ?? "zellij", `${session.attachedClients ?? 0} attached`].join(" · ")}
+      </div>
+      {(session.metadata?.projectSlug || session.metadata?.taskId || session.metadata?.workspaceSessionId) && (
+        <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
+          {[session.metadata.projectSlug, session.metadata.taskId, session.metadata.workspaceSessionId].filter(Boolean).join(" · ")}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1" style={{ marginTop: 6, paddingLeft: 12 }}>
+        <SessionActionBtn label="Connect" sessionId={session.name} onClick={onOpen} />
+        <SessionActionBtn label="Delete" sessionId={session.name} onClick={onDelete} danger />
       </div>
     </div>
   );

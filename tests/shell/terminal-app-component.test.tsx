@@ -339,6 +339,73 @@ describe("TerminalApp", () => {
     expect(deleteCalls.length).toBe(1);
   });
 
+  it("lists canonical zellij terminal sessions in the sidebar and opens them directly", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions/bench") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", backend: "zellij", attachedClients: 1 },
+              { name: "bench", status: "active", backend: "zellij", attachedClients: 0 },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Terminal sessions")).toBeTruthy();
+    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    expect(screen.getByText("bench")).toBeTruthy();
+    expect(screen.getByText("active · zellij · 1 attached")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /connect bench/i }));
+    });
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: { sessionId: "bench" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /delete bench/i }));
+      await Promise.resolve();
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/bench?force=1"),
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("uses workspace sessions as the coding cockpit source of truth", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "@finnaai/matrix/shell-protocol";
 import { ShellReplayBuffer } from "./replay-buffer.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
@@ -25,7 +26,7 @@ const ShellWsClientMessageSchema = z.union([
   ShellWsDetachSchema,
 ]);
 
-export const SHELL_ATTACH_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
+export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 export const SHELL_ATTACH_RECENT_REPLAY_EVENTS = 50;
 
 export interface ShellWsSocket {

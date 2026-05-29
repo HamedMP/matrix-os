@@ -1,7 +1,10 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { createShellClient } from "../../src/cli/shell-client.js";
+import {
+  createShellClient,
+  SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+} from "../../src/cli/shell-client.js";
 
 class FakeWebSocket extends EventEmitter {
   static last: FakeWebSocket | null = null;
@@ -121,7 +124,7 @@ describe("createShellClient attachSession", () => {
     FakeWebSocket.last?.emit("close");
     await attach;
 
-    expect(FakeWebSocket.last?.url).toContain(`fromSeq=${Number.MAX_SAFE_INTEGER}`);
+    expect(FakeWebSocket.last?.url).toContain(`fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`);
   });
 
   it("forwards SIGINT after attach so terminals that still emit signals can interrupt remote programs", async () => {
@@ -159,5 +162,43 @@ describe("createShellClient attachSession", () => {
 
     FakeWebSocket.last?.emit("close");
     await attach;
+  });
+
+  it("detaches cleanly on SIGTERM after attach", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+
+    const output = new PassThrough();
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+
+    const attach = client.attachSession("main", {
+      input,
+      output,
+      WebSocketImpl: FakeWebSocket as never,
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    process.emit("SIGTERM", "SIGTERM");
+
+    await expect(attach).resolves.toEqual({ detached: true });
+    expect(FakeWebSocket.last?.sent).toContain(JSON.stringify({ type: "detach" }));
+    expect(FakeWebSocket.last?.sent).not.toContain(JSON.stringify({ type: "input", data: "\u0003" }));
+    expect(FakeWebSocket.last?.closed).toBe(true);
+    expect(input.setRawMode).toHaveBeenCalledWith(false);
+    expect(input.pause).toHaveBeenCalled();
   });
 });
