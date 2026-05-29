@@ -2,7 +2,7 @@
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionHealth } from "../../shell/src/hooks/useConnectionHealth.js";
 import { ConnectionIndicator, resolveConnectionCopy } from "../../shell/src/components/ConnectionIndicator.js";
 
@@ -26,6 +26,10 @@ function jsonResponse(body: unknown) {
 }
 
 describe("ConnectionIndicator", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -94,6 +98,33 @@ describe("resolveConnectionCopy", () => {
       title: "Connection lost",
       detail: expect.stringContaining("online"),
       action: "Reconnect",
+    });
+  });
+
+  it("uses gateway-online copy while reconnecting", () => {
+    expect(resolveConnectionCopy("reconnecting", {
+      reachability: "online",
+      releaseVersion: "v2026.05.29-test",
+    })).toMatchObject({
+      title: "Reconnecting shell",
+      detail: expect.stringContaining("v2026.05.29-test"),
+      action: "Retry now",
+    });
+  });
+
+  it("uses checking copy before runtime polling settles", () => {
+    expect(resolveConnectionCopy("reconnecting", { reachability: "checking" })).toMatchObject({
+      title: "Checking Matrix computer",
+      detail: expect.stringContaining("checking"),
+      action: "Retry now",
+    });
+  });
+
+  it("uses restart copy when the runtime is unreachable", () => {
+    expect(resolveConnectionCopy("reconnecting", { reachability: "unavailable" })).toMatchObject({
+      title: "Matrix computer is restarting",
+      detail: expect.stringContaining("Services are coming back online"),
+      action: "Retry now",
     });
   });
 });

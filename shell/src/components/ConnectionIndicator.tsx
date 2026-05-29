@@ -24,6 +24,21 @@ interface ConnectionCopy {
   action: string;
 }
 
+function classifyRuntimeStatusError(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === "AbortError" || error.name === "TimeoutError") return "timeout";
+    return "dom_exception";
+  }
+  if (error instanceof SyntaxError) return "invalid_json";
+  if (error instanceof TypeError) return "network_error";
+  if (error instanceof Error) return "unexpected_error";
+  return "unknown";
+}
+
+function logRuntimeStatusError(stage: string, error: unknown): void {
+  console.warn(`[connection-indicator] ${stage} failed: ${classifyRuntimeStatusError(error)}`);
+}
+
 export function resolveConnectionCopy(state: ConnectionState, status: RuntimeStatus): ConnectionCopy {
   if (state === "disconnected") {
     return {
@@ -87,7 +102,8 @@ async function loadRuntimeStatus(): Promise<RuntimeStatus> {
       releaseVersion: body.release?.version ?? body.version ?? null,
       releaseChannel: body.release?.channel ?? null,
     };
-  } catch (_err: unknown) {
+  } catch (err: unknown) {
+    logRuntimeStatusError("system-info", err);
     return { reachability: "online" };
   }
 }
@@ -106,7 +122,8 @@ export function ConnectionIndicator() {
         .then((next) => {
           if (!cancelled) setStatus(next);
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          logRuntimeStatusError("runtime-status", err);
           if (!cancelled) setStatus({ reachability: "unavailable" });
         })
         .finally(() => {
