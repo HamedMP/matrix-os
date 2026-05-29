@@ -450,6 +450,31 @@ describe("shell REST client", () => {
     ]);
   });
 
+  it("buffers fragmented enhanced keyboard protocol sequences", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    input.emit("data", "a\u001b[99");
+    input.emit("data", ";5ub");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "a" },
+      { type: "input", data: "\u001b[99;5ub" },
+    ]);
+  });
+
   it("buffers fragmented SGR mouse sequences instead of forwarding partial escape bytes", async () => {
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
     const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
