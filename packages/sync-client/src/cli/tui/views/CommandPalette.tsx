@@ -6,8 +6,8 @@ function actionDescription(action: TuiAction): string {
   return action.intents[0] ?? action.aliases[0] ?? action.group;
 }
 
-function paddedTitle(title: string): string {
-  return title.length >= 34 ? `${title}  ` : title.padEnd(34);
+function paddedTitle(title: string, targetWidth: number): string {
+  return title.length >= targetWidth ? `${title}  ` : title.padEnd(targetWidth);
 }
 
 export function CommandPalette({
@@ -24,6 +24,7 @@ export function CommandPalette({
   noColor?: boolean;
 }) {
   const width = Math.min(Math.max(1, columns), 76);
+  const titleColumnWidth = Math.min(34, Math.max(1, Math.floor((width - 4) / 2)));
 
   return (
     <Box borderStyle="single" borderColor={noColor ? undefined : "cyan"} flexDirection="column" paddingX={1} paddingY={1} width={width}>
@@ -35,7 +36,7 @@ export function CommandPalette({
       {results.map((action, index) => (
         <Box key={action.id} marginTop={1} flexDirection="column">
           <Text color={noColor ? undefined : index === selectedIndex ? "yellow" : undefined}>
-            {index === selectedIndex ? "> " : "  "}{paddedTitle(action.title)}{action.group}
+            {index === selectedIndex ? "> " : "  "}{paddedTitle(action.title, titleColumnWidth)}{action.group}
           </Text>
           <Text color={noColor ? undefined : "gray"}>
             {"    "}{actionDescription(action)}

@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToString } from "ink";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TUI_ACTIONS } from "../../src/cli/tui/actions.js";
+import { DEFAULT_TUI_ACTIONS, type TuiAction } from "../../src/cli/tui/actions.js";
 import { searchTuiActions } from "../../src/cli/tui/palette.js";
 import { CommandPalette } from "../../src/cli/tui/views/CommandPalette.js";
 
@@ -39,5 +39,21 @@ describe("command palette", () => {
     for (const line of output.split("\n")) {
       expect(line.length).toBeLessThanOrEqual(32);
     }
+  });
+
+  it("uses narrower title padding in compact palettes", () => {
+    const compactAction: TuiAction = {
+      id: "test.open",
+      title: "Open",
+      group: "Utility",
+      aliases: ["open"],
+      intents: ["open command"],
+      danger: "none",
+      handler: "view",
+    };
+
+    const output = renderToString(<CommandPalette results={[compactAction]} query="open" selectedIndex={0} columns={32} noColor />);
+
+    expect(output).toContain("> Open          Utility");
   });
 });
