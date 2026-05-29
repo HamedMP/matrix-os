@@ -1,5 +1,6 @@
 import posthog from "posthog-js";
 import {
+  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
@@ -22,5 +23,6 @@ if (config) {
     defaults: "2026-01-30",
     capture_exceptions: true,
     debug: process.env.NODE_ENV === "development",
+    ...buildPostHogCookieConsentInitOptions(document.documentElement.dataset.posthogVisitorCountry),
   } as PostHogInitOptions);
 }
