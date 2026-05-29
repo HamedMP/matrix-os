@@ -332,6 +332,8 @@ Read these on demand, not every session:
 - Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
 - TypeScript 5.5+ strict, ES modules, Node.js 24+ + citty, Ink + React, ws, Zod 4, existing sync-client/gateway command clients (084-matrix-cli-tui)
 - Existing `~/.matrixos` profile/auth/config files plus owner-readable TUI preferences; no new database (084-matrix-cli-tui)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19 for Ink TUI components + `ink`, React 19, existing `@finnaai/matrix` CLI stack (`citty`, `tsx`), existing shell client, existing gateway shell/session routes, Zod 4 via `zod/v4` for any new schemas (085-cli-tui-action-console)
+- Owner-controlled Matrix home files for remote setup state/imported agent config; local CLI profile/config files under `~/.matrixos/`; selected local source directories such as `~/.codex`, `~/.claude`, `~/.agent`, and `~/.agents` are read-only inputs until explicit confirmation (085-cli-tui-action-console)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -356,5 +358,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/084-matrix-cli-tui/plan.md`.
+Current Spec Kit plan: `specs/085-cli-tui-action-console/plan.md`.
 <!-- SPECKIT END -->
