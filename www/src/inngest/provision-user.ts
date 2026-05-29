@@ -19,13 +19,24 @@ export const provisionUser = inngest.createFunction(
     const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
     const posthog = getPostHogClient();
 
-    posthog.capture({
-      distinctId: user.id,
-      event: MATRIX_TELEMETRY_EVENTS.USER_SIGNED_UP,
-      properties: {
-        handle,
-        source: "clerk_signup",
-      },
+    await step.run("record-signup", async () => {
+      posthog.capture({
+        distinctId: user.id,
+        event: MATRIX_TELEMETRY_EVENTS.USER_SIGNED_UP,
+        properties: {
+          handle,
+          source: "clerk_signup",
+        },
+      });
+
+      posthog.identify({
+        distinctId: user.id,
+        properties: {
+          handle,
+          email: user.email_addresses?.[0]?.email_address,
+          created_via: "clerk_signup",
+        },
+      });
     });
 
     posthog.capture({
@@ -34,15 +45,6 @@ export const provisionUser = inngest.createFunction(
       properties: {
         handle,
         source: "inngest",
-      },
-    });
-
-    posthog.identify({
-      distinctId: user.id,
-      properties: {
-        handle,
-        email: user.email_addresses?.[0]?.email_address,
-        created_via: "clerk_signup",
       },
     });
 
