@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { MATRIX_TELEMETRY_EVENTS } from "../../packages/observability/src/events.js";
 
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
@@ -185,6 +186,7 @@ describe("useSocket heartbeat and resilience", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.doUnmock("@/lib/posthog-client");
     vi.unstubAllGlobals();
   });
 
@@ -243,5 +245,26 @@ describe("useSocket heartbeat and resilience", () => {
     const msgs = ws2.sent.map((s) => JSON.parse(s));
     const queued = msgs.filter((m: { text?: string }) => m.text === "queued1" || m.text === "queued2");
     expect(queued).toHaveLength(2);
+  });
+
+  it("captures websocket reconnect and connected telemetry", async () => {
+    vi.resetModules();
+    const capturePostHogEvent = vi.fn();
+    vi.doMock("@/lib/posthog-client", () => ({
+      capturePostHogEvent,
+      capturePostHogException: vi.fn(),
+    }));
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("document", { addEventListener: vi.fn(), visibilityState: "visible" });
+
+    const { ensureConnected } = await import("../../shell/src/hooks/useSocket.js");
+    ensureConnected();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(capturePostHogEvent).toHaveBeenCalledWith(
+      MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED,
+      expect.objectContaining({ attempt: 0, visibility: "visible" }),
+    );
+    expect(capturePostHogEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.SHELL_WS_CONNECTED);
   });
 });

@@ -4,7 +4,9 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
+import { capturePostHogEvent } from "@/lib/posthog-client";
 import { useConnectionHealth } from "./useConnectionHealth";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
@@ -71,6 +73,12 @@ function connect() {
   if (globalSocket?.readyState === WebSocket.OPEN) return;
   if (globalSocket?.readyState === WebSocket.CONNECTING) return;
 
+  if (connectionState !== "reconnecting") {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED, {
+      attempt: reconnectAttempt,
+      visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
+    });
+  }
   setConnectionState("reconnecting");
   void buildAuthenticatedWebSocketUrl("/ws")
     .catch((err: unknown) => {
@@ -90,6 +98,7 @@ function connect() {
       globalSocket.onopen = () => {
         reconnectAttempt = 0;
         setConnectionState("connected");
+        capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_CONNECTED);
         heartbeat.start();
         drainQueue();
       };
@@ -113,6 +122,10 @@ function connect() {
         heartbeat.stop();
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
           setConnectionState("disconnected");
+          capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_EXHAUSTED, {
+            attempts: reconnectAttempt,
+            visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
+          });
           return;
         }
         setConnectionState("reconnecting");

@@ -9,7 +9,9 @@ export function isPhoneViewport(width: number): boolean {
 }
 
 export function useMobileViewport(): boolean {
-  const [mobile, setMobile] = useState(false);
+  const [mobile, setMobile] = useState(() => (
+    typeof window !== "undefined" && isPhoneViewport(window.innerWidth)
+  ));
 
   useEffect(() => {
     const update = () => setMobile(isPhoneViewport(window.innerWidth));
