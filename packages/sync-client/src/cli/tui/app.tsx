@@ -101,7 +101,15 @@ export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnap
   }
 
   if (paletteOpen) {
-    return <CommandPalette results={paletteResults} query={paletteQuery} selectedIndex={selectedIndex} noColor={capabilities.noColor} />;
+    return (
+      <CommandPalette
+        results={paletteResults}
+        query={paletteQuery}
+        selectedIndex={selectedIndex}
+        columns={capabilities.columns}
+        noColor={capabilities.noColor}
+      />
+    );
   }
 
   return <HomeView snapshot={snapshot} columns={capabilities.columns} noColor={capabilities.noColor} />;

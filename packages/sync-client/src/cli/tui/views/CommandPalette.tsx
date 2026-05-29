@@ -14,15 +14,19 @@ export function CommandPalette({
   results,
   query,
   selectedIndex = 0,
+  columns = 80,
   noColor = false,
 }: {
   results: readonly TuiAction[];
   query: string;
   selectedIndex?: number;
+  columns?: number;
   noColor?: boolean;
 }) {
+  const width = Math.min(Math.max(1, columns), 76);
+
   return (
-    <Box borderStyle="single" borderColor={noColor ? undefined : "cyan"} flexDirection="column" paddingX={1} paddingY={1} width={76}>
+    <Box borderStyle="single" borderColor={noColor ? undefined : "cyan"} flexDirection="column" paddingX={1} paddingY={1} width={width}>
       <Box justifyContent="space-between">
         <Text bold color={noColor ? undefined : "cyan"}>MATRIX COMMANDS</Text>
         <Text color={noColor ? undefined : "gray"}>esc closes</Text>

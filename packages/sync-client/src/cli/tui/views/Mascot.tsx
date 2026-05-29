@@ -25,8 +25,8 @@ export function Mascot({ state, noColor, compact = false }: { state: TuiOverallS
 
   return (
     <Box flexDirection="column" alignItems="center">
-      {RABBIT_ART.map((line) => (
-        <Text key={line} color={color}>{line}</Text>
+      {RABBIT_ART.map((line, index) => (
+        <Text key={index} color={color}>{line}</Text>
       ))}
     </Box>
   );

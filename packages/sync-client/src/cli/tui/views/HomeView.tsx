@@ -45,8 +45,8 @@ export function HomeView({
       <Box flexDirection="column" alignItems="center" marginBottom={1}>
         {!narrow ? (
           <>
-            {WORDMARK.map((line) => (
-              <Text key={line} bold color={noColor ? undefined : "cyan"}>{line}</Text>
+            {WORDMARK.map((line, index) => (
+              <Text key={index} bold color={noColor ? undefined : "cyan"}>{line}</Text>
             ))}
             <Text color={noColor ? undefined : "gray"}>MATRIX OS</Text>
           </>

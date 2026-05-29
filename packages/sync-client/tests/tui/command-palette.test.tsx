@@ -31,4 +31,13 @@ describe("command palette", () => {
     expect(output).toContain("> Run doctor");
     expect(output).not.toContain("\u001B[");
   });
+
+  it("caps palette width to the terminal columns", () => {
+    const results = searchTuiActions(DEFAULT_TUI_ACTIONS, "session", 8);
+    const output = renderToString(<CommandPalette results={results} query="session" selectedIndex={0} columns={32} noColor />);
+
+    for (const line of output.split("\n")) {
+      expect(line.length).toBeLessThanOrEqual(32);
+    }
+  });
 });
