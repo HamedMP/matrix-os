@@ -97,7 +97,7 @@ export function requiresPostHogCookieConsent(countryCode: string | null | undefi
 
 export function buildPostHogCookieConsentInitOptions(
   countryCode: string | null | undefined,
-): Record<string, "on_reject"> {
+): { cookieless_mode?: "on_reject" } {
   return requiresPostHogCookieConsent(countryCode) ? { cookieless_mode: "on_reject" } : {};
 }
 

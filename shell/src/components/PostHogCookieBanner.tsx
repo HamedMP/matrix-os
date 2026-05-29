@@ -8,6 +8,7 @@ import {
 } from "@matrix-os/observability/client";
 
 type ConsentStatus = "pending" | "granted" | "denied" | "unknown";
+type PostHogLoadState = { __loaded?: boolean };
 
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
@@ -22,7 +23,25 @@ export function PostHogCookieBanner({ visitorCountry }: { visitorCountry: string
 
   useEffect(() => {
     if (!config || !consentRequired) return;
-    setConsentStatus(posthog.get_explicit_consent_status() ?? "pending");
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
+    function refreshConsentStatus() {
+      if (cancelled) return;
+      if (!(posthog as PostHogLoadState).__loaded) {
+        timeout = setTimeout(refreshConsentStatus, 100);
+        return;
+      }
+      setConsentStatus(posthog.get_explicit_consent_status() ?? "pending");
+    }
+
+    refreshConsentStatus();
+
+    return () => {
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+    };
   }, [consentRequired]);
 
   if (!config || !consentRequired || consentStatus !== "pending") return null;
@@ -42,6 +61,7 @@ export function PostHogCookieBanner({ visitorCountry }: { visitorCountry: string
           type="button"
           className="rounded-md border border-white/20 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
           onClick={() => {
+            if (!(posthog as PostHogLoadState).__loaded) return;
             posthog.opt_out_capturing();
             setConsentStatus("denied");
           }}
@@ -52,6 +72,7 @@ export function PostHogCookieBanner({ visitorCountry }: { visitorCountry: string
           type="button"
           className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-[#101411] transition hover:bg-white/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
           onClick={() => {
+            if (!(posthog as PostHogLoadState).__loaded) return;
             posthog.opt_in_capturing();
             setConsentStatus("granted");
           }}
