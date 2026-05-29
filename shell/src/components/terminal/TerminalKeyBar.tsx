@@ -143,6 +143,7 @@ export function TerminalKeyBar({
           gap: 4,
           overflowX: "auto",
           WebkitOverflowScrolling: "touch",
+          touchAction: "pan-x",
         }}
       >
         {visible.map((k) => (
