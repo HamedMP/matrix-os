@@ -52,8 +52,8 @@ export function HomeView({
               <Text color={noColor ? undefined : "cyan"}>|</Text>
             </Box>
             <Box flexDirection="column" paddingX={1} paddingY={1}>
-              <Text color={noColor ? undefined : "gray"}>{'Ask Hermes... "review my current PR"'}</Text>
-              <Text color={noColor ? undefined : "cyan"}>Build    Hermes    Codex    Shell</Text>
+              <Text color={noColor ? undefined : "gray"}>{'Ask Matrix... "review my current PR"'}</Text>
+              <Text color={noColor ? undefined : "cyan"}>Build    Matrix    Codex    Shell</Text>
               <Text color={noColor ? undefined : "gray"}>/ commands    tab agents    s sessions    q quit</Text>
             </Box>
           </Box>

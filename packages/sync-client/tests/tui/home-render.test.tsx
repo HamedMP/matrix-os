@@ -24,7 +24,8 @@ describe("HomeView", () => {
     expect(output).not.toContain("M   M   A   TTTTT");
     expect(output).toContain(".@@@@oo.o@@@.");
     expect(output).toContain("@@@@@@@@@@@@@@@");
-    expect(output).toContain("Ask Hermes");
+    expect(output).toContain("Ask Matrix");
+    expect(output).toContain("Build    Matrix");
     expect(output).toContain("q quit");
     expect(output).toContain("cloud");
     expect(output).toContain("2 sessions");
@@ -44,7 +45,7 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={80} noColor />);
 
     expect(output).toContain(".@@@@oo.o@@@.");
-    expect(output).toContain("Ask Hermes");
+    expect(output).toContain("Ask Matrix");
     expect(output).toContain("healthy · cloud · ok · 2 sessions");
   });
 
@@ -52,7 +53,7 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={60} noColor />);
 
     expect(output).toContain("MATRIX OS");
-    expect(output).toContain("Ask Hermes");
+    expect(output).toContain("Ask Matrix");
     expect(output).toContain("cloud");
     expect(output).toContain("rabbit: .@@. @@@");
     expect(output).not.toContain(".@@@@oo.o@@@.");
