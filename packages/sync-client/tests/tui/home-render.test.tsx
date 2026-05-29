@@ -21,6 +21,7 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor={false} />);
 
     expect(output).toContain("MATRIX OS");
+    expect(output).not.toContain("M   M   A   TTTTT");
     expect(output).toContain(".@@@@oo.o@@@.");
     expect(output).toContain("@@@@@@@@@@@@@@@");
     expect(output).toContain("Ask Hermes");

@@ -3,14 +3,6 @@ import { Box, Text } from "ink";
 import { Mascot } from "./Mascot.js";
 import type { TuiStatusSnapshot } from "../status.js";
 
-const WORDMARK = [
-  "M   M   A   TTTTT RRRR  III X   X    OOO   SSS",
-  "MM MM  A A    T   R   R  I   X X    O   O S",
-  "M M M AAAAA   T   RRRR   I    X     O   O  SSS",
-  "M   M A   A   T   R  R   I   X X    O   O     S",
-  "M   M A   A   T   R   R III X   X    OOO  SSS",
-];
-
 function stateLabel(snapshot: TuiStatusSnapshot): string {
   if (snapshot.overall === "unauthenticated") {
     return "login required";
@@ -44,16 +36,7 @@ export function HomeView({
   return (
     <Box flexDirection="column" width={stageWidth} alignItems="center">
       <Box flexDirection="column" alignItems="center" marginBottom={1}>
-        {!narrow ? (
-          <>
-            {WORDMARK.map((line, index) => (
-              <Text key={index} bold color={noColor ? undefined : "cyan"}>{line}</Text>
-            ))}
-            <Text color={noColor ? undefined : "gray"}>MATRIX OS</Text>
-          </>
-        ) : (
-          <Text bold color={noColor ? undefined : "cyan"}>MATRIX OS</Text>
-        )}
+        <Text bold color={noColor ? undefined : "cyan"}>MATRIX OS</Text>
       </Box>
 
       {!narrow && !extraWide && (
