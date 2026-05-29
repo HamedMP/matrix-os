@@ -17,28 +17,42 @@ const baseSnapshot: TuiStatusSnapshot = {
 };
 
 describe("HomeView", () => {
-  it("renders prompt-first Matrix OS home with compact status", () => {
+  it("renders wide Matrix OS launcher with rabbit art, prompt, shortcuts, and status", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor={false} />);
 
-    expect(output).toContain("Matrix OS");
+    expect(output).toContain("MATRIX OS");
+    expect(output).toContain("/\\_/\\");
     expect(output).toContain("Ask Hermes");
+    expect(output).toContain("q quit");
     expect(output).toContain("cloud");
     expect(output).toContain("2 sessions");
-    expect(output).toContain("/ commands");
+    expect(output).toContain("healthy · cloud · ok · 2 sessions");
   });
 
-  it("keeps no-color output understandable", () => {
+  it("keeps no-color home output understandable without ANSI escapes", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor />);
 
+    expect(output).toContain("MATRIX OS");
+    expect(output).toContain("/\\_/\\");
     expect(output).toContain("healthy");
     expect(output).not.toContain("\u001B[");
   });
 
-  it("hides mascot and preserves critical text in narrow terminals", () => {
+  it("keeps large rabbit art readable on normal-width terminals", () => {
+    const output = renderToString(<HomeView snapshot={baseSnapshot} columns={80} noColor />);
+
+    expect(output).toContain("/| MATRIX |\\");
+    expect(output).toContain("Ask Hermes");
+    expect(output).toContain("healthy · cloud · ok · 2 sessions");
+  });
+
+  it("hides large art and preserves critical prompt/status text in narrow terminals", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={60} noColor />);
 
+    expect(output).toContain("MATRIX OS");
     expect(output).toContain("Ask Hermes");
     expect(output).toContain("cloud");
-    expect(output).not.toContain("rabbit");
+    expect(output).toContain("rabbit: /\\_/\\");
+    expect(output).not.toContain("/| MATRIX |\\");
   });
 });

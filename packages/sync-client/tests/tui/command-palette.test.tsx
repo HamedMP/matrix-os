@@ -15,10 +15,20 @@ describe("command palette", () => {
 
   it("renders filtered commands with the selected row highlighted", () => {
     const results = searchTuiActions(DEFAULT_TUI_ACTIONS, "session", 8);
-    const output = renderToString(<CommandPalette results={results} query="session" selectedIndex={0} noColor />);
+    const output = renderToString(<CommandPalette results={results} query="session" selectedIndex={1} noColor />);
 
-    expect(output).toContain("Command Palette");
-    expect(output).toContain("Open shell sessions");
+    expect(output).toContain("MATRIX COMMANDS");
+    expect(output).toContain("> Open shell sessions");
     expect(output).toContain("Shell and Remote Run");
+    expect(output).toContain("attach to a session");
+  });
+
+  it("keeps no-color palette readable without ANSI escapes", () => {
+    const results = searchTuiActions(DEFAULT_TUI_ACTIONS, "doctor", 8);
+    const output = renderToString(<CommandPalette results={results} query="doctor" selectedIndex={0} noColor />);
+
+    expect(output).toContain("/doctor");
+    expect(output).toContain("> Run doctor");
+    expect(output).not.toContain("\u001B[");
   });
 });
