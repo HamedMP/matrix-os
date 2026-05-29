@@ -3,12 +3,19 @@ import { Box, Text } from "ink";
 import type { TuiOverallState } from "../status.js";
 
 const RABBIT_ART = [
-  "     /\\_/\\",
-  "    ( o.o )",
-  "     > ^ <",
-  "   /| MATRIX |\\",
-  "  /_|__OS___|_\\",
+  "        /\\        /\\",
+  "       /##\\______/##\\",
+  "      /##############\\",
+  "     |###  []  []  ###|",
+  "     |###    __    ###|",
+  "   __|###  MATRIX  ###|__",
+  "  /##|###    OS    ###|##\\",
+  " |###|##############|###|",
+  "  \\##|__[]______[]__|##/",
+  "      /__/      \\__\\",
 ];
+
+const COMPACT_RABBIT = "rabbit: /##\\_[]_/##\\";
 
 function mascotColor(state: TuiOverallState): "green" | "yellow" | "cyan" {
   if (state === "healthy") return "green";
@@ -20,7 +27,7 @@ export function Mascot({ state, noColor, compact = false }: { state: TuiOverallS
   const color = noColor ? undefined : mascotColor(state);
 
   if (compact) {
-    return <Text color={color}>{"rabbit: /\\_/\\"}</Text>;
+    return <Text color={color}>{COMPACT_RABBIT}</Text>;
   }
 
   return (

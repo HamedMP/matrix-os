@@ -21,7 +21,9 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor={false} />);
 
     expect(output).toContain("MATRIX OS");
-    expect(output).toContain("/\\_/\\");
+    expect(output).toContain("/##\\______/##\\");
+    expect(output).toContain("MATRIX");
+    expect(output).toContain("OS");
     expect(output).toContain("Ask Hermes");
     expect(output).toContain("q quit");
     expect(output).toContain("cloud");
@@ -33,7 +35,7 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor />);
 
     expect(output).toContain("MATRIX OS");
-    expect(output).toContain("/\\_/\\");
+    expect(output).toContain("/##\\______/##\\");
     expect(output).toContain("healthy");
     expect(output).not.toContain("\u001B[");
   });
@@ -41,7 +43,7 @@ describe("HomeView", () => {
   it("keeps large rabbit art readable on normal-width terminals", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={80} noColor />);
 
-    expect(output).toContain("/| MATRIX |\\");
+    expect(output).toContain("|###  MATRIX  ###|");
     expect(output).toContain("Ask Hermes");
     expect(output).toContain("healthy · cloud · ok · 2 sessions");
   });
@@ -52,7 +54,7 @@ describe("HomeView", () => {
     expect(output).toContain("MATRIX OS");
     expect(output).toContain("Ask Hermes");
     expect(output).toContain("cloud");
-    expect(output).toContain("rabbit: /\\_/\\");
-    expect(output).not.toContain("/| MATRIX |\\");
+    expect(output).toContain("rabbit: /##\\_[]_/##\\");
+    expect(output).not.toContain("|###  MATRIX  ###|");
   });
 });
