@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { PricingTable, SignInButton, useAuth } from "@clerk/nextjs";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CreditCardIcon, Loader2Icon, LogInIcon } from "lucide-react";
+import { Loader2Icon, LogInIcon } from "lucide-react";
 import {
-  MATRIX_BILLING_PLAN,
   getMatrixBillingSuccessRedirectUrl,
   hasMatrixBillingAccess,
 } from "@/lib/billing";
-import { useBillingRedirectUrl } from "@/hooks/useBillingRedirectUrl";
+import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
+import { Settings } from "./Settings";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "matrix.billing.checkoutAttemptAt";
 const CHECKOUT_ATTEMPT_MAX_AGE_MS = 30 * 60 * 1000;
+const DEFAULT_SIGN_IN_URL = "https://matrix-os.com/login";
 
 function logCheckoutStorageError(action: "read" | "write", error: unknown): void {
   if (error instanceof Error) {
@@ -29,6 +30,10 @@ function rememberBillingCheckoutAttempt(): void {
 
   try {
     window.sessionStorage.setItem(CHECKOUT_ATTEMPT_STORAGE_KEY, String(Date.now()));
+    capturePostHogEvent("billing_checkout_attempt_remembered", {
+      surface: "shell",
+      source: "billing_gate",
+    });
   } catch (error) {
     logCheckoutStorageError("write", error);
   }
@@ -49,89 +54,63 @@ function hasRecentBillingCheckoutAttempt(): boolean {
   }
 }
 
-function BillingTableFallback() {
-  return (
-    <div className="flex min-h-48 items-center justify-center rounded-lg border border-border/50 bg-card/60">
-      <Loader2Icon className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
-    </div>
-  );
-}
-
 function BillingRequired() {
-  const redirectUrl = useBillingRedirectUrl();
-
   return (
-    <main className="min-h-screen overflow-y-auto bg-background px-4 py-10 text-foreground">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-        <section className="rounded-xl border border-border/60 bg-card/95 p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium text-primary">
-                <CreditCardIcon className="size-4" aria-hidden="true" />
-                <span>Matrix OS billing</span>
-              </div>
-              <h1 className="text-2xl font-semibold tracking-normal">
-                Choose the early adopter plan to continue
-              </h1>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Matrix OS is available to signed-in early adopters while the paid beta opens.
-                Subscribe with Clerk Billing to unlock the shell on this account.
-              </p>
-            </div>
-            <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
-              Plan: <span className="font-medium">{MATRIX_BILLING_PLAN}</span>
-            </div>
-          </div>
-        </section>
-
-        <section
-          className="rounded-xl border border-border/60 bg-card/95 p-4 shadow-sm"
-          onPointerDownCapture={rememberBillingCheckoutAttempt}
-          onKeyDownCapture={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              rememberBillingCheckoutAttempt();
-            }
-          }}
-        >
-          {redirectUrl ? (
-            <PricingTable
-              for="user"
-              newSubscriptionRedirectUrl={redirectUrl}
-              fallback={<BillingTableFallback />}
-            />
-          ) : (
-            <BillingTableFallback />
-          )}
-        </section>
-      </div>
-    </main>
+    <Settings
+      open
+      onOpenChange={() => {}}
+      defaultSection="billing"
+      lockedSection="billing"
+      billingActiveOverride={false}
+      closeDisabled
+      billingMode="provisioning"
+      onBillingCheckoutIntent={rememberBillingCheckoutAttempt}
+    />
   );
 }
 
-function SignInRequired() {
+function getSignInRedirectUrl(): string {
+  const configuredSignInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? DEFAULT_SIGN_IN_URL;
+  const currentUrl =
+    typeof window !== "undefined"
+      ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+      : "/";
+  const appOrigin =
+    typeof window !== "undefined" && window.location.origin
+      ? window.location.origin
+      : "https://app.matrix-os.com";
+  const signInUrl = new URL(configuredSignInUrl, appOrigin);
+  signInUrl.searchParams.set("redirect_url", new URL(currentUrl, appOrigin).toString());
+  return signInUrl.toString();
+}
+
+function SignInRedirecting() {
+  useEffect(() => {
+    window.location.assign(getSignInRedirectUrl());
+  }, []);
+
   return (
-    <main className="min-h-screen overflow-y-auto bg-background px-4 py-10 text-foreground">
-      <section className="mx-auto flex w-full max-w-3xl flex-col gap-5 rounded-xl border border-border/60 bg-card/95 p-6 shadow-sm">
-        <div className="flex items-center gap-2 text-sm font-medium text-primary">
-          <LogInIcon className="size-4" aria-hidden="true" />
-          <span>Matrix OS billing</span>
+    <main className="flex min-h-screen items-center justify-center bg-page-bg px-4 text-deep">
+      <section className="relative flex w-full max-w-md flex-col items-center gap-5 overflow-hidden rounded-3xl border border-forest/15 bg-white p-8 text-center shadow-[0_40px_120px_rgba(50,53,46,0.15)]">
+        <div
+          className="pointer-events-none absolute -right-20 -top-20 size-60 rounded-full opacity-60 blur-3xl"
+          style={{
+            background:
+              "radial-gradient(circle, color-mix(in srgb, var(--ember) 22%, transparent), transparent 70%)",
+          }}
+          aria-hidden="true"
+        />
+        <div className="relative flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-cream/50 shadow-sm">
+          <LogInIcon className="size-6 text-ember" aria-hidden="true" />
         </div>
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-normal">Sign in to continue</h1>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Matrix OS checks your Clerk account for the early adopter plan before opening
-            the shell.
+        <div className="relative space-y-2">
+          <h1 className="text-xl font-semibold tracking-tight text-deep">
+            Opening Matrix OS sign in
+          </h1>
+          <p className="text-sm leading-6 text-forest/75">
+            Redirecting to matrix-os.com so signup stays in one place.
           </p>
         </div>
-        <SignInButton mode="modal">
-          <button
-            type="button"
-            className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <LogInIcon className="size-4" aria-hidden="true" />
-            Sign in
-          </button>
-        </SignInButton>
       </section>
     </main>
   );
@@ -139,28 +118,43 @@ function SignInRequired() {
 
 function SubscriptionConfirmationPending() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
-      <section className="flex w-full max-w-xl flex-col gap-4 rounded-xl border border-border/60 bg-card/95 p-6 shadow-sm">
-        <div className="flex items-center gap-2 text-sm font-medium text-primary">
-          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
-          <span>Matrix OS billing</span>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-deep/30 px-4 py-8 text-deep backdrop-blur-md">
+      <section className="relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl border border-forest/15 bg-page-bg/95 shadow-[0_40px_120px_rgba(50,53,46,0.35)]">
+        <div
+          className="pointer-events-none absolute -right-20 -top-20 size-60 rounded-full opacity-60 blur-3xl"
+          style={{
+            background:
+              "radial-gradient(circle, color-mix(in srgb, var(--ember) 22%, transparent), transparent 70%)",
+          }}
+          aria-hidden="true"
+        />
+
+        <div className="relative flex flex-col items-center gap-5 p-8 text-center">
+          <div className="flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-white shadow-sm">
+            <Loader2Icon className="size-6 animate-spin text-ember" aria-hidden="true" />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
+              Matrix OS · Billing
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight text-deep">
+              Confirming your subscription
+            </h1>
+            <p className="mx-auto max-w-xs text-sm leading-6 text-forest/75">
+              Clerk is activating billing for your Matrix computer. This usually takes a few
+              seconds — your shell will open automatically.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.assign(getMatrixBillingSuccessRedirectUrl())}
+            className="inline-flex h-10 items-center rounded-xl border border-forest/15 bg-white px-5 text-sm font-semibold text-forest transition-colors hover:bg-cream/60"
+          >
+            Refresh status
+          </button>
         </div>
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-normal">Confirming your subscription</h1>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Clerk is updating your early adopter access. Refresh the shell in a moment if it
-            does not open automatically.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => window.location.assign(getMatrixBillingSuccessRedirectUrl())}
-          className="inline-flex h-10 w-fit items-center rounded-md border border-border/60 px-4 text-sm font-medium hover:bg-muted/50"
-        >
-          Refresh status
-        </button>
       </section>
-    </main>
+    </div>
   );
 }
 
@@ -172,6 +166,7 @@ export function BillingGate({ children }: { children: ReactNode }) {
   const hasBillingAccess = isSignedIn ? hasMatrixBillingAccess(has) : false;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
+  const lastTrackedState = useRef<string | null>(null);
 
   useEffect(() => {
     if (!checkoutReturnRequested) {
@@ -186,9 +181,38 @@ export function BillingGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (hasBillingAccess && checkoutReturnRequested) {
+      capturePostHogEvent("billing_checkout_confirmed", {
+        surface: "shell",
+        source: "billing_gate",
+      });
       router.replace("/");
     }
   }, [checkoutReturnRequested, hasBillingAccess, router]);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    const state = !isSignedIn
+      ? "signed_out"
+      : hasBillingAccess
+        ? "billing_active"
+        : checkoutReturnRequested
+          ? "checkout_return_pending"
+          : "billing_required";
+    if (lastTrackedState.current === state) return;
+    lastTrackedState.current = state;
+    capturePostHogEvent("shell_access_state_changed", {
+      surface: "shell",
+      source: "billing_gate",
+      access_state: state,
+      checkout_return_requested: checkoutReturnRequested,
+    });
+    capturePostHogLog("info", `shell access ${state}`, {
+      surface: "shell",
+      source: "billing_gate",
+      access_state: state,
+      checkout_return_requested: checkoutReturnRequested,
+    });
+  }, [checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
@@ -196,9 +220,9 @@ export function BillingGate({ children }: { children: ReactNode }) {
 
   if (!isLoaded) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+      <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
         <div className="flex items-center gap-2 text-sm" role="status">
-          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Loading billing status
         </div>
       </main>
@@ -206,14 +230,14 @@ export function BillingGate({ children }: { children: ReactNode }) {
   }
 
   if (!isSignedIn) {
-    return <SignInRequired />;
+    return <SignInRedirecting />;
   }
 
   if (!hasBillingAccess && checkoutReturnRequested && !checkoutAttemptChecked) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+      <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
         <div className="flex items-center gap-2 text-sm" role="status">
-          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Checking billing status...
         </div>
       </main>
@@ -222,10 +246,24 @@ export function BillingGate({ children }: { children: ReactNode }) {
 
   if (!hasBillingAccess) {
     if (checkoutJustCompleted) {
-      return <SubscriptionConfirmationPending />;
+      return (
+        <>
+          <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
+            {children}
+          </div>
+          <SubscriptionConfirmationPending />
+        </>
+      );
     }
 
-    return <BillingRequired />;
+    return (
+      <>
+        <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
+          {children}
+        </div>
+        <BillingRequired />
+      </>
+    );
   }
 
   return <>{children}</>;

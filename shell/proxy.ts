@@ -10,6 +10,7 @@ const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
 const platformUpgradeToken = process.env.UPGRADE_TOKEN;
+const configuredSignInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
 
 interface ProxyRequestLike {
   headers: Headers;
@@ -91,7 +92,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
     const { userId } = await auth();
     if (!userId) {
       const publicOrigin = getPublicOrigin(request);
-      const signInUrl = new URL("/sign-in", publicOrigin);
+      const signInUrl = new URL(configuredSignInUrl ?? "/sign-in", publicOrigin);
       const redirectUrl = new URL(
         `${request.nextUrl.pathname}${request.nextUrl.search}`,
         publicOrigin,

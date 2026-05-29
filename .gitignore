@@ -139,3 +139,4 @@ paper/*.blg
 paper/*.log
 paper/*.out
 paper/*.pdf
+.gstack/

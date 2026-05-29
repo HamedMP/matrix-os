@@ -7,6 +7,7 @@ import {
 } from "../../packages/platform/src/db.js";
 import { createOrchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createApp } from "../../packages/platform/src/main.js";
+import { createAuthRoutes } from "../../packages/platform/src/auth-routes.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
 
@@ -647,6 +648,36 @@ describe("device routes", () => {
 
       expect(res.status).toBe(401);
       await expect(res.json()).resolves.toEqual({ error: "unauthorized" });
+    });
+
+    it("emits telemetry when rejecting a sync JWT for a cross-user handle lookup", async () => {
+      const captureEvent = vi.fn();
+      const authApp = createAuthRoutes({
+        db,
+        jwtSecret: JWT_SECRET,
+        platformUrl: "https://app.matrix-os.com",
+        gatewayUrlForHandle: () => "https://app.matrix-os.com",
+        captureEvent,
+      });
+      const issued = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_mallory",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+
+      const res = await authApp.request("/api/me", {
+        headers: { authorization: `Bearer ${issued.token}` },
+      });
+
+      expect(res.status).toBe(401);
+      expect(captureEvent).toHaveBeenCalledWith(
+        "cli_runtime_lookup_unauthorized",
+        expect.objectContaining({
+          source: "platform-device-auth",
+          shell_surface: "cli_tui",
+        }),
+      );
     });
 
     it("rejects a sync JWT whose subject does not own the claimed VPS-native handle", async () => {

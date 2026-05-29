@@ -40,7 +40,7 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("surfaces the early adopter subscription state and Clerk pricing table", async () => {
+  it("surfaces the subscription state and Clerk pricing table", async () => {
     clerkState.isLoaded = true;
     clerkState.hasPlan = false;
 
@@ -51,7 +51,7 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    expect(screen.getByText("Early adopter access")).toBeTruthy();
+    expect(screen.getByText("Manage your hosted Matrix computer")).toBeTruthy();
     expect(screen.getByText("Not active")).toBeTruthy();
     expect((await screen.findByTestId("pricing-table")).getAttribute("data-for")).toBe(
       "user",
@@ -61,7 +61,36 @@ describe("BillingSection", () => {
     );
   });
 
-  it("marks early adopter as active when Clerk grants the plan", async () => {
+  it("uses provisioning copy when billing is shown before the hosted computer exists", async () => {
+    clerkState.isLoaded = true;
+    clerkState.hasPlan = false;
+
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
+
+    render(<BillingSection mode="provisioning" />);
+
+    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
+    expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
+    expect(screen.getAllByText("Computer").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("CPX22")).toBeTruthy();
+    expect(screen.getByText("$14")).toBeTruthy();
+    expect(screen.getAllByText("CPX32").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("$19").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("CPX52")).toBeTruthy();
+    expect(screen.getByText("$49")).toBeTruthy();
+    expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Closest location is selected automatically")).toBeTruthy();
+    expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("🇺🇸").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("ash")).toBeTruthy();
+    expect(screen.queryByText("sin")).toBeNull();
+    expect(screen.getByText("Start trial & provision")).toBeTruthy();
+    expect(await screen.findByTestId("pricing-table")).toBeTruthy();
+  });
+
+  it("marks billing as active when Clerk grants a paid plan", async () => {
     clerkState.isLoaded = true;
     clerkState.hasPlan = true;
 
@@ -73,7 +102,7 @@ describe("BillingSection", () => {
 
     expect(screen.getByText("Active")).toBeTruthy();
     expect(
-      screen.getByText("Your early adopter access is active for this Clerk account."),
+      screen.getByText("Billing is active for this Clerk account."),
     ).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import {
   PaletteIcon,
   UserIcon,
@@ -23,6 +24,7 @@ import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
 import { BillingSection } from "./settings/sections/BillingSection";
+import { hasMatrixBillingAccess } from "@/lib/billing";
 
 
 const sections = [
@@ -40,16 +42,20 @@ const sections = [
 
 type SectionId = typeof sections[number]["id"];
 
-function TrafficLights({ onClose }: { onClose: () => void }) {
+function TrafficLights({ onClose, closeDisabled = false }: { onClose: () => void; closeDisabled?: boolean }) {
   return (
     <div className="group/traffic flex items-center gap-1.5">
       <button
         onClick={(e) => {
           e.stopPropagation();
+          if (closeDisabled) return;
           onClose();
         }}
-        className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
+        className={`size-3 rounded-full bg-[#ff5f57] flex items-center justify-center transition-colors ${
+          closeDisabled ? "cursor-not-allowed opacity-45" : "hover:brightness-90"
+        }`}
         aria-label="Close"
+        disabled={closeDisabled}
       >
         <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
           x
@@ -76,10 +82,33 @@ function TrafficLights({ onClose }: { onClose: () => void }) {
 interface SettingsProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultSection?: SectionId;
+  lockedSection?: SectionId;
+  billingActiveOverride?: boolean | null;
+  closeDisabled?: boolean;
+  billingMode?: "settings" | "provisioning";
+  onBillingCheckoutIntent?: () => void;
 }
 
-export function Settings({ open, onOpenChange }: SettingsProps) {
-  const [activeSection, setActiveSection] = useState<SectionId>("appearance");
+export function Settings({
+  open,
+  onOpenChange,
+  defaultSection = "appearance",
+  lockedSection,
+  billingActiveOverride,
+  closeDisabled = false,
+  billingMode = "settings",
+  onBillingCheckoutIntent,
+}: SettingsProps) {
+  const [activeSection, setActiveSection] = useState<SectionId>(defaultSection);
+  const wasOpenRef = useRef(open);
+  const { isLoaded, has } = useAuth();
+  const billingActive =
+    billingActiveOverride !== undefined
+      ? billingActiveOverride
+      : isLoaded
+        ? hasMatrixBillingAccess(has)
+        : null;
 
   // Delayed unmount so the exit animation has time to play. `visible`
   // flips one frame after mount so the enter transition has a distinct
@@ -111,15 +140,27 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
   }, [open, onOpenChange]);
 
   useEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+
+    if (open && lockedSection) {
+      setActiveSection(lockedSection);
+      return;
+    }
+    if (justOpened && billingActive === false) {
+      setActiveSection("billing");
+      return;
+    }
     if (!open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset section on close
-      setActiveSection("appearance");
+      setActiveSection(defaultSection);
     }
-  }, [open]);
+  }, [billingActive, defaultSection, lockedSection, open]);
 
   if (!mounted) return null;
 
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
+  const isBillingSurface = activeSection === "billing";
 
   return (
     <div className="fixed inset-0 z-[45]">
@@ -130,13 +171,17 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
           transition: `opacity 300ms ${transitionEase}`,
         }}
         onClick={(e) => {
-          if (e.target === e.currentTarget) onOpenChange(false);
+          if (!closeDisabled && e.target === e.currentTarget) onOpenChange(false);
         }}
       />
 
-      <div className="relative flex items-center justify-center h-full z-10 overflow-hidden">
+      <div className="relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
         <div
-          className="flex flex-col w-[880px] max-w-[92vw] h-[680px] max-h-[88vh] bg-card/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden"
+          className={`flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl ${
+            isBillingSurface
+              ? "xl:h-[760px] xl:w-[1180px]"
+              : "lg:h-[680px] lg:w-[880px]"
+          }`}
           style={{
             opacity: visible ? 1 : 0,
             transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
@@ -144,36 +189,52 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
           }}
         >
           <header className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none">
-            <TrafficLights onClose={() => onOpenChange(false)} />
+            <TrafficLights closeDisabled={closeDisabled} onClose={() => onOpenChange(false)} />
             <h1 className="text-xs font-medium text-center flex-1">Settings</h1>
             <div className="w-[42px]" />
           </header>
 
-          <div className="flex flex-1 min-h-0">
-            <aside className="w-48 border-r border-border/40 bg-card/50 p-2 overflow-y-auto">
-              <nav className="flex flex-col gap-0.5">
+          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+            <aside className="w-full shrink-0 border-b border-border/40 bg-card/50 p-2 sm:w-48 sm:border-b-0 sm:border-r sm:overflow-y-auto">
+              <nav className="flex gap-1 overflow-x-auto pb-1 sm:flex-col sm:gap-0.5 sm:overflow-x-visible sm:pb-0">
                 {sections.map((section) => {
                   const Icon = section.icon;
                   const active = activeSection === section.id;
+                  const locked = Boolean(lockedSection && section.id !== lockedSection);
                   return (
                     <button
                       key={section.id}
-                      onClick={() => setActiveSection(section.id)}
-                      className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
+                      onClick={() => {
+                        if (!locked) setActiveSection(section.id);
+                      }}
+                      disabled={locked}
+                      aria-label={locked ? `${section.label} Locked until billing is active` : section.label}
+                      className={`flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
                         active
                           ? "bg-foreground/8 text-foreground font-medium"
-                          : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+                          : locked
+                            ? "cursor-not-allowed text-muted-foreground/45"
+                            : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
                       }`}
                     >
-                      <Icon className={`size-4 shrink-0 ${active ? "text-primary" : ""}`} />
+                      <Icon
+                        className={`size-4 shrink-0 ${
+                          active
+                            ? section.id === "billing"
+                              ? "text-ember"
+                              : "text-foreground"
+                            : ""
+                        }`}
+                      />
                       <span>{section.label}</span>
+                      {locked && <span className="sr-only">Locked until billing is active</span>}
                     </button>
                   );
                 })}
               </nav>
             </aside>
 
-            <main className="flex-1 overflow-y-auto">
+            <main className="min-w-0 flex-1 overflow-y-auto">
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "agent" && <AgentSection />}
               {activeSection === "channels" && <ChannelsSection />}
@@ -181,9 +242,14 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}
-              {activeSection === "billing" && <BillingSection />}
+              {activeSection === "billing" && (
+                <BillingSection
+                  mode={billingMode}
+                  onCheckoutIntent={onBillingCheckoutIntent}
+                />
+              )}
               {activeSection === "plugins" && <PluginsSection />}
-              {activeSection === "system" && <SystemSection />}
+              {activeSection === "system" && <SystemSection billingActive={billingActive !== false} />}
             </main>
           </div>
         </div>

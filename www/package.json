@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "6.39.0",
+    "@clerk/ui": "1.12.1",
     "@matrix-os/observability": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-popover": "^1.1.15",
