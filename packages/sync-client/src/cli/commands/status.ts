@@ -44,7 +44,7 @@ export const statusCommand = defineCommand({
       const auth = profile.token ? null : await loadProfileAuth(profile.name);
       const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
       const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-      const res = await fetch(`${profile.gatewayUrl}/api/health`, {
+      const res = await fetch(`${profile.gatewayUrl}/health`, {
         ...(headers ? { headers } : {}),
         signal: AbortSignal.timeout(10_000),
       });
