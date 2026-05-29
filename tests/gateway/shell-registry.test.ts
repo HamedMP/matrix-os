@@ -73,6 +73,20 @@ describe("shell registry", () => {
     await expect(registry.list()).resolves.toEqual([]);
   });
 
+  it("force deletes live orphan zellij sessions missing from metadata", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["bench"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+
+    await expect(registry.delete("bench", { force: true })).resolves.toBeUndefined();
+
+    expect(adapter.deleteSession).toHaveBeenCalledWith("bench", { force: true });
+  });
+
   it("rolls back zellij sessions if metadata persistence fails", async () => {
     const root = await tempRoot();
     const systemDir = join(root, "system");

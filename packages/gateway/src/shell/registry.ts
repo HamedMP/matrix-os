@@ -135,7 +135,8 @@ export class ShellRegistry {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
       const file = await this.read();
-      if (!file.sessions[safeName]) {
+      const live = new Set(await this.options.adapter.listSessions());
+      if (!file.sessions[safeName] && !(options.force && live.has(safeName))) {
         throw shellError("session_not_found", "Session not found", 404);
       }
       await this.options.adapter.deleteSession(safeName, options);
