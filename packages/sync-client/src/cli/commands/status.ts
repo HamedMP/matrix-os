@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
+import { probeGatewayHealth } from "../gateway-health.js";
 
 function writeError(err: unknown, json: boolean): void {
   const code =
@@ -26,20 +27,12 @@ export const statusCommand = defineCommand({
       const profile = await resolveCliProfile(args);
       const auth = profile.token ? null : await loadProfileAuth(profile.name);
       const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
-      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-      const res = await fetch(`${profile.gatewayUrl}/api/health`, {
-        ...(headers ? { headers } : {}),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const body = res.ok ? ((await res.json()) as { status?: unknown }) : {};
+      const gateway = await probeGatewayHealth(profile.gatewayUrl, token);
       const data = {
         profile: profile.name,
         gatewayUrl: profile.gatewayUrl,
         authenticated: !!token,
-        gateway: {
-          reachable: res.ok,
-          status: typeof body.status === "string" ? body.status : res.ok ? "ok" : "unreachable",
-        },
+        gateway,
       };
 
       if (json) {

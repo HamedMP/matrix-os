@@ -59,6 +59,35 @@ describe("phase 1: static + vite runtime", () => {
     expect(html).toMatch(/<script/);
   }, 120_000);
 
+  it("serves Vite app assets to sandboxed srcdoc iframes with explicit null-origin CORS", async () => {
+    await gateway.installAppFromFixture("hello-vite");
+    const cookie = await gateway.openAppSession("hello-vite");
+    const htmlRes = await gateway.app.request("/apps/hello-vite/", {
+      headers: { Cookie: cookie },
+    });
+    expect(htmlRes.status).toBe(200);
+    const html = await htmlRes.text();
+    const assetPath = html.match(/src="([^"]+\.js)"/)?.[1];
+    expect(assetPath).toBeTruthy();
+
+    const assetRes = await gateway.app.request(`/apps/hello-vite/${assetPath}`, {
+      headers: { Cookie: cookie, Origin: "null" },
+    });
+    expect(assetRes.status).toBe(200);
+    expect(assetRes.headers.get("access-control-allow-origin")).toBe("null");
+    expect(assetRes.headers.get("access-control-allow-credentials")).toBe("true");
+
+    const cachedRes = await gateway.app.request(`/apps/hello-vite/${assetPath}`, {
+      headers: {
+        Cookie: cookie,
+        Origin: "null",
+        "If-None-Match": assetRes.headers.get("etag") ?? "",
+      },
+    });
+    expect(cachedRes.status).toBe(304);
+    expect(cachedRes.headers.get("access-control-allow-origin")).toBe("null");
+  }, 120_000);
+
   it("session cookie issued for calculator-static is rejected on /apps/hello-vite/ (path scoping)", async () => {
     await gateway.installAppFromFixture("calculator-static");
     await gateway.installAppFromFixture("hello-vite");

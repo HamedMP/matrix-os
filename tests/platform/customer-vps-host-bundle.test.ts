@@ -1,6 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+function runDevBundleGate(env: Record<string, string>) {
+  const root = process.cwd();
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-dev-bundle-gate-'));
+  const outputPath = join(tempDir, 'github-output');
+
+  try {
+    const result = spawnSync('bash', [join(root, 'scripts/ci/dev-bundle-gate.sh')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputPath,
+        ...env,
+      },
+    });
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+
+    return {
+      output: readFileSync(outputPath, 'utf8'),
+      stdout: result.stdout,
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 describe('customer VPS host bundle', () => {
   it('build script packages the systemd entrypoint binaries', () => {
@@ -111,6 +140,99 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy"');
     expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
     expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
+  });
+
+  it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('skip_dev_bundle:');
+    expect(workflow).toContain('Dev bundle gate');
+    expect(workflow).toContain('SKIP_DEV_BUNDLE_INPUT');
+    expect(workflow).toContain('scripts/ci/dev-bundle-gate.sh');
+    expect(workflow).toContain("needs.dev-bundle-gate.outputs.should_build == 'true'");
+    expect(workflow).toContain('Validate public build environment');
+    expect(workflow).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}');
+    expect(workflow).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required for host bundle releases.');
+    expect(workflow).toContain('pk_test_Y2xlcmsuZXhhbXBsZS5jb20k');
+    expect(workflow).toContain('Refusing to publish a host bundle with the example Clerk publishable key.');
+    expect(workflow).not.toContain('HEAD_COMMIT_MESSAGE');
+    expect(workflow).not.toContain('CHANGED_FILES="$changed_files"');
+    expect(workflow).not.toContain('continue-on-error: true');
+  });
+
+  it('host bundle release workflow keeps tag pushes triggerable', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('tags:');
+    expect(workflow).toContain('- "v*"');
+    expect(workflow).not.toContain('paths-ignore:');
+  });
+
+  it('dev bundle gate builds branch pushes even when commit messages request a skip', () => {
+    const result = runDevBundleGate({
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_REF_TYPE: 'branch',
+      HEAD_COMMIT_MESSAGE: 'feat: update docs [skip dev-bundle]',
+      SKIP_DEV_BUNDLE_INPUT: 'false',
+      CHANGED_FILES: 'packages/kernel/src/index.ts',
+    });
+
+    expect(result.output).toContain('should_build=true');
+    expect(result.output).toContain('reason=host bundle build required');
+  });
+
+  it('dev bundle gate builds main branch pushes even for metadata-only changes', () => {
+    const result = runDevBundleGate({
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_REF_TYPE: 'branch',
+      HEAD_COMMIT_MESSAGE: 'docs: update landing page',
+      SKIP_DEV_BUNDLE_INPUT: 'false',
+      CHANGED_FILES: ['www/content/docs/index.mdx', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
+    });
+
+    expect(result.output).toContain('should_build=true');
+    expect(result.output).toContain('reason=host bundle build required');
+  });
+
+  it('dev bundle gate only skips when workflow dispatch explicitly requests it', () => {
+    const result = runDevBundleGate({
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      GITHUB_REF_TYPE: 'branch',
+      HEAD_COMMIT_MESSAGE: 'docs: update workflow notes',
+      SKIP_DEV_BUNDLE_INPUT: 'true',
+      CHANGED_FILES: 'packages/gateway/src/index.ts',
+    });
+
+    expect(result.output).toContain('should_build=false');
+    expect(result.output).toContain('reason=skip_dev_bundle workflow input was true');
+  });
+
+  it('dev bundle gate builds tag releases even for metadata-only tag targets', () => {
+    const result = runDevBundleGate({
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_REF_TYPE: 'tag',
+      HEAD_COMMIT_MESSAGE: 'docs: release notes [skip dev-bundle]',
+      SKIP_DEV_BUNDLE_INPUT: 'false',
+      CHANGED_FILES: 'README.md',
+    });
+
+    expect(result.output).toContain('should_build=true');
+    expect(result.output).toContain('reason=tag releases always build by default');
+  });
+
+  it('dev bundle gate builds branch pushes with host-bundle-relevant changes', () => {
+    const result = runDevBundleGate({
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_REF_TYPE: 'branch',
+      HEAD_COMMIT_MESSAGE: 'feat: update gateway',
+      SKIP_DEV_BUNDLE_INPUT: 'false',
+      CHANGED_FILES: ['docs/dev/releases.md', 'packages/gateway/src/index.ts'].join('\n'),
+    });
+
+    expect(result.output).toContain('should_build=true');
+    expect(result.output).toContain('reason=host bundle build required');
   });
 
   it('update launcher triggers the sync agent update and rollback paths', () => {

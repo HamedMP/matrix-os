@@ -32,7 +32,7 @@ describe("RuntimeIdentityBanner", () => {
             machineId: "11111111-2222-3333-4444-555555555555",
             runtimeSlot: "staging",
           },
-          release: { version: "v082-test" },
+          release: { version: "v082-test", channel: "stable" },
           resources: {
             cpuCount: 2,
             memoryTotalBytes: 4 * 1024 * 1024 * 1024,
@@ -59,7 +59,7 @@ describe("RuntimeIdentityBanner", () => {
     });
   });
 
-  it("uses runtime slot, not handle text, to decide whether the VM is staging", async () => {
+  it("hides the primary VM banner for stable releases", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/system/info")) {
@@ -69,7 +69,7 @@ describe("RuntimeIdentityBanner", () => {
             machineId: "11111111-2222-3333-4444-555555555556",
             runtimeSlot: "primary",
           },
-          release: { version: "v082-test" },
+          release: { version: "v082-test", channel: "stable" },
         }));
       }
       if (url.endsWith("/api/identity")) {
@@ -81,10 +81,59 @@ describe("RuntimeIdentityBanner", () => {
     render(<RuntimeIdentityBanner />);
 
     await waitFor(() => {
-      expect(screen.getByText("Matrix VM")).toBeTruthy();
-      expect(screen.queryByText("STAGING VM")).toBeNull();
-      expect(screen.getByText("primary")).toBeTruthy();
+      expect(screen.queryByLabelText("Current Matrix VM")).toBeNull();
     });
+  });
+
+  it("shows the primary VM banner for dev, canary, and beta releases", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({
+          runtime: {
+            handle: "hamedmp",
+            machineId: "11111111-2222-3333-4444-555555555557",
+            runtimeSlot: "primary",
+          },
+          release: { version: "v2026.05.28-151", channel: "dev" },
+        }));
+      }
+      if (url.endsWith("/api/identity")) {
+        return Promise.resolve(jsonResponse({ handle: "hamedmp" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }));
+
+    render(<RuntimeIdentityBanner />);
+
+    await waitFor(() => {
+      expect(screen.getByText("DEV BUILD")).toBeTruthy();
+      expect(screen.getByText("hamedmp")).toBeTruthy();
+      expect(screen.getByText("primary")).toBeTruthy();
+      expect(screen.getByText("dev")).toBeTruthy();
+    });
+  });
+
+  it("dismisses the banner until the page refreshes", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({
+          runtime: { handle: "hamedmp", runtimeSlot: "primary" },
+          release: { version: "v2026.05.28-151", channel: "beta" },
+        }));
+      }
+      if (url.endsWith("/api/identity")) {
+        return Promise.resolve(jsonResponse({ handle: "hamedmp" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }));
+
+    render(<RuntimeIdentityBanner />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /dismiss runtime banner/i }));
+
+    expect(screen.queryByLabelText("Current Matrix VM")).toBeNull();
   });
 
   it("posts onboarding reset from the VM banner", async () => {

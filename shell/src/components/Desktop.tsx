@@ -9,7 +9,7 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
+import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
@@ -524,11 +524,12 @@ function FullscreenExitPill({ onExit }: { onExit: () => void }) {
 }
 
 interface DesktopProps {
+  launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
   chat?: import("@/hooks/useChatState").ChatState;
 }
 
-export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
+export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -558,6 +559,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
   const [showOnboarding, setShowOnboarding] = useState(true);
+  const launchPathConsumedRef = useRef<string | null>(null);
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
@@ -623,7 +625,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
-    void saveDesktopConfig({
+    void saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
       dock,
       pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
@@ -892,6 +894,14 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     [focusOrOpen],
   );
 
+  useEffect(() => {
+    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
+    const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
+    if (!match) return;
+    launchPathConsumedRef.current = launchAppPath;
+    focusOrOpen(match.name, match.path);
+  }, [apps, focusOrOpen, launchAppPath]);
+
   const loadModules = useCallback(async () => {
     try {
       const [layoutRes, modulesRes, appsRes] = await Promise.all([
@@ -1146,7 +1156,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
-    void saveDesktopConfig({
+    void saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
       dock,
       pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],

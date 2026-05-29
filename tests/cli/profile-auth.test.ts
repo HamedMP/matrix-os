@@ -165,7 +165,7 @@ describe("profile-aware auth CLI commands", () => {
 
     await statusCommand.run!({ args: { json: true } } as never);
 
-    expect(fetchImpl).toHaveBeenCalledWith("https://gateway.example/api/health", {
+    expect(fetchImpl).toHaveBeenCalledWith("https://gateway.example/api/system/info", {
       headers: { Authorization: "Bearer cloud-token" },
       signal: expect.any(AbortSignal),
     });

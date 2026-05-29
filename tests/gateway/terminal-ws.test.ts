@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import {
@@ -10,6 +13,7 @@ import {
   DestroySchema,
 } from "../../packages/gateway/src/session-registry.js";
 import {
+  resetVolatilePtySessionList,
   registerTerminalSessionRoutes,
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
@@ -183,6 +187,18 @@ describe("Terminal WebSocket Protocol — Zod Schemas", () => {
 });
 
 describe("Terminal session REST routes", () => {
+  it("resets volatile persisted pty session lists during canonical shell startup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-os-terminal-list-"));
+    const persistPath = join(root, "system", "terminal-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(persistPath, JSON.stringify([{ sessionId: SESSION_ID }]), { flag: "w" });
+
+    await resetVolatilePtySessionList(persistPath);
+
+    await expect(readFile(persistPath, "utf-8")).resolves.toBe("[]\n");
+    await rm(root, { recursive: true, force: true });
+  });
+
   it("lists terminal sessions with home-relative cwd values", async () => {
     const registry = {
       list: () => [{
@@ -199,7 +215,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request("/api/terminal/sessions");
+    const res = await app.request("/api/terminal/pty-sessions");
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{
@@ -220,7 +236,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request("/api/terminal/sessions/not-a-uuid", { method: "DELETE" });
+    const res = await app.request("/api/terminal/pty-sessions/not-a-uuid", { method: "DELETE" });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid session ID" });
@@ -236,7 +252,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request(`/api/terminal/sessions/${SESSION_ID}`, { method: "DELETE" });
+    const res = await app.request(`/api/terminal/pty-sessions/${SESSION_ID}`, { method: "DELETE" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -251,7 +267,7 @@ describe("Terminal session REST routes", () => {
     };
     const app = appWithTerminalRegistry(registry);
 
-    const res = await app.request(`/api/terminal/sessions/${SESSION_ID}`, {
+    const res = await app.request(`/api/terminal/pty-sessions/${SESSION_ID}`, {
       method: "DELETE",
       headers: {
         "Content-Type": "text/plain",

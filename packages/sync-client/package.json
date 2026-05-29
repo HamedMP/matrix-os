@@ -1,6 +1,6 @@
 {
   "name": "@finnaai/matrix",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -29,7 +29,12 @@
     "mos": "bin/matrix.mjs"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./shell-protocol": {
+      "types": "./src/protocol/shell.d.ts",
+      "import": "./src/protocol/shell.js",
+      "default": "./src/protocol/shell.js"
+    }
   },
   "files": [
     "bin/",

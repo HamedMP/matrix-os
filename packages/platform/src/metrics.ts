@@ -112,6 +112,13 @@ export const vpsHealthy = new Gauge({
   registers: [metricsRegistry],
 });
 
+export const vpsRuntimeInfo = new Gauge({
+  name: 'matrix_vps_runtime_info',
+  help: 'Runtime release info reported by a reachable customer VPS (value is always 1, labels carry metadata)',
+  labelNames: ['handle', 'version'] as const,
+  registers: [metricsRegistry],
+});
+
 export const vpsProbeLatencySeconds = new Gauge({
   name: 'matrix_vps_probe_latency_seconds',
   help: 'Latest VPS system probe latency in seconds',
@@ -306,6 +313,7 @@ export function refreshReleaseChannelMetrics(
 export interface VpsRuntimeMetricInput {
   handle: string;
   healthy?: boolean;
+  runtimeVersion?: string | null;
   probeLatencyMs?: number | null;
   load1?: number | null;
   cpuCount?: number | null;
@@ -317,6 +325,7 @@ export interface VpsRuntimeMetricInput {
 
 export function refreshVpsRuntimeMetrics(machines: VpsRuntimeMetricInput[]): void {
   vpsHealthy.reset();
+  vpsRuntimeInfo.reset();
   vpsProbeLatencySeconds.reset();
   vpsLoad1.reset();
   vpsCpuCount.reset();
@@ -327,6 +336,9 @@ export function refreshVpsRuntimeMetrics(machines: VpsRuntimeMetricInput[]): voi
 
   for (const machine of machines) {
     vpsHealthy.set({ handle: machine.handle }, machine.healthy ? 1 : 0);
+    if (machine.healthy && machine.runtimeVersion) {
+      vpsRuntimeInfo.set({ handle: machine.handle, version: machine.runtimeVersion }, 1);
+    }
     if (typeof machine.probeLatencyMs === 'number') {
       vpsProbeLatencySeconds.set({ handle: machine.handle }, machine.probeLatencyMs / 1000);
     }

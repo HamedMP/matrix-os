@@ -818,13 +818,21 @@ async function resolveAppDomainIdentity(opts: {
         ? claims.runtime_slot
         : undefined;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
-      if (machine?.clerkUserId !== claims.sub) {
+      if (machine?.clerkUserId === claims.sub) {
+        return {
+          handle: machine.handle,
+          userId: machine.clerkUserId,
+          runtimeSlot: machine.runtimeSlot,
+        };
+      }
+      const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
+      if (!activeMachine || activeMachine.clerkUserId !== claims.sub) {
         return null;
       }
       return {
-        handle: machine.handle,
-        userId: machine.clerkUserId,
-        runtimeSlot: machine.runtimeSlot,
+        handle: activeMachine.handle,
+        userId: activeMachine.clerkUserId,
+        runtimeSlot: activeMachine.runtimeSlot,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -907,7 +915,7 @@ async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecre
   }
   const headers = new Headers({
     authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`,
-    host: `${machine.handle}.matrix-os.com`,
+    host: 'app.matrix-os.com',
     'x-forwarded-host': 'app.matrix-os.com',
     'x-forwarded-proto': 'https',
     connection: 'close',
@@ -943,6 +951,7 @@ async function probeCustomerVpsRuntime(
   platformSecret: string,
 ): Promise<{
   healthy: boolean;
+  runtimeVersion?: string | null;
   probeLatencyMs?: number;
   load1?: number | null;
   cpuCount?: number | null;
@@ -959,7 +968,7 @@ async function probeCustomerVpsRuntime(
     const res = await fetch(`https://${machine.publicIPv4}:443/api/system/info`, {
       headers: {
         authorization: `Bearer ${token}`,
-        host: `${machine.handle}.matrix-os.com`,
+        host: 'app.matrix-os.com',
         'x-forwarded-host': 'app.matrix-os.com',
         'x-forwarded-proto': 'https',
       },
@@ -970,6 +979,9 @@ async function probeCustomerVpsRuntime(
     if (!res.ok) return { healthy: false, probeLatencyMs };
 
     const info = await res.json() as {
+      release?: {
+        version?: unknown;
+      };
       resources?: {
         cpuCount?: number;
         loadAverage?: unknown;
@@ -983,6 +995,7 @@ async function probeCustomerVpsRuntime(
     const load1 = typeof loadAverage[0] === 'number' ? loadAverage[0] : null;
     return {
       healthy: true,
+      runtimeVersion: typeof info.release?.version === 'string' ? info.release.version : null,
       probeLatencyMs,
       load1,
       cpuCount: typeof info.resources?.cpuCount === 'number' ? info.resources.cpuCount : null,

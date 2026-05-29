@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon } from "lucide-react";
+import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon, XIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
+
+const ATTENTION_RELEASE_CHANNELS = new Set(["dev", "canary", "beta"]);
 
 interface RuntimeInfo {
   runtime?: {
@@ -12,6 +14,7 @@ interface RuntimeInfo {
   };
   release?: {
     version?: string | null;
+    channel?: string | null;
   };
   resources?: {
     cpuCount?: number;
@@ -44,6 +47,7 @@ export function RuntimeIdentityBanner() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [identity, setIdentity] = useState<IdentityInfo | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -82,20 +86,25 @@ export function RuntimeIdentityBanner() {
     const slot = runtime?.runtime?.runtimeSlot ?? "primary";
     const machineId = runtime?.runtime?.machineId ?? null;
     const isStaging = slot !== "primary";
+    const channel = runtime?.release?.channel?.toLowerCase() ?? null;
+    const shouldShow = isStaging || (channel ? ATTENTION_RELEASE_CHANNELS.has(channel) : false);
     return {
       handle,
       slot,
       machineId,
       shortId: shortMachineId(machineId),
       version: runtime?.release?.version ?? "version pending",
+      channel,
       cpu: runtime?.resources?.cpuCount ? `${runtime.resources.cpuCount} CPU` : null,
       memory: formatBytes(runtime?.resources?.memoryTotalBytes),
       disk: formatBytes(runtime?.resources?.diskTotalBytes),
       isStaging,
+      shouldShow,
+      label: isStaging ? "STAGING VM" : `${channel?.toUpperCase() ?? "RUNTIME"} BUILD`,
     };
   }, [identity?.handle, runtime]);
 
-  if (!summary.handle) return null;
+  if (!summary.handle || !summary.shouldShow || dismissed) return null;
 
   const resetOnboarding = async () => {
     if (resetting) return;
@@ -121,42 +130,55 @@ export function RuntimeIdentityBanner() {
         "fixed right-3 top-9 z-[95] max-w-[calc(100vw-1.5rem)] rounded-md border px-3 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop-blur-md",
         summary.isStaging
           ? "border-[#8a3a11]/35 bg-[#fff1df]/92 text-[#3f210d]"
-          : "border-[#17281f]/14 bg-white/82 text-[#17281f]",
+          : "border-[#8a3a11]/30 bg-[#fff8e8]/92 text-[#3f210d]",
       ].join(" ")}
       aria-label="Current Matrix VM"
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        <span className="inline-flex items-center gap-1.5 font-semibold">
-          {summary.isStaging ? <AlertTriangleIcon className="h-3.5 w-3.5 text-[#b4531f]" aria-hidden="true" /> : <ServerIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-          {summary.isStaging ? "STAGING VM" : "Matrix VM"}
-        </span>
-        <span className="font-mono font-semibold">{summary.handle ?? "unknown"}</span>
-        <span className="rounded-full border border-current/15 px-2 py-0.5 font-medium">{summary.slot}</span>
-        {summary.shortId && <span className="font-mono text-current/62">#{summary.shortId}</span>}
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-current/62">
-        {summary.cpu && (
-          <span className="inline-flex items-center gap-1">
-            <CpuIcon className="h-3 w-3" aria-hidden="true" />
-            {summary.cpu}
-          </span>
-        )}
-        {summary.memory && <span>{summary.memory} RAM</span>}
-        {summary.disk && (
-          <span className="inline-flex items-center gap-1">
-            <HardDriveIcon className="h-3 w-3" aria-hidden="true" />
-            {summary.disk}
-          </span>
-        )}
-        <span className="max-w-[18rem] truncate font-mono">{summary.version}</span>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="inline-flex items-center gap-1.5 font-semibold">
+              {summary.isStaging ? <AlertTriangleIcon className="h-3.5 w-3.5 text-[#b4531f]" aria-hidden="true" /> : <ServerIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+              {summary.label}
+            </span>
+            <span className="font-mono font-semibold">{summary.handle ?? "unknown"}</span>
+            <span className="rounded-full border border-current/15 px-2 py-0.5 font-medium">{summary.slot}</span>
+            {summary.channel && <span className="rounded-full border border-current/15 px-2 py-0.5 font-medium">{summary.channel}</span>}
+            {summary.shortId && <span className="font-mono text-current/62">#{summary.shortId}</span>}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-current/62">
+            {summary.cpu && (
+              <span className="inline-flex items-center gap-1">
+                <CpuIcon className="h-3 w-3" aria-hidden="true" />
+                {summary.cpu}
+              </span>
+            )}
+            {summary.memory && <span>{summary.memory} RAM</span>}
+            {summary.disk && (
+              <span className="inline-flex items-center gap-1">
+                <HardDriveIcon className="h-3 w-3" aria-hidden="true" />
+                {summary.disk}
+              </span>
+            )}
+            <span className="max-w-[18rem] truncate font-mono">{summary.version}</span>
+            <button
+              type="button"
+              onClick={() => void resetOnboarding()}
+              disabled={resetting}
+              className="inline-flex min-h-6 items-center gap-1 rounded-full border border-current/15 bg-white/35 px-2 py-0.5 font-medium text-current/78 transition hover:bg-white/60 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCcwIcon className="h-3 w-3" aria-hidden="true" />
+              {resetting ? "Resetting" : "Reset onboarding"}
+            </button>
+          </div>
+        </div>
         <button
           type="button"
-          onClick={() => void resetOnboarding()}
-          disabled={resetting}
-          className="inline-flex min-h-6 items-center gap-1 rounded-full border border-current/15 bg-white/35 px-2 py-0.5 font-medium text-current/78 transition hover:bg-white/60 disabled:cursor-wait disabled:opacity-60"
+          onClick={() => setDismissed(true)}
+          className="-mr-1 -mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-current/58 transition hover:bg-white/55 hover:text-current"
+          aria-label="Dismiss runtime banner"
         >
-          <RefreshCcwIcon className="h-3 w-3" aria-hidden="true" />
-          {resetting ? "Resetting" : "Reset onboarding"}
+          <XIcon className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </div>
     </aside>

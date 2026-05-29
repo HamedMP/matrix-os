@@ -2,17 +2,24 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
   createShellClient,
+  SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
   SHELL_ATTACH_MAX_QUEUED_BYTES,
 } from "../../packages/sync-client/src/cli/shell-client.js";
 
+const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l\u001b[?2004l\u001b[>4;0m\u001b[<1u";
+
 class ControlledWebSocket {
   static last: ControlledWebSocket | null = null;
+  static lastUrl: string | null = null;
+  static lastOptions: unknown = null;
   closed = false;
   listeners = new Map<string, (...args: unknown[]) => void>();
   sent: string[] = [];
 
-  constructor() {
+  constructor(url: string, options?: unknown) {
     ControlledWebSocket.last = this;
+    ControlledWebSocket.lastUrl = url;
+    ControlledWebSocket.lastOptions = options;
   }
 
   send(data: string) {
@@ -68,7 +75,7 @@ describe("shell REST client", () => {
 
     await expect(client.listSessions()).resolves.toEqual([]);
     expect(fetchImpl).toHaveBeenCalledWith(
-      "http://gateway/api/sessions",
+      "http://gateway/api/terminal/sessions",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer tok" }),
         signal: expect.any(AbortSignal),
@@ -93,14 +100,25 @@ describe("shell REST client", () => {
     });
   });
 
-  it("builds authenticated terminal websocket URLs for attach", () => {
+  it("builds terminal websocket URLs without leaking bearer auth by default", () => {
     const client = createShellClient({
       gatewayUrl: "https://gateway.example",
       token: "tok",
     });
 
     expect(client.createAttachUrl("main", { fromSeq: 7 })).toBe(
-      "wss://gateway.example/ws/terminal?session=main&fromSeq=7",
+      "wss://gateway.example/ws/terminal/session?session=main&fromSeq=7",
+    );
+  });
+
+  it("supports explicit terminal websocket query tokens for browser clients", () => {
+    const client = createShellClient({
+      gatewayUrl: "https://gateway.example",
+      token: "bearer-token",
+    });
+
+    expect(client.createAttachUrl("main", { token: "query-token" })).toBe(
+      "wss://gateway.example/ws/terminal/session?session=main&token=query-token",
     );
   });
 
@@ -143,7 +161,7 @@ describe("shell REST client", () => {
   });
 
   it("clears the attach timeout after the websocket opens", async () => {
-    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 5 });
+    const client = createShellClient({ gatewayUrl: "http://gateway", token: "tok", timeoutMs: 5 });
     const input = new EventEmitter() as NodeJS.ReadStream;
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
@@ -159,6 +177,32 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.lastUrl).toBe(
+      `ws://gateway/ws/terminal/session?session=main&fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`,
+    );
+    expect(ControlledWebSocket.lastOptions).toEqual({
+      headers: { Authorization: "Bearer tok" },
+    });
+  });
+
+  it("honors explicit replay cursors for terminal attach", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      fromSeq: 0,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=0");
   });
 
   it("queues stdin frames until the websocket is open", async () => {
@@ -257,6 +301,127 @@ describe("shell REST client", () => {
       { type: "input", data: "a" },
       { type: "input", data: "\u001cb" },
       { type: "detach" },
+    ]);
+  });
+
+  it("resets local mouse and focus modes on websocket errors", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("error", new Error("boom"));
+
+    await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+    expect((input as unknown as FakeTtyInput).rawModes).toEqual([true, false]);
+    expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
+  });
+
+  it("drops mouse escape sequences when no-mouse attach mode is enabled", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      mouse: false,
+    });
+    ControlledWebSocket.last?.emit("open");
+    input.emit("data", "a\u001b[<0;10;20M\u001b[Mabc\u001b[I\u001b[O");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "a" },
+    ]);
+  });
+
+  it("drops focus reporting sequences while still dropping mouse input when unfocused", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    input.emit("data", "\u001b[Ia\u001b[O\u001b[<0;10;20M");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "a" },
+    ]);
+  });
+
+  it("resets stale local mouse modes and drops immediate mouse bytes after focus returns", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(0);
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
+    nowSpy.mockReturnValue(6_000);
+    input.emit("data", "\u001b[I\u001b[<0;10;20M\u001b[Mabcx");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "x" },
+    ]);
+    nowSpy.mockRestore();
+  });
+
+  it("buffers fragmented SGR mouse sequences instead of forwarding partial escape bytes", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      mouse: false,
+    });
+    ControlledWebSocket.last?.emit("open");
+    input.emit("data", "a\u001b[<0;10;");
+    input.emit("data", "20Mbc");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "a" },
+      { type: "input", data: "bc" },
     ]);
   });
 });
