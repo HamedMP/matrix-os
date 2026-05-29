@@ -399,6 +399,57 @@ describe("shell REST client", () => {
     nowSpy.mockRestore();
   });
 
+  it("drops stale enhanced keyboard protocol bytes after focus returns", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(0);
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
+    nowSpy.mockReturnValue(6_000);
+    input.emit("data", "\u001b[I\u001b[99;5u\u001b[100;5uok");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "ok" },
+    ]);
+    nowSpy.mockRestore();
+  });
+
+  it("keeps enhanced keyboard protocol bytes while focused", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    input.emit("data", "\u001b[99;5u");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "resize", cols: 80, rows: 24 },
+      { type: "input", data: "\u001b[99;5u" },
+    ]);
+  });
+
   it("buffers fragmented SGR mouse sequences instead of forwarding partial escape bytes", async () => {
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
     const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;

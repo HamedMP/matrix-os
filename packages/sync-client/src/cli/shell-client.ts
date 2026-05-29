@@ -109,6 +109,12 @@ function createTerminalInputFilter(options: {
 
   const now = () => options.now?.() ?? Date.now();
   const shouldForwardMouse = () => !options.dropMouse && focused && now() >= suppressMouseUntil;
+  const shouldForwardEnhancedKeyboard = () => focused && now() >= suppressMouseUntil;
+  const isCsiUParamChar = (char: string | undefined) => char !== undefined && (
+    (char >= "0" && char <= "9") ||
+    char === ";" ||
+    char === ":"
+  );
 
   return {
     noteRemoteOutput() {
@@ -140,6 +146,24 @@ function createTerminalInputFilter(options: {
           }
           i += 3;
           continue;
+        }
+
+        if (third >= "0" && third <= "9") {
+          let end = i + 2;
+          while (end < input.length && isCsiUParamChar(input[end])) {
+            end += 1;
+          }
+          if (end >= input.length) {
+            pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
+            break;
+          }
+          if (input[end] === "u") {
+            if (shouldForwardEnhancedKeyboard()) {
+              output += input.slice(i, end + 1);
+            }
+            i = end + 1;
+            continue;
+          }
         }
 
         if (third === "<") {
