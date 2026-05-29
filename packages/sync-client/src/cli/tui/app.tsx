@@ -137,13 +137,20 @@ export async function launchTui(options: { noColor?: boolean } = {}): Promise<vo
   const useAlternateScreen = shouldUseAlternateScreen();
   if (useAlternateScreen) {
     process.stdout.write(ENTER_ALTERNATE_SCREEN);
-  }
-  try {
-    const { waitUntilExit } = render(<MatrixTuiApp noColor={options.noColor} />);
-    await waitUntilExit();
-  } finally {
-    if (useAlternateScreen) {
+    const restoreAlternateScreen = () => {
       process.stdout.write(EXIT_ALTERNATE_SCREEN);
+    };
+    process.once("exit", restoreAlternateScreen);
+    try {
+      const { waitUntilExit } = render(<MatrixTuiApp noColor={options.noColor} />);
+      await waitUntilExit();
+    } finally {
+      process.removeListener("exit", restoreAlternateScreen);
+      restoreAlternateScreen();
     }
+    return;
   }
+
+  const { waitUntilExit } = render(<MatrixTuiApp noColor={options.noColor} />);
+  await waitUntilExit();
 }
