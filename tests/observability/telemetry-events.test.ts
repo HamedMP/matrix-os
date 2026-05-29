@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { MATRIX_TELEMETRY_EVENTS, isMatrixTelemetryEvent } from "../../packages/observability/src/events.js";
 
@@ -29,5 +30,20 @@ describe("Matrix telemetry events", () => {
       expect(isMatrixTelemetryEvent(name)).toBe(true);
     }
     expect(isMatrixTelemetryEvent("matrix_unknown_event")).toBe(false);
+  });
+
+  it("keeps browser telemetry imports on the event-only subpath", async () => {
+    const browserFiles = [
+      "shell/src/app/page.tsx",
+      "shell/src/components/AppViewer.tsx",
+      "shell/src/hooks/useSocket.ts",
+    ];
+
+    for (const file of browserFiles) {
+      const source = await readFile(file, "utf8");
+      expect(source, file).toContain("@matrix-os/observability/events");
+      expect(source, file).not.toContain(`from "@matrix-os/observability"`);
+      expect(source, file).not.toContain(`from '@matrix-os/observability'`);
+    }
   });
 });

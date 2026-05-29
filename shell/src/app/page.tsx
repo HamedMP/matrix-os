@@ -8,7 +8,7 @@ import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
 import { capturePostHogEvent } from "@/lib/posthog-client";
-import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 import { Desktop } from "@/components/Desktop";
 import { MobileShell } from "@/components/mobile/MobileShell";

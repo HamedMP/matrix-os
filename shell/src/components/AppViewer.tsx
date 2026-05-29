@@ -13,7 +13,7 @@ import {
 import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
-import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;

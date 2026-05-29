@@ -6,7 +6,7 @@ import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { useConnectionHealth } from "./useConnectionHealth";
-import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
