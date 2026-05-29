@@ -110,7 +110,7 @@ export class ShellReplayBuffer {
 
   async latestSeq(): Promise<number | null> {
     await this.seedOffsetFromScrollback();
-    return this.lastSeq;
+    return this.lastSeq ?? (this.seqOffset > 0 ? this.seqOffset - 1 : null);
   }
 
   private async seedOffsetFromScrollback(): Promise<void> {

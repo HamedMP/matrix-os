@@ -155,6 +155,43 @@ describe("zellij terminal WebSocket", () => {
     expect(secondWs.sent).toContainEqual({ type: "output", seq: 10, data: "frame-10" });
   });
 
+  it("maps cold-start live-tail attach from persisted scrollback instead of replaying from zero", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const readSince = vi.fn(async () => []);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => 99),
+        readSince,
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const session = await handler.open({
+      ws,
+      session: "main",
+      fromSeq: SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+    });
+    session.onClose();
+
+    expect(ws.sent).toContainEqual({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 50,
+    });
+    expect(readSince).toHaveBeenCalledWith("main", 50);
+  });
+
   it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {
     const ws = socket();
     const handler = createShellWsHandler({

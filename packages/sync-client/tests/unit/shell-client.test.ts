@@ -156,9 +156,10 @@ describe("createShellClient attachSession", () => {
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     process.emit("SIGINT", "SIGINT");
+    process.emit("SIGINT", "SIGINT");
 
     expect(FakeWebSocket.last?.closed).toBe(false);
-    expect(FakeWebSocket.last?.sent).toContain(JSON.stringify({ type: "input", data: "\u0003" }));
+    expect(FakeWebSocket.last?.sent.filter((frame) => frame === JSON.stringify({ type: "input", data: "\u0003" }))).toHaveLength(2);
 
     FakeWebSocket.last?.emit("close");
     await attach;

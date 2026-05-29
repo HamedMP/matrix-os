@@ -491,6 +491,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           sendFrame(JSON.stringify({ type: "input", data: "\u0003" }));
+          process.once("SIGINT", onSignal);
         };
         const onProcessExit = () => {
           resetLocalInputModes();
