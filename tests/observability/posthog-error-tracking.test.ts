@@ -433,6 +433,121 @@ describe("PostHog error tracking", () => {
     expect(wwwPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest"');
   });
 
+  it("configures browser PostHog logs without console autocapture", async () => {
+    const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
+
+    expect(shellPostHogClient).toContain("capturePostHogLog");
+    expect(shellPostHogClient).toContain("posthog as PostHogWithLogger");
+    expect(shellPostHogClient).toContain("serviceName: \"matrix-shell\"");
+    expect(shellPostHogClient).toContain("captureConsoleLogs: false");
+    expect(shellPostHogClient).not.toContain("captureConsoleLogs: true");
+  });
+
+  it("keeps the shell error preview dev-only and wired through the route error boundary", async () => {
+    const [pageSource, crashSource] = await Promise.all([
+      readFile("shell/src/app/__error-preview/page.tsx", "utf8"),
+      readFile("shell/src/app/__error-preview/preview-crash.tsx", "utf8"),
+    ]);
+
+    expect(pageSource).toContain('process.env.NODE_ENV === "production"');
+    expect(pageSource).toContain("notFound()");
+    expect(crashSource).toContain('"use client"');
+    expect(crashSource).toContain("Matrix OS error preview: verify PostHog error tracking");
+  });
+
+  it("captures shell error-boundary exceptions with copyable error IDs", async () => {
+    const [routeError, globalError, errorUtils] = await Promise.all([
+      readFile("shell/src/app/error.tsx", "utf8"),
+      readFile("shell/src/app/global-error.tsx", "utf8"),
+      readFile("shell/src/lib/error-boundary-utils.ts", "utf8"),
+    ]);
+
+    for (const source of [routeError, globalError]) {
+      expect(source).toContain("capturePostHogException(error");
+      expect(source).toContain("errorId");
+      expect(source).toContain("Copy error ID");
+      expect(source).toContain("createErrorId");
+    }
+    expect(errorUtils).toContain("crypto.randomUUID");
+    expect(errorUtils).toContain("describeUnknownError");
+  });
+
+  it("tracks terminal websocket lifecycle without terminal output payloads", async () => {
+    const [terminalPane, gatewayServer] = await Promise.all([
+      readFile("shell/src/components/terminal/TerminalPane.tsx", "utf8"),
+      readFile("packages/gateway/src/server.ts", "utf8"),
+    ]);
+
+    expect(terminalPane).toContain('capturePostHogEvent("shell_terminal_ws"');
+    expect(terminalPane).toContain("capturePostHogLog");
+    expect(terminalPane).toContain('track("schedule-reconnect"');
+    expect(terminalPane).not.toContain("capturePostHogEvent(\"shell_terminal_ws\", { data");
+    expect(gatewayServer).toContain('posthogErrorTracker.captureEvent("gateway_terminal_ws"');
+    expect(gatewayServer).toContain('captureTerminalEvent("attach-request"');
+    expect(gatewayServer).not.toContain('captureTerminalEvent("input"');
+  });
+
+  it("tracks billing provisioning decisions as metadata-only events", async () => {
+    const billingPanel = await readFile(
+      "shell/src/components/settings/sections/BillingPanel.tsx",
+      "utf8",
+    );
+
+    expect(billingPanel).toContain('capturePostHogEvent("shell_billing"');
+    expect(billingPanel).toContain("capturePostHogLog");
+    expect(billingPanel).toContain('"view_provisioning_billing"');
+    expect(billingPanel).toContain('"profile_select"');
+    expect(billingPanel).toContain('"region_select"');
+    expect(billingPanel).toContain('"checkout_intent"');
+    expect(billingPanel).toContain('"checkout_pricing_table_available"');
+    expect(billingPanel).toContain('"checkout_local_preview_unavailable"');
+    expect(billingPanel).toContain("selected_hetzner_type");
+    expect(billingPanel).toContain("selected_region_slug");
+    expect(billingPanel).not.toContain("cardNumber");
+    expect(billingPanel).not.toContain("terminalData");
+  });
+
+  it("tracks the landing to billing funnel before the shell handoff", async () => {
+    const [landingPage, landingTelemetry, landingBilling, wwwPostHogClient] = await Promise.all([
+      readFile("www/src/app/page.tsx", "utf8"),
+      readFile("www/src/components/landing/LandingTelemetry.tsx", "utf8"),
+      readFile("www/src/components/landing/LandingBilling.tsx", "utf8"),
+      readFile("www/src/lib/posthog-client.ts", "utf8"),
+    ]);
+
+    expect(wwwPostHogClient).toContain("capturePostHogEvent");
+    expect(landingPage).toContain("<LandingTelemetry />");
+    expect(landingPage).toContain('data-ph-event="marketing_cta_clicked"');
+    expect(landingTelemetry).toContain('"marketing_landing_viewed"');
+    expect(landingTelemetry).toContain("[data-ph-event]");
+    expect(landingBilling).toContain('"marketing_billing_viewed"');
+    expect(landingBilling).toContain('"marketing_billing_cta_clicked"');
+    expect(landingBilling).toContain('"marketing_billing_pricing_error"');
+  });
+
+  it("tracks shell, gateway, and CLI/TUI product activity without content payloads", async () => {
+    const [billingGate, gatewayServer, platformAuthRoutes, platformMain] = await Promise.all([
+      readFile("shell/src/components/BillingGate.tsx", "utf8"),
+      readFile("packages/gateway/src/server.ts", "utf8"),
+      readFile("packages/platform/src/auth-routes.ts", "utf8"),
+      readFile("packages/platform/src/main.ts", "utf8"),
+    ]);
+
+    expect(billingGate).toContain('"shell_access_state_changed"');
+    expect(billingGate).toContain('"billing_checkout_confirmed"');
+    expect(gatewayServer).toContain('captureEvent("gateway_product"');
+    expect(gatewayServer).toContain('"shell_ws_open"');
+    expect(gatewayServer).toContain('"agent_task_started"');
+    expect(gatewayServer).toContain('"agent_task_completed"');
+    expect(gatewayServer).toContain('"sync_peer_subscribe"');
+    expect(platformAuthRoutes).toContain('"cli_device_code_created"');
+    expect(platformAuthRoutes).toContain('"cli_device_token_issued"');
+    expect(platformAuthRoutes).toContain('"cli_runtime_lookup_resolved"');
+    expect(platformMain).toContain("captureEvent: capturePlatformEvent");
+    expect(gatewayServer).not.toContain('captureGatewayProductEvent("terminal_input"');
+    expect(gatewayServer).not.toContain('captureGatewayProductEvent("message_text"');
+  });
+
   it("queues Next server PostHog reporting off the request-error hook path", async () => {
     const serverEntrypoints = [
       "shell/instrumentation.ts",

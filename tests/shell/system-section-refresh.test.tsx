@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/gateway", () => ({
@@ -30,6 +30,7 @@ function jsonResponse(body: unknown) {
 describe("SystemSection release refresh", () => {
   afterEach(() => {
     vi.useRealTimers();
+    cleanup();
     vi.restoreAllMocks();
   });
 
@@ -574,6 +575,7 @@ describe("SystemSection release refresh", () => {
   });
 
   it("keeps system upgrades read-only until billing is active", async () => {
+    vi.useRealTimers();
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/system/info")) {
@@ -617,8 +619,13 @@ describe("SystemSection release refresh", () => {
 
     render(<SystemSection billingActive={false} />);
 
-    expect(await screen.findByText("System upgrades are locked until billing is active.")).toBeTruthy();
-    const upgradeButton = await screen.findByRole("button", { name: "Upgrade Now" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("System upgrades are locked until billing is active.")).toBeTruthy();
+    const upgradeButton = screen.getByRole("button", { name: "Upgrade Now" });
     expect((upgradeButton as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(upgradeButton);
