@@ -842,6 +842,105 @@ describe("TerminalApp", () => {
     expect(deleteCalls).toHaveLength(1);
   });
 
+  it("keeps the Shells sidebar synchronized with newly adopted zellij sessions", async () => {
+    let revealBench = false;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: revealBench
+              ? [{ name: "main", status: "active" }, { name: "bench", status: "active" }]
+              : [{ name: "main", status: "active" }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    expect(screen.queryByText("bench")).toBeNull();
+
+    await act(async () => {
+      revealBench = true;
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("bench")).toBeTruthy();
+  });
+
+  it("keeps the last known Shells list visible during transient refresh failures", async () => {
+    let shellListCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method !== "POST") {
+        shellListCalls += 1;
+        if (shellListCalls > 1) {
+          return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("main")).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getByText("Failed to load shells")).toBeTruthy();
+  });
+
   it("surfaces shell creation failures in the Shells sidebar", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

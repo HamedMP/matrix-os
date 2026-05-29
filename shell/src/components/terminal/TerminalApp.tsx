@@ -39,6 +39,7 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
 
 const DEFAULT_CWD = "projects";
 const DEFAULT_SHELL_SESSION_NAME = "main";
+const SHELL_SESSION_REFRESH_MS = 5_000;
 
 interface Tab {
   id: string;
@@ -1167,16 +1168,16 @@ function LocalTerminalSidebar() {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
-  const fetchShells = useCallback(async () => {
-    setShellsLoading(true);
-    setShellsError(null);
+  const fetchShells = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) setShellsLoading(true);
+    if (!options.silent) setShellsError(null);
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         setShellsError("Failed to load shells");
-        setShells([]);
+        if (!options.silent) setShells([]);
         return;
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
@@ -1184,14 +1185,22 @@ function LocalTerminalSidebar() {
     } catch (err: unknown) {
       console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
       setShellsError("Could not reach gateway");
-      setShells([]);
+      if (!options.silent) setShells([]);
     } finally {
-      setShellsLoading(false);
+      if (!options.silent) setShellsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (tab === "shells") void fetchShells();
+  }, [fetchShells, tab]);
+
+  useEffect(() => {
+    if (tab !== "shells") return;
+    const timer = setInterval(() => {
+      void fetchShells({ silent: true });
+    }, SHELL_SESSION_REFRESH_MS);
+    return () => clearInterval(timer);
   }, [fetchShells, tab]);
 
   const fetchSessions = useCallback(async () => {
