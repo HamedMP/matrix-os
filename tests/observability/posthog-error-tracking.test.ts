@@ -426,6 +426,11 @@ describe("PostHog error tracking", () => {
 
     const shellClient = await readFile("shell/instrumentation-client.ts", "utf8");
     expect(shellClient).toContain("Shell has no local PostHog /ingest proxy");
+
+    const wwwPostHogClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
+    expect(wwwPostHogClient).toContain("ensurePostHogInitialized(config)");
+    expect(wwwPostHogClient).toContain("posthog.init(currentConfig.token");
+    expect(wwwPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest"');
   });
 
   it("queues Next server PostHog reporting off the request-error hook path", async () => {

@@ -1,6 +1,7 @@
 import { SignUp } from "@clerk/nextjs";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
+import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
 import { getSignupFallbackRedirectUrl } from "@/inngest/provision-status";
 
 export default function SignUpPage() {
@@ -8,30 +9,14 @@ export default function SignUpPage() {
     <AuthLayout
       featureContent={
         <FeatureShowcase
-          heading="The OS that builds itself"
-          subheading="Sign up to get your personal Matrix OS instance."
+          heading="Start with a free account"
+          subheading="Create your Matrix identity first. The 3-day hosted trial starts only when you provision a cloud computer."
         />
       }
       formContent={
         <SignUp
           fallbackRedirectUrl={getSignupFallbackRedirectUrl()}
-          appearance={{
-            elements: {
-              rootBox: "w-full",
-              card: "bg-transparent shadow-none border-0 w-full p-0",
-              headerTitle: "text-foreground text-xl",
-              headerSubtitle: "text-muted-foreground",
-              formButtonPrimary:
-                "bg-primary hover:bg-primary/90 text-primary-foreground",
-              formFieldInput:
-                "bg-background border-border text-foreground focus:ring-ring",
-              footerActionLink: "text-primary hover:text-primary/80",
-              socialButtonsBlockButton:
-                "border-border text-foreground hover:bg-secondary",
-              dividerLine: "bg-border",
-              dividerText: "text-muted-foreground",
-            },
-          }}
+          appearance={matrixClerkAppearance}
         />
       }
     />

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@clerk/ui/themes/shadcn.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -68,6 +69,16 @@
   --input: #e5e5e4;
   --ring: #8CC7BE;
 
+  /* Brand palette (shared source of truth with the matrix-os.com landing).
+     These do NOT recolor the OS accent (--primary stays the shell theme);
+     they give billing/marketing surfaces the forest/ember identity. */
+  --forest: #434E3F;
+  --deep: #32352E;
+  --ember: #D06F25;
+  --ember-foreground: #FAFAF5;
+  --cream: #E0E1CA;
+  --page-bg: #E2E2CF;
+
   /* Neumorphic tokens — no-op defaults, overridden by retro theme via applyTheme() */
   --neu-shadow-light: transparent;
   --neu-shadow-dark: transparent;
@@ -114,6 +125,12 @@
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
+  --color-forest: var(--forest);
+  --color-deep: var(--deep);
+  --color-ember: var(--ember);
+  --color-ember-foreground: var(--ember-foreground);
+  --color-cream: var(--cream);
+  --color-page-bg: var(--page-bg);
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);

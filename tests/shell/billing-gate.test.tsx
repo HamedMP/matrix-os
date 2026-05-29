@@ -19,10 +19,15 @@ vi.mock("@clerk/nextjs", () => ({
       data-for={props.for}
       data-redirect={props.newSubscriptionRedirectUrl}
       data-testid="pricing-table"
-    />
+    >
+      <button type="button">Start trial</button>
+    </div>
   ),
-  SignInButton: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="sign-in-button">{children}</div>
+  SignIn: () => (
+    <div data-testid="sign-in-component">Mock SignIn</div>
+  ),
+  SignUp: () => (
+    <div data-testid="sign-up-component">Mock SignUp</div>
   ),
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
@@ -66,7 +71,7 @@ describe("BillingGate", () => {
     vi.resetModules();
   });
 
-  it("renders Matrix OS when the signed-in user has the early adopter plan", async () => {
+  it("renders Matrix OS when the signed-in user has a paid plan", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
@@ -85,7 +90,7 @@ describe("BillingGate", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("shows Clerk checkout when the user has not subscribed to early adopter", async () => {
+  it("keeps the shell visible behind locked billing settings when the user has not subscribed", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
@@ -100,8 +105,15 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(screen.queryByText("Matrix workspace")).toBeNull();
-    expect(screen.getByText("Choose the early adopter plan to continue")).toBeTruthy();
+    expect(screen.getByText("Matrix workspace")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
+    expect(screen.getByText("Settings")).toBeTruthy();
+    expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", {
+        name: "Appearance Locked until billing is active",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect((await screen.findByTestId("pricing-table")).getAttribute("data-for")).toBe(
       "user",
     );
@@ -128,6 +140,7 @@ describe("BillingGate", () => {
     );
 
     expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
+    expect(screen.getByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
@@ -186,7 +199,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    fireEvent.pointerDown(await screen.findByTestId("pricing-table"));
+    await screen.findByTestId("pricing-table");
+    fireEvent.click(screen.getByRole("button", { name: /start trial/i }));
 
     expect(
       Number(window.sessionStorage.getItem("matrix.billing.checkoutAttemptAt")),
@@ -209,8 +223,8 @@ describe("BillingGate", () => {
     );
 
     expect(screen.queryByText("Matrix workspace")).toBeNull();
-    expect(screen.getByText("Sign in to continue")).toBeTruthy();
-    expect(screen.getByTestId("sign-in-button")).toBeTruthy();
+    expect(screen.getByText("Opening Matrix OS sign in")).toBeTruthy();
+    expect(screen.queryByTestId("sign-in-component")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 });

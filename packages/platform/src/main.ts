@@ -1095,6 +1095,10 @@ function getAuthPage(
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
+  const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
+  const modeDetail = mode === 'sign-up'
+    ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
+    : 'Sign in to continue to your Matrix computer, provisioning status, or trial checkout.';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1103,13 +1107,162 @@ function getAuthPage(
   <title>Matrix OS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    #auth { min-height: 400px; display: flex; align-items: center; justify-content: center; }
-    .loading { color: #666; font-size: 14px; }
+    body {
+      min-height: 100vh;
+      background: #E2E2CF;
+      color: #32352E;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
+    }
+    .story {
+      position: relative;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      border-right: 1px solid #D6D3C8;
+      background: #E0E1CA;
+      padding: 64px;
+    }
+    .story::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 24% 20%, rgba(250,250,245,0.78) 0%, transparent 55%),
+        radial-gradient(ellipse at 82% 72%, rgba(208,111,37,0.12) 0%, transparent 60%);
+    }
+    .story::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.08;
+      background-image:
+        linear-gradient(rgba(67,78,63,0.28) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(67,78,63,0.28) 1px, transparent 1px);
+      background-size: 42px 42px;
+    }
+    .story-inner { position: relative; z-index: 1; max-width: 560px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 48px;
+      color: #434E3F;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .logo {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: rgba(250,250,245,0.58);
+      border: 1px solid rgba(67,78,63,0.14);
+      color: #D06F25;
+    }
+    .eyebrow {
+      margin-bottom: 18px;
+      color: #7A7768;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 560px;
+      color: #434E3F;
+      font-size: clamp(2.4rem, 6vw, 4.8rem);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+      font-weight: 750;
+      margin-bottom: 24px;
+    }
+    .lead {
+      max-width: 500px;
+      color: #5C5A4F;
+      font-size: 16px;
+      line-height: 1.8;
+    }
+    .proof {
+      display: grid;
+      gap: 12px;
+      margin-top: 38px;
+    }
+    .proof-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      color: #5C5A4F;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      margin-top: 5px;
+      border-radius: 999px;
+      background: #D06F25;
+      box-shadow: 0 0 0 5px rgba(208,111,37,0.12);
+      flex: none;
+    }
+    .auth-panel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 48px;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 390px;
+      min-height: 470px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #D6D3C8;
+      border-radius: 24px;
+      background: rgba(250,250,245,0.68);
+      box-shadow: 0 24px 80px rgba(50,53,46,0.12);
+      padding: 32px;
+      backdrop-filter: blur(14px);
+    }
+    #auth { width: 100%; min-height: 400px; display: flex; align-items: center; justify-content: center; }
+    .loading { color: #7A7768; font-size: 14px; }
+    @media (max-width: 860px) {
+      .page { grid-template-columns: 1fr; }
+      .story { min-height: 42vh; border-right: 0; border-bottom: 1px solid #D6D3C8; padding: 40px 24px; }
+      .auth-panel { padding: 28px 20px 44px; }
+      .auth-card { max-width: 440px; padding: 24px; }
+    }
   </style>
 </head>
 <body>
-  <div id="auth"><span class="loading">Loading...</span></div>
+  <main class="page">
+    <section class="story">
+      <div class="story-inner">
+        <div class="brand"><span class="logo">M</span><span>Matrix OS</span></div>
+        <p class="eyebrow">${mode === 'sign-up' ? 'Free account' : 'Secure access'}</p>
+        <h1>${modeLabel}</h1>
+        <p class="lead">${modeDetail}</p>
+        <div class="proof">
+          <div class="proof-row"><span class="dot"></span><span>Signup stays free until you deliberately start hosted provisioning.</span></div>
+          <div class="proof-row"><span class="dot"></span><span>The trial provisions an owner-controlled Matrix computer, not just a dashboard.</span></div>
+          <div class="proof-row"><span class="dot"></span><span>Clerk handles account security and the payment step for the hosted runtime.</span></div>
+        </div>
+      </div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div id="auth"><span class="loading">Loading...</span></div>
+      </div>
+    </section>
+  </main>
   <script
     id="clerk-script"
     nonce="${scriptNonce}"
@@ -1121,6 +1274,29 @@ function getAuthPage(
   ></script>
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
+    var appearance = {
+      variables: {
+        colorPrimary: '#D06F25',
+        colorBackground: 'transparent',
+        colorText: '#32352E',
+        colorTextSecondary: '#5C5A4F',
+        colorInputBackground: 'rgba(250,250,245,0.74)',
+        colorInputText: '#32352E',
+        borderRadius: '0.875rem',
+        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      },
+      layout: {
+        socialButtonsPlacement: 'top',
+        socialButtonsVariant: 'blockButton',
+        logoLinkUrl: 'https://matrix-os.com'
+      },
+      elements: {
+        card: 'border-0 bg-transparent shadow-none p-0',
+        header: 'text-left',
+        formButtonPrimary: 'shadow-none',
+        footerActionLink: 'font-medium'
+      }
+    };
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
@@ -1130,9 +1306,9 @@ function getAuthPage(
         var el = document.getElementById('auth');
         el.innerHTML = '';
         if ('${mode}' === 'sign-up') {
-          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget });
+          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget, appearance: appearance });
         } else {
-          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget });
+          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget, appearance: appearance });
         }
       });
     }
@@ -2102,6 +2278,7 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: platformPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
+        captureEvent: capturePlatformEvent,
       }),
     );
   }
