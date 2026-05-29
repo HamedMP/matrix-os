@@ -1,6 +1,6 @@
 # Tasks: CLI TUI Action Console
 
-**Input**: Design documents from `/specs/085-cli-tui-action-console/`  
+**Input**: Design documents from `/specs/085-cli-tui-action-console/`
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/](./contracts/), [quickstart.md](./quickstart.md)
 
 **Tests**: Required. Matrix OS constitution requires TDD, and the feature specification requires independently testable user stories.

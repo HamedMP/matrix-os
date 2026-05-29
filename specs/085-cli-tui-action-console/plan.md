@@ -9,14 +9,14 @@ Turn the Matrix CLI TUI from a visual launcher into an actionable local control 
 
 ## Technical Context
 
-**Language/Version**: TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19 for Ink TUI components  
-**Primary Dependencies**: `ink`, React 19, existing `@finnaai/matrix` CLI stack (`citty`, `tsx`), existing shell client, existing gateway shell/session routes, Zod 4 via `zod/v4` for any new schemas  
-**Storage**: Owner-controlled Matrix home files for remote setup state/imported agent config; local CLI profile/config files under `~/.matrixos/`; selected local source directories such as `~/.codex`, `~/.claude`, `~/.agent`, and `~/.agents` are read-only inputs until explicit confirmation  
-**Testing**: Vitest TUI render/unit tests, executor unit tests, setup-migration unit tests, shell-client tests, gateway route tests if upload/import endpoints are added, `pnpm --filter @finnaai/matrix exec tsc --noEmit`, `bun run check:patterns`  
-**Target Platform**: Developer/user laptops running the Matrix CLI plus customer Matrix OS VPS gateways for session and remote setup operations  
-**Project Type**: Multi-package CLI/TUI + gateway integration in the existing monorepo  
-**Performance Goals**: Home and palette interactions respond within 100ms locally; local status refresh and session list complete within 1s p95 when gateway is healthy; setup source scan completes within 2s for normal config directories; TUI render remains readable at 60/80/100 columns  
-**Constraints**: No raw internal errors in TUI; no silent action no-ops; no unbounded local file traversal; no copying secrets/caches by default; all external fetches retain `AbortSignal.timeout`; mutating gateway endpoints use `bodyLimit`; destructive session actions require confirmation; no new persistence outside owner-controlled files/Postgres where already used  
+**Language/Version**: TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19 for Ink TUI components
+**Primary Dependencies**: `ink`, React 19, existing `@finnaai/matrix` CLI stack (`citty`, `tsx`), existing shell client, existing gateway shell/session routes, Zod 4 via `zod/v4` for any new schemas
+**Storage**: Owner-controlled Matrix home files for remote setup state/imported agent config; local CLI profile/config files under `~/.matrixos/`; selected local source directories such as `~/.codex`, `~/.claude`, `~/.agent`, and `~/.agents` are read-only inputs until explicit confirmation
+**Testing**: Vitest TUI render/unit tests, executor unit tests, setup-migration unit tests, shell-client tests, gateway route tests if upload/import endpoints are added, `pnpm --filter @finnaai/matrix exec tsc --noEmit`, `bun run check:patterns`
+**Target Platform**: Developer/user laptops running the Matrix CLI plus customer Matrix OS VPS gateways for session and remote setup operations
+**Project Type**: Multi-package CLI/TUI + gateway integration in the existing monorepo
+**Performance Goals**: Home and palette interactions respond within 100ms locally; local status refresh and session list complete within 1s p95 when gateway is healthy; setup source scan completes within 2s for normal config directories; TUI render remains readable at 60/80/100 columns
+**Constraints**: No raw internal errors in TUI; no silent action no-ops; no unbounded local file traversal; no copying secrets/caches by default; all external fetches retain `AbortSignal.timeout`; mutating gateway endpoints use `bodyLimit`; destructive session actions require confirmation; no new persistence outside owner-controlled files/Postgres where already used
 **Scale/Scope**: First slice covers command dispatch, quick-action home, session list/create/attach/remove, setup wizard for Codex/Claude, safe config detection/import, and docs. Layout picker, rename, pane management, and richer setup providers are deferred.
 
 ## Constitution Check

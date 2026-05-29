@@ -1,8 +1,8 @@
 # Feature Specification: CLI TUI Action Console
 
-**Feature Branch**: `085-cli-tui-action-console`  
-**Created**: 2026-05-29  
-**Status**: Draft  
+**Feature Branch**: `085-cli-tui-action-console`
+**Created**: 2026-05-29
+**Status**: Draft
 **Input**: User description: "Make the Matrix CLI TUI useful instead of decorative: remove the poor mascot/ASCII-poster home screen, execute command palette actions, add a home screen with most-used commands, add persistent shell-session management, add a coding-agent setup wizard for Codex/Claude and local config migration, and finish setup by opening a terminal session."
 
 ## User Scenarios & Testing *(mandatory)*

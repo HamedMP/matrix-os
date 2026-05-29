@@ -1,7 +1,7 @@
 # Specification Quality Checklist: CLI TUI Action Console
 
-**Purpose**: Validate specification completeness and quality before proceeding to planning  
-**Created**: 2026-05-29  
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-05-29
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
