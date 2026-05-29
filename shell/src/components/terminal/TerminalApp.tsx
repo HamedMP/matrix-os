@@ -1,46 +1,39 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
+import {
+  BotIcon,
+  FilesIcon,
+  FolderIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
-import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
+import { useTerminalSettings } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
+import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId } from "./TerminalPane";
+import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
-// Map xterm theme ids onto zellij's built-in theme names. Zellij ships with
-// these themes in 0.44, so referencing them by name "just works".
-const ZELLIJ_THEME_BY_TERMINAL: Record<string, string> = {
-  "one-dark": "one-half-dark",
-  "one-light": "one-half-light",
-  "catppuccin-mocha": "catppuccin-mocha",
-  "dracula": "dracula",
-  "nord": "nord",
-  "solarized-dark": "solarized-dark",
-  "solarized-light": "solarized-light",
-  "github-dark": "default",
-  "github-light": "default",
-};
+export { TERMINAL_INPUT_EVENT };
+export type { TerminalInputEventDetail };
 
-// Build a one-shot shell command that writes a Matrix-owned zellij config
-// honoring the user's terminal theme, then launches zellij with that config.
-function zellijLaunchCommand(themeId: TerminalThemeId, isLight: boolean): string {
-  const mapped = themeId !== "system" ? ZELLIJ_THEME_BY_TERMINAL[themeId] : undefined;
-  const fallback = isLight ? "one-half-light" : "default";
-  const theme = mapped ?? fallback;
-  return `mkdir -p ~/.config/matrix-os && printf 'theme "${theme}"\\n' > ~/.config/matrix-os/zellij.kdl && exec zellij --config ~/.config/matrix-os/zellij.kdl`;
-}
-
-function isLightTerminalTheme(themeId: TerminalThemeId, desktopThemeSlug?: string): boolean {
-  return (
-    themeId === "one-light" ||
-    themeId === "solarized-light" ||
-    themeId === "github-light" ||
-    (themeId === "system" && /light|day/i.test(desktopThemeSlug ?? ""))
+function dispatchPaneInput(paneId: string | null, data: string): void {
+  if (!paneId) return;
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<TerminalInputEventDetail>(TERMINAL_INPUT_EVENT, {
+      detail: { paneId, data },
+    }),
   );
 }
 
@@ -140,10 +133,12 @@ function getSessionIds(node: PaneNode): string[] {
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
 }
 
-function layoutHasCanonicalShellSession(layout: TerminalLayout): boolean {
-  return Array.isArray(layout.tabs) && layout.tabs.some((tab) => (
-    getSessionIds(tab.paneTree).some((sessionId) => isCanonicalShellSessionId(sessionId))
-  ));
+function layoutUsesOnlyCanonicalShellSessions(layout: TerminalLayout): boolean {
+  if (!Array.isArray(layout.tabs) || layout.tabs.length === 0) {
+    return false;
+  }
+  const sessionIds = layout.tabs.flatMap((tab) => getSessionIds(tab.paneTree));
+  return sessionIds.length > 0 && sessionIds.every((sessionId) => isCanonicalShellSessionId(sessionId));
 }
 
 async function ensureDefaultShellSession(): Promise<boolean> {
@@ -172,7 +167,7 @@ async function ensureDefaultShellSession(): Promise<boolean> {
 }
 
 function getSafePreferencesSessionName(value: string | null): string | null {
-  return value && /^[a-z][a-z0-9-]{0,30}$/.test(value) ? value : null;
+  return value && /^[a-z0-9][a-z0-9-]{0,30}$/.test(value) ? value : null;
 }
 
 function terminalAppDebug(event: string, details: Record<string, unknown>): void {
@@ -196,15 +191,23 @@ interface TerminalAppProps {
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
-  const isLightTheme = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
 
   // Match the padding around the xterm to the active terminal theme so the
   // user never sees a colored seam between the OS theme bg and the xterm
   // bg. Falls back to the desktop theme bg when "Match OS" is selected.
+  const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
   const terminalBackground =
     themeId === "system"
       ? (theme.colors.background || "var(--background)")
-      : getTerminalThemePreset(themeId).background;
+      : terminalPreset?.background ?? "var(--background)";
+  const terminalForeground =
+    themeId === "system"
+      ? (theme.colors.foreground || "var(--foreground)")
+      : terminalPreset?.foreground ?? "var(--foreground)";
+  const terminalAccent =
+    themeId === "system"
+      ? (theme.colors.primary || "var(--primary)")
+      : terminalPreset?.cursor ?? "var(--primary)";
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
@@ -218,11 +221,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   tabsRef.current = tabs;
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
-  const themeIdRef = useRef(themeId);
-  themeIdRef.current = themeId;
   const initialMobileRef = useRef(mobile);
   const sidebarOpenRef = useRef(sidebarOpen);
   sidebarOpenRef.current = sidebarOpen;
+  const mountedRef = useRef(false);
   const pendingPaneSessionsRef = useRef<Map<string, string>>(new Map());
   const closingPaneIdsRef = useRef<Set<string>>(new Set());
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,7 +241,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
-      sidebarOpen: sidebarOpenRef.current,
+      ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
     };
 
     return fetch(`${getGatewayUrl()}/api/terminal/layout`, {
@@ -256,7 +258,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const destroyTerminalSessions = useCallback((sessionIds: string[]) => {
     const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
     for (const sessionId of uniqueIds) {
-      void fetch(`${getGatewayUrl()}/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`, {
+      const isCanonical = isCanonicalShellSessionId(sessionId);
+      const path = isCanonical
+        ? `/api/terminal/sessions/${encodeURIComponent(sessionId)}?force=1`
+        : `/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`;
+      void fetch(`${getGatewayUrl()}${path}`, {
         method: "DELETE",
         keepalive: true,
         signal: AbortSignal.timeout(5_000),
@@ -293,6 +299,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         closingPaneIdsRef.current.delete(paneId);
       }
     }, 0);
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   const addTab = useCallback(
@@ -339,6 +352,44 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return id;
   }, []);
 
+  const createShellSessionTab = useCallback(async (label: string, cwd = DEFAULT_CWD) => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const name = `zellij-${genId()}`;
+      try {
+        const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, cwd }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 409) {
+          continue;
+        }
+        if (!res.ok) {
+          console.warn(`Failed to create shell session "${name}": ${res.status}`);
+          return null;
+        }
+        if (!mountedRef.current) {
+          destroyTerminalSessions([name]);
+          return null;
+        }
+        addSessionTab(label, name, cwd);
+        return name;
+      } catch (err: unknown) {
+        console.warn(
+          "Failed to create shell session:",
+          err instanceof Error ? err.message : String(err),
+        );
+        if (err instanceof Error && err.name === "AbortError") {
+          continue;
+        }
+        return null;
+      }
+    }
+    console.warn("Failed to create shell session: name collision");
+    return null;
+  }, [addSessionTab, destroyTerminalSessions]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -362,7 +413,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         if (res.ok) {
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
-            if (layoutHasCanonicalShellSession(data)) {
+            if (layoutUsesOnlyCanonicalShellSessions(data)) {
               const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
               const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
               setTabs(data.tabs);
@@ -608,16 +659,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       case "E": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "vertical"); break;
       case "B": e.preventDefault(); setSidebarOpen(o => !o); break;
       case "C": e.preventDefault(); addTab(getCwd(), "Claude Code", true); break;
-      case "Z": e.preventDefault(); addTab(getCwd(), "Zellij", false, zellijLaunchCommand(themeIdRef.current, isLightTheme)); break;
+      case "Z": e.preventDefault(); void createShellSessionTab("Zellij", getCwd()); break;
     }
-  }, [addTab, closePane, splitPane, focusedPaneId, getCwd, isLightTheme]);
+  }, [addTab, closePane, createShellSessionTab, splitPane, focusedPaneId, getCwd]);
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile,
-    addTab, addSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
+    addTab, addSessionTab, createShellSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
   };
@@ -630,7 +681,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       onKeyDown={handleKeyDown}
     >
       <TerminalAppContext.Provider value={storeApi}>
-        <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} isLightTheme={isLightTheme} />
+        <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} />
         <div className="flex flex-1 min-h-0">
           {!mobile && <LocalTerminalSidebar />}
           {activeTab ? (
@@ -638,15 +689,25 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               className="flex-1 min-w-0 min-h-0 flex"
               style={{ padding: mobile ? "6px" : "8px 10px 8px 12px", background: terminalBackground }}
             >
-              <PaneGrid
-                paneTree={activeTab.paneTree}
-                theme={theme}
-                focusedPaneId={focusedPaneId}
-                onFocusPane={setFocusedPaneId}
-                onSessionAttached={handleSessionAttached}
-                shouldCachePane={shouldCachePane}
-                shouldDestroyPane={shouldDestroyPane}
-              />
+              <div className="flex flex-1 min-h-0 min-w-0 flex-col">
+                <PaneGrid
+                  paneTree={activeTab.paneTree}
+                  theme={theme}
+                  focusedPaneId={focusedPaneId}
+                  onFocusPane={setFocusedPaneId}
+                  onSessionAttached={handleSessionAttached}
+                  shouldCachePane={shouldCachePane}
+                  shouldDestroyPane={shouldDestroyPane}
+                />
+                {mobile && (
+                  <TerminalKeyBar
+                    onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
+                    background={terminalBackground}
+                    foreground={terminalForeground}
+                    accent={terminalAccent}
+                  />
+                )}
+              </div>
             </div>
           ) : !initialized ? (
             <div className="flex-1" style={{ background: "var(--background)" }} />
@@ -681,6 +742,7 @@ interface TerminalAppContextType {
   mobile: boolean;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
+  createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -845,9 +907,8 @@ function ThemePickerButton() {
   );
 }
 
-function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string; isLightTheme: boolean }) {
+function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const ctx = useTerminalAppContext();
-  const themeId = useTerminalSettings((s) => s.themeId);
   const dragIndexRef = useRef<number | null>(null);
 
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
@@ -859,18 +920,29 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
 
   return (
     <div
-      className="flex items-stretch border-b shrink-0 select-none"
+      className="grid items-stretch border-b shrink-0 select-none"
       style={{
         background: "var(--card)",
         borderColor: "var(--border)",
-        height: ctx.mobile ? 50 : 40,
+        height: ctx.mobile ? 50 : 44,
         padding: "4px 6px",
         gap: 4,
+        gridTemplateColumns: ctx.mobile ? "1fr auto" : "minmax(0, 1fr) auto",
+        minWidth: 0,
       }}
     >
-      <div className="flex items-stretch overflow-x-auto flex-1 min-w-0" style={{ gap: 2 }}>
+      <div
+        className="flex items-stretch overflow-x-auto min-w-0"
+        style={{
+          gap: 3,
+          scrollbarWidth: "thin",
+          overscrollBehaviorX: "contain",
+        }}
+      >
         {ctx.tabs.map((tab, i) => {
           const active = tab.id === ctx.activeTabId;
+          const tabPaneId = getFirstPaneId(tab.paneTree);
+          const tabSessionId = getPaneSessionId(tab.paneTree, tabPaneId);
           return (
             <div
               key={tab.id}
@@ -882,8 +954,10 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
                 borderRadius: 6,
                 padding: ctx.mobile ? "0 8px" : "0 10px",
                 fontSize: 12,
-                height: ctx.mobile ? 34 : 30,
+                height: ctx.mobile ? 34 : 34,
                 fontWeight: active ? 500 : 400,
+                minWidth: ctx.mobile ? 112 : 136,
+                maxWidth: ctx.mobile ? 168 : 220,
               }}
               draggable
               onClick={() => ctx.setActiveTab(tab.id)}
@@ -901,11 +975,11 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
                 }}
               />
               <span
-                className={ctx.mobile ? "flex min-w-0 flex-col leading-tight" : undefined}
-                style={{ maxWidth: ctx.mobile ? 132 : 160, overflow: "hidden" }}
+                className="flex min-w-0 flex-col leading-tight"
+                style={{ overflow: "hidden" }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
-                {ctx.mobile && active && (
+                {(ctx.mobile || active) && (
                   <span
                     style={{
                       color: "var(--muted-foreground)",
@@ -913,9 +987,10 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
                       fontWeight: 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
+                      fontFamily: "var(--font-mono, ui-monospace, monospace)",
                     }}
                   >
-                    {formatCwd(activeCwd)}
+                    {active ? formatCwd(activeCwd) : tabSessionId ?? formatCwd(getPaneCwd(tab.paneTree, tabPaneId) ?? defaultCwd)}
                   </span>
                 )}
               </span>
@@ -944,7 +1019,15 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
           );
         })}
       </div>
-      <div className="flex items-center shrink-0" style={{ gap: 4, paddingLeft: 8, borderLeft: "1px solid var(--border)" }}>
+      <div
+        className="flex items-center shrink-0"
+        style={{
+          gap: 4,
+          paddingLeft: 8,
+          borderLeft: "1px solid var(--border)",
+          minWidth: 0,
+        }}
+      >
         {ctx.mobile ? (
           <ToolbarBtn
             onClick={() => ctx.addTab(getCwd())}
@@ -962,7 +1045,7 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
               Claude
             </ToolbarBtn>
             <ToolbarBtn
-              onClick={() => ctx.addTab(getCwd(), "Zellij", false, zellijLaunchCommand(themeId, isLightTheme))}
+              onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
               title="Launch Zellij (Ctrl+Shift+Z)"
               variant="primary"
             >
@@ -1005,7 +1088,15 @@ interface ProjectInfo {
   modified: string | null;
 }
 
-type SidebarTab = "projects" | "files" | "sessions";
+type SidebarTab = "projects" | "shells" | "sessions" | "files";
+
+interface ShellSessionSummary {
+  name: string;
+  status?: "active" | "exited" | "degraded";
+  updatedAt?: string;
+  attachedClients?: number;
+  tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
+}
 
 interface WorkspaceSessionSummary {
   id: string;
@@ -1023,39 +1114,30 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
-interface TerminalSessionSummary {
-  name: string;
-  status?: "active" | "exited" | "degraded";
-  backend?: string;
-  attachedClients?: number;
-  createdAt?: string;
-  updatedAt?: string;
-  tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
-  metadata?: {
-    projectSlug?: string;
-    worktreeId?: string;
-    taskId?: string;
-    pr?: number;
-    workspaceSessionId?: string;
-  };
-}
-
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
-  const theme = useTheme();
-  const themeId = useTerminalSettings((s) => s.themeId);
-  const isLightSidebar = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
   const [tab, setTab] = useState<SidebarTab>("projects");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [shells, setShells] = useState<ShellSessionSummary[]>([]);
+  const [shellsLoading, setShellsLoading] = useState(false);
+  const [shellsError, setShellsError] = useState<string | null>(null);
+  const creatingShellRef = useRef(false);
+  const [creatingShell, setCreatingShell] = useState(false);
+  const deletingShellsRef = useRef<Set<string>>(new Set());
+  const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
-  const [terminalSessions, setTerminalSessions] = useState<TerminalSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
+
+  const selectSidebarTab = useCallback((nextTab: SidebarTab) => {
+    setTab(nextTab);
+    setFilter("");
+  }, []);
 
   const fetchProjects = useCallback(async () => {
     setProjectsLoading(true);
@@ -1085,36 +1167,50 @@ function LocalTerminalSidebar() {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
+  const fetchShells = useCallback(async () => {
+    setShellsLoading(true);
+    setShellsError(null);
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setShellsError("Failed to load shells");
+        setShells([]);
+        return;
+      }
+      const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
+      setShells(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch (err: unknown) {
+      console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
+      setShellsError("Could not reach gateway");
+      setShells([]);
+    } finally {
+      setShellsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "shells") void fetchShells();
+  }, [fetchShells, tab]);
+
   const fetchSessions = useCallback(async () => {
     setSessionsLoading(true);
     setSessionsError(null);
     try {
-      const [terminalRes, workspaceRes] = await Promise.all([
-        fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-          signal: AbortSignal.timeout(10_000),
-        }),
-        fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
-          signal: AbortSignal.timeout(10_000),
-        }),
-      ]);
-      if (!terminalRes.ok) {
+      const res = await fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
         setSessionsError("Failed to load sessions");
-        setTerminalSessions([]);
         setSessions([]);
         return;
       }
-      const terminalData = (await terminalRes.json()) as { sessions?: TerminalSessionSummary[] };
-      setTerminalSessions(Array.isArray(terminalData.sessions) ? terminalData.sessions : []);
-      if (workspaceRes.ok) {
-        const workspaceData = (await workspaceRes.json()) as { sessions?: WorkspaceSessionSummary[] };
-        setSessions(Array.isArray(workspaceData.sessions) ? workspaceData.sessions : []);
-      } else {
-        setSessions([]);
-      }
+      const data = (await res.json()) as { sessions?: WorkspaceSessionSummary[] };
+      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
     } catch (err: unknown) {
-      console.warn("Failed to load terminal sessions:", err instanceof Error ? err.message : err);
+      console.warn("Failed to load workspace sessions:", err instanceof Error ? err.message : err);
       setSessionsError("Could not reach gateway");
-      setTerminalSessions([]);
       setSessions([]);
     } finally {
       setSessionsLoading(false);
@@ -1152,24 +1248,31 @@ function LocalTerminalSidebar() {
 
   if (!ctx.sidebarOpen) {
     return (
-      <div className="flex flex-col items-center py-2 gap-2 shrink-0" style={{ width: 40, background: "var(--card)", borderRight: "1px solid var(--border)" }}>
+      <div className="flex flex-col items-center py-2 gap-2 shrink-0" style={{ width: 44, background: "var(--card)", borderRight: "1px solid var(--border)" }}>
         <button
           className="flex items-center justify-center rounded cursor-pointer hover:bg-[var(--accent)] transition-colors"
-          style={{ width: 28, height: 28, fontSize: 14 }}
+          style={{ width: 30, height: 30, fontSize: 14 }}
           onClick={() => ctx.setSidebarOpen(true)}
           title="Open sidebar (Ctrl+Shift+B)"
         >
-          ☰
+          <PanelLeftOpenIcon size={16} strokeWidth={1.8} />
         </button>
       </div>
     );
   }
 
   const isAtRoot = !rootPath || rootPath === ".";
-  const filteredProjects = filter
-    ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
-    : projects;
   const normalizedFilter = filter.trim().toLowerCase();
+  const filteredProjects = normalizedFilter
+    ? projects.filter((p) => p.name.toLowerCase().includes(normalizedFilter))
+    : projects;
+  const filteredShells = normalizedFilter
+    ? shells.filter((shell) => [
+      shell.name,
+      shell.status,
+      shell.tabs?.map((shellTab) => shellTab.name).join(" "),
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
+    : shells;
   const filteredSessions = normalizedFilter
     ? sessions.filter((session) => [
       session.id,
@@ -1182,36 +1285,50 @@ function LocalTerminalSidebar() {
       session.transcriptPath,
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
     : sessions;
-  const filteredTerminalSessions = normalizedFilter
-    ? terminalSessions.filter((session) => [
-      session.name,
-      session.status,
-      session.backend,
-      session.metadata?.projectSlug,
-      session.metadata?.taskId,
-      session.metadata?.worktreeId,
-      session.metadata?.workspaceSessionId,
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
-    : terminalSessions;
+  const filteredTree = normalizedFilter ? filterTreeNodes(tree, normalizedFilter) : tree;
 
-  const openTerminalSession = (session: TerminalSessionSummary) => {
-    ctx.addSessionTab(session.name, session.name);
+  const createManagedShell = async () => {
+    if (creatingShellRef.current) return;
+    creatingShellRef.current = true;
+    setCreatingShell(true);
+    setShellsError(null);
+    try {
+      const name = await ctx.createShellSessionTab("Zellij", ctx.sidebarSelectedPath ?? DEFAULT_CWD);
+      if (name) {
+        await fetchShells();
+      } else {
+        setShellsError("Failed to create shell");
+      }
+    } catch (err: unknown) {
+      console.warn("Failed to create shell session:", err instanceof Error ? err.message : err);
+      setShellsError("Could not create shell");
+    } finally {
+      creatingShellRef.current = false;
+      setCreatingShell(false);
+    }
   };
 
-  const deleteTerminalSession = async (sessionName: string) => {
+  const deleteManagedShell = async (name: string) => {
+    if (deletingShellsRef.current.has(name)) return;
+    deletingShellsRef.current.add(name);
+    setDeletingShellNames(Array.from(deletingShellsRef.current));
+    setShellsError(null);
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}?force=1`, {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
         method: "DELETE",
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        setSessionsError("Failed to delete terminal session");
+        setShellsError("Failed to remove shell");
         return;
       }
-      await fetchSessions();
+      await fetchShells();
     } catch (err: unknown) {
-      console.warn("Failed to delete terminal session:", err instanceof Error ? err.message : err);
-      setSessionsError("Could not delete terminal session");
+      console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
+      setShellsError("Could not remove shell");
+    } finally {
+      deletingShellsRef.current.delete(name);
+      setDeletingShellNames(Array.from(deletingShellsRef.current));
     }
   };
 
@@ -1283,88 +1400,144 @@ function LocalTerminalSidebar() {
   };
 
   return (
-    <div className="flex flex-col shrink-0 overflow-hidden" style={{ width: 240, background: "var(--card)", borderRight: "1px solid var(--border)", paddingLeft: 4 }}>
-      <div className="flex items-stretch shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+    <div
+      className="grid shrink-0 overflow-hidden"
+      style={{
+        width: 320,
+        gridTemplateColumns: "48px minmax(0, 1fr)",
+        background: "var(--card)",
+        borderRight: "1px solid var(--border)",
+      }}
+    >
+      <div
+        className="flex flex-col items-center py-2"
+        style={{
+          gap: 6,
+          borderRight: "1px solid var(--border)",
+          background: "color-mix(in srgb, var(--background) 62%, var(--card))",
+        }}
+      >
+        <SidebarRailButton label="Projects" icon={<FolderIcon size={16} strokeWidth={1.8} />} active={tab === "projects"} onClick={() => selectSidebarTab("projects")} />
+        <SidebarRailButton label="Shells" icon={<TerminalIcon size={16} strokeWidth={1.8} />} active={tab === "shells"} onClick={() => selectSidebarTab("shells")} />
+        <SidebarRailButton label="Agents" icon={<BotIcon size={16} strokeWidth={1.8} />} active={tab === "sessions"} onClick={() => selectSidebarTab("sessions")} />
+        <SidebarRailButton label="Files" icon={<FilesIcon size={16} strokeWidth={1.8} />} active={tab === "files"} onClick={() => selectSidebarTab("files")} />
+        <div style={{ flex: 1 }} />
         <button
-          aria-label="Projects"
-          className="flex-1 flex items-center justify-center gap-1.5 text-[11px] cursor-pointer transition-colors"
+          className="flex items-center justify-center cursor-pointer transition-colors"
           style={{
-            padding: "8px 6px",
-            background: tab === "projects" ? "var(--background)" : "transparent",
-            color: tab === "projects" ? "var(--foreground)" : "var(--muted-foreground)",
-            borderBottom: tab === "projects" ? "2px solid var(--primary)" : "2px solid transparent",
-            fontWeight: 500,
-            letterSpacing: "0.3px",
+            width: 32,
+            height: 32,
+            borderRadius: 6,
+            border: "1px solid transparent",
+            background: "transparent",
+            color: "var(--muted-foreground)",
+            fontSize: 14,
           }}
-          onClick={() => setTab("projects")}
-        >
-          <span style={{ fontSize: 12 }}>◆</span> Projects
-        </button>
-        <button
-          aria-label="Files"
-          className="flex-1 flex items-center justify-center gap-1.5 text-[11px] cursor-pointer transition-colors"
-          style={{
-            padding: "8px 6px",
-            background: tab === "files" ? "var(--background)" : "transparent",
-            color: tab === "files" ? "var(--foreground)" : "var(--muted-foreground)",
-            borderBottom: tab === "files" ? "2px solid var(--primary)" : "2px solid transparent",
-            fontWeight: 500,
-            letterSpacing: "0.3px",
-          }}
-          onClick={() => setTab("files")}
-        >
-          <span style={{ fontSize: 12 }}>▤</span> Files
-        </button>
-        <button
-          aria-label="Sessions"
-          className="flex-1 flex items-center justify-center gap-1.5 text-[11px] cursor-pointer transition-colors"
-          style={{
-            padding: "8px 6px",
-            background: tab === "sessions" ? "var(--background)" : "transparent",
-            color: tab === "sessions" ? "var(--foreground)" : "var(--muted-foreground)",
-            borderBottom: tab === "sessions" ? "2px solid var(--primary)" : "2px solid transparent",
-            fontWeight: 500,
-            letterSpacing: "0.3px",
-          }}
-          onClick={() => setTab("sessions")}
-        >
-          <span style={{ fontSize: 12 }}>◉</span> Sessions
-        </button>
-        <button
-          className="flex items-center justify-center cursor-pointer hover:bg-[var(--accent)] transition-colors"
-          style={{ width: 28, color: "var(--muted-foreground)", fontSize: 14 }}
           onClick={() => ctx.setSidebarOpen(false)}
           title="Hide sidebar (Ctrl+Shift+B)"
         >
-          ‹
+          <PanelLeftCloseIcon size={16} strokeWidth={1.8} />
         </button>
       </div>
 
-      {tab === "projects" ? (
-        <>
-          <div className="flex items-center gap-1.5 px-2 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+      <div className="flex min-w-0 flex-col overflow-hidden">
+        <div
+          className="shrink-0"
+          style={{
+            padding: "10px 12px 8px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div className="flex items-center justify-between gap-2" style={{ marginBottom: 8 }}>
+            <div className="min-w-0">
+              <div
+                className="truncate"
+                style={{
+                  color: "var(--foreground)",
+                  fontSize: 13,
+                  fontWeight: 650,
+                  lineHeight: 1.1,
+                }}
+              >
+                {tab === "projects" ? "Projects" : tab === "shells" ? "Shells" : tab === "sessions" ? "Agents" : "Files"}
+              </div>
+              <div
+                className="truncate"
+                style={{
+                  color: "var(--muted-foreground)",
+                  fontSize: 10,
+                  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                  marginTop: 3,
+                }}
+              >
+                {tab === "files" ? rootPath || "~" : ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/projects"}
+              </div>
+            </div>
+            {tab === "shells" ? (
+              <button
+                onClick={() => void createManagedShell()}
+                disabled={creatingShell}
+                className="flex items-center gap-1.5 cursor-pointer"
+                style={{
+                  height: 28,
+                  padding: "0 10px",
+                  borderRadius: 6,
+                  border: "1px solid transparent",
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  cursor: creatingShell ? "not-allowed" : "pointer",
+                  opacity: creatingShell ? 0.75 : 1,
+                }}
+              >
+                <PlusIcon size={13} strokeWidth={2} />
+                New
+              </button>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-1.5">
             <input
+              aria-label={`Search ${tab === "sessions" ? "agents" : tab}`}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter..."
-              className="flex-1 text-[11px] outline-none"
+              placeholder={tab === "shells" ? "Find shell..." : tab === "sessions" ? "Find agent..." : tab === "files" ? "Find file..." : "Find project..."}
+              className="min-w-0 flex-1 text-[11px] outline-none"
               style={{
+                height: 28,
                 background: "var(--background)",
                 color: "var(--foreground)",
                 border: "1px solid var(--border)",
-                borderRadius: 4,
-                padding: "3px 6px",
+                borderRadius: 6,
+                padding: "0 8px",
               }}
             />
             <button
-              onClick={() => void fetchProjects()}
-              className="cursor-pointer hover:bg-[var(--accent)] rounded transition-colors"
-              style={{ color: "var(--muted-foreground)", fontSize: 12, padding: "2px 6px" }}
+              onClick={() => {
+                if (tab === "projects") void fetchProjects();
+                if (tab === "shells") void fetchShells();
+                if (tab === "sessions") void fetchSessions();
+                if (tab === "files") void fetchDir(rootPath).then((entries: TreeNode[]) => setTree(entries.map(e => ({ ...e, path: `${rootPath}/${e.name}` }))));
+              }}
+              className="flex items-center justify-center cursor-pointer hover:bg-[var(--accent)] transition-colors"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--background)",
+                color: "var(--muted-foreground)",
+                fontSize: 12,
+              }}
               title="Refresh"
             >
-              ↻
+              <RefreshCwIcon size={13} strokeWidth={1.8} />
             </button>
           </div>
+        </div>
+
+        {tab === "projects" ? (
           <div className="flex-1 overflow-y-auto py-1">
             {projectsLoading && (
               <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
@@ -1393,43 +1566,44 @@ function LocalTerminalSidebar() {
                 project={p}
                 onOpenShell={() => ctx.addTab(p.path, p.name)}
                 onOpenClaude={() => ctx.addTab(p.path, `${p.name} · claude`, true)}
-                onOpenZellij={() => ctx.addTab(p.path, `${p.name} · zellij`, false, zellijLaunchCommand(themeId, isLightSidebar))}
+                onOpenZellij={() => { void ctx.createShellSessionTab(`${p.name} · zellij`, p.path); }}
                 onSelect={() => ctx.setSidebarSelectedPath(p.path)}
                 isSelected={ctx.sidebarSelectedPath === p.path}
               />
             ))}
           </div>
-        </>
-      ) : tab === "sessions" ? (
-        <>
-          <div className="flex items-center gap-1.5 px-2 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
-            <input
-              aria-label="Search sessions and transcripts"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Search sessions..."
-              className="flex-1 text-[11px] outline-none"
-              style={{
-                background: "var(--background)",
-                color: "var(--foreground)",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                padding: "3px 6px",
-              }}
-            />
-            <button
-              onClick={() => void fetchSessions()}
-              className="cursor-pointer hover:bg-[var(--accent)] rounded transition-colors"
-              style={{ color: "var(--muted-foreground)", fontSize: 12, padding: "2px 6px" }}
-              title="Refresh sessions"
-            >
-              ↻
-            </button>
+        ) : tab === "shells" ? (
+          <div className="flex-1 overflow-y-auto py-1">
+            {shellsLoading && (
+              <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                Loading shells...
+              </div>
+            )}
+            {!shellsLoading && shellsError && (
+              <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--destructive)" }}>
+                {shellsError}
+              </div>
+            )}
+            {!shellsLoading && !shellsError && filteredShells.length === 0 && (
+              <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                {filter ? "No shells match" : "No zellij shells"}
+              </div>
+            )}
+            {!shellsLoading && filteredShells.map((shell) => (
+              <ShellCard
+                key={shell.name}
+                shell={shell}
+                deleting={deletingShellNames.includes(shell.name)}
+                onOpen={() => ctx.addSessionTab(shell.name, shell.name)}
+                onDelete={() => void deleteManagedShell(shell.name)}
+              />
+            ))}
           </div>
+        ) : tab === "sessions" ? (
           <div className="flex-1 overflow-y-auto py-1">
             {sessionsLoading && (
               <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-                Loading sessions…
+                Loading sessions...
               </div>
             )}
             {!sessionsLoading && sessionsError && (
@@ -1437,27 +1611,9 @@ function LocalTerminalSidebar() {
                 {sessionsError}
               </div>
             )}
-            {!sessionsLoading && !sessionsError && filteredTerminalSessions.length === 0 && filteredSessions.length === 0 && (
+            {!sessionsLoading && !sessionsError && filteredSessions.length === 0 && (
               <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-                {filter ? "No sessions match" : "No terminal sessions"}
-              </div>
-            )}
-            {!sessionsLoading && filteredTerminalSessions.length > 0 && (
-              <div className="px-3 py-1.5 text-[10px]" style={{ color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                Terminal sessions
-              </div>
-            )}
-            {!sessionsLoading && filteredTerminalSessions.map((session) => (
-              <TerminalSessionCard
-                key={session.name}
-                session={session}
-                onOpen={() => openTerminalSession(session)}
-                onDelete={() => void deleteTerminalSession(session.name)}
-              />
-            ))}
-            {!sessionsLoading && filteredSessions.length > 0 && (
-              <div className="px-3 py-1.5 text-[10px]" style={{ color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                Workspace sessions
+                {filter ? "No sessions match" : "No coding sessions"}
               </div>
             )}
             {!sessionsLoading && filteredSessions.map((session) => (
@@ -1471,9 +1627,8 @@ function LocalTerminalSidebar() {
               />
             ))}
           </div>
-        </>
-      ) : (
-        <>
+        ) : (
+          <>
           <div className="flex items-center gap-1 px-2 py-1.5 text-[10px] shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
             {!isAtRoot && (
               <button
@@ -1492,7 +1647,7 @@ function LocalTerminalSidebar() {
             </span>
           </div>
           <div className="flex-1 overflow-y-auto py-1 text-xs">
-            {tree.map(node => (
+            {filteredTree.map(node => (
               <TreeItem
                 key={node.path}
                 node={node}
@@ -1503,14 +1658,134 @@ function LocalTerminalSidebar() {
                 onOpenTerminal={(path) => ctx.addTab(path)}
               />
             ))}
-            {tree.length === 0 && (
+            {filteredTree.length === 0 && (
               <div className="px-3 py-4 text-center" style={{ color: "var(--muted-foreground)" }}>
-                Empty directory
+                {normalizedFilter ? "No files match" : "Empty directory"}
               </div>
             )}
           </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SidebarRailButton({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label={label}
+      onClick={onClick}
+      className="flex items-center justify-center cursor-pointer transition-colors"
+      style={{
+        width: 34,
+        height: 34,
+        borderRadius: 8,
+        border: `1px solid ${active ? "var(--border)" : "transparent"}`,
+        background: active ? "var(--card)" : "transparent",
+        color: active ? "var(--foreground)" : "var(--muted-foreground)",
+        fontSize: 12,
+        fontWeight: 700,
+        boxShadow: active ? "0 1px 0 rgba(0,0,0,0.08)" : "none",
+      }}
+      title={label}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function ShellCard({
+  shell,
+  deleting,
+  onOpen,
+  onDelete,
+}: {
+  shell: ShellSessionSummary;
+  deleting?: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const tabs = shell.tabs ?? [];
+  const focusedTab = tabs.find((tab) => tab.focused) ?? tabs[0];
+  const statusColor =
+    shell.status === "active" || !shell.status
+      ? "var(--success)"
+      : shell.status === "degraded"
+        ? "var(--warning)"
+        : "var(--muted-foreground)";
+  return (
+    <div
+      style={{
+        margin: "5px 8px",
+        padding: "9px 10px",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        background: "var(--background)",
+      }}
+    >
+      <div className="flex items-center gap-2" style={{ marginBottom: 5 }}>
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            background: statusColor,
+            flexShrink: 0,
+          }}
+        />
+        <span
+          className="min-w-0 flex-1 truncate"
+          style={{
+            color: "var(--foreground)",
+            fontSize: 12,
+            fontWeight: 650,
+            fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          }}
+        >
+          {shell.name}
+        </span>
+        <span style={{ color: "var(--muted-foreground)", fontSize: 10, whiteSpace: "nowrap" }}>
+          {shell.attachedClients ?? 0} attached
+        </span>
+      </div>
+      <div className="truncate" style={{ color: "var(--muted-foreground)", fontSize: 10, paddingLeft: 15 }}>
+        {shell.status ?? "active"} · {tabs.length} zellij tab{tabs.length === 1 ? "" : "s"}
+      </div>
+      {focusedTab ? (
+        <div
+          className="truncate"
+          style={{
+            color: "var(--muted-foreground)",
+            fontSize: 10,
+            paddingLeft: 15,
+            marginTop: 2,
+            fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          }}
+        >
+          {focusedTab.idx}: {focusedTab.name ?? "tab"}
+        </div>
+      ) : null}
+      <div className="flex items-center gap-1" style={{ marginTop: 8, paddingLeft: 15 }}>
+        <SessionActionBtn label="Open" sessionId={shell.name} onClick={onOpen} />
+        <SessionActionBtn
+          label={deleting ? "Deleting" : "Delete"}
+          sessionId={shell.name}
+          onClick={onDelete}
+          danger
+          disabled={deleting}
+        />
+      </div>
     </div>
   );
 }
@@ -1577,71 +1852,24 @@ function SessionCard({
   );
 }
 
-function TerminalSessionCard({
-  session,
-  onOpen,
-  onDelete,
-}: {
-  session: TerminalSessionSummary;
-  onOpen: () => void;
-  onDelete: () => void;
-}) {
-  const status = session.status ?? "active";
-  return (
-    <div
-      style={{
-        margin: "3px 8px",
-        padding: "8px 10px 6px",
-        borderRadius: 6,
-        border: "1px solid var(--border)",
-        background: "var(--background)",
-      }}
-    >
-      <div className="flex items-center gap-1.5" style={{ marginBottom: 4 }}>
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: status === "active" ? "var(--success)" : "var(--muted-foreground)",
-            flexShrink: 0,
-          }}
-        />
-        <span className="text-[12px] truncate flex-1" style={{ color: "var(--foreground)", fontWeight: 500 }}>
-          {session.name}
-        </span>
-      </div>
-      <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
-        {[status, session.backend ?? "zellij", `${session.attachedClients ?? 0} attached`].join(" · ")}
-      </div>
-      {(session.metadata?.projectSlug || session.metadata?.taskId || session.metadata?.workspaceSessionId) && (
-        <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
-          {[session.metadata.projectSlug, session.metadata.taskId, session.metadata.workspaceSessionId].filter(Boolean).join(" · ")}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-1" style={{ marginTop: 6, paddingLeft: 12 }}>
-        <SessionActionBtn label="Connect" sessionId={session.name} onClick={onOpen} />
-        <SessionActionBtn label="Delete" sessionId={session.name} onClick={onDelete} danger />
-      </div>
-    </div>
-  );
-}
-
 function SessionActionBtn({
   label,
   sessionId,
   onClick,
   danger,
+  disabled,
 }: {
   label: string;
   sessionId: string;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       aria-label={`${label} ${sessionId}`}
       onClick={onClick}
+      disabled={disabled}
       className="text-[10px] cursor-pointer transition-colors"
       style={{
         padding: "2px 6px",
@@ -1649,6 +1877,8 @@ function SessionActionBtn({
         background: danger ? "var(--destructive)" : "var(--card)",
         color: danger ? "white" : "var(--foreground)",
         border: danger ? "none" : "1px solid var(--border)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.65 : 1,
       }}
     >
       {label}
@@ -1784,6 +2014,25 @@ function ProjectActionBtn({
 interface TreeNode { name: string; type: "file" | "directory"; size?: number; gitStatus: string | null; changedCount?: number; path: string; children?: TreeNode[]; expanded?: boolean; }
 
 const GIT_COLORS: Record<string, string> = { modified: "var(--warning)", added: "var(--success)", untracked: "var(--success)", deleted: "var(--destructive)", renamed: "var(--primary)" };
+
+function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[] {
+  return nodes.flatMap((node) => {
+    const children = node.children ? filterTreeNodes(node.children, normalizedFilter) : [];
+    const matches = [
+      node.name,
+      node.path,
+      node.gitStatus,
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter);
+
+    if (matches) {
+      return [{ ...node, expanded: node.type === "directory" ? true : node.expanded }];
+    }
+    if (children.length > 0) {
+      return [{ ...node, children, expanded: true }];
+    }
+    return [];
+  });
+}
 
 function TreeItem({ node, depth, selectedPath, onToggle, onSelect, onOpenTerminal }: { node: TreeNode; depth: number; selectedPath: string | null; onToggle: (n: TreeNode) => void; onSelect: (n: TreeNode) => void; onOpenTerminal: (path: string) => void }) {
   return (

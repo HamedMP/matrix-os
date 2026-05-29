@@ -524,11 +524,12 @@ function FullscreenExitPill({ onExit }: { onExit: () => void }) {
 }
 
 interface DesktopProps {
+  launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
   chat?: import("@/hooks/useChatState").ChatState;
 }
 
-export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
+export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -558,6 +559,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
   const [showOnboarding, setShowOnboarding] = useState(true);
+  const launchPathConsumedRef = useRef<string | null>(null);
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
@@ -891,6 +893,14 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     },
     [focusOrOpen],
   );
+
+  useEffect(() => {
+    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
+    const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
+    if (!match) return;
+    launchPathConsumedRef.current = launchAppPath;
+    focusOrOpen(match.name, match.path);
+  }, [apps, focusOrOpen, launchAppPath]);
 
   const loadModules = useCallback(async () => {
     try {
