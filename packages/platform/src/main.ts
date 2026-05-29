@@ -626,6 +626,12 @@ export function classifyWebSocketPath(path: string): string {
   }
 }
 
+export function classifySessionRoutedHost(host: string): 'app' | 'code' | 'other' {
+  if (isAppDomainHost(host)) return 'app';
+  if (isCodeDomainHost(host)) return 'code';
+  return 'other';
+}
+
 export function buildPlatformWebSocketUpgradeHeaders(opts: {
   incomingHeaders: IncomingMessage['headers'];
   externalHost: string;
@@ -3548,6 +3554,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
+    const hostClass = classifySessionRoutedHost(host);
 
     const requestRuntimeSlot = readRuntimeSlot(path);
     const wsToken = getWebSocketUpgradeToken(path);
@@ -3567,7 +3574,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         `[platform] websocket auth failed host=${host} pathClass=${pathClass} error=${describeError(err)}`,
       );
       app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_AUTH_FAILED, {
-        host,
+        hostClass,
         pathClass,
         runtimeSlot: requestRuntimeSlot,
         hasToken: Boolean(wsToken),
@@ -3580,7 +3587,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (!identity) {
       console.warn(`[platform] websocket unauthenticated host=${host} pathClass=${pathClass} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
       app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UNAUTHENTICATED, {
-        host,
+        hostClass,
         pathClass,
         runtimeSlot: requestRuntimeSlot,
         hasToken: Boolean(wsToken),

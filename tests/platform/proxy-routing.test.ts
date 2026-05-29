@@ -4,6 +4,7 @@ import { type PlatformDB, deleteContainer, getContainer, insertContainer, insert
 import {
   buildPlatformWebSocketUpgradeHeaders,
   buildPostAuthRedirectPath,
+  classifySessionRoutedHost,
   classifyWebSocketPath,
   createApp,
   escapeInlineScriptJson,
@@ -307,6 +308,12 @@ describe("platform proxy routing", () => {
     expect(classifyWebSocketPath("/ws/terminal/session?token=secret&session=main")).toBe("/ws/terminal");
     expect(classifyWebSocketPath("/ws/other?token=secret")).toBe("/ws/*");
     expect(classifyWebSocketPath("/api/ping")).toBe("other");
+  });
+
+  it("classifies websocket hosts without preserving user-specific hostnames", () => {
+    expect(classifySessionRoutedHost("app.matrix-os.com")).toBe("app");
+    expect(classifySessionRoutedHost("code.matrix-os.com")).toBe("code");
+    expect(classifySessionRoutedHost("alice.matrix-os.com")).toBe("other");
   });
 
   it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
