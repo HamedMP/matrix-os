@@ -34,11 +34,21 @@ function scoreAction(action: TuiAction, query: string): number {
   return 0;
 }
 
+function groupPriority(action: TuiAction): number {
+  if (action.group === "Shell and Remote Run") {
+    return 0;
+  }
+  if (action.group === "Sessions and Agents") {
+    return 1;
+  }
+  return 2;
+}
+
 export function searchTuiActions(actions: readonly TuiAction[], query: string, limit = 10): TuiAction[] {
   return actions
     .map((action) => ({ action, score: scoreAction(action, query) }))
     .filter((result) => result.score > 0)
-    .sort((a, b) => b.score - a.score || a.action.title.localeCompare(b.action.title))
+    .sort((a, b) => b.score - a.score || groupPriority(a.action) - groupPriority(b.action) || a.action.title.localeCompare(b.action.title))
     .slice(0, limit)
     .map((result) => result.action);
 }

@@ -1,34 +1,38 @@
-import type { TuiStatusSnapshot } from "./status.js";
+import type { TuiAction } from "./actions.js";
+import type { QuickActionId } from "./quick-actions.js";
+import type { TuiActionExecutionState } from "./action-executor.js";
 
-export type TuiView = "home" | "help" | "sessions";
+export type TuiViewMode = "home" | "palette" | "sessions" | "setup" | "confirm" | "action-status";
 
-export interface TuiState {
-  activeView: TuiView;
-  snapshot: TuiStatusSnapshot | null;
-  refreshing: boolean;
-  safeError?: string;
+export interface TuiSelectionState {
+  paletteIndex: number;
+  quickActionIndex: number;
+  sessionIndex: number;
 }
 
-export function createInitialTuiState(): TuiState {
-  return { activeView: "home", snapshot: null, refreshing: false };
+export interface TuiConfirmState {
+  action: TuiAction;
+  typedValue: string;
 }
 
-export function reduceTuiState(state: TuiState, event: { type: "refresh:start" } | { type: "refresh:done"; snapshot: TuiStatusSnapshot } | { type: "view"; view: TuiView }): TuiState {
-  switch (event.type) {
-    case "refresh:start":
-      return { ...state, refreshing: true };
-    case "refresh:done":
-      return { ...state, refreshing: false, snapshot: event.snapshot };
-    case "view":
-      return { ...state, activeView: event.view };
-  }
+export interface MatrixTuiState {
+  mode: TuiViewMode;
+  paletteQuery: string;
+  selection: TuiSelectionState;
+  selectedQuickActionId?: QuickActionId;
+  confirming?: TuiConfirmState;
+  execution: TuiActionExecutionState;
 }
 
-
-export function refreshAfterSetupAction(state: TuiState): TuiState {
-  return { ...state, refreshing: true, safeError: undefined };
-}
-
-export function completeSetupRefresh(state: TuiState, snapshot: TuiStatusSnapshot): TuiState {
-  return { ...state, refreshing: false, snapshot, activeView: "home" };
+export function createInitialTuiState(): MatrixTuiState {
+  return {
+    mode: "home",
+    paletteQuery: "",
+    selection: {
+      paletteIndex: 0,
+      quickActionIndex: 0,
+      sessionIndex: 0,
+    },
+    execution: { status: "idle" },
+  };
 }

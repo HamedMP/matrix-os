@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { render, Text, useApp, useInput } from "ink";
-import { DEFAULT_TUI_ACTIONS } from "./actions.js";
+import { DEFAULT_TUI_ACTIONS, type TuiAction } from "./actions.js";
+import { createStaticTuiActionExecutor, type TuiActionExecutor } from "./action-executor.js";
 import { normalizeTuiError } from "./errors.js";
 import { searchTuiActions } from "./palette.js";
 import { aggregateTuiStatusSnapshot, type TuiStatusSnapshot } from "./status.js";
@@ -27,14 +28,29 @@ function createSnapshotFailure(error: unknown): TuiStatusSnapshot {
   };
 }
 
-export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnapshot?: TuiStatusSnapshot; noColor?: boolean }) {
+export interface MatrixTuiAppProps {
+  initialSnapshot?: TuiStatusSnapshot;
+  noColor?: boolean;
+  actions?: readonly TuiAction[];
+  executor?: TuiActionExecutor;
+  loadStatusSnapshot?: () => Promise<TuiStatusSnapshot>;
+}
+
+export function MatrixTuiApp({
+  initialSnapshot,
+  noColor = false,
+  actions = DEFAULT_TUI_ACTIONS,
+  executor = createStaticTuiActionExecutor(),
+  loadStatusSnapshot = aggregateTuiStatusSnapshot,
+}: MatrixTuiAppProps) {
   const { exit } = useApp();
   const [snapshot, setSnapshot] = useState<TuiStatusSnapshot | null>(initialSnapshot ?? null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const capabilities = getTerminalCapabilities({ noColor });
-  const paletteResults = searchTuiActions(DEFAULT_TUI_ACTIONS, paletteQuery, 8);
+  const paletteResults = searchTuiActions(actions, paletteQuery, 8);
+  void executor;
 
   useInput((input, key) => {
     if (key.escape) {
@@ -89,7 +105,7 @@ export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnap
       return;
     }
     let cancelled = false;
-    aggregateTuiStatusSnapshot().then((next) => {
+    loadStatusSnapshot().then((next) => {
       if (!cancelled) {
         setSnapshot(next);
       }
@@ -102,7 +118,7 @@ export function MatrixTuiApp({ initialSnapshot, noColor = false }: { initialSnap
     return () => {
       cancelled = true;
     };
-  }, [snapshot]);
+  }, [loadStatusSnapshot, snapshot]);
 
   if (!snapshot) {
     return <Text>Loading Matrix OS...</Text>;

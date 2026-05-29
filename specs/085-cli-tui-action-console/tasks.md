@@ -32,16 +32,16 @@
 
 **Critical**: No user story implementation should begin until this phase is complete.
 
-- [ ] T007 Define TUI action execution types and safe result envelopes in `packages/sync-client/src/cli/tui/action-executor.ts`
-- [ ] T008 Extend the TUI action registry with `shell.new`, `setup.agents`, `status.whoami`, refresh metadata, and prerequisites in `packages/sync-client/src/cli/tui/actions.ts`
-- [ ] T009 [P] Add quick action definitions and shortcut mapping in `packages/sync-client/src/cli/tui/quick-actions.ts`
-- [ ] T010 [P] Add safe TUI message capping helpers in `packages/sync-client/src/cli/tui/errors.ts`
-- [ ] T011 [P] Add TUI view-mode and selection state types in `packages/sync-client/src/cli/tui/state.ts`
-- [ ] T012 Add executor dependency injection props to `MatrixTuiApp` in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T013 Add a reusable action status renderer in `packages/sync-client/src/cli/tui/views/ActionStatusView.tsx`
-- [ ] T014 Add a reusable confirmation renderer for dangerous actions in `packages/sync-client/src/cli/tui/views/ConfirmActionView.tsx`
-- [ ] T015 [P] Add foundational registry validation tests in `packages/sync-client/tests/tui/actions-registry.test.ts`
-- [ ] T016 [P] Add safe error capping tests in `packages/sync-client/tests/tui/error-messages.test.ts`
+- [X] T007 Define TUI action execution types and safe result envelopes in `packages/sync-client/src/cli/tui/action-executor.ts`
+- [X] T008 Extend the TUI action registry with `shell.new`, `setup.agents`, `status.whoami`, refresh metadata, and prerequisites in `packages/sync-client/src/cli/tui/actions.ts`
+- [X] T009 [P] Add quick action definitions and shortcut mapping in `packages/sync-client/src/cli/tui/quick-actions.ts`
+- [X] T010 [P] Add safe TUI message capping helpers in `packages/sync-client/src/cli/tui/errors.ts`
+- [X] T011 [P] Add TUI view-mode and selection state types in `packages/sync-client/src/cli/tui/state.ts`
+- [X] T012 Add executor dependency injection props to `MatrixTuiApp` in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T013 Add a reusable action status renderer in `packages/sync-client/src/cli/tui/views/ActionStatusView.tsx`
+- [X] T014 Add a reusable confirmation renderer for dangerous actions in `packages/sync-client/src/cli/tui/views/ConfirmActionView.tsx`
+- [X] T015 [P] Add foundational registry validation tests in `packages/sync-client/tests/tui/actions-registry.test.ts`
+- [X] T016 [P] Add safe error capping tests in `packages/sync-client/tests/tui/error-messages.test.ts`
 
 **Checkpoint**: Shared action, error, state, status, and confirmation infrastructure is ready for story work.
 

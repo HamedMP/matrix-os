@@ -16,6 +16,8 @@ export const REQUIRED_TUI_ACTION_GROUPS = [
 export type TuiActionGroup = (typeof REQUIRED_TUI_ACTION_GROUPS)[number];
 export type TuiActionDanger = "none" | "confirm" | "exact-phrase";
 export type TuiActionHandler = "view" | "flow" | "direct-command" | "external-attach";
+export type TuiActionPrerequisite = "auth" | "gateway" | "local-profile";
+export type TuiActionRefreshTarget = "auth" | "profile" | "gateway" | "sessions" | "daemon" | "sync";
 
 export interface TuiAction {
   id: string;
@@ -26,6 +28,8 @@ export interface TuiAction {
   shortcut?: string;
   directCommand?: string;
   requiresContext?: string[];
+  prerequisites?: TuiActionPrerequisite[];
+  refreshes?: TuiActionRefreshTarget[];
   danger: TuiActionDanger;
   confirmationPhrase?: string;
   handler: TuiActionHandler;
@@ -33,6 +37,7 @@ export interface TuiAction {
 
 export interface TuiActionRegistryReport {
   duplicateIds: string[];
+  duplicateShortcuts: string[];
   missingGroups: TuiActionGroup[];
   unsafeDestructiveActionIds: string[];
 }
@@ -45,6 +50,9 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     aliases: ["auth", "signin", "profile"],
     intents: ["connect my account", "switch profile", "show whoami"],
     directCommand: "matrix login",
+    shortcut: "l",
+    prerequisites: ["local-profile"],
+    refreshes: ["auth", "profile", "gateway", "sessions"],
     danger: "none",
     handler: "flow",
   },
@@ -65,6 +73,21 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     aliases: ["health", "diagnostics", "status"],
     intents: ["find what is broken", "check gateway and sync"],
     directCommand: "matrix doctor",
+    shortcut: "d",
+    prerequisites: ["local-profile"],
+    refreshes: ["auth", "profile", "gateway", "daemon", "sync", "sessions"],
+    danger: "none",
+    handler: "view",
+  },
+  {
+    id: "status.whoami",
+    title: "Show whoami",
+    group: "Status and Doctor",
+    aliases: ["me", "identity", "profile"],
+    intents: ["show active account", "check current handle", "show profile identity"],
+    directCommand: "matrix whoami",
+    prerequisites: ["local-profile"],
+    refreshes: ["auth", "profile"],
     danger: "none",
     handler: "view",
   },
@@ -79,6 +102,19 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     handler: "view",
   },
   {
+    id: "shell.new",
+    title: "New shell session",
+    group: "Shell and Remote Run",
+    aliases: ["new terminal", "new zellij", "create shell"],
+    intents: ["create a terminal", "start a persistent shell", "open a workspace session"],
+    directCommand: "matrix shell new",
+    shortcut: "n",
+    prerequisites: ["auth", "gateway"],
+    refreshes: ["sessions"],
+    danger: "none",
+    handler: "flow",
+  },
+  {
     id: "shell.sessions",
     title: "Open shell sessions",
     group: "Shell and Remote Run",
@@ -86,6 +122,8 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     intents: ["attach to a session", "create a terminal", "run a command remotely"],
     directCommand: "matrix shell ls",
     shortcut: "s",
+    prerequisites: ["auth", "gateway"],
+    refreshes: ["sessions"],
     danger: "none",
     handler: "view",
   },
@@ -97,6 +135,18 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     intents: ["find a project", "open a worktree", "switch branch context"],
     danger: "none",
     handler: "view",
+  },
+  {
+    id: "setup.agents",
+    title: "Setup coding agents",
+    group: "Sessions and Agents",
+    aliases: ["setup", "codex", "claude", "migrate config"],
+    intents: ["choose coding agent", "migrate local agent config", "set up codex and claude"],
+    shortcut: "a",
+    prerequisites: ["local-profile"],
+    refreshes: ["profile", "sessions"],
+    danger: "none",
+    handler: "flow",
   },
   {
     id: "projects.create",
@@ -163,6 +213,16 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     handler: "flow",
   },
   {
+    id: "utility.palette",
+    title: "Open command palette",
+    group: "Utility",
+    aliases: ["search", "commands", "palette"],
+    intents: ["search commands", "find an action", "open command search"],
+    shortcut: "/",
+    danger: "none",
+    handler: "view",
+  },
+  {
     id: "utility.help",
     title: "Open help",
     group: "Utility",
@@ -170,6 +230,16 @@ export const DEFAULT_TUI_ACTIONS: readonly TuiAction[] = [
     intents: ["show keyboard shortcuts", "explain matrix cli", "open command help"],
     directCommand: "matrix --help",
     shortcut: "?",
+    danger: "none",
+    handler: "view",
+  },
+  {
+    id: "utility.quit",
+    title: "Quit",
+    group: "Utility",
+    aliases: ["exit", "close"],
+    intents: ["leave the tui", "close matrix tui"],
+    shortcut: "q",
     danger: "none",
     handler: "view",
   },
@@ -181,7 +251,9 @@ export function validateTuiActionRegistry(
   actions: readonly TuiAction[],
 ): TuiActionRegistryReport {
   const seen = new Set<string>();
+  const shortcutOwners = new Map<string, string>();
   const duplicateIds = new Set<string>();
+  const duplicateShortcuts = new Set<string>();
   const groups = new Set<TuiActionGroup>();
   const unsafe = new Set<string>();
 
@@ -191,6 +263,15 @@ export function validateTuiActionRegistry(
     }
     seen.add(action.id);
     groups.add(action.group);
+
+    if (action.shortcut) {
+      const owner = shortcutOwners.get(action.shortcut);
+      if (owner && owner !== action.id) {
+        duplicateShortcuts.add(action.shortcut);
+      } else {
+        shortcutOwners.set(action.shortcut, action.id);
+      }
+    }
 
     const destructiveText = `${action.id} ${action.title} ${action.directCommand ?? ""}`;
     if (DESTRUCTIVE_PATTERN.test(destructiveText) && action.danger === "none") {
@@ -203,6 +284,7 @@ export function validateTuiActionRegistry(
 
   return {
     duplicateIds: [...duplicateIds].sort(),
+    duplicateShortcuts: [...duplicateShortcuts].sort(),
     missingGroups: REQUIRED_TUI_ACTION_GROUPS.filter((group) => !groups.has(group)),
     unsafeDestructiveActionIds: [...unsafe].sort(),
   };
@@ -210,4 +292,8 @@ export function validateTuiActionRegistry(
 
 export function getTuiActionById(id: string, actions: readonly TuiAction[] = DEFAULT_TUI_ACTIONS): TuiAction | undefined {
   return actions.find((action) => action.id === id);
+}
+
+export function getTuiActionByShortcut(shortcut: string, actions: readonly TuiAction[] = DEFAULT_TUI_ACTIONS): TuiAction | undefined {
+  return actions.find((action) => action.shortcut === shortcut);
 }
