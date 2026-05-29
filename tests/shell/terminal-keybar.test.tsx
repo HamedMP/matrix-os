@@ -87,5 +87,6 @@ describe("TerminalKeyBar", () => {
     expect(screen.getByRole("button", { name: "letter m" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Space" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backspace" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Enter" })).toHaveLength(1);
   });
 });

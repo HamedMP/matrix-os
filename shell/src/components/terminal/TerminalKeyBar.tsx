@@ -60,7 +60,6 @@ const KEYBOARD_ROWS: KeyDef[][] = [
     { label: "Space", data: " ", ariaLabel: "Space" },
     { label: ".", data: "." },
     { label: "_", data: "_" },
-    { label: "Enter", data: "\r", ariaLabel: "Enter" },
   ],
 ];
 

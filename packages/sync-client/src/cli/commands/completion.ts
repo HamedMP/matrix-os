@@ -100,7 +100,7 @@ function fishCompletion(): string {
   const shellCommandList = SHELL_COMMANDS.join(" ");
   return `# Matrix CLI completion for fish
 complete -c matrix -f -n '__fish_use_subcommand' -a '${commandList}'
-complete -c matrix -f -n '__fish_seen_subcommand_from shell sh' -a '${shellCommandList}'
+complete -c matrix -f -n '__fish_seen_subcommand_from shell sh; and not __fish_seen_subcommand_from ${SHELL_COMMANDS.join(" ")}' -a '${shellCommandList}'
 complete -c matrix -f -n '__fish_seen_subcommand_from shell sh; and __fish_seen_subcommand_from connect attach rm' -a '(matrix shell list --json 2>/dev/null | tr "," "\\n" | sed -n "s/.*\\"name\\"[[:space:]]*:[[:space:]]*\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/p")'
 `;
 }

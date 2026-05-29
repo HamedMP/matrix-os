@@ -1283,9 +1283,6 @@ function LocalTerminalSidebar() {
     return (
       <div
         className="absolute left-2 top-2 z-20"
-        style={{
-          position: "absolute",
-        }}
       >
         <button
           className="flex items-center justify-center rounded cursor-pointer hover:bg-[var(--accent)] transition-colors"

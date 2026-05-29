@@ -82,4 +82,21 @@ describe("unified CLI command tree", () => {
     expect(script).toContain("matrix shell list --json");
     expect(script).toContain('"connect" || "$shell_command" == "attach" || "$shell_command" == "rm"');
   });
+
+  it("prevents fish shell command completions from mixing with session completions", async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (line?: unknown) => {
+      logs.push(String(line));
+    };
+    try {
+      await completionCommand.run?.({ args: { shell: "fish" } } as never);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const script = logs.join("\n");
+    expect(script).toContain("and not __fish_seen_subcommand_from list ls new connect attach rm tab pane layout");
+    expect(script).toContain("__fish_seen_subcommand_from connect attach rm");
+  });
 });

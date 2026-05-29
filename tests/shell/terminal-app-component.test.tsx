@@ -149,7 +149,7 @@ describe("TerminalApp", () => {
     fireEvent.click(screen.getByTitle("Hide sidebar (Ctrl+Shift+B)"));
 
     const openButton = screen.getByTitle("Open sidebar (Ctrl+Shift+B)");
-    expect(openButton.parentElement?.style.position).toBe("absolute");
+    expect(openButton.parentElement?.className).toContain("absolute");
     expect(openButton.parentElement?.style.width).not.toBe("44px");
   });
 
