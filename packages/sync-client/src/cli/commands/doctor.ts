@@ -38,9 +38,9 @@ export const doctorCommand = defineCommand({
 
     let token: string | undefined;
     if (profile) {
-      const auth = profile.token ? { accessToken: profile.token } : await loadProfileAuth(profile.name);
-      token = profile.token ?? (auth && "expiresAt" in auth && !isExpired(auth) ? auth.accessToken : undefined);
-      checks.push(auth
+      const auth = profile.token ? null : await loadProfileAuth(profile.name);
+      token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
+      checks.push(token
         ? { name: "auth", ok: true }
         : { name: "auth", ok: false, code: "not_authenticated", hint: "Run `matrix login`." });
     } else {

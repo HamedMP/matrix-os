@@ -11,6 +11,8 @@ export async function probeGatewayHealth(
 ): Promise<GatewayHealth> {
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
   const primary = await fetchGatewayHealth(`${gatewayUrl}/api/system/info`, headers);
+  // Only fall back to legacy /health when /api/system/info does not exist.
+  // Other non-2xx responses should surface the real gateway auth/reachability state.
   if (primary.res.status !== 404) {
     return readGatewayStatus(primary.res, primary.body);
   }

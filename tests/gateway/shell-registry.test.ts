@@ -166,6 +166,34 @@ describe("shell registry", () => {
     expect(adapter.deleteSession).toHaveBeenCalledWith("bench", { force: true });
   });
 
+  it("deletes metadata-tracked sessions without listing live zellij sessions", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          main: { name: "main", status: "active", createdAt: "x", updatedAt: "x", attachedClients: 0, tabs: [] },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => {
+        throw new Error("zellij list unavailable");
+      }),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+
+    await expect(registry.delete("main")).resolves.toBeUndefined();
+
+    expect(adapter.listSessions).not.toHaveBeenCalled();
+    expect(adapter.deleteSession).toHaveBeenCalledWith("main", {});
+  });
+
   it("rolls back zellij sessions if metadata persistence fails", async () => {
     const root = await tempRoot();
     const systemDir = join(root, "system");

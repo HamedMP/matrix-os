@@ -175,13 +175,16 @@ export class ShellRegistry {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
       const file = await this.read();
-      const live = new Set(await this.options.adapter.listSessions());
-      if (!live.has(safeName) && !(options.force && file.sessions[safeName])) {
-        throw shellError("session_not_found", "Session not found", 404);
+      if (!file.sessions[safeName]) {
+        if (!options.force) {
+          throw shellError("session_not_found", "Session not found", 404);
+        }
+        const live = new Set(await this.options.adapter.listSessions());
+        if (!live.has(safeName)) {
+          throw shellError("session_not_found", "Session not found", 404);
+        }
       }
-      if (live.has(safeName)) {
-        await this.options.adapter.deleteSession(safeName, options);
-      }
+      await this.options.adapter.deleteSession(safeName, options);
       delete file.sessions[safeName];
       await this.cleanupScrollback(safeName);
       await this.write(file);
