@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileShell } from "../../shell/src/components/mobile/MobileShell.js";
@@ -47,14 +46,12 @@ describe("mobile shell", () => {
     await waitFor(() => expect(screen.getByTestId("viewport-mode").textContent).toBe("mobile"));
   });
 
-  it("starts from the server-safe desktop value before switching to phone mode", async () => {
+  it("initializes phone mode synchronously on the client", () => {
     setPhoneViewport();
-
-    expect(renderToString(<ViewportProbe />)).toContain("desktop");
 
     render(<ViewportProbe />);
 
-    await waitFor(() => expect(screen.getByTestId("viewport-mode").textContent).toBe("mobile"));
+    expect(screen.getByTestId("viewport-mode").textContent).toBe("mobile");
   });
 
   it("updates viewport mode when a phone viewport expands", () => {

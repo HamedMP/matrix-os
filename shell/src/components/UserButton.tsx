@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
+import { hasMatrixBillingAccess } from "@/lib/billing";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ServerIcon, UserIcon } from "lucide-react";
+import { CreditCardIcon, ServerIcon, UserIcon } from "lucide-react";
 
 function Placeholder() {
   return (
@@ -39,29 +40,43 @@ export function UserButton() {
 }
 
 function MountedUserButton() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, has } = useAuth();
 
   if (!isLoaded || !isSignedIn) {
     return <Placeholder />;
   }
 
+  const billingActive = hasMatrixBillingAccess(has);
+
   return (
-    <ClerkUserButton
-      appearance={{
-        elements: {
-          avatarBox: "size-10 rounded-xl",
-          userButtonTrigger: "rounded-xl shadow-sm border border-border/60",
-        },
-      }}
-      afterSignOutUrl="https://app.matrix-os.com/sign-in"
-    >
-      <ClerkUserButton.MenuItems>
-        <ClerkUserButton.Link
-          label="Switch computer"
-          labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
-          href="/runtime"
-        />
-      </ClerkUserButton.MenuItems>
-    </ClerkUserButton>
+    <div className="flex flex-col items-center gap-1">
+      <ClerkUserButton
+        appearance={{
+          elements: {
+            avatarBox: "size-10 rounded-xl",
+            userButtonTrigger: "rounded-xl shadow-sm border border-border/60",
+          },
+        }}
+        afterSignOutUrl="https://app.matrix-os.com/sign-in"
+      >
+        <ClerkUserButton.MenuItems>
+          <ClerkUserButton.Link
+            label="Switch computer"
+            labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
+            href="/runtime"
+          />
+        </ClerkUserButton.MenuItems>
+      </ClerkUserButton>
+      <div
+        className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+          billingActive
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+            : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        }`}
+      >
+        <CreditCardIcon className="size-3" aria-hidden="true" />
+        {billingActive ? "Active" : "Trial"}
+      </div>
+    </div>
   );
 }

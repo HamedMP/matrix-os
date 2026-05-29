@@ -1,5 +1,6 @@
 import { inngest } from "./client";
 import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
 import {
   getProvisionVerificationTarget,
   isCustomerVpsUsableStatus,
@@ -16,24 +17,38 @@ export const provisionUser = inngest.createFunction(
   async ({ event, step }) => {
     const user = event.data;
     const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
-    const posthog = getPostHogClient();
 
-    posthog.capture({
-      distinctId: user.id,
-      event: "inngest_provision_started",
-      properties: {
-        handle,
-        source: "inngest",
-      },
+    await step.run("record-signup", async () => {
+      const posthog = getPostHogClient();
+      posthog.capture({
+        distinctId: user.id,
+        event: MATRIX_TELEMETRY_EVENTS.USER_SIGNED_UP,
+        properties: {
+          handle,
+          source: "clerk_signup",
+        },
+      });
+
+      posthog.identify({
+        distinctId: user.id,
+        properties: {
+          handle,
+          email: user.email_addresses?.[0]?.email_address,
+          created_via: "clerk_signup",
+        },
+      });
     });
 
-    posthog.identify({
-      distinctId: user.id,
-      properties: {
-        handle,
-        email: user.email_addresses?.[0]?.email_address,
-        created_via: "clerk_signup",
-      },
+    await step.run("record-provision-started", async () => {
+      const posthog = getPostHogClient();
+      posthog.capture({
+        distinctId: user.id,
+        event: "inngest_provision_started",
+        properties: {
+          handle,
+          source: "inngest",
+        },
+      });
     });
 
     const provisionResult = await step.run("provision-container", async (): Promise<ProvisionResult> => {
@@ -54,6 +69,7 @@ export const provisionUser = inngest.createFunction(
 
       if (!res.ok) {
         const body = await res.text();
+        const posthog = getPostHogClient();
         posthog.capture({
           distinctId: user.id,
           event: "inngest_provision_failed",
@@ -73,6 +89,7 @@ export const provisionUser = inngest.createFunction(
     await step.sleep("wait-for-boot", "10s");
 
     await step.run("verify-running", async () => {
+      const posthog = getPostHogClient();
       const headers: Record<string, string> = {};
       if (PLATFORM_SECRET) headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
       const target = getProvisionVerificationTarget(PLATFORM_API_URL, handle, provisionResult);

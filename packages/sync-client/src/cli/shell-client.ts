@@ -66,7 +66,7 @@ const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[>4;0m",
   "\u001b[<1u",
 ].join("");
-const MAX_PENDING_MOUSE_SEQUENCE_CHARS = 128;
+const MAX_PENDING_ESCAPE_SEQUENCE_CHARS = 128;
 const STALE_MOUSE_FOCUS_GUARD_MS = 5_000;
 const FOCUS_MOUSE_SUPPRESS_MS = 1_000;
 
@@ -103,20 +103,26 @@ function createTerminalInputFilter(options: {
   now?: () => number;
 }) {
   let focused = true;
-  let pendingMouseSequence = "";
+  let pendingEscapeSequence = "";
   let lastRemoteOutputAt = options.now?.() ?? Date.now();
   let suppressMouseUntil = 0;
 
   const now = () => options.now?.() ?? Date.now();
   const shouldForwardMouse = () => !options.dropMouse && focused && now() >= suppressMouseUntil;
+  const shouldForwardEnhancedKeyboard = () => focused && now() >= suppressMouseUntil;
+  const isCsiUParamChar = (char: string | undefined) => char !== undefined && (
+    (char >= "0" && char <= "9") ||
+    char === ";" ||
+    char === ":"
+  );
 
   return {
     noteRemoteOutput() {
       lastRemoteOutputAt = now();
     },
     filter(chunk: string): string {
-      const input = pendingMouseSequence + chunk;
-      pendingMouseSequence = "";
+      const input = pendingEscapeSequence + chunk;
+      pendingEscapeSequence = "";
       let output = "";
       for (let i = 0; i < input.length;) {
         if (input[i] !== "\u001b" || input[i + 1] !== "[") {
@@ -127,7 +133,7 @@ function createTerminalInputFilter(options: {
 
         const third = input[i + 2];
         if (third === undefined) {
-          pendingMouseSequence = input.slice(i);
+          pendingEscapeSequence = input.slice(i);
           break;
         }
 
@@ -142,13 +148,31 @@ function createTerminalInputFilter(options: {
           continue;
         }
 
+        if (third >= "0" && third <= "9") {
+          let end = i + 2;
+          while (end < input.length && isCsiUParamChar(input[end])) {
+            end += 1;
+          }
+          if (end >= input.length) {
+            pendingEscapeSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_ESCAPE_SEQUENCE_CHARS));
+            break;
+          }
+          if (input[end] === "u") {
+            if (shouldForwardEnhancedKeyboard()) {
+              output += input.slice(i, end + 1);
+            }
+            i = end + 1;
+            continue;
+          }
+        }
+
         if (third === "<") {
           let end = i + 3;
           while (end < input.length && input[end] !== "M" && input[end] !== "m") {
             end += 1;
           }
           if (end >= input.length) {
-            pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
+            pendingEscapeSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_ESCAPE_SEQUENCE_CHARS));
             break;
           }
           if (shouldForwardMouse()) {
@@ -160,7 +184,7 @@ function createTerminalInputFilter(options: {
 
         if (third === "M") {
           if (i + 6 > input.length) {
-            pendingMouseSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_MOUSE_SEQUENCE_CHARS));
+            pendingEscapeSequence = input.slice(i, Math.min(input.length, i + MAX_PENDING_ESCAPE_SEQUENCE_CHARS));
             break;
           }
           if (shouldForwardMouse()) {
@@ -177,7 +201,7 @@ function createTerminalInputFilter(options: {
     },
     reset() {
       focused = true;
-      pendingMouseSequence = "";
+      pendingEscapeSequence = "";
       suppressMouseUntil = 0;
     },
   };

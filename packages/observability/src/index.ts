@@ -1,6 +1,7 @@
 import { PostHog } from "posthog-node";
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+export { MATRIX_TELEMETRY_EVENTS, isMatrixTelemetryEvent, type MatrixTelemetryEvent } from "./events.js";
 
 type EnvSource = Record<string, string | undefined>;
 type PrimitiveProperty = string | number | boolean;

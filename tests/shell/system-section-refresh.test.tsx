@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/gateway", () => ({
@@ -30,6 +30,7 @@ function jsonResponse(body: unknown) {
 describe("SystemSection release refresh", () => {
   afterEach(() => {
     vi.useRealTimers();
+    cleanup();
     vi.restoreAllMocks();
   });
 
@@ -571,5 +572,66 @@ describe("SystemSection release refresh", () => {
     });
 
     expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 2_000)).toBe(false);
+  });
+
+  it("keeps system upgrades read-only until billing is active", async () => {
+    vi.useRealTimers();
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({
+          version: "v2026.05.14-1",
+          release: {
+            version: "v2026.05.14-1",
+            channel: "stable",
+            buildTime: "2026-05-14T11:00:00.000Z",
+          },
+        }));
+      }
+      if (url.endsWith("/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok", cronJobs: 0, channels: {} }));
+      }
+      if (url.endsWith("/api/system/update?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          latest: {
+            version: "v2026.05.14-2",
+            buildTime: "2026-05-14T12:00:00.000Z",
+          },
+          updateAvailable: true,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          releases: [{
+            version: "v2026.05.14-2",
+            buildTime: "2026-05-14T12:00:00.000Z",
+          }],
+        }));
+      }
+      if (url.endsWith("/api/system/update")) {
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SystemSection billingActive={false} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("System upgrades are locked until billing is active.")).toBeTruthy();
+    const upgradeButton = screen.getByRole("button", { name: "Upgrade Now" });
+    expect((upgradeButton as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(upgradeButton);
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "http://gateway.test/api/system/update",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });

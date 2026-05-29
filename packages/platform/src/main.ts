@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
+import { installPostHogHonoErrorTracking, MATRIX_TELEMETRY_EVENTS, type MatrixTelemetryEvent } from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -613,6 +613,67 @@ function buildPlatformUserProof(handle: string, userId: string, platformSecret: 
   return createHmac('sha256', handleToken).update(userId).digest('hex');
 }
 
+export function classifyWebSocketPath(path: string): string {
+  try {
+    const parsed = new URL(path, 'https://app.matrix-os.com');
+    if (parsed.pathname.startsWith('/ws/terminal')) return '/ws/terminal';
+    if (parsed.pathname === '/ws') return '/ws';
+    if (parsed.pathname.startsWith('/ws/')) return '/ws/*';
+    return 'other';
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return 'invalid';
+    throw err;
+  }
+}
+
+export function classifySessionRoutedHost(host: string): 'app' | 'code' | 'other' {
+  if (isAppDomainHost(host)) return 'app';
+  if (isCodeDomainHost(host)) return 'code';
+  return 'other';
+}
+
+export function buildPlatformWebSocketUpgradeHeaders(opts: {
+  incomingHeaders: IncomingMessage['headers'];
+  externalHost: string;
+  handle: string;
+  userId: string;
+  platformSecret: string;
+  includePlatformProof: boolean;
+  isCodeDomain: boolean;
+}): string {
+  return Object.entries(opts.incomingHeaders)
+    .filter(([k]) => (
+      k !== 'host' &&
+      k !== 'authorization' &&
+      k !== 'cookie' &&
+      k !== 'x-forwarded-host' &&
+      k !== 'x-forwarded-proto'
+    ))
+    .flatMap(([k, v]) => {
+      if (v === undefined) return [];
+      return `${k}: ${Array.isArray(v) ? v.join(', ') : v}`;
+    })
+    .concat([
+      `x-forwarded-host: ${opts.externalHost}`,
+      'x-forwarded-proto: https',
+    ])
+    .concat(
+      opts.platformSecret && opts.includePlatformProof
+        ? [
+            `authorization: Bearer ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`,
+            `x-platform-verified: ${buildPlatformUserProof(opts.handle, opts.userId, opts.platformSecret)}`,
+            `x-platform-user-id: ${opts.userId}`,
+          ]
+        : [],
+    )
+    .concat(
+      opts.platformSecret && opts.isCodeDomain
+        ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`]
+        : [],
+    )
+    .join('\r\n');
+}
+
 function requireValidHandle(handle: string): string {
   if (!HANDLE_PATTERN.test(handle)) {
     throw new Error('Invalid handle');
@@ -1034,6 +1095,10 @@ function getAuthPage(
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
+  const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
+  const modeDetail = mode === 'sign-up'
+    ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
+    : 'Sign in to continue to your Matrix computer, provisioning status, or trial checkout.';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1042,13 +1107,162 @@ function getAuthPage(
   <title>Matrix OS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    #auth { min-height: 400px; display: flex; align-items: center; justify-content: center; }
-    .loading { color: #666; font-size: 14px; }
+    body {
+      min-height: 100vh;
+      background: #E2E2CF;
+      color: #32352E;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
+    }
+    .story {
+      position: relative;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      border-right: 1px solid #D6D3C8;
+      background: #E0E1CA;
+      padding: 64px;
+    }
+    .story::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 24% 20%, rgba(250,250,245,0.78) 0%, transparent 55%),
+        radial-gradient(ellipse at 82% 72%, rgba(208,111,37,0.12) 0%, transparent 60%);
+    }
+    .story::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.08;
+      background-image:
+        linear-gradient(rgba(67,78,63,0.28) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(67,78,63,0.28) 1px, transparent 1px);
+      background-size: 42px 42px;
+    }
+    .story-inner { position: relative; z-index: 1; max-width: 560px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 48px;
+      color: #434E3F;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .logo {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: rgba(250,250,245,0.58);
+      border: 1px solid rgba(67,78,63,0.14);
+      color: #D06F25;
+    }
+    .eyebrow {
+      margin-bottom: 18px;
+      color: #7A7768;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 560px;
+      color: #434E3F;
+      font-size: clamp(2.4rem, 6vw, 4.8rem);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+      font-weight: 750;
+      margin-bottom: 24px;
+    }
+    .lead {
+      max-width: 500px;
+      color: #5C5A4F;
+      font-size: 16px;
+      line-height: 1.8;
+    }
+    .proof {
+      display: grid;
+      gap: 12px;
+      margin-top: 38px;
+    }
+    .proof-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      color: #5C5A4F;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      margin-top: 5px;
+      border-radius: 999px;
+      background: #D06F25;
+      box-shadow: 0 0 0 5px rgba(208,111,37,0.12);
+      flex: none;
+    }
+    .auth-panel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 48px;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 390px;
+      min-height: 470px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #D6D3C8;
+      border-radius: 24px;
+      background: rgba(250,250,245,0.68);
+      box-shadow: 0 24px 80px rgba(50,53,46,0.12);
+      padding: 32px;
+      backdrop-filter: blur(14px);
+    }
+    #auth { width: 100%; min-height: 400px; display: flex; align-items: center; justify-content: center; }
+    .loading { color: #7A7768; font-size: 14px; }
+    @media (max-width: 860px) {
+      .page { grid-template-columns: 1fr; }
+      .story { min-height: 42vh; border-right: 0; border-bottom: 1px solid #D6D3C8; padding: 40px 24px; }
+      .auth-panel { padding: 28px 20px 44px; }
+      .auth-card { max-width: 440px; padding: 24px; }
+    }
   </style>
 </head>
 <body>
-  <div id="auth"><span class="loading">Loading...</span></div>
+  <main class="page">
+    <section class="story">
+      <div class="story-inner">
+        <div class="brand"><span class="logo">M</span><span>Matrix OS</span></div>
+        <p class="eyebrow">${mode === 'sign-up' ? 'Free account' : 'Secure access'}</p>
+        <h1>${modeLabel}</h1>
+        <p class="lead">${modeDetail}</p>
+        <div class="proof">
+          <div class="proof-row"><span class="dot"></span><span>Signup stays free until you deliberately start hosted provisioning.</span></div>
+          <div class="proof-row"><span class="dot"></span><span>The trial provisions an owner-controlled Matrix computer, not just a dashboard.</span></div>
+          <div class="proof-row"><span class="dot"></span><span>Clerk handles account security and the payment step for the hosted runtime.</span></div>
+        </div>
+      </div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div id="auth"><span class="loading">Loading...</span></div>
+      </div>
+    </section>
+  </main>
   <script
     id="clerk-script"
     nonce="${scriptNonce}"
@@ -1060,6 +1274,29 @@ function getAuthPage(
   ></script>
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
+    var appearance = {
+      variables: {
+        colorPrimary: '#D06F25',
+        colorBackground: 'transparent',
+        colorText: '#32352E',
+        colorTextSecondary: '#5C5A4F',
+        colorInputBackground: 'rgba(250,250,245,0.74)',
+        colorInputText: '#32352E',
+        borderRadius: '0.875rem',
+        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      },
+      layout: {
+        socialButtonsPlacement: 'top',
+        socialButtonsVariant: 'blockButton',
+        logoLinkUrl: 'https://matrix-os.com'
+      },
+      elements: {
+        card: 'border-0 bg-transparent shadow-none p-0',
+        header: 'text-left',
+        formButtonPrimary: 'shadow-none',
+        footerActionLink: 'font-medium'
+      }
+    };
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
@@ -1069,9 +1306,9 @@ function getAuthPage(
         var el = document.getElementById('auth');
         el.innerHTML = '';
         if ('${mode}' === 'sign-up') {
-          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget });
+          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget, appearance: appearance });
         } else {
-          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget });
+          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget, appearance: appearance });
         }
       });
     }
@@ -1521,6 +1758,10 @@ export type PlatformApp = Hono<{
     internalContainerClerkUserId: string;
   };
 }> & {
+  capturePlatformEvent(
+    event: MatrixTelemetryEvent,
+    properties: Record<string, string | number | boolean | null | undefined>,
+  ): void;
   shutdownPostHog(): Promise<void>;
 };
 
@@ -1659,7 +1900,7 @@ export function createApp(deps: {
   });
   const posthogShutdowns: Array<() => Promise<void>> = [() => posthogErrorTracker.shutdown()];
   function capturePlatformEvent(
-    event: string,
+    event: MatrixTelemetryEvent,
     properties: Record<string, string | number | boolean | null | undefined>,
   ): void {
     void posthogErrorTracker.captureEvent(event, {
@@ -1670,6 +1911,7 @@ export function createApp(deps: {
       console.warn(`[posthog] Failed to queue platform event ${event}: ${kind}`);
     });
   }
+  app.capturePlatformEvent = capturePlatformEvent;
 
   app.use('*', async (c, next) => {
     const started = performance.now();
@@ -1815,13 +2057,13 @@ export function createApp(deps: {
       let channel;
       if (parsed.data.channel) {
         channel = await promoteHostBundleChannel(db, parsed.data.channel, release.version);
-        capturePlatformEvent('host_bundle_channel_promoted', {
+        capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
           channel: parsed.data.channel,
           version: release.version,
           gitCommit: release.gitCommit,
         });
       }
-      capturePlatformEvent('host_bundle_release_registered', {
+      capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_RELEASE_REGISTERED, {
         version: release.version,
         gitCommit: release.gitCommit,
         gitRef: release.gitRef,
@@ -1863,7 +2105,7 @@ export function createApp(deps: {
     }
     try {
       const promoted = await promoteHostBundleChannel(db, channel, parsed.data.version);
-      capturePlatformEvent('host_bundle_channel_promoted', {
+      capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
         channel,
         version: promoted.version,
       });
@@ -2036,6 +2278,7 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: platformPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
+        captureEvent: capturePlatformEvent,
       }),
     );
   }
@@ -3472,17 +3715,23 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       if (handledInternalGeminiLive) return;
     } catch (err: unknown) {
       console.warn('[platform] internal Gemini Live proxy failed:', describeError(err));
+      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
+        pathClass: 'internal-gemini-live',
+        errorKind: err instanceof Error ? err.name : typeof err,
+      });
       socket.destroy();
       return;
     }
 
     const path = req.url ?? '/';
+    const pathClass = classifyWebSocketPath(path);
     const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
+    const hostClass = classifySessionRoutedHost(host);
 
     const requestRuntimeSlot = readRuntimeSlot(path);
     const wsToken = getWebSocketUpgradeToken(path);
@@ -3499,13 +3748,28 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       });
     } catch (err: unknown) {
       console.warn(
-        `[platform] websocket auth failed host=${host} path=${path} error=${describeError(err)}`,
+        `[platform] websocket auth failed host=${host} pathClass=${pathClass} error=${describeError(err)}`,
       );
+      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_AUTH_FAILED, {
+        hostClass,
+        pathClass,
+        runtimeSlot: requestRuntimeSlot,
+        hasToken: Boolean(wsToken),
+        hasCookie: Boolean(req.headers.cookie),
+        errorKind: err instanceof Error ? err.name : typeof err,
+      });
       socket.destroy();
       return;
     }
     if (!identity) {
-      console.warn(`[platform] websocket unauthenticated host=${host} path=${path} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
+      console.warn(`[platform] websocket unauthenticated host=${host} pathClass=${pathClass} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
+      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UNAUTHENTICATED, {
+        hostClass,
+        pathClass,
+        runtimeSlot: requestRuntimeSlot,
+        hasToken: Boolean(wsToken),
+        hasCookie: Boolean(req.headers.cookie),
+      });
       socket.destroy();
       return;
     }
@@ -3534,39 +3798,17 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const onSocketError = () => activeUpstream?.destroy();
     socket.on('error', onSocketError);
 
-    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => {
-      return Object.entries(req.headers)
-        .filter(([k]) => (
-          k !== 'host' &&
-          k !== 'authorization' &&
-          k !== 'cookie' &&
-          k !== 'x-forwarded-host' &&
-          k !== 'x-forwarded-proto'
-        ))
-        .flatMap(([k, v]) => {
-          if (v === undefined) return [];
-          return `${k}: ${Array.isArray(v) ? v.join(', ') : v}`;
-        })
-        .concat([
-          `x-forwarded-host: ${host}`,
-          'x-forwarded-proto: https',
-        ])
-        .concat(
-          PLATFORM_SECRET && includePlatformProof
-            ? [
-                `authorization: Bearer ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`,
-                `x-platform-verified: ${buildPlatformUserProof(handle, identity.userId, PLATFORM_SECRET)}`,
-                `x-platform-user-id: ${identity.userId}`,
-              ]
-            : [],
-        )
-        .concat(
-          PLATFORM_SECRET && isCodeDomain
-            ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`]
-            : [],
-        )
-        .join('\r\n');
-    };
+    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
+      buildPlatformWebSocketUpgradeHeaders({
+        incomingHeaders: req.headers,
+        externalHost: host,
+        handle,
+        userId: identity.userId,
+        platformSecret: PLATFORM_SECRET,
+        includePlatformProof,
+        isCodeDomain,
+      })
+    );
 
     const writeUpgradeRequest = (
       upstream: Socket,
@@ -3591,14 +3833,19 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (runningMachine) {
       if (!entitlement.runtimeProxyAllowed) {
         console.warn(
-          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} path=${path}`,
+          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} pathClass=${pathClass}`,
         );
+        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_ENTITLEMENT_DENIED, {
+          handle: runningMachine.handle,
+          runtimeSlot,
+          pathClass,
+        });
         socket.destroy();
         return;
       }
       if (!runningMachine.publicIPv4) {
         console.warn(
-          `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} path=${path}`,
+          `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} pathClass=${pathClass}`,
         );
         socket.destroy();
         return;
@@ -3618,8 +3865,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       upstream.on('error', (err) => {
         upstream.destroy();
         console.warn(
-          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} path=${path} error=${describeError(err)}`,
+          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} pathClass=${pathClass} error=${describeError(err)}`,
         );
+        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
+          handle: runningMachine.handle,
+          runtimeSlot,
+          pathClass,
+          errorKind: err instanceof Error ? err.name : typeof err,
+        });
         socket.destroy();
       });
       return;
@@ -3628,7 +3881,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (!record) { socket.destroy(); return; }
     if (!entitlement.runtimeProxyAllowed) {
       console.warn(
-        `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} path=${path}`,
+        `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} pathClass=${pathClass}`,
       );
       socket.destroy();
       return;
@@ -3637,7 +3890,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
         console.warn(
-          `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} path=${path}`,
+          `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} pathClass=${pathClass}`,
         );
         socket.destroy();
         return;
@@ -3659,7 +3912,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       upstream.on('error', (err) => {
         upstream.destroy();
         console.warn(
-          `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+          `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} pathClass=${pathClass} error=${describeError(err)}`,
         );
         if (!connected && attempt === 0 && !socket.destroyed) {
           void connectUpstream(attempt + 1).catch((retryErr) => {

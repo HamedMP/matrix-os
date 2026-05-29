@@ -97,11 +97,13 @@ jobs:
         run: cd shell && pnpm build
         env:
           E2E_TEST_BYPASS: "1"
+          NEXT_PUBLIC_E2E_TEST_BYPASS: "1"
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
 
       - name: Install Playwright Chromium
         if: steps.screenshots.outputs.should_run == 'true'
-        run: cd shell && pnpm exec playwright install chromium
+        timeout-minutes: 5
+        run: cd shell && pnpm exec playwright install --only-shell chromium
 
       - name: Run Playwright tests
         if: steps.screenshots.outputs.should_run == 'true'

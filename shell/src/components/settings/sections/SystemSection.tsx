@@ -97,7 +97,7 @@ function coerceReleaseChannel(value: unknown): ReleaseChannel {
   return RELEASE_CHANNELS.includes(value as ReleaseChannel) ? value as ReleaseChannel : "stable";
 }
 
-export function SystemSection() {
+export function SystemSection({ billingActive = true }: { billingActive?: boolean }) {
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null);
@@ -189,6 +189,7 @@ export function SystemSection() {
   const installedChannel = coerceReleaseChannel(info.release?.channel);
   const releaseRows = releaseList?.releases ?? [];
   const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
+  const systemUpdatesLocked = !billingActive;
 
   const waitForInstalledUpdate = useCallback(async (
     target: { channel?: ReleaseChannel; version?: string },
@@ -231,6 +232,11 @@ export function SystemSection() {
   }, [currentVersion, installedChannel]);
 
   const startUpdate = useCallback(async (target: { channel?: ReleaseChannel; version?: string }) => {
+    if (!billingActive) {
+      setUpgradeError("System upgrades are locked until billing is active.");
+      return;
+    }
+
     const targetKey = target.version ?? target.channel ?? "stable";
     setUpgrading(true);
     setInstallingTarget(targetKey);
@@ -275,7 +281,7 @@ export function SystemSection() {
       setUpgrading(false);
       setInstallingTarget(null);
     }
-  }, [waitForInstalledUpdate]);
+  }, [billingActive, waitForInstalledUpdate]);
 
   const handleChannelChange = useCallback((value: string) => {
     const channel = coerceReleaseChannel(value);
@@ -349,6 +355,11 @@ export function SystemSection() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {systemUpdatesLocked && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-300">
+              System upgrades are locked until billing is active.
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="space-y-1.5">
               <label htmlFor="release-channel" className="text-xs font-medium text-muted-foreground">
@@ -420,7 +431,7 @@ export function SystemSection() {
             <div className="pt-1">
               <button
                 onClick={handleUpgrade}
-                disabled={upgrading}
+                disabled={upgrading || systemUpdatesLocked}
                 className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 {upgrading
@@ -479,7 +490,7 @@ export function SystemSection() {
                     </div>
                     <button
                       onClick={() => release.version && void startUpdate({ version: release.version })}
-                      disabled={!canInstallRelease || upgrading}
+                      disabled={!canInstallRelease || upgrading || systemUpdatesLocked}
                       className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
                     >
                       {installingTarget === release.version ? "Installing" : action}

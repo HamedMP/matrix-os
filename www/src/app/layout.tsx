@@ -76,24 +76,24 @@ export default async function RootLayout({
   const visitorCountry = getPostHogVisitorCountry(await headers());
 
   return (
-    <ClerkProvider>
-      <html
-        lang="en"
-        suppressHydrationWarning
-        data-posthog-visitor-country={visitorCountry ?? undefined}
-      >
-        <head>
-          <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />
-          <link rel="dns-prefetch" href="https://eu.i.posthog.com" />
-          <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
-          <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
-        </head>
-        <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-posthog-visitor-country={visitorCountry ?? undefined}
+    >
+      <head>
+        <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />
+        <link rel="dns-prefetch" href="https://eu.i.posthog.com" />
+        <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
+      </head>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
+        <ClerkProvider>
           {children}
           <PostHogCookieBanner visitorCountry={visitorCountry} />
           <Analytics />
-        </body>
-      </html>
-    </ClerkProvider>
+        </ClerkProvider>
+      </body>
+    </html>
   );
 }

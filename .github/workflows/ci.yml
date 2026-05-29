@@ -278,3 +278,55 @@ jobs:
           name: e2e-test-results
           path: tests/e2e/
           retention-days: 7
+
+  ci-results:
+    name: CI Results
+    needs: [changes, typecheck, patterns, sync-client, unit, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Summarize required CI jobs
+        env:
+          SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          PATTERNS_RESULT: ${{ needs.patterns.result }}
+          SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "### CI Results"
+            echo
+            echo "Branch protection should require this aggregate job, not each internal shard."
+            echo
+            echo "CI relevant source changes: ${SHOULD_RUN:-unknown}"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| Detect CI-relevant changes | $CHANGES_RESULT |"
+            echo "| Type Check | $TYPECHECK_RESULT |"
+            echo "| Pattern Scan | $PATTERNS_RESULT |"
+            echo "| Sync Client Package | $SYNC_CLIENT_RESULT |"
+            echo "| Unit Tests | $UNIT_RESULT |"
+            echo "| E2E Tests | $E2E_RESULT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          failed=false
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$PATTERNS_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$E2E_RESULT"; do
+            case "$result" in
+              success|skipped)
+                ;;
+              *)
+                failed=true
+                ;;
+            esac
+          done
+
+          if [ "$failed" = "true" ]; then
+            echo "One or more required CI jobs failed or were cancelled." >&2
+            exit 1
+          fi

@@ -13,6 +13,11 @@
       "types": "./src/client.ts",
       "import": "./dist/client.js",
       "default": "./dist/client.js"
+    },
+    "./events": {
+      "types": "./src/events.ts",
+      "import": "./dist/events.js",
+      "default": "./dist/events.js"
     }
   },
   "scripts": {
