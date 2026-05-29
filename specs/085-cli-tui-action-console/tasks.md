@@ -105,16 +105,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T035 [P] [US3] Add failing session action adapter tests in `packages/sync-client/tests/tui/session-actions.test.ts`
-- [ ] T036 [P] [US3] Add failing Sessions view render tests for list, empty, unauthenticated, and gateway-unavailable states in `packages/sync-client/tests/tui/sessions-view.test.tsx`
-- [ ] T037 [P] [US3] Add failing session keyboard tests for Enter, `n`, `r`, `k`, and Escape in `packages/sync-client/tests/tui/sessions-keyboard.test.tsx`
-- [ ] T038 [P] [US3] Add failing destructive confirmation tests for session removal in `packages/sync-client/tests/tui/session-confirmation.test.tsx`
+- [X] T035 [P] [US3] Add failing session action adapter tests in `packages/sync-client/tests/tui/session-actions.test.ts`
+- [X] T036 [P] [US3] Add failing Sessions view render tests for list, empty, unauthenticated, and gateway-unavailable states in `packages/sync-client/tests/tui/sessions-view.test.tsx`
+- [X] T037 [P] [US3] Add failing session keyboard tests for Enter, `n`, `r`, `k`, and Escape in `packages/sync-client/tests/tui/sessions-keyboard.test.tsx`
+- [X] T038 [P] [US3] Add failing destructive confirmation tests for session removal in `packages/sync-client/tests/tui/session-confirmation.test.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T039 [US3] Implement shell session TUI adapter over `createShellClient` in `packages/sync-client/src/cli/tui/sessions/session-actions.ts`
-- [ ] T040 [US3] Create `SessionsView` list, empty, unauthenticated, and gateway-unavailable states in `packages/sync-client/src/cli/tui/views/SessionsView.tsx`
-- [ ] T041 [US3] Wire `shell.sessions` and `s` to Sessions view mode in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T039 [US3] Implement shell session TUI adapter over `createShellClient` in `packages/sync-client/src/cli/tui/sessions/session-actions.ts`
+- [X] T040 [US3] Create `SessionsView` list, empty, unauthenticated, and gateway-unavailable states in `packages/sync-client/src/cli/tui/views/SessionsView.tsx`
+- [X] T041 [US3] Wire `shell.sessions` and `s` to Sessions view mode in `packages/sync-client/src/cli/tui/app.tsx`
 - [ ] T042 [US3] Wire `shell.new` and `n` to create a safe default session or prompt state in `packages/sync-client/src/cli/tui/app.tsx`
 - [ ] T043 [US3] Wire selected session attach to existing `ShellClient.attachSession` handoff in `packages/sync-client/src/cli/tui/sessions/session-actions.ts`
 - [ ] T044 [US3] Wire confirmed session remove/stop through existing `ShellClient.deleteSession` in `packages/sync-client/src/cli/tui/sessions/session-actions.ts`

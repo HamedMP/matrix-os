@@ -16,6 +16,8 @@ import { getTerminalCapabilities } from "./terminal.js";
 import { CommandPalette } from "./views/CommandPalette.js";
 import { HomeView } from "./views/HomeView.js";
 import { ActionStatusView } from "./views/ActionStatusView.js";
+import { SessionsView, type SessionsViewState } from "./views/SessionsView.js";
+import type { MatrixSessionSummary } from "./session-types.js";
 
 const ENTER_ALTERNATE_SCREEN = "\u001B[?1049h\u001B[H\u001B[2J";
 const EXIT_ALTERNATE_SCREEN = "\u001B[?1049l";
@@ -73,6 +75,7 @@ export interface MatrixTuiAppProps {
   actions?: readonly TuiAction[];
   executor?: TuiActionExecutor;
   loadStatusSnapshot?: () => Promise<TuiStatusSnapshot>;
+  loadShellSessions?: () => Promise<MatrixSessionSummary[]>;
 }
 
 export function MatrixTuiApp({
@@ -81,6 +84,7 @@ export function MatrixTuiApp({
   actions = DEFAULT_TUI_ACTIONS,
   executor = createTuiActionExecutor(),
   loadStatusSnapshot = aggregateTuiStatusSnapshot,
+  loadShellSessions,
 }: MatrixTuiAppProps) {
   const { exit } = useApp();
   const [snapshot, setSnapshot] = useState<TuiStatusSnapshot | null>(initialSnapshot ?? null);
@@ -88,6 +92,9 @@ export function MatrixTuiApp({
   const [paletteQuery, setPaletteQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedQuickActionIndex, setSelectedQuickActionIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<"home" | "sessions">("home");
+  const [sessions, setSessions] = useState<MatrixSessionSummary[]>([]);
+  const [sessionsState, setSessionsState] = useState<SessionsViewState>("empty");
   const [execution, setExecution] = useState<TuiActionExecutionState>({ status: "idle" });
   const capabilities = getTerminalCapabilities({ noColor });
   const paletteResults = searchTuiActions(actions, paletteQuery, 8);
@@ -102,6 +109,10 @@ export function MatrixTuiApp({
         message: "No action selected",
         error: createTuiSafeError("action_unavailable", { message: "No action selected" }),
       });
+      return;
+    }
+    if (action.id === "shell.sessions") {
+      setViewMode("sessions");
       return;
     }
     setExecution({ actionId: action.id, status: "running", message: `Running ${action.title}` });
@@ -135,6 +146,10 @@ export function MatrixTuiApp({
 
   useInput((input, key) => {
     if (key.escape) {
+      if (viewMode === "sessions") {
+        setViewMode("home");
+        return;
+      }
       setPaletteOpen(false);
       setPaletteQuery("");
       setSelectedIndex(0);
@@ -222,6 +237,45 @@ export function MatrixTuiApp({
     };
   }, [loadStatusSnapshot, snapshot]);
 
+  useEffect(() => {
+    if (viewMode !== "sessions") {
+      return;
+    }
+    if (snapshot?.auth.state === "unauthenticated" || snapshot?.auth.state === "expired") {
+      setSessionsState("unauthenticated");
+      setSessions([]);
+      return;
+    }
+    if (snapshot?.gateway.state !== "healthy") {
+      setSessionsState("gateway-unavailable");
+      setSessions([]);
+      return;
+    }
+    if (!loadShellSessions) {
+      setSessionsState("empty");
+      setSessions([]);
+      return;
+    }
+    let cancelled = false;
+    setSessionsState("loading");
+    loadShellSessions().then((next) => {
+      if (!cancelled) {
+        setSessions(next);
+        setSessionsState(next.length > 0 ? "ready" : "empty");
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        const safeError = normalizeTuiError(error);
+        setSessions([]);
+        setSessionsState("error");
+        setExecution({ status: "failed", message: safeError.message, error: safeError });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadShellSessions, snapshot, viewMode]);
+
   if (!snapshot) {
     return <Text>Loading Matrix OS...</Text>;
   }
@@ -236,6 +290,10 @@ export function MatrixTuiApp({
         noColor={capabilities.noColor}
       />
     );
+  }
+
+  if (viewMode === "sessions") {
+    return <SessionsView sessions={sessions} state={sessionsState} noColor={capabilities.noColor} />;
   }
 
   return (
