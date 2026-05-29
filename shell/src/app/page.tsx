@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useChatState } from "@/hooks/useChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
+import { capturePostHogEvent } from "@/lib/posthog-client";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
 
 import { Desktop } from "@/components/Desktop";
 import { MobileShell } from "@/components/mobile/MobileShell";
@@ -40,6 +42,7 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [launchAppPath, setLaunchAppPath] = useState<string | null>(null);
   const isMobile = useMobileViewport();
+  const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
 
@@ -63,6 +66,14 @@ export default function Home() {
   useEffect(() => {
     setLaunchAppPath(readLaunchPathFromLocation());
   }, []);
+
+  useEffect(() => {
+    if (shellLoadedCaptured.current) return;
+    shellLoadedCaptured.current = true;
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_LOADED, {
+      surface: isMobile ? "mobile" : "desktop",
+    });
+  }, [isMobile]);
 
   return (
     <ChatProvider value={chat}>

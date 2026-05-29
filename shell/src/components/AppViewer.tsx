@@ -12,6 +12,8 @@ import {
 } from "@/lib/os-bridge";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
+import { capturePostHogEvent } from "@/lib/posthog-client";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
@@ -275,6 +277,13 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [sessionReady, setSessionReady] = useState(!slug);
   const lastRefreshAtRef = useRef(0);
   const refreshInFlightRef = useRef(false);
+
+  useEffect(() => {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_APP_OPENED, {
+      app: slug ?? appName,
+      runtime: slug ? "vite" : "file",
+    });
+  }, [appName, slug]);
 
   // Spec 063 session bootstrap: set the matrix_app_session__{slug} cookie
   // before the iframe ever navigates to /apps/{slug}/. Skipping this step

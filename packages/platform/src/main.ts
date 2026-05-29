@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { installPostHogHonoErrorTracking } from '@matrix-os/observability';
+import { installPostHogHonoErrorTracking, MATRIX_TELEMETRY_EVENTS, type MatrixTelemetryEvent } from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -611,6 +611,61 @@ function buildCodeDomainProxyHeaders(
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
   const handleToken = buildPlatformVerificationToken(handle, platformSecret);
   return createHmac('sha256', handleToken).update(userId).digest('hex');
+}
+
+export function classifyWebSocketPath(path: string): string {
+  try {
+    const parsed = new URL(path, 'https://app.matrix-os.com');
+    if (parsed.pathname.startsWith('/ws/terminal')) return '/ws/terminal';
+    if (parsed.pathname === '/ws') return '/ws';
+    if (parsed.pathname.startsWith('/ws/')) return '/ws/*';
+    return 'other';
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return 'invalid';
+    throw err;
+  }
+}
+
+export function buildPlatformWebSocketUpgradeHeaders(opts: {
+  incomingHeaders: IncomingMessage['headers'];
+  externalHost: string;
+  handle: string;
+  userId: string;
+  platformSecret: string;
+  includePlatformProof: boolean;
+  isCodeDomain: boolean;
+}): string {
+  return Object.entries(opts.incomingHeaders)
+    .filter(([k]) => (
+      k !== 'host' &&
+      k !== 'authorization' &&
+      k !== 'cookie' &&
+      k !== 'x-forwarded-host' &&
+      k !== 'x-forwarded-proto'
+    ))
+    .flatMap(([k, v]) => {
+      if (v === undefined) return [];
+      return `${k}: ${Array.isArray(v) ? v.join(', ') : v}`;
+    })
+    .concat([
+      `x-forwarded-host: ${opts.externalHost}`,
+      'x-forwarded-proto: https',
+    ])
+    .concat(
+      opts.platformSecret && opts.includePlatformProof
+        ? [
+            `authorization: Bearer ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`,
+            `x-platform-verified: ${buildPlatformUserProof(opts.handle, opts.userId, opts.platformSecret)}`,
+            `x-platform-user-id: ${opts.userId}`,
+          ]
+        : [],
+    )
+    .concat(
+      opts.platformSecret && opts.isCodeDomain
+        ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`]
+        : [],
+    )
+    .join('\r\n');
 }
 
 function requireValidHandle(handle: string): string {
@@ -1521,6 +1576,10 @@ export type PlatformApp = Hono<{
     internalContainerClerkUserId: string;
   };
 }> & {
+  capturePlatformEvent(
+    event: MatrixTelemetryEvent,
+    properties: Record<string, string | number | boolean | null | undefined>,
+  ): void;
   shutdownPostHog(): Promise<void>;
 };
 
@@ -1659,7 +1718,7 @@ export function createApp(deps: {
   });
   const posthogShutdowns: Array<() => Promise<void>> = [() => posthogErrorTracker.shutdown()];
   function capturePlatformEvent(
-    event: string,
+    event: MatrixTelemetryEvent,
     properties: Record<string, string | number | boolean | null | undefined>,
   ): void {
     void posthogErrorTracker.captureEvent(event, {
@@ -1670,6 +1729,7 @@ export function createApp(deps: {
       console.warn(`[posthog] Failed to queue platform event ${event}: ${kind}`);
     });
   }
+  app.capturePlatformEvent = capturePlatformEvent;
 
   app.use('*', async (c, next) => {
     const started = performance.now();
@@ -1815,13 +1875,13 @@ export function createApp(deps: {
       let channel;
       if (parsed.data.channel) {
         channel = await promoteHostBundleChannel(db, parsed.data.channel, release.version);
-        capturePlatformEvent('host_bundle_channel_promoted', {
+        capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
           channel: parsed.data.channel,
           version: release.version,
           gitCommit: release.gitCommit,
         });
       }
-      capturePlatformEvent('host_bundle_release_registered', {
+      capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_RELEASE_REGISTERED, {
         version: release.version,
         gitCommit: release.gitCommit,
         gitRef: release.gitRef,
@@ -1863,7 +1923,7 @@ export function createApp(deps: {
     }
     try {
       const promoted = await promoteHostBundleChannel(db, channel, parsed.data.version);
-      capturePlatformEvent('host_bundle_channel_promoted', {
+      capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
         channel,
         version: promoted.version,
       });
@@ -3472,11 +3532,16 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       if (handledInternalGeminiLive) return;
     } catch (err: unknown) {
       console.warn('[platform] internal Gemini Live proxy failed:', describeError(err));
+      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
+        pathClass: 'internal-gemini-live',
+        errorKind: err instanceof Error ? err.name : typeof err,
+      });
       socket.destroy();
       return;
     }
 
     const path = req.url ?? '/';
+    const pathClass = classifyWebSocketPath(path);
     const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
@@ -3499,13 +3564,28 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       });
     } catch (err: unknown) {
       console.warn(
-        `[platform] websocket auth failed host=${host} path=${path} error=${describeError(err)}`,
+        `[platform] websocket auth failed host=${host} pathClass=${pathClass} error=${describeError(err)}`,
       );
+      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_AUTH_FAILED, {
+        host,
+        pathClass,
+        runtimeSlot: requestRuntimeSlot,
+        hasToken: Boolean(wsToken),
+        hasCookie: Boolean(req.headers.cookie),
+        errorKind: err instanceof Error ? err.name : typeof err,
+      });
       socket.destroy();
       return;
     }
     if (!identity) {
-      console.warn(`[platform] websocket unauthenticated host=${host} path=${path} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
+      console.warn(`[platform] websocket unauthenticated host=${host} pathClass=${pathClass} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
+      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UNAUTHENTICATED, {
+        host,
+        pathClass,
+        runtimeSlot: requestRuntimeSlot,
+        hasToken: Boolean(wsToken),
+        hasCookie: Boolean(req.headers.cookie),
+      });
       socket.destroy();
       return;
     }
@@ -3534,39 +3614,17 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const onSocketError = () => activeUpstream?.destroy();
     socket.on('error', onSocketError);
 
-    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => {
-      return Object.entries(req.headers)
-        .filter(([k]) => (
-          k !== 'host' &&
-          k !== 'authorization' &&
-          k !== 'cookie' &&
-          k !== 'x-forwarded-host' &&
-          k !== 'x-forwarded-proto'
-        ))
-        .flatMap(([k, v]) => {
-          if (v === undefined) return [];
-          return `${k}: ${Array.isArray(v) ? v.join(', ') : v}`;
-        })
-        .concat([
-          `x-forwarded-host: ${host}`,
-          'x-forwarded-proto: https',
-        ])
-        .concat(
-          PLATFORM_SECRET && includePlatformProof
-            ? [
-                `authorization: Bearer ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`,
-                `x-platform-verified: ${buildPlatformUserProof(handle, identity.userId, PLATFORM_SECRET)}`,
-                `x-platform-user-id: ${identity.userId}`,
-              ]
-            : [],
-        )
-        .concat(
-          PLATFORM_SECRET && isCodeDomain
-            ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`]
-            : [],
-        )
-        .join('\r\n');
-    };
+    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
+      buildPlatformWebSocketUpgradeHeaders({
+        incomingHeaders: req.headers,
+        externalHost: host,
+        handle,
+        userId: identity.userId,
+        platformSecret: PLATFORM_SECRET,
+        includePlatformProof,
+        isCodeDomain,
+      })
+    );
 
     const writeUpgradeRequest = (
       upstream: Socket,
@@ -3591,14 +3649,19 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (runningMachine) {
       if (!entitlement.runtimeProxyAllowed) {
         console.warn(
-          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} path=${path}`,
+          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} pathClass=${pathClass}`,
         );
+        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_ENTITLEMENT_DENIED, {
+          handle: runningMachine.handle,
+          runtimeSlot,
+          pathClass,
+        });
         socket.destroy();
         return;
       }
       if (!runningMachine.publicIPv4) {
         console.warn(
-          `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} path=${path}`,
+          `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} pathClass=${pathClass}`,
         );
         socket.destroy();
         return;
@@ -3618,8 +3681,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       upstream.on('error', (err) => {
         upstream.destroy();
         console.warn(
-          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} path=${path} error=${describeError(err)}`,
+          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} pathClass=${pathClass} error=${describeError(err)}`,
         );
+        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
+          handle: runningMachine.handle,
+          runtimeSlot,
+          pathClass,
+          errorKind: err instanceof Error ? err.name : typeof err,
+        });
         socket.destroy();
       });
       return;
@@ -3628,7 +3697,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (!record) { socket.destroy(); return; }
     if (!entitlement.runtimeProxyAllowed) {
       console.warn(
-        `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} path=${path}`,
+        `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} pathClass=${pathClass}`,
       );
       socket.destroy();
       return;
@@ -3637,7 +3706,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
         console.warn(
-          `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} path=${path}`,
+          `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} pathClass=${pathClass}`,
         );
         socket.destroy();
         return;
@@ -3659,7 +3728,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       upstream.on('error', (err) => {
         upstream.destroy();
         console.warn(
-          `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+          `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} pathClass=${pathClass} error=${describeError(err)}`,
         );
         if (!connected && attempt === 0 && !socket.destroyed) {
           void connectUpstream(attempt + 1).catch((retryErr) => {

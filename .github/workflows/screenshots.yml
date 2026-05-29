@@ -101,7 +101,8 @@ jobs:
 
       - name: Install Playwright Chromium
         if: steps.screenshots.outputs.should_run == 'true'
-        run: cd shell && pnpm exec playwright install chromium
+        timeout-minutes: 5
+        run: cd shell && pnpm exec playwright install --only-shell chromium
 
       - name: Run Playwright tests
         if: steps.screenshots.outputs.should_run == 'true'

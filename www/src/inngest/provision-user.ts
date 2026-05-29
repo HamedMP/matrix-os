@@ -1,5 +1,6 @@
 import { inngest } from "./client";
 import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
 import {
   getProvisionVerificationTarget,
   isCustomerVpsUsableStatus,
@@ -17,6 +18,15 @@ export const provisionUser = inngest.createFunction(
     const user = event.data;
     const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
     const posthog = getPostHogClient();
+
+    posthog.capture({
+      distinctId: user.id,
+      event: MATRIX_TELEMETRY_EVENTS.USER_SIGNED_UP,
+      properties: {
+        handle,
+        source: "clerk_signup",
+      },
+    });
 
     posthog.capture({
       distinctId: user.id,
