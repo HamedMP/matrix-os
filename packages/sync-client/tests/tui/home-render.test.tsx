@@ -23,8 +23,8 @@ describe("HomeView", () => {
     expect(output).toContain("MATRIX OS");
     expect(output).toContain("Action console");
     expect(output).not.toContain("M   M   A   TTTTT");
-    expect(output).not.toContain(".@@@@oo.o@@@.");
-    expect(output).not.toContain("@@@@@@@@@@@@@@@");
+    expect(output).toContain(".@@@@oo.o@@@.");
+    expect(output).toContain("@@@@@@@@@@@@@@@");
     expect(output).toContain("> [n] New shell session");
     expect(output).toContain("[s] Open shell sessions");
     expect(output).toContain("[a] Setup coding agents");
@@ -41,6 +41,7 @@ describe("HomeView", () => {
 
     expect(output).toContain("MATRIX OS");
     expect(output).toContain("Quick actions");
+    expect(output).toContain(".@@@@oo.o@@@.");
     expect(output).toContain("healthy");
     expect(output).not.toContain("\u001B[");
   });
@@ -57,6 +58,7 @@ describe("HomeView", () => {
 
     expect(output).toContain("New shell session");
     expect(output).toContain("Open shell sessions");
+    expect(output).toContain("rabbit: .@@. @@@");
     expect(output).toContain("healthy · cloud · ok · 2 sessions");
   });
 
@@ -66,6 +68,7 @@ describe("HomeView", () => {
     expect(output).toContain("MATRIX OS");
     expect(output).toContain("Quick actions");
     expect(output).toContain("cloud");
+    expect(output).toContain("rabbit: .@@. @@@");
     expect(output).toContain("/ palette · q quit");
     expect(output).not.toContain(".@@@@oo.o@@@.");
   });
