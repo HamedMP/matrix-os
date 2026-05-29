@@ -74,6 +74,7 @@ type MaybeTtyStream = NodeJS.ReadStream & {
   rows?: number;
   setRawMode?: (enabled: boolean) => unknown;
   resume?: () => unknown;
+  pause?: () => unknown;
 };
 
 function terminalSize(input: MaybeTtyStream, output: NodeJS.WriteStream): {
@@ -357,6 +358,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
         let socketOpen = false;
+        let remoteAttached = false;
         let rawModeEnabled = false;
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
@@ -383,6 +385,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             input.setRawMode?.(false);
             rawModeEnabled = false;
           }
+          input.pause?.();
         };
         const settle = (fn: () => void) => {
           if (settled) {
@@ -431,8 +434,17 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             })));
           }
         };
+        const detachLocal = () => {
+          sendFrame(JSON.stringify({ type: "detach" }));
+          ws.close();
+          settle(() => resolve({ detached: true }));
+        };
         const onInput = (chunk: Buffer | string) => {
           const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          if (rawModeEnabled && !remoteAttached && rawData.includes("\u0003")) {
+            detachLocal();
+            return;
+          }
           const data = inputFilter.filter(rawData);
           let outbound = "";
           for (const char of data) {
@@ -442,9 +454,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               if (outbound.length > 0) {
                 sendFrame(JSON.stringify({ type: "input", data: outbound }));
               }
-              sendFrame(JSON.stringify({ type: "detach" }));
-              ws.close();
-              settle(() => resolve({ detached: true }));
+              detachLocal();
               return;
             }
             if (detachSequence.startsWith(pendingInput)) {
@@ -466,13 +476,19 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           sendFrame(JSON.stringify({ type: "resize", ...size }));
         };
+        const schedulePostAttachResizeFrames = () => {
+          setTimeout(sendResizeFrame, 50).unref?.();
+          setTimeout(sendResizeFrame, 250).unref?.();
+        };
         const onResize = () => {
           sendResizeFrame();
         };
         const onSignal = () => {
-          sendFrame(JSON.stringify({ type: "detach" }));
-          ws.close();
-          settle(() => resolve({ detached: true }));
+          if (!remoteAttached) {
+            detachLocal();
+            return;
+          }
+          sendFrame(JSON.stringify({ type: "input", data: "\u0003" }));
         };
         const onProcessExit = () => {
           resetLocalInputModes();
@@ -480,6 +496,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             input.setRawMode?.(false);
             rawModeEnabled = false;
           }
+          input.pause?.();
         };
         const onOpen = () => {
           markOpen();
@@ -500,7 +517,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           const msg = parsed as Record<string, unknown>;
           if (msg.type === "attached") {
+            remoteAttached = true;
             markOpen();
+            schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
             inputFilter.noteRemoteOutput();
             output.write(msg.data);

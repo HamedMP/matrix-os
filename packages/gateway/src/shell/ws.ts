@@ -25,6 +25,9 @@ const ShellWsClientMessageSchema = z.union([
   ShellWsDetachSchema,
 ]);
 
+export const SHELL_ATTACH_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
+export const SHELL_ATTACH_RECENT_REPLAY_EVENTS = 50;
+
 export interface ShellWsSocket {
   send(data: string): void;
   close?: () => void;
@@ -144,14 +147,18 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       exitDisposable = null;
     };
 
+    const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
+      ? Math.max(0, (await replayBuffer.latestSeq() ?? 0) - SHELL_ATTACH_RECENT_REPLAY_EVENTS + 1)
+      : fromSeq;
+
     sendJson(ws, {
       type: "attached",
       session: safeName,
       state: info.status === "exited" ? "exited" : "running",
-      fromSeq,
+      fromSeq: effectiveFromSeq,
     });
 
-    for (const event of await replayBuffer.replayFromSeq(fromSeq)) {
+    for (const event of await replayBuffer.replayFromSeq(effectiveFromSeq)) {
       if (event.type === "replay-evicted") {
         continue;
       }
