@@ -14,7 +14,11 @@ vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
 }));
 
 vi.mock("@/hooks/useTheme", () => ({
-  useTheme: () => ({ mode: "dark", colors: {}, fonts: {} }),
+  useTheme: () => ({
+    mode: "dark",
+    colors: { background: "#101820", foreground: "#f0efe7", primary: "#33aaff" },
+    fonts: {},
+  }),
 }));
 
 vi.mock("@/stores/terminal-settings", () => {
@@ -101,6 +105,22 @@ describe("TerminalApp", () => {
 
     expect(screen.getByText("~/projects")).toBeTruthy();
     expect(screen.getByTitle("New tab (Ctrl+Shift+T)")).toBeTruthy();
+  });
+
+  it("keeps mobile terminal accessory keys theme-aligned and keyboard safe", async () => {
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const keyBar = screen.getByTestId("terminal-key-bar");
+    expect(keyBar.style.position).toBe("sticky");
+    expect(keyBar.style.bottom).toBe("var(--matrix-terminal-keybar-bottom)");
+    expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
+    expect(keyBar.style.background).toContain("16, 24, 32");
+    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("240, 239, 231");
   });
 
   it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {
@@ -758,6 +778,11 @@ describe("TerminalApp", () => {
               status: "active",
               attachedClients: 1,
               tabs: [{ idx: 0, name: "dev", focused: true }],
+            }, {
+              name: "bench",
+              status: "degraded",
+              attachedClients: 0,
+              tabs: [{ idx: 0, name: "latency", focused: true }, { idx: 1, name: "load" }],
             }],
           }),
         });
@@ -783,13 +808,15 @@ describe("TerminalApp", () => {
 
     expect(screen.getByLabelText("Search shells")).toHaveProperty("value", "");
     expect(screen.getByText("active · 1 zellij tab")).toBeTruthy();
+    expect(screen.getByText("degraded · 2 zellij tabs")).toBeTruthy();
     expect(screen.getByText("0: dev")).toBeTruthy();
+    expect(screen.getByText("0: latency")).toBeTruthy();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /open main/i }));
+      fireEvent.click(screen.getByRole("button", { name: /open bench/i }));
     });
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: { sessionId: "main" },
+      paneTree: { sessionId: "bench" },
     });
 
     await act(async () => {

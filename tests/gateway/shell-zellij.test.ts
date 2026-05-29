@@ -254,6 +254,36 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("creates command sessions with the command as the initial focused pane", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await adapter.createSession({
+      name: "bench",
+      cwd: "/home/alice/work",
+      cmd: "node -e 'process.stdout.write(\"MATRIX_BENCH_READY\\n\")'",
+    });
+
+    expect(execFile).toHaveBeenCalledTimes(1);
+    const args = execFile.mock.calls[0]?.[1];
+    expect(args).toEqual([
+      "--session",
+      "bench",
+      "--layout-string",
+      expect.stringContaining('command="node"'),
+      "attach",
+      "--create-background",
+      "bench",
+    ]);
+    expect(String(args?.[3])).toContain('cwd="/home/alice/work"');
+    expect(String(args?.[3])).toContain('args "-e"');
+    expect(String(args?.[3])).toContain("MATRIX_BENCH_READY");
+  });
+
   it("creates tabs and panes with terminal-capable environment at process launch", async () => {
     const child = childProcess();
     const execFile = vi.fn((_file, _args, _opts, cb) => {

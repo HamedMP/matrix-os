@@ -1,8 +1,9 @@
 import { defineCommand } from "citty";
-import { loadProfileAuth } from "../../auth/token-store.js";
+import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { formatCliSuccess } from "../output.js";
 import { isDaemonRunning } from "../daemon-client.js";
 import { resolveCliProfile } from "../profiles.js";
+import { probeGatewayHealth } from "../gateway-health.js";
 
 interface DoctorCheck {
   name: string;
@@ -35,9 +36,11 @@ export const doctorCommand = defineCommand({
       checks.push({ name: "profile", ok: false, code: "profile_not_found", hint: "Run `matrix profile ls`." });
     }
 
+    let token: string | undefined;
     if (profile) {
-      const auth = profile.token ? { accessToken: profile.token } : await loadProfileAuth(profile.name);
-      checks.push(auth
+      const auth = profile.token ? null : await loadProfileAuth(profile.name);
+      token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
+      checks.push(token
         ? { name: "auth", ok: true }
         : { name: "auth", ok: false, code: "not_authenticated", hint: "Run `matrix login`." });
     } else {
@@ -50,11 +53,8 @@ export const doctorCommand = defineCommand({
 
     if (profile) {
       try {
-        const res = await fetch(`${profile.gatewayUrl}/api/health`, {
-          headers: profile.token ? { Authorization: `Bearer ${profile.token}` } : undefined,
-          signal: AbortSignal.timeout(10_000),
-        });
-        checks.push(res.ok
+        const gateway = await probeGatewayHealth(profile.gatewayUrl, token);
+        checks.push(gateway.reachable
           ? { name: "gateway", ok: true }
           : { name: "gateway", ok: false, code: "gateway_unavailable", hint: "Check the selected profile gateway URL." });
       } catch (_err: unknown) {

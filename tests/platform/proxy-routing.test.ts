@@ -769,6 +769,10 @@ describe("platform proxy routing", () => {
       "https://203.0.113.25:443/api/system/info",
       "https://203.0.113.26:443/api/system/info",
     ]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Headers).get("host")).toBe("app.matrix-os.com");
+      expect((init?.headers as Headers).get("x-forwarded-host")).toBe("app.matrix-os.com");
+    }
     expect(timeoutSpy).toHaveBeenCalledWith(2500);
     const html = await res.text();
     expect(html).toContain("Choose your Matrix OS computer");
@@ -1758,6 +1762,8 @@ describe("platform proxy routing", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://203.0.113.11:443/api/system/info");
     expect((init?.headers as Headers).get("authorization")).toBeTruthy();
+    expect((init?.headers as Headers).get("host")).toBe("app.matrix-os.com");
+    expect((init?.headers as Headers).get("x-forwarded-host")).toBe("app.matrix-os.com");
   });
 
   it("requires authentication before proxying code-domain editor static assets", async () => {

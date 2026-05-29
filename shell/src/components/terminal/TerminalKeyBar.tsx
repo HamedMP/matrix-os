@@ -12,7 +12,7 @@
  *   the bar stays one row tall by default.
  */
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 interface KeyDef {
   label: string;
@@ -50,12 +50,23 @@ const KEYS: KeyDef[] = [
 
 interface TerminalKeyBarProps {
   onSend: (data: string) => void;
+  background?: string;
+  foreground?: string;
+  accent?: string;
 }
 
-export function TerminalKeyBar({ onSend }: TerminalKeyBarProps) {
+export function TerminalKeyBar({
+  onSend,
+  background = "var(--background)",
+  foreground = "var(--foreground)",
+  accent = "var(--primary)",
+}: TerminalKeyBarProps) {
   const [expanded, setExpanded] = useState(false);
 
   const visible = expanded ? KEYS : KEYS.filter((k) => k.primary);
+  const buttonBackground = `color-mix(in srgb, ${foreground} 10%, transparent)`;
+  const buttonBorder = `color-mix(in srgb, ${foreground} 18%, transparent)`;
+  const mutedForeground = `color-mix(in srgb, ${foreground} 66%, transparent)`;
 
   return (
     <div
@@ -63,17 +74,22 @@ export function TerminalKeyBar({ onSend }: TerminalKeyBarProps) {
       aria-label="Terminal accessory keys"
       data-testid="terminal-key-bar"
       style={{
+        "--matrix-terminal-keybar-bottom": "env(keyboard-inset-height, 0px)",
         display: "flex",
         alignItems: "center",
         gap: 4,
-        padding: "6px 4px",
-        background: "rgba(0,0,0,0.45)",
-        borderTop: "1px solid rgba(244,237,224,0.08)",
+        padding: "6px 4px max(6px, env(safe-area-inset-bottom))",
+        position: "sticky",
+        bottom: "var(--matrix-terminal-keybar-bottom)",
+        zIndex: 5,
+        background,
+        borderTop: `1px solid ${buttonBorder}`,
         overflowX: "auto",
         flexShrink: 0,
         touchAction: "pan-x",
         WebkitOverflowScrolling: "touch",
-      }}
+        boxShadow: `0 -10px 20px color-mix(in srgb, ${background} 70%, transparent)`,
+      } as CSSProperties & Record<"--matrix-terminal-keybar-bottom", string>}
     >
       {visible.map((k) => (
         <button
@@ -90,9 +106,9 @@ export function TerminalKeyBar({ onSend }: TerminalKeyBarProps) {
             fontSize: 13,
             lineHeight: 1,
             padding: "8px 10px",
-            background: "rgba(244,237,224,0.08)",
-            color: "var(--foreground, #f4ede0)",
-            border: "1px solid rgba(244,237,224,0.12)",
+            background: buttonBackground,
+            color: foreground,
+            border: `1px solid ${buttonBorder}`,
             borderRadius: 6,
             minWidth: 36,
             flexShrink: 0,
@@ -111,8 +127,8 @@ export function TerminalKeyBar({ onSend }: TerminalKeyBarProps) {
           fontSize: 13,
           padding: "8px 10px",
           background: "transparent",
-          color: "var(--muted-foreground, rgba(244,237,224,0.6))",
-          border: "1px dashed rgba(244,237,224,0.12)",
+          color: mutedForeground,
+          border: `1px dashed ${accent}`,
           borderRadius: 6,
           minWidth: 36,
           flexShrink: 0,

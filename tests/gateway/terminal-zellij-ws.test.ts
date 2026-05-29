@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
   createShellWsHandler,
+  SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+  SHELL_ATTACH_RECENT_REPLAY_EVENTS,
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
 
@@ -110,6 +112,84 @@ describe("zellij terminal WebSocket", () => {
     pty.emitExit({ exitCode: 101 });
 
     expect(ws.sent).toContainEqual({ type: "exit", code: 101 });
+  });
+
+  it("maps live-tail attach to a bounded recent replay window", async () => {
+    const pty = new FakePty();
+    const secondPty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(pty)
+          .mockReturnValueOnce(secondPty),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const first = await handler.open({ ws, session: "main", fromSeq: 0 });
+    for (let index = 0; index < SHELL_ATTACH_RECENT_REPLAY_EVENTS + 10; index += 1) {
+      pty.emitData(`frame-${index}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    first.onClose();
+
+    const secondWs = socket();
+    const secondHandler = await handler.open({
+      ws: secondWs,
+      session: "main",
+      fromSeq: SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+    });
+    secondHandler.onClose();
+
+    expect(secondWs.sent).toContainEqual({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 10,
+    });
+    expect(secondWs.sent).not.toContainEqual({ type: "output", seq: 0, data: "frame-0" });
+    expect(secondWs.sent).toContainEqual({ type: "output", seq: 10, data: "frame-10" });
+  });
+
+  it("maps cold-start live-tail attach from persisted scrollback instead of replaying from zero", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const readSince = vi.fn(async () => []);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => 99),
+        readSince,
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const session = await handler.open({
+      ws,
+      session: "main",
+      fromSeq: SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
+    });
+    session.onClose();
+
+    expect(ws.sent).toContainEqual({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 50,
+    });
+    expect(readSince).toHaveBeenCalledWith("main", 50);
   });
 
   it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {

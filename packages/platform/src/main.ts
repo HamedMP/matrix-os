@@ -915,7 +915,7 @@ async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecre
   }
   const headers = new Headers({
     authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`,
-    host: `${machine.handle}.matrix-os.com`,
+    host: 'app.matrix-os.com',
     'x-forwarded-host': 'app.matrix-os.com',
     'x-forwarded-proto': 'https',
     connection: 'close',
@@ -968,7 +968,7 @@ async function probeCustomerVpsRuntime(
     const res = await fetch(`https://${machine.publicIPv4}:443/api/system/info`, {
       headers: {
         authorization: `Bearer ${token}`,
-        host: `${machine.handle}.matrix-os.com`,
+        host: 'app.matrix-os.com',
         'x-forwarded-host': 'app.matrix-os.com',
         'x-forwarded-proto': 'https',
       },

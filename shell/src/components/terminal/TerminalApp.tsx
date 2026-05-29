@@ -195,10 +195,19 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Match the padding around the xterm to the active terminal theme so the
   // user never sees a colored seam between the OS theme bg and the xterm
   // bg. Falls back to the desktop theme bg when "Match OS" is selected.
+  const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
   const terminalBackground =
     themeId === "system"
       ? (theme.colors.background || "var(--background)")
-      : getTerminalThemePreset(themeId).background;
+      : terminalPreset?.background ?? "var(--background)";
+  const terminalForeground =
+    themeId === "system"
+      ? (theme.colors.foreground || "var(--foreground)")
+      : terminalPreset?.foreground ?? "var(--foreground)";
+  const terminalAccent =
+    themeId === "system"
+      ? (theme.colors.primary || "var(--primary)")
+      : terminalPreset?.cursor ?? "var(--primary)";
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
@@ -693,6 +702,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                 {mobile && (
                   <TerminalKeyBar
                     onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
+                    background={terminalBackground}
+                    foreground={terminalForeground}
+                    accent={terminalAccent}
                   />
                 )}
               </div>
@@ -1080,7 +1092,7 @@ type SidebarTab = "projects" | "shells" | "sessions" | "files";
 
 interface ShellSessionSummary {
   name: string;
-  status?: "active" | "exited";
+  status?: "active" | "exited" | "degraded";
   updatedAt?: string;
   attachedClients?: number;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
@@ -1706,6 +1718,12 @@ function ShellCard({
 }) {
   const tabs = shell.tabs ?? [];
   const focusedTab = tabs.find((tab) => tab.focused) ?? tabs[0];
+  const statusColor =
+    shell.status === "active" || !shell.status
+      ? "var(--success)"
+      : shell.status === "degraded"
+        ? "var(--warning)"
+        : "var(--muted-foreground)";
   return (
     <div
       style={{
@@ -1722,7 +1740,7 @@ function ShellCard({
             width: 7,
             height: 7,
             borderRadius: "50%",
-            background: shell.status === "exited" ? "var(--muted-foreground)" : "var(--success)",
+            background: statusColor,
             flexShrink: 0,
           }}
         />
@@ -1737,8 +1755,8 @@ function ShellCard({
         >
           {shell.name}
         </span>
-        <span style={{ color: "var(--muted-foreground)", fontSize: 10 }}>
-          {shell.attachedClients ?? 0}
+        <span style={{ color: "var(--muted-foreground)", fontSize: 10, whiteSpace: "nowrap" }}>
+          {shell.attachedClients ?? 0} attached
         </span>
       </div>
       <div className="truncate" style={{ color: "var(--muted-foreground)", fontSize: 10, paddingLeft: 15 }}>
