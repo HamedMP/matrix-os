@@ -19,4 +19,17 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.e2e.result');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
+
+  it('documents workflow ownership and required checks', () => {
+    const root = process.cwd();
+    const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+
+    expect(readme).toContain('# GitHub Actions Workflows');
+    expect(readme).toContain('CI Results');
+    expect(readme).toContain('branch protection');
+    expect(readme).toContain('Host Bundle Release');
+    expect(readme).toContain('host bundle release tests are blocking');
+    expect(readme).toContain('Screenshots');
+    expect(readme).toContain('explicitly optional');
+  });
 });

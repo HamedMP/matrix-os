@@ -53,6 +53,21 @@ bun run test:e2e                      # e2e tests
 bun run check:patterns                # all files in packages/ and shell/
 ```
 
+## Required GitHub Checks
+
+Branch protection should require the `CI Results` job from
+`.github/workflows/ci.yml`. `CI Results` is the stable aggregate gate for the
+internal CI shards: typecheck, pattern scan, sync-client package checks, unit
+test shards, and e2e tests. Requiring the aggregate keeps branch protection
+stable when shards are split, renamed, or skipped for docs-only PRs.
+
+Do not require each internal shard directly unless branch protection is updated
+at the same time. The shard jobs remain visible for logs and artifacts; the
+aggregate job is the merge gate.
+
+Workflow ownership and optional checks are documented in
+`.github/workflows/README.md`.
+
 ## PR Size Guidelines
 
 | Additions | Files | Recommendation |
