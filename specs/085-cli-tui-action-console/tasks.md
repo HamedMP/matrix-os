@@ -55,19 +55,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T017 [P] [US1] Add failing executor tests for registered direct command dispatch in `packages/sync-client/tests/tui/action-executor.test.tsx`
-- [ ] T018 [P] [US1] Add failing command palette Enter dispatch tests in `packages/sync-client/tests/tui/command-palette-dispatch.test.tsx`
-- [ ] T019 [P] [US1] Add failing status refresh tests after action success in `packages/sync-client/tests/tui/action-refresh.test.tsx`
-- [ ] T020 [P] [US1] Add failing safe action failure rendering tests in `packages/sync-client/tests/tui/action-status-view.test.tsx`
+- [X] T017 [P] [US1] Add failing executor tests for registered direct command dispatch in `packages/sync-client/tests/tui/action-executor.test.tsx`
+- [X] T018 [P] [US1] Add failing command palette Enter dispatch tests in `packages/sync-client/tests/tui/command-palette-dispatch.test.tsx`
+- [X] T019 [P] [US1] Add failing status refresh tests after action success in `packages/sync-client/tests/tui/action-refresh.test.tsx`
+- [X] T020 [P] [US1] Add failing safe action failure rendering tests in `packages/sync-client/tests/tui/action-status-view.test.tsx`
 
 ### Implementation for User Story 1
 
-- [ ] T021 [US1] Implement trusted registered-action dispatch in `packages/sync-client/src/cli/tui/action-executor.ts`
-- [ ] T022 [US1] Wire command palette Enter to `TuiActionExecutor.execute` in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T023 [US1] Render running, success, failed, and cancelled states through `ActionStatusView` in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T024 [US1] Refresh `aggregateTuiStatusSnapshot` after refreshable actions in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T025 [US1] Implement safe handling for no-result Enter and concurrent action attempts in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T026 [US1] Add login, doctor, status, and whoami executor adapters using existing CLI command services in `packages/sync-client/src/cli/tui/action-executor.ts`
+- [X] T021 [US1] Implement trusted registered-action dispatch in `packages/sync-client/src/cli/tui/action-executor.ts`
+- [X] T022 [US1] Wire command palette Enter to `TuiActionExecutor.execute` in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T023 [US1] Render running, success, failed, and cancelled states through `ActionStatusView` in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T024 [US1] Refresh `aggregateTuiStatusSnapshot` after refreshable actions in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T025 [US1] Implement safe handling for no-result Enter and concurrent action attempts in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T026 [US1] Add login, doctor, status, and whoami executor adapters using existing CLI command services in `packages/sync-client/src/cli/tui/action-executor.ts`
 
 **Checkpoint**: User Story 1 works independently; command palette actions are no longer decorative.
 

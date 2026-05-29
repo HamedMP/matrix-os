@@ -1,16 +1,45 @@
 import React, { useEffect, useState } from "react";
-import { render, Text, useApp, useInput } from "ink";
+import { Box, render, Text, useApp, useInput } from "ink";
 import { DEFAULT_TUI_ACTIONS, type TuiAction } from "./actions.js";
-import { createStaticTuiActionExecutor, type TuiActionExecutor } from "./action-executor.js";
+import {
+  createTuiActionExecutor,
+  type TuiActionExecutionResult,
+  type TuiActionExecutionState,
+  type TuiActionExecutor,
+} from "./action-executor.js";
+import { createTuiSafeError } from "./errors.js";
 import { normalizeTuiError } from "./errors.js";
 import { searchTuiActions } from "./palette.js";
 import { aggregateTuiStatusSnapshot, type TuiStatusSnapshot } from "./status.js";
 import { getTerminalCapabilities } from "./terminal.js";
 import { CommandPalette } from "./views/CommandPalette.js";
 import { HomeView } from "./views/HomeView.js";
+import { ActionStatusView } from "./views/ActionStatusView.js";
 
 const ENTER_ALTERNATE_SCREEN = "\u001B[?1049h\u001B[H\u001B[2J";
 const EXIT_ALTERNATE_SCREEN = "\u001B[?1049l";
+
+export function resolvePaletteEnterAction(results: readonly TuiAction[], selectedIndex: number): TuiAction | undefined {
+  return selectedIndex >= 0 && selectedIndex < results.length ? results[selectedIndex] : undefined;
+}
+
+export async function executeTuiActionWithRefresh({
+  action,
+  executor,
+  snapshot,
+  loadStatusSnapshot,
+}: {
+  action: TuiAction;
+  executor: TuiActionExecutor;
+  snapshot?: TuiStatusSnapshot;
+  loadStatusSnapshot: () => Promise<TuiStatusSnapshot>;
+}): Promise<{ result: TuiActionExecutionResult; snapshot?: TuiStatusSnapshot }> {
+  const result = await executor.execute(action, { snapshot });
+  if (result.status === "succeeded" && result.refreshes.length > 0) {
+    return { result, snapshot: await loadStatusSnapshot() };
+  }
+  return { result };
+}
 
 function createSnapshotFailure(error: unknown): TuiStatusSnapshot {
   const unknownSubsystem = { state: "unknown" as const, label: "unknown" };
@@ -40,7 +69,7 @@ export function MatrixTuiApp({
   initialSnapshot,
   noColor = false,
   actions = DEFAULT_TUI_ACTIONS,
-  executor = createStaticTuiActionExecutor(),
+  executor = createTuiActionExecutor(),
   loadStatusSnapshot = aggregateTuiStatusSnapshot,
 }: MatrixTuiAppProps) {
   const { exit } = useApp();
@@ -48,9 +77,50 @@ export function MatrixTuiApp({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [execution, setExecution] = useState<TuiActionExecutionState>({ status: "idle" });
   const capabilities = getTerminalCapabilities({ noColor });
   const paletteResults = searchTuiActions(actions, paletteQuery, 8);
-  void executor;
+
+  const executeAction = (action: TuiAction | undefined) => {
+    if (execution.status === "running") {
+      return;
+    }
+    if (!action) {
+      setExecution({
+        status: "failed",
+        message: "No action selected",
+        error: createTuiSafeError("action_unavailable", { message: "No action selected" }),
+      });
+      return;
+    }
+    setExecution({ actionId: action.id, status: "running", message: `Running ${action.title}` });
+    void executeTuiActionWithRefresh({
+      action,
+      executor,
+      snapshot: snapshot ?? undefined,
+      loadStatusSnapshot,
+    }).then(({ result, snapshot: refreshedSnapshot }) => {
+      setExecution({
+        actionId: result.actionId,
+        status: result.status,
+        message: result.message,
+        recoveryHint: result.recoveryHint,
+        error: result.error,
+      });
+      if (refreshedSnapshot) {
+        setSnapshot(refreshedSnapshot);
+      }
+    }).catch((error: unknown) => {
+      const safeError = normalizeTuiError(error);
+      setExecution({
+        actionId: action.id,
+        status: "failed",
+        message: safeError.message,
+        recoveryHint: "Run doctor and try again.",
+        error: safeError,
+      });
+    });
+  };
 
   useInput((input, key) => {
     if (key.escape) {
@@ -77,9 +147,11 @@ export function MatrixTuiApp({
       return;
     }
     if (paletteOpen && key.return) {
+      const action = resolvePaletteEnterAction(paletteResults, selectedIndex);
       setPaletteOpen(false);
       setPaletteQuery("");
       setSelectedIndex(0);
+      executeAction(action);
       return;
     }
     if (paletteOpen && key.backspace) {
@@ -136,7 +208,12 @@ export function MatrixTuiApp({
     );
   }
 
-  return <HomeView snapshot={snapshot} columns={capabilities.columns} rows={capabilities.rows} noColor={capabilities.noColor} />;
+  return (
+    <Box flexDirection="column">
+      <HomeView snapshot={snapshot} columns={capabilities.columns} rows={capabilities.rows} noColor={capabilities.noColor} />
+      {execution.status !== "idle" && <ActionStatusView state={execution} noColor={capabilities.noColor} />}
+    </Box>
+  );
 }
 
 export function shouldUseAlternateScreen({
