@@ -44,7 +44,7 @@ on:
         default: ""
         type: string
       skip_dev_bundle:
-        description: "Skip dev host-bundle build/publish for metadata-only stack layers"
+        description: "Skip dev host-bundle build/publish for explicit manual maintenance runs"
         required: false
         default: false
         type: boolean
@@ -71,23 +71,10 @@ jobs:
       - name: Decide whether to build
         id: decision
         env:
-          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
-          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           SKIP_DEV_BUNDLE_INPUT: ${{ github.event.inputs.skip_dev_bundle || 'false' }}
         run: |
           set -euo pipefail
-
-          changed_files=""
-          zero_sha="0000000000000000000000000000000000000000"
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ]; then
-            if [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "$GITHUB_EVENT_BEFORE" != "$zero_sha" ] && git cat-file -e "${GITHUB_EVENT_BEFORE}^{commit}" 2>/dev/null; then
-              changed_files="$(git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA")"
-            else
-              changed_files="$(git show --pretty= --name-only "$GITHUB_SHA")"
-            fi
-          fi
-
-          CHANGED_FILES="$changed_files" scripts/ci/dev-bundle-gate.sh
+          scripts/ci/dev-bundle-gate.sh
 
   test:
     name: Test
@@ -111,11 +98,9 @@ jobs:
 
       - name: Type check
         run: bun run typecheck
-        continue-on-error: true
 
       - name: Unit tests
         run: bun run test
-        continue-on-error: true
 
   build:
     name: Build host bundle
@@ -144,6 +129,20 @@ jobs:
           cache: pnpm
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Validate public build environment
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required for host bundle releases." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to publish a host bundle with the example Clerk publishable key." >&2
+            exit 1
+          fi
 
       - name: Generate version
         id: version
