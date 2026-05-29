@@ -71,6 +71,85 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
 
     await expect(registry.list()).resolves.toEqual([]);
+    const raw = await readFile(persistPath, "utf-8");
+    expect(JSON.parse(raw).sessions.stale.status).toBe("exited");
+  });
+
+  it("lists orphan zellij sessions missing from metadata and adopts them", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main", status: "active", attachedClients: 0, tabs: [] },
+    ]);
+
+    const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
+    expect(JSON.parse(raw).sessions.main.name).toBe("main");
+  });
+
+  it("connects by adopting an orphan active zellij session", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+
+    await expect(registry.get("main")).resolves.toMatchObject({
+      name: "main",
+      status: "active",
+    });
+  });
+
+  it("connects by resurrecting an orphan exited zellij session", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          main: { name: "main", status: "exited", createdAt: "x", updatedAt: "x", attachedClients: 0, tabs: [] },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+
+    await expect(registry.get("main")).resolves.toMatchObject({
+      name: "main",
+      status: "active",
+    });
+    const raw = await readFile(persistPath, "utf-8");
+    expect(JSON.parse(raw).sessions.main.status).toBe("active");
+  });
+
+  it("adopts existing zellij sessions when creating a duplicate name", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+
+    await expect(registry.create({ name: "main" })).resolves.toMatchObject({
+      name: "main",
+      status: "active",
+    });
+
+    expect(adapter.createSession).not.toHaveBeenCalled();
   });
 
   it("force deletes live orphan zellij sessions missing from metadata", async () => {

@@ -47,6 +47,7 @@ export function parseArgs(argv) {
     csv: false,
     json: false,
     ssh: undefined,
+    serverSampleIntervalMs: 1_000,
     debugOutput: false,
   };
 
@@ -72,6 +73,7 @@ export function parseArgs(argv) {
     else if (arg === "--ping-count") options.pingCount = parsePositiveInteger(readValue(), "ping-count");
     else if (arg === "--ping-interval") options.pingIntervalMs = parsePositiveInteger(readValue(), "ping-interval");
     else if (arg === "--ssh") options.ssh = readValue();
+    else if (arg === "--server-sample-interval") options.serverSampleIntervalMs = parsePositiveInteger(readValue(), "server-sample-interval");
     else if (arg === "--debug-output") options.debugOutput = true;
     else if (arg === "--force") options.force = true;
     else if (arg === "--keep-session") options.keepSession = true;
@@ -172,10 +174,19 @@ async function main() {
   const results = [];
 
   for (const run of runs) {
-    const serverBefore = options.ssh ? await sampleServerLoad(options.ssh).catch((err) => ({ error: safeError(err) })) : null;
-    const result = await runOneBenchmark({ run, options, profile, WebSocket });
-    const serverAfter = options.ssh ? await sampleServerLoad(options.ssh).catch((err) => ({ error: safeError(err) })) : null;
-    results.push({ ...result, serverBefore, serverAfter });
+    const sampler = options.ssh
+      ? startServerLoadSampler(options.ssh, options.serverSampleIntervalMs)
+      : null;
+    let result;
+    try {
+      result = await runOneBenchmark({ run, options, profile, WebSocket });
+    } finally {
+      if (!result) {
+        await sampler?.stop();
+      }
+    }
+    const serverSamples = sampler ? await sampler.stop() : [];
+    results.push({ ...result, serverLoad: summarizeServerLoad(serverSamples) });
     if (!options.json && !options.csv) printHumanRow(results[results.length - 1]);
   }
 
@@ -199,7 +210,7 @@ async function runOneBenchmark({ run, options, profile, WebSocket }) {
           if (!isNotFoundError(err)) throw err;
         });
       }
-      await createSession(profile, session);
+      await createSession(profile, session, buildEchoCommand());
       await delay(250);
       const client = await attachEchoClientWithRetry({
         profile,
@@ -266,18 +277,17 @@ async function attachEchoClientWithRetry(options) {
   throw lastError;
 }
 
-async function attachEchoClient({ profile, session, WebSocket, startupTimeoutMs }) {
-  const url = attachUrl(profile.gateway, session, profile.token);
+export async function attachEchoClient({ profile, session, WebSocket, startupTimeoutMs }) {
+  const url = attachUrl(profile.gateway, session);
   const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${profile.token}` } });
   const state = {
     session,
     ws,
     outputBytes: 0,
-    pendingTokens: [],
+    pendingByHex: new Map(),
     latencies: [],
     disconnects: 0,
     parser: { buffer: "" },
-    matchBuffer: "",
     debugTail: "",
     attached: false,
     ready: false,
@@ -307,8 +317,7 @@ async function attachEchoClient({ profile, session, WebSocket, startupTimeoutMs 
     state.outputBytes += Buffer.byteLength(msg.data);
     const normalized = normalizeTerminalText(msg.data);
     state.debugTail = `${state.debugTail}${normalized}`.slice(-4_000);
-    consumePromptEchoes(state, normalized);
-    const parsed = parseEchoes(state.parser, normalized, () => undefined);
+    const parsed = parseEchoes(state.parser, normalized, (echo) => consumeDeterministicEcho(state, echo));
     if (parsed.ready) state.ready = true;
   });
 
@@ -319,7 +328,10 @@ async function attachEchoClient({ profile, session, WebSocket, startupTimeoutMs 
       return state.attached;
     }, startupTimeoutMs, `terminal session did not attach in ${session}`);
     ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
-    state.ready = true;
+    await waitUntil(() => {
+      if (state.error) throw new Error(`terminal session attach failed in ${session}: ${state.error}`);
+      return state.ready;
+    }, startupTimeoutMs, `deterministic echo program did not become ready in ${session}`);
   } catch (err) {
     ws.close();
     throw err;
@@ -330,9 +342,12 @@ async function attachEchoClient({ profile, session, WebSocket, startupTimeoutMs 
     state,
     ping: () => pingWebSocket(ws),
     sendSample(index) {
-      const token = sampleToken(index);
-      state.pendingTokens.push({ token, sentAt: performance.now() });
-      const data = token;
+      const byte = sampleByte(index);
+      const hex = byte.toString(16).padStart(2, "0");
+      const queue = state.pendingByHex.get(hex) ?? [];
+      queue.push({ sentAt: performance.now() });
+      state.pendingByHex.set(hex, queue);
+      const data = String.fromCharCode(byte);
       ws.send(JSON.stringify({ type: "input", data }));
       return Buffer.byteLength(data);
     },
@@ -358,7 +373,7 @@ async function runClientLoad(client, run) {
   }
   await waitForEchoDrain(client, run.echoTimeoutMs);
   const latencies = client.state.latencies.slice(beforeLatencyCount);
-  const missing = client.state.pendingTokens.length;
+  const missing = countPendingEchoes(client.state);
   const summary = summarizeLatencies(
     latencies,
     inputBytes,
@@ -409,7 +424,7 @@ function pingWebSocket(ws) {
 
 async function waitForEchoDrain(client, timeoutMs) {
   const startedAt = Date.now();
-  while (client.state.pendingTokens.length > 0 && Date.now() - startedAt <= timeoutMs) {
+  while (countPendingEchoes(client.state) > 0 && Date.now() - startedAt <= timeoutMs) {
     await delay(25);
   }
 }
@@ -471,19 +486,18 @@ function sessionNames(prefix, concurrency, runId) {
   return Array.from({ length: concurrency }, (_, index) => `${root}-${index + 1}`);
 }
 
-function attachUrl(gateway, session, token) {
+export function attachUrl(gateway, session) {
   const url = new URL("/ws/terminal/session", gateway);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("session", session);
   url.searchParams.set("fromSeq", String(LIVE_TAIL_FROM_SEQ));
-  url.searchParams.set("token", token);
   return url.toString();
 }
 
-async function createSession(profile, session) {
+export async function createSession(profile, session, cmd = undefined) {
   await requestJson(profile, "/api/terminal/sessions", {
     method: "POST",
-    body: JSON.stringify({ name: session }),
+    body: JSON.stringify(cmd ? { name: session, cmd } : { name: session }),
   });
 }
 
@@ -522,8 +536,15 @@ async function requestJson(profile, path, init) {
   }
 }
 
-async function resolveProfile(options) {
-  const registryPath = join(homedir(), ".matrixos", "profiles.json");
+export async function resolveProfile(options, home = homedir()) {
+  if (options.gateway && options.token) {
+    return {
+      profile: options.profile ?? "direct",
+      gateway: options.gateway,
+      token: options.token,
+    };
+  }
+  const registryPath = join(home, ".matrixos", "profiles.json");
   const registry = JSON.parse(await readFile(registryPath, "utf8"));
   const profileName = options.profile ?? registry.active ?? DEFAULT_PROFILE;
   const profile = registry.profiles?.[profileName];
@@ -532,7 +553,7 @@ async function resolveProfile(options) {
   }
   const auth = options.token
     ? { accessToken: options.token, expiresAt: Date.now() + 60_000 }
-    : JSON.parse(await readFile(join(homedir(), ".matrixos", "profiles", profileName, "auth.json"), "utf8"));
+    : JSON.parse(await readFile(join(home, ".matrixos", "profiles", profileName, "auth.json"), "utf8"));
   if (typeof auth.expiresAt === "number" && Date.now() >= auth.expiresAt) {
     throw new Error(`Matrix profile auth is expired: ${profileName}`);
   }
@@ -597,6 +618,76 @@ console.log(JSON.stringify({
     script,
   ], 15_000);
   return JSON.parse(stdout);
+}
+
+function startServerLoadSampler(sshTarget, intervalMs) {
+  const samples = [];
+  let stopped = false;
+  const running = (async () => {
+    while (!stopped) {
+      const startedAt = Date.now();
+      try {
+        samples.push(await sampleServerLoad(sshTarget));
+      } catch (err) {
+        samples.push({ error: safeError(err), sampledAt: new Date().toISOString() });
+      }
+      const remaining = intervalMs - (Date.now() - startedAt);
+      if (!stopped && remaining > 0) await delay(remaining);
+    }
+  })();
+  return {
+    async stop() {
+      stopped = true;
+      await running;
+      return samples;
+    },
+  };
+}
+
+export function summarizeServerLoad(samples) {
+  const valid = samples.filter((sample) => !sample.error);
+  const totals = (key) => valid.map((sample) => sumProcessMetric(sample[key], "cpuPercent"));
+  const rssTotals = (key) => valid.map((sample) => sumProcessMetric(sample[key], "rssKb"));
+  return {
+    sampleCount: valid.length,
+    errors: samples.filter((sample) => sample.error).length,
+    gatewayCpuPercent: summarizeNumbers(totals("gateway")),
+    gatewayRssKb: summarizeNumbers(rssTotals("gateway")),
+    gatewayFdCount: summarizeNumbers(valid.map((sample) => Number(sample.gatewayFdCount ?? 0))),
+    zellijCpuPercent: summarizeNumbers(totals("zellij")),
+    zellijRssKb: summarizeNumbers(rssTotals("zellij")),
+    load1: summarizeNumbers(valid.map((sample) => parseLoadAverage(sample.loadAverage))),
+  };
+}
+
+function sumProcessMetric(processes, key) {
+  if (!Array.isArray(processes)) return 0;
+  return processes.reduce((sum, processInfo) => {
+    const value = Number(processInfo?.[key]);
+    return Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+}
+
+function parseLoadAverage(value) {
+  const first = String(value ?? "").trim().split(/\s+/)[0];
+  const parsed = Number(first);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function summarizeNumbers(values) {
+  const sorted = values
+    .filter((value) => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) {
+    return { avg: null, p95: null, max: null };
+  }
+  const avg = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+  const p95Index = Math.min(sorted.length - 1, Math.ceil(0.95 * sorted.length) - 1);
+  return {
+    avg: roundMs(avg),
+    p95: roundMs(sorted[p95Index]),
+    max: roundMs(sorted[sorted.length - 1]),
+  };
 }
 
 function execFilePromise(command, args, timeoutMs) {
@@ -668,20 +759,26 @@ function validateSessionPrefix(value) {
   }
 }
 
-function sampleToken(index) {
-  return `MB${index.toString(36).padStart(6, "0")}Z`;
+function sampleByte(index) {
+  return 33 + (index % 90);
 }
 
-function consumePromptEchoes(state, normalized) {
-  state.matchBuffer = `${state.matchBuffer}${normalized}`.slice(-8_000);
-  while (state.pendingTokens.length > 0) {
-    const pending = state.pendingTokens[0];
-    const index = state.matchBuffer.indexOf(pending.token);
-    if (index === -1) return;
-    state.latencies.push(performance.now() - pending.sentAt);
-    state.pendingTokens.shift();
-    state.matchBuffer = state.matchBuffer.slice(index + pending.token.length);
+function consumeDeterministicEcho(state, echo) {
+  const queue = state.pendingByHex.get(echo.hex);
+  const pending = queue?.shift();
+  if (!pending) return;
+  state.latencies.push(performance.now() - pending.sentAt);
+  if (queue.length === 0) {
+    state.pendingByHex.delete(echo.hex);
   }
+}
+
+function countPendingEchoes(state) {
+  let count = 0;
+  for (const queue of state.pendingByHex.values()) {
+    count += queue.length;
+  }
+  return count;
 }
 
 function isNotFoundError(err) {
@@ -742,7 +839,7 @@ Creates dedicated bench-prefixed terminal sessions and measures live-tail termin
 Options:
   --profile <name>          CLI profile to use (default: cloud)
   --gateway <url>           Override gateway URL
-  --token <token>           Override bearer/query token
+  --token <token>           Override bearer token
   --session <name>          bench-prefixed session name (default: bench)
   --rates <csv>             Key rates per client, comma-separated (default: 1,10,30)
   --duration <seconds>      Duration per rate run (default: 30)
@@ -750,7 +847,9 @@ Options:
   --concurrency <csv>       Concurrent clients, comma-separated (default: 1,5,10)
   --force                   Delete existing bench sessions before each run
   --keep-session            Leave bench sessions behind after the run
-  --ssh <user@host>         Sample server load before/after each run
+  --ssh <user@host>         Sample server load during each run
+  --server-sample-interval <ms>
+                           Server load sampling interval (default: 1000)
   --debug-output            Include normalized terminal output tails in JSON
   --json                    Print JSON
   --csv                     Print CSV

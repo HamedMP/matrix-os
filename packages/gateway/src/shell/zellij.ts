@@ -216,15 +216,13 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     },
     async createSession(options) {
       const args = ["--session", options.name];
-      if (options.layout) args.push("--layout", options.layout);
+      if (options.cmd) {
+        args.push("--layout-string", initialCommandLayout(options.cmd, options.cwd));
+      } else if (options.layout) {
+        args.push("--layout", options.layout);
+      }
       args.push("attach", "--create-background", options.name);
       await run(args, timeoutMs, options.cwd);
-      if (options.cmd) {
-        const commandArgs = ["--session", options.name, "action", "new-pane"];
-        if (options.cwd) commandArgs.push("--cwd", options.cwd);
-        commandArgs.push("--", ...splitCommand(options.cmd));
-        await run(commandArgs);
-      }
     },
     async deleteSession(name, options = {}) {
       const args = ["delete-session", name];
@@ -352,4 +350,26 @@ function splitCommand(command: string): string[] {
     throw shellError("invalid_command", "Invalid command", 400);
   }
   return parts;
+}
+
+function initialCommandLayout(command: string, cwd?: string): string {
+  const [binary, ...args] = splitCommand(command);
+  const paneAttrs = [
+    cwd ? `cwd=${kdlString(cwd)}` : null,
+    `command=${kdlString(binary)}`,
+  ].filter(Boolean).join(" ");
+  const argLine = args.length > 0
+    ? `      args ${args.map(kdlString).join(" ")}\n`
+    : "";
+  return `layout {
+  tab name="main" {
+    pane ${paneAttrs} {
+${argLine}    }
+  }
+}
+`;
+}
+
+function kdlString(value: string): string {
+  return JSON.stringify(value);
 }
