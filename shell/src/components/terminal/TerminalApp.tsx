@@ -39,6 +39,7 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
 
 const DEFAULT_CWD = "projects";
 const DEFAULT_SHELL_SESSION_NAME = "main";
+const SHELL_SESSION_REFRESH_MS = 5_000;
 
 interface Tab {
   id: string;
@@ -1133,6 +1134,7 @@ function LocalTerminalSidebar() {
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
+  const shellPollAbortRef = useRef<AbortController | null>(null);
 
   const selectSidebarTab = useCallback((nextTab: SidebarTab) => {
     setTab(nextTab);
@@ -1167,31 +1169,57 @@ function LocalTerminalSidebar() {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
-  const fetchShells = useCallback(async () => {
-    setShellsLoading(true);
-    setShellsError(null);
+  const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
+    if (!options.silent) setShellsLoading(true);
+    if (!options.silent) setShellsError(null);
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-        signal: AbortSignal.timeout(10_000),
+        signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         setShellsError("Failed to load shells");
-        setShells([]);
+        if (!options.silent) setShells([]);
         return;
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
       setShells(Array.isArray(data.sessions) ? data.sessions : []);
+      setShellsError(null);
     } catch (err: unknown) {
+      if (options.silent && err instanceof DOMException && err.name === "AbortError") return;
       console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
       setShellsError("Could not reach gateway");
-      setShells([]);
+      if (!options.silent) setShells([]);
     } finally {
-      setShellsLoading(false);
+      if (!options.silent) setShellsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (tab === "shells") void fetchShells();
+  }, [fetchShells, tab]);
+
+  useEffect(() => {
+    if (tab !== "shells") return;
+    const refresh = () => {
+      shellPollAbortRef.current?.abort();
+      const controller = new AbortController();
+      shellPollAbortRef.current = controller;
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      void fetchShells({ silent: true, signal: controller.signal }).finally(() => {
+        clearTimeout(timeout);
+        if (shellPollAbortRef.current === controller) {
+          shellPollAbortRef.current = null;
+        }
+      });
+    };
+    const timer = setInterval(() => {
+      refresh();
+    }, SHELL_SESSION_REFRESH_MS);
+    return () => {
+      clearInterval(timer);
+      shellPollAbortRef.current?.abort();
+      shellPollAbortRef.current = null;
+    };
   }, [fetchShells, tab]);
 
   const fetchSessions = useCallback(async () => {

@@ -1,11 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
-import { buildPostAuthRedirectPath, createApp, escapeInlineScriptJson } from "../../packages/platform/src/main.js";
+import {
+  buildPlatformWebSocketUpgradeHeaders,
+  buildPostAuthRedirectPath,
+  classifySessionRoutedHost,
+  classifyWebSocketPath,
+  createApp,
+  escapeInlineScriptJson,
+} from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
+import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import type Dockerode from "dockerode";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
@@ -214,6 +222,98 @@ describe("platform proxy routing", () => {
       expiresAt: expect.any(Number),
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("issues websocket tokens that resolve back to the selected customer VPS runtime", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "machine-alice-ws-runtime",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 124,
+      publicIPv4: "203.0.113.12",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/ws-token", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { token: string };
+    const claims = await syncJwt.verifySyncJwt(body.token, { secret: JWT_SECRET });
+    expect(claims).toMatchObject({
+      sub: "user_alice",
+      handle: "alice",
+      runtime_slot: "primary",
+      aud: "matrix-os-sync",
+      iss: "matrix-os-platform",
+    });
+  });
+
+  it("builds customer VPS websocket upgrade headers without leaking browser credentials or query JWTs", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+    const headers = buildPlatformWebSocketUpgradeHeaders({
+      incomingHeaders: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+        cookie: "__session=secret; matrix_shell_route=alice",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-forwarded-proto": "https",
+        upgrade: "websocket",
+        connection: "Upgrade",
+        "sec-websocket-key": "client-key",
+      },
+      externalHost: "app.matrix-os.com",
+      handle: "alice",
+      userId: "user_alice",
+      platformSecret: "platform-secret-123",
+      includePlatformProof: true,
+      isCodeDomain: false,
+    });
+
+    const platformToken = buildPlatformVerificationToken("alice", "platform-secret-123");
+    expect(headers).toContain(`authorization: Bearer ${platformToken}`);
+    expect(headers).toContain("x-platform-user-id: user_alice");
+    expect(headers).toContain("x-platform-verified:");
+    expect(headers).toContain("x-forwarded-host: app.matrix-os.com");
+    expect(headers).toContain("sec-websocket-key: client-key");
+    expect(headers).not.toContain(issued.token);
+    expect(headers).not.toContain("__session");
+    expect(headers).not.toContain("matrix_shell_route");
+  });
+
+  it("classifies websocket paths without preserving secrets", () => {
+    expect(classifyWebSocketPath("/ws?token=secret")).toBe("/ws");
+    expect(classifyWebSocketPath("/ws/terminal/session?token=secret&session=main")).toBe("/ws/terminal");
+    expect(classifyWebSocketPath("/ws/other?token=secret")).toBe("/ws/*");
+    expect(classifyWebSocketPath("/api/ping")).toBe("other");
+  });
+
+  it("classifies websocket hosts without preserving user-specific hostnames", () => {
+    expect(classifySessionRoutedHost("app.matrix-os.com")).toBe("app");
+    expect(classifySessionRoutedHost("code.matrix-os.com")).toBe("code");
+    expect(classifySessionRoutedHost("alice.matrix-os.com")).toBe("other");
   });
 
   it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
