@@ -11,6 +11,7 @@ const pkgRoot = resolve(here, '..');
 const mustExist = [
   'bin/matrix.mjs',
   'src/cli/index.ts',
+  'src/cli/tui/index.ts',
   'src/daemon/index.ts',
   'src/index.ts',
 ];
