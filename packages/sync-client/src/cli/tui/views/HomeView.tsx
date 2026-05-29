@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { Mascot } from "./Mascot.js";
+import { getQuickActions, type QuickAction } from "../quick-actions.js";
 import type { TuiStatusSnapshot } from "../status.js";
 
 const MATRIX_GREEN = "#00ff41";
@@ -21,16 +21,18 @@ export function HomeView({
   columns = 80,
   rows = 24,
   noColor = false,
+  selectedQuickActionIndex = 0,
+  quickActions = getQuickActions(),
 }: {
   snapshot: TuiStatusSnapshot;
   columns?: number;
   rows?: number;
   noColor?: boolean;
+  selectedQuickActionIndex?: number;
+  quickActions?: readonly QuickAction[];
 }) {
   const narrow = columns < 80;
-  const wide = columns >= 92;
-  const extraWide = columns >= 124;
-  const stageWidth = Math.max(40, Math.min(columns, extraWide ? 120 : wide ? 96 : 76));
+  const stageWidth = Math.max(40, Math.min(columns, narrow ? 60 : 76));
   const fullScreenHeight = rows >= 30 ? rows : undefined;
   const sessionLabel = `${snapshot.sessions.count} ${snapshot.sessions.count === 1 ? "session" : "sessions"}`;
   const status = `${stateLabel(snapshot)} · ${snapshot.profile.name} · ${snapshot.gateway.label} · ${sessionLabel}`;
@@ -42,50 +44,34 @@ export function HomeView({
       width={stageWidth}
       height={fullScreenHeight}
       justifyContent={fullScreenHeight ? "center" : undefined}
-      alignItems="center"
     >
-      <Box flexDirection="column" alignItems="center" marginBottom={1}>
+      <Box flexDirection="column" marginBottom={1}>
         <Text bold color={noColor ? undefined : MATRIX_GREEN}>MATRIX OS</Text>
+        <Text color={noColor ? undefined : "gray"}>Action console</Text>
       </Box>
 
-      {!narrow && !extraWide && (
-        <Box marginBottom={1} justifyContent="center">
-          <Mascot state={snapshot.overall} noColor={noColor} />
-        </Box>
-      )}
+      <Box borderStyle="single" borderColor={noColor ? undefined : "gray"} flexDirection="column" paddingX={1}>
+        <Text color={noColor ? undefined : "gray"}>Quick actions</Text>
+        {quickActions.map((quickAction, index) => {
+          const selected = index === selectedQuickActionIndex;
+          const prefix = selected ? ">" : " ";
+          return (
+            <Text key={quickAction.id} color={selected && !noColor ? MATRIX_GREEN : undefined}>
+              {`${prefix} [${quickAction.shortcut}] ${quickAction.action.title}`}
+            </Text>
+          );
+        })}
+        <Text color={noColor ? undefined : "gray"}>
+          {narrow ? "/ palette · q quit" : "/ palette · arrows select · enter run · q quit"}
+        </Text>
+      </Box>
 
-      <Box width="100%" justifyContent="center">
-        <Box flexDirection="column" width={wide ? 64 : "100%"}>
-          <Box borderStyle="single" borderColor={noColor ? undefined : "gray"} flexDirection="row">
-            <Box width={2} flexShrink={0} backgroundColor={noColor ? undefined : MATRIX_GREEN}>
-              <Text color={noColor ? undefined : MATRIX_GREEN}>|</Text>
-            </Box>
-            <Box flexDirection="column" paddingX={1} paddingY={1}>
-              <Text color={noColor ? undefined : "gray"}>{'Ask Matrix... "review my current PR"'}</Text>
-              <Text color={noColor ? undefined : MATRIX_GREEN}>Build    Matrix    Codex    Shell</Text>
-              <Text color={noColor ? undefined : "gray"}>/ commands    tab agents    s sessions    q quit</Text>
-            </Box>
-          </Box>
-
-          <Box marginTop={1} flexDirection="column">
-            <Text color={color}>{status}</Text>
-            {snapshot.blockingActions.length > 0 && (
-              <Text color={noColor ? undefined : MATRIX_GREEN}>{`Next: /${snapshot.blockingActions[0]}`}</Text>
-            )}
-          </Box>
-        </Box>
-        {extraWide && (
-          <Box marginLeft={3}>
-            <Mascot state={snapshot.overall} noColor={noColor} />
-          </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text color={color}>{status}</Text>
+        {snapshot.blockingActions.length > 0 && (
+          <Text color={noColor ? undefined : MATRIX_GREEN}>{`Next: /${snapshot.blockingActions[0]}`}</Text>
         )}
       </Box>
-
-      {narrow && (
-        <Box marginTop={1}>
-          <Mascot state={snapshot.overall} noColor={noColor} compact />
-        </Box>
-      )}
     </Box>
   );
 }

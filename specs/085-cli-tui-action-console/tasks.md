@@ -81,17 +81,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T027 [P] [US2] Add failing quick-action render tests for 60, 80, and 100 columns in `packages/sync-client/tests/tui/home-actions.test.tsx`
-- [ ] T028 [P] [US2] Add failing home shortcut dispatch tests for `n`, `s`, `a`, `d`, and `l` in `packages/sync-client/tests/tui/home-shortcuts.test.tsx`
-- [ ] T029 [P] [US2] Add failing no-mascot/no-poster regression tests in `packages/sync-client/tests/tui/home-render.test.tsx`
+- [X] T027 [P] [US2] Add failing quick-action render tests for 60, 80, and 100 columns in `packages/sync-client/tests/tui/home-actions.test.tsx`
+- [X] T028 [P] [US2] Add failing home shortcut dispatch tests for `n`, `s`, `a`, `d`, and `l` in `packages/sync-client/tests/tui/home-shortcuts.test.tsx`
+- [X] T029 [P] [US2] Add failing no-mascot/no-poster regression tests in `packages/sync-client/tests/tui/home-render.test.tsx`
 
 ### Implementation for User Story 2
 
-- [ ] T030 [US2] Replace home mascot/wordmark layout with quick-action list and status layout in `packages/sync-client/src/cli/tui/views/HomeView.tsx`
-- [ ] T031 [US2] Add selected quick-action state and up/down navigation in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T032 [US2] Wire home Enter and shortcuts to the shared executor in `packages/sync-client/src/cli/tui/app.tsx`
-- [ ] T033 [US2] Remove obsolete mascot rendering from `packages/sync-client/src/cli/tui/views/Mascot.tsx` or delete the file if no longer referenced
-- [ ] T034 [US2] Update home rendering tests to assert practical console layout in `packages/sync-client/tests/tui/home-render.test.tsx`
+- [X] T030 [US2] Replace home mascot/wordmark layout with quick-action list and status layout in `packages/sync-client/src/cli/tui/views/HomeView.tsx`
+- [X] T031 [US2] Add selected quick-action state and up/down navigation in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T032 [US2] Wire home Enter and shortcuts to the shared executor in `packages/sync-client/src/cli/tui/app.tsx`
+- [X] T033 [US2] Remove obsolete mascot rendering from `packages/sync-client/src/cli/tui/views/Mascot.tsx` or delete the file if no longer referenced
+- [X] T034 [US2] Update home rendering tests to assert practical console layout in `packages/sync-client/tests/tui/home-render.test.tsx`
 
 **Checkpoint**: User Story 2 works independently; the first screen is a useful action surface.
 

@@ -9,6 +9,7 @@ import {
 } from "./action-executor.js";
 import { createTuiSafeError } from "./errors.js";
 import { normalizeTuiError } from "./errors.js";
+import { getQuickActionByShortcut, getQuickActions } from "./quick-actions.js";
 import { searchTuiActions } from "./palette.js";
 import { aggregateTuiStatusSnapshot, type TuiStatusSnapshot } from "./status.js";
 import { getTerminalCapabilities } from "./terminal.js";
@@ -21,6 +22,15 @@ const EXIT_ALTERNATE_SCREEN = "\u001B[?1049l";
 
 export function resolvePaletteEnterAction(results: readonly TuiAction[], selectedIndex: number): TuiAction | undefined {
   return selectedIndex >= 0 && selectedIndex < results.length ? results[selectedIndex] : undefined;
+}
+
+export function resolveHomeEnterAction(actions: readonly TuiAction[], selectedQuickActionIndex: number): TuiAction | undefined {
+  const quickAction = getQuickActions(actions)[selectedQuickActionIndex];
+  return quickAction?.action;
+}
+
+export function resolveHomeShortcutAction(input: string, actions: readonly TuiAction[]): TuiAction | undefined {
+  return getQuickActionByShortcut(input, actions)?.action;
 }
 
 export async function executeTuiActionWithRefresh({
@@ -77,6 +87,7 @@ export function MatrixTuiApp({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedQuickActionIndex, setSelectedQuickActionIndex] = useState(0);
   const [execution, setExecution] = useState<TuiActionExecutionState>({ status: "idle" });
   const capabilities = getTerminalCapabilities({ noColor });
   const paletteResults = searchTuiActions(actions, paletteQuery, 8);
@@ -137,6 +148,25 @@ export function MatrixTuiApp({
     if (!paletteOpen && input === "q") {
       exit();
       return;
+    }
+    if (!paletteOpen && key.upArrow) {
+      setSelectedQuickActionIndex((value) => Math.max(0, value - 1));
+      return;
+    }
+    if (!paletteOpen && key.downArrow) {
+      setSelectedQuickActionIndex((value) => Math.min(Math.max(0, getQuickActions(actions).length - 1), value + 1));
+      return;
+    }
+    if (!paletteOpen && key.return) {
+      executeAction(resolveHomeEnterAction(actions, selectedQuickActionIndex));
+      return;
+    }
+    if (!paletteOpen && input) {
+      const action = resolveHomeShortcutAction(input, actions);
+      if (action) {
+        executeAction(action);
+        return;
+      }
     }
     if (paletteOpen && key.upArrow) {
       setSelectedIndex((value) => Math.max(0, value - 1));
@@ -210,7 +240,13 @@ export function MatrixTuiApp({
 
   return (
     <Box flexDirection="column">
-      <HomeView snapshot={snapshot} columns={capabilities.columns} rows={capabilities.rows} noColor={capabilities.noColor} />
+      <HomeView
+        snapshot={snapshot}
+        columns={capabilities.columns}
+        rows={capabilities.rows}
+        noColor={capabilities.noColor}
+        selectedQuickActionIndex={selectedQuickActionIndex}
+      />
       {execution.status !== "idle" && <ActionStatusView state={execution} noColor={capabilities.noColor} />}
     </Box>
   );

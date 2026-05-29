@@ -17,15 +17,19 @@ const baseSnapshot: TuiStatusSnapshot = {
 };
 
 describe("HomeView", () => {
-  it("renders wide Matrix OS launcher with rabbit art, prompt, shortcuts, and status", () => {
+  it("renders a practical quick-action console with shortcuts and status", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor={false} />);
 
     expect(output).toContain("MATRIX OS");
+    expect(output).toContain("Action console");
     expect(output).not.toContain("M   M   A   TTTTT");
-    expect(output).toContain(".@@@@oo.o@@@.");
-    expect(output).toContain("@@@@@@@@@@@@@@@");
-    expect(output).toContain("Ask Matrix");
-    expect(output).toContain("Build    Matrix");
+    expect(output).not.toContain(".@@@@oo.o@@@.");
+    expect(output).not.toContain("@@@@@@@@@@@@@@@");
+    expect(output).toContain("> [n] New shell session");
+    expect(output).toContain("[s] Open shell sessions");
+    expect(output).toContain("[a] Setup coding agents");
+    expect(output).toContain("[d] Run doctor");
+    expect(output).toContain("[l] Log in");
     expect(output).toContain("q quit");
     expect(output).toContain("cloud");
     expect(output).toContain("2 sessions");
@@ -36,7 +40,7 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} noColor />);
 
     expect(output).toContain("MATRIX OS");
-    expect(output).toContain(".@@@@@@@@@@o.");
+    expect(output).toContain("Quick actions");
     expect(output).toContain("healthy");
     expect(output).not.toContain("\u001B[");
   });
@@ -45,14 +49,14 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={100} rows={40} noColor />);
 
     expect(output.split("\n").length).toBeGreaterThanOrEqual(40);
-    expect(output).toContain("Ask Matrix");
+    expect(output).toContain("Quick actions");
   });
 
-  it("keeps large rabbit art readable on normal-width terminals", () => {
+  it("keeps quick actions readable on normal-width terminals", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={80} noColor />);
 
-    expect(output).toContain(".@@@@oo.o@@@.");
-    expect(output).toContain("Ask Matrix");
+    expect(output).toContain("New shell session");
+    expect(output).toContain("Open shell sessions");
     expect(output).toContain("healthy · cloud · ok · 2 sessions");
   });
 
@@ -60,9 +64,9 @@ describe("HomeView", () => {
     const output = renderToString(<HomeView snapshot={baseSnapshot} columns={60} noColor />);
 
     expect(output).toContain("MATRIX OS");
-    expect(output).toContain("Ask Matrix");
+    expect(output).toContain("Quick actions");
     expect(output).toContain("cloud");
-    expect(output).toContain("rabbit: .@@. @@@");
+    expect(output).toContain("/ palette · q quit");
     expect(output).not.toContain(".@@@@oo.o@@@.");
   });
 });
