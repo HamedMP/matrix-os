@@ -1,5 +1,7 @@
 import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
+import { LandingBilling } from "@/components/landing/LandingBilling";
+import { LandingTelemetry } from "@/components/landing/LandingTelemetry";
 import {
   ArrowRightIcon,
   BrainCircuitIcon,
@@ -13,7 +15,7 @@ const faqItems = [
   { q: "What if something breaks?", a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost." },
   { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source under AGPL-3.0-or-later, auditable by anyone." },
   { q: "How is this different from ChatGPT?", a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep." },
-  { q: "What does it cost?", a: "Free to start. The platform is open source. You bring your own AI key, or use our hosted instances. No surprise bills, no credit-burning loops." },
+  { q: "What does it cost?", a: "Signup is free. Provisioning a hosted Matrix computer starts a 3-day trial through Clerk Billing because the private VPS has real runtime cost. The open source platform remains available for self-hosting." },
 ];
 
 const jsonLd = JSON.stringify({
@@ -43,6 +45,7 @@ const c = {
 const navLinks = [
   { label: "about", href: "#about" },
   { label: "features", href: "#features" },
+  { label: "pricing", href: "#pricing" },
   { label: "developers", href: "#developers" },
   { label: "releases", href: "/releases" },
   { label: "agents", href: "/skills.md" },
@@ -86,6 +89,7 @@ export default function LandingPage() {
   return (
     <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", position: "relative" }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
+      <LandingTelemetry />
       <BodyOverflow />
       <svg style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 50, opacity: 0.12 }}>
         <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
@@ -152,13 +156,13 @@ export default function LandingPage() {
             ))}
           </nav>
           <SignedOut>
-            <a href="https://app.matrix-os.com" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
+            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="nav" data-ph-target="get_started" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
               style={{ backgroundColor: c.forest, color: c.pageBg }}>
               get started
             </a>
           </SignedOut>
           <SignedIn>
-            <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
+            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="nav" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
               style={{ backgroundColor: c.forest, color: c.pageBg }}>
               open matrix os
             </a>
@@ -176,13 +180,13 @@ export default function LandingPage() {
               A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready — your apps, your files, your way.
             </p>
             <SignedOut>
-              <a href="https://app.matrix-os.com" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+              <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="get_started" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
                 style={{ backgroundColor: c.forest, color: c.pageBg }}>
                 Get Started <ArrowRightIcon className="size-3.5" />
               </a>
             </SignedOut>
             <SignedIn>
-              <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+              <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
                 style={{ backgroundColor: c.forest, color: c.pageBg }}>
                 Open Matrix OS <ArrowRightIcon className="size-3.5" />
               </a>
@@ -414,13 +418,13 @@ export default function LandingPage() {
         <div className="mx-auto max-w-[1100px] px-8">
           <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
           <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] mb-16 md:mb-24" style={{ color: c.forest }}>
-            Up and running in seconds.
+            Free to start, deliberate when you provision.
           </h2>
 
           <div className="grid md:grid-cols-3 gap-12 md:gap-16">
             {[
-              { step: "01", title: "Create an account", desc: "Sign up in seconds. No credit card, no setup wizard, no downloads." },
-              { step: "02", title: "Get your Matrix instance", desc: "Your personal cloud computer spins up instantly — a full desktop with apps, files, and AI built in." },
+              { step: "01", title: "Create a free account", desc: "Sign up in seconds. No credit card, no setup wizard, no downloads." },
+              { step: "02", title: "Start the hosted trial", desc: "When you provision a Matrix computer, Clerk starts the 3-day trial and collects the card required for the private VPS." },
               { step: "03", title: "Bring your own agent", desc: "Connect your preferred AI — Claude, GPT, Hermes, or any model you trust. Your instance, your agent, your rules." },
             ].map((item) => (
               <div key={item.step}>
@@ -434,6 +438,8 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      <LandingBilling />
 
       <section id="developers" className="py-28 md:py-36" style={{ backgroundColor: c.pageBg }}>
         <div className="mx-auto max-w-[1100px] px-8">

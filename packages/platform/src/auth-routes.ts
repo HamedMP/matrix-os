@@ -32,6 +32,10 @@ export interface AuthRoutesConfig {
   jwtSecret: string;
   platformUrl: string; // e.g. https://platform.matrix-os.com
   gatewayUrlForHandle: (handle: string) => string;
+  captureEvent?: (
+    event: string,
+    properties: Record<string, string | number | boolean | null | undefined>,
+  ) => void;
   now?: () => number;
 }
 
@@ -443,6 +447,17 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
   const app = new Hono();
   const rateLimit = createRateLimiter();
 
+  function captureAuthEvent(
+    event: string,
+    properties: Record<string, string | number | boolean | null | undefined> = {},
+  ) {
+    config.captureEvent?.(event, {
+      source: "platform-device-auth",
+      shell_surface: "cli_tui",
+      ...properties,
+    });
+  }
+
   const flow: DeviceFlow = createDeviceFlow({
     db: config.db,
     verificationBase: config.platformUrl,
@@ -496,6 +511,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
 
       try {
         const issued = await flow.createDeviceCode();
+        captureAuthEvent("cli_device_code_created", {
+          client_id: body.clientId,
+        });
         return c.json({
           deviceCode: issued.deviceCode,
           userCode: issued.userCode,
@@ -540,8 +558,10 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
           case 'slow_down':
             return c.json({ error: 'slow_down' }, 429);
           case 'expired':
+            captureAuthEvent("cli_device_token_expired");
             return c.json({ error: 'expired_token' }, 410);
           case 'approved':
+            captureAuthEvent("cli_device_token_issued");
             return c.json({
               accessToken: result.token,
               expiresAt: result.expiresAt,
@@ -631,6 +651,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
 
       try {
         await flow.approveDeviceCode(userCode, verifyResult.userId);
+        captureAuthEvent("cli_device_approved");
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'approval failed';
         console.error('[device/approve] failed:', msg);
@@ -671,11 +692,14 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     const ownerClerkUserId = container?.clerkUserId ?? machine?.clerkUserId;
     const handle = container?.handle ?? machine?.handle;
     if (!ownerClerkUserId || !handle) {
+      captureAuthEvent("cli_runtime_lookup_missing");
       return c.json({ error: 'unknown_handle' }, 404);
     }
     if (ownerClerkUserId !== claims.sub) {
+      captureAuthEvent("cli_runtime_lookup_unauthorized");
       return c.json({ error: 'unauthorized' }, 401);
     }
+    captureAuthEvent("cli_runtime_lookup_resolved");
     return c.json({
       userId: claims.sub,
       handle,

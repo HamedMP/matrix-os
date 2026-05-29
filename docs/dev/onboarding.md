@@ -136,8 +136,13 @@ bun run test:e2e          # End-to-end tests
 ```bash
 cd shell
 pnpm exec playwright install chromium
+NEXT_PUBLIC_E2E_TEST_BYPASS=1 pnpm build
 pnpm exec playwright test
 ```
+
+`NEXT_PUBLIC_E2E_TEST_BYPASS` is read by the browser bundle, so it must be set
+when the shell is built. Setting it only on `pnpm start` will not bypass Clerk
+Billing in the compiled app.
 
 ## Testing a Feature
 

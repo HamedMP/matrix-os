@@ -34,7 +34,7 @@ describe("Matrix telemetry events", () => {
 
   it("keeps browser telemetry imports on the event-only subpath", async () => {
     const browserFiles = [
-      "shell/src/app/page.tsx",
+      "shell/src/components/ShellHome.tsx",
       "shell/src/components/AppViewer.tsx",
       "shell/src/hooks/useSocket.ts",
     ];

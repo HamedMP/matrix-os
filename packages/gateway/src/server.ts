@@ -503,6 +503,30 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
+  const captureTerminalEvent = (
+    event: string,
+    properties: Record<string, string | number | boolean | undefined> = {},
+  ) => {
+    void posthogErrorTracker.captureEvent("gateway_terminal_ws", {
+      properties: {
+        source: "gateway-terminal-ws",
+        event,
+        ...properties,
+      },
+    });
+  };
+  const captureGatewayProductEvent = (
+    event: string,
+    properties: Record<string, string | number | boolean | undefined> = {},
+  ) => {
+    void posthogErrorTracker.captureEvent("gateway_product", {
+      properties: {
+        source: "gateway",
+        event,
+        ...properties,
+      },
+    });
+  };
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
     model: config.model,
@@ -1929,6 +1953,9 @@ export async function createGateway(config: GatewayConfig) {
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
           wsConnectionsActive.inc();
+          captureGatewayProductEvent("shell_ws_open", {
+            active_clients: clients.size,
+          });
           approvalBridge = createApprovalBridge({
             send: (msg) => send(ws, msg),
             timeout: approvalPolicy.timeout,
@@ -1958,6 +1985,7 @@ export async function createGateway(config: GatewayConfig) {
 
           const parsedResult = MainWsClientMessageSchema.safeParse(rawMessage);
           if (!parsedResult.success) {
+            captureGatewayProductEvent("shell_ws_invalid_message");
             send(ws, { type: "kernel:error", message: "Invalid message format" });
             return;
           }
@@ -2010,6 +2038,10 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
+            captureGatewayProductEvent("sync_peer_subscribe", {
+              shell_surface: "gateway_ws",
+              client_version_present: Boolean(parsed.clientVersion),
+            });
             syncPeerLifecycle?.subscribe({
               peerId: parsed.peerId,
               hostname: parsed.hostname,
@@ -2034,6 +2066,11 @@ export async function createGateway(config: GatewayConfig) {
             pendingText = parsed.displayText ?? parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
+            captureGatewayProductEvent("agent_task_started", {
+              shell_surface: "gateway_ws",
+              request_id_present: Boolean(requestId),
+              session_id_present: Boolean(parsed.sessionId),
+            });
 
             // Register abort controller so the user can stop this run.
             // Skip if no requestId (legacy clients) -- they can't target
@@ -2068,10 +2105,18 @@ export async function createGateway(config: GatewayConfig) {
                   publishConversationRunMessage(activeSessionId, msg);
                   conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
+                  captureGatewayProductEvent("agent_task_completed", {
+                    shell_surface: "gateway_ws",
+                    request_id_present: Boolean(requestId),
+                  });
                   publishConversationRunMessage(activeSessionId, msg);
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
                 } else if (msg.type === "kernel:error" && activeSessionId) {
+                  captureGatewayProductEvent("agent_task_failed", {
+                    shell_surface: "gateway_ws",
+                    request_id_present: Boolean(requestId),
+                  });
                   publishConversationRunMessage(activeSessionId, {
                     ...msg,
                     message: CLIENT_KERNEL_ERROR_MESSAGE,
@@ -2086,6 +2131,10 @@ export async function createGateway(config: GatewayConfig) {
               }, undefined, abortController)
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
+                captureGatewayProductEvent("agent_task_dispatch_failed", {
+                  shell_surface: "gateway_ws",
+                  request_id_present: Boolean(requestId),
+                });
                 if (activeSessionId) {
                   publishConversationRunMessage(activeSessionId, {
                     type: "kernel:error",
@@ -2120,6 +2169,9 @@ export async function createGateway(config: GatewayConfig) {
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }
+          captureGatewayProductEvent("shell_ws_close", {
+            active_clients: clients.size,
+          });
         },
       };
     }),
@@ -2246,6 +2298,10 @@ export async function createGateway(config: GatewayConfig) {
             cwdParam: cwdParam ?? null,
             namedSession: namedSession ?? null,
           });
+          captureTerminalEvent("open", {
+            hasCwdParam: Boolean(cwdParam),
+            namedSession: Boolean(namedSession),
+          });
           const sendJson = (msg: PtyServerMessage) => {
             try {
               ws.send(JSON.stringify(msg));
@@ -2271,6 +2327,10 @@ export async function createGateway(config: GatewayConfig) {
               namedHandle = session;
             }).catch((err: unknown) => {
               console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
+              captureTerminalEvent("named-attach-failed", {
+                namedSession: true,
+                socketClosed: namedSocketClosed,
+              });
               if (namedSocketClosed) {
                 return;
               }
@@ -2317,6 +2377,9 @@ export async function createGateway(config: GatewayConfig) {
                   autoCreatedSessionId = null;
                 }
                 console.error("Terminal session create error:", err);
+                captureTerminalEvent("auto-create-failed", {
+                  hasCwdParam: Boolean(cwdParam),
+                });
                 sendJson({ type: "error", message: "Failed to create session" });
               }
             }, 100);
@@ -2334,12 +2397,14 @@ export async function createGateway(config: GatewayConfig) {
             parsed = JSON.parse(raw);
           } catch (err: unknown) {
             logUnexpectedJsonParseFailure("Failed to parse terminal WebSocket message", err);
+            captureTerminalEvent("invalid-json");
             ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
             return;
           }
 
           const result = ClientMessageSchema.safeParse(parsed);
           if (!result.success) {
+            captureTerminalEvent("invalid-message");
             ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
             return;
           }
@@ -2363,6 +2428,10 @@ export async function createGateway(config: GatewayConfig) {
                 cwd: "cwd" in msg ? msg.cwd : null,
                 sessionId: "sessionId" in msg ? msg.sessionId : null,
                 fromSeq: "fromSeq" in msg ? (msg.fromSeq ?? 0) : null,
+              });
+              captureTerminalEvent("attach-request", {
+                mode: "cwd" in msg ? "create" : "reattach",
+                hasFromSeq: "fromSeq" in msg && msg.fromSeq !== undefined,
               });
               if (autoCreateTimer) {
                 clearTimeout(autoCreateTimer);
@@ -2399,6 +2468,9 @@ export async function createGateway(config: GatewayConfig) {
                     sessionRegistry.destroy(sessionId);
                   }
                   console.error("Terminal session create error:", err);
+                  captureTerminalEvent("create-failed", {
+                    hasShell: Boolean(msg.shell),
+                  });
                   sendJson({ type: "error", message: "Failed to create session" });
                 }
               } else {
@@ -2418,6 +2490,7 @@ export async function createGateway(config: GatewayConfig) {
                     handle.replay(msg.fromSeq ?? 0);
                   } else {
                     logTerminalDebug("attach-existing-miss", { sessionId: msg.sessionId });
+                    captureTerminalEvent("attach-miss");
                     sendJson({ type: "error", message: "Session not found" });
                   }
                 } catch (err: unknown) {
@@ -2426,6 +2499,7 @@ export async function createGateway(config: GatewayConfig) {
                     handle = null;
                   }
                   console.error("Terminal session attach error:", err);
+                  captureTerminalEvent("attach-failed");
                   sendJson({ type: "error", message: "Failed to attach session" });
                 }
               }
@@ -2440,6 +2514,7 @@ export async function createGateway(config: GatewayConfig) {
             case "detach":
               if (handle) {
                 logTerminalDebug("ws-detach", { sessionId: handle.sessionId });
+                captureTerminalEvent("detach");
                 handle.detach();
                 handle = null;
               }
@@ -2448,6 +2523,7 @@ export async function createGateway(config: GatewayConfig) {
               if (handle) {
                 const sessionId = handle.sessionId;
                 logTerminalDebug("ws-destroy", { sessionId });
+                captureTerminalEvent("destroy");
                 handle.detach();
                 handle = null;
                 sessionRegistry.destroy(sessionId);
@@ -2468,6 +2544,11 @@ export async function createGateway(config: GatewayConfig) {
           logTerminalDebug("ws-close", {
             handleSessionId: handle?.sessionId ?? null,
             autoCreatedSessionId,
+          });
+          captureTerminalEvent("close", {
+            hadHandle: Boolean(handle),
+            hadAutoCreatedSession: Boolean(autoCreatedSessionId),
+            namedSession: Boolean(namedSession),
           });
           if (autoCreateTimer) {
             clearTimeout(autoCreateTimer);

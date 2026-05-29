@@ -68,9 +68,11 @@ describe('platform/customer-vps-cloud-init', () => {
     const rendered = renderCloudInitTemplate(cloudInit, input);
 
     expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
+    expect(rendered).toContain('MATRIX_AUTH_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
     expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
     expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
+    expect(rendered).not.toContain('MATRIX_AUTH_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
   });
@@ -143,6 +145,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
+    expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');

@@ -1,6 +1,7 @@
 import { SignIn } from "@clerk/nextjs";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
+import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
 
 export default function LoginPage() {
   return (
@@ -8,29 +9,13 @@ export default function LoginPage() {
       featureContent={
         <FeatureShowcase
           heading="Welcome back"
-          subheading="Sign in to your Matrix OS instance."
+          subheading="Sign in to your Matrix account, then continue to your cloud computer when it is provisioned."
         />
       }
       formContent={
         <SignIn
           fallbackRedirectUrl="/dashboard"
-          appearance={{
-            elements: {
-              rootBox: "w-full",
-              card: "bg-transparent shadow-none border-0 w-full p-0",
-              headerTitle: "text-foreground text-xl",
-              headerSubtitle: "text-muted-foreground",
-              formButtonPrimary:
-                "bg-primary hover:bg-primary/90 text-primary-foreground",
-              formFieldInput:
-                "bg-background border-border text-foreground focus:ring-ring",
-              footerActionLink: "text-primary hover:text-primary/80",
-              socialButtonsBlockButton:
-                "border-border text-foreground hover:bg-secondary",
-              dividerLine: "bg-border",
-              dividerText: "text-muted-foreground",
-            },
-          }}
+          appearance={matrixClerkAppearance}
         />
       }
     />

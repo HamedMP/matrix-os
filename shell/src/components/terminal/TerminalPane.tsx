@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
+import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
@@ -222,6 +223,16 @@ function suppressXtermNativeKeyboard(container: HTMLElement): void {
   helper.setAttribute("aria-hidden", "true");
 }
 
+function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
+  const payload = {
+    source: "terminal-pane",
+    event,
+    ...properties,
+  };
+  capturePostHogEvent("shell_terminal_ws", payload);
+  capturePostHogLog(event.includes("error") ? "error" : "info", `terminal websocket ${event}`, payload);
+}
+
 function describeReadyState(ws: WebSocket | null): string {
   if (!ws) {
     return "null";
@@ -359,6 +370,16 @@ export function TerminalPane({
           sessionId: sessionIdRef.current,
           lastSeq: lastSeqRef.current,
           wsState: describeReadyState(wsRef.current),
+          ...details,
+        });
+      };
+
+      const track = (event: string, details: Record<string, string | number | boolean | undefined> = {}) => {
+        terminalTelemetry(event, {
+          paneId,
+          hasSession: Boolean(sessionIdRef.current),
+          wsState: describeReadyState(wsRef.current),
+          reconnectAttempt: reconnectAttemptRef.current,
           ...details,
         });
       };
@@ -605,6 +626,7 @@ export function TerminalPane({
           attachOnOpen,
           boundWsState: describeReadyState(ws),
         });
+        track("bind", { attachOnOpen, boundWsState: describeReadyState(ws) });
 
         const sendAttach = () => {
           const currentSessionId = sessionIdRef.current;
@@ -663,6 +685,7 @@ export function TerminalPane({
             reconnectLinesWrittenRef.current = 0;
           }
           log("ws-open", { attachOnOpen });
+          track("open", { attachOnOpen });
 
           // Start heartbeat
           if (heartbeatRef.current) heartbeatRef.current.stop();
@@ -685,6 +708,7 @@ export function TerminalPane({
 
         ws.onerror = () => {
           log("ws-error");
+          track("error");
           if (!sessionIdRef.current) {
             term.write("\r\n\x1b[31mConnection error. Is the gateway running?\x1b[0m\r\n");
           }
@@ -697,6 +721,10 @@ export function TerminalPane({
             isClosing: isClosingRef.current,
             reconnectAttempt: reconnectAttemptRef.current,
           });
+          track("close", {
+            disposed,
+            isClosing: isClosingRef.current,
+          });
           if (disposed || isClosingRef.current) return;
 
           // Attempt reconnection with exponential backoff
@@ -706,6 +734,7 @@ export function TerminalPane({
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
             reconnectAttemptRef.current = attempt + 1;
             log("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
+            track("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             clearPendingReconnectBanner();
             pendingReconnectBannerTimerRef.current = setTimeout(() => {
               pendingReconnectBannerTimerRef.current = null;
@@ -753,6 +782,10 @@ export function TerminalPane({
                 attachedSessionId: msg.sessionId,
                 state: msg.state,
                 exitCode: msg.exitCode ?? null,
+              });
+              track("attached", {
+                state: msg.state,
+                hasExitCode: msg.exitCode != null,
               });
               sessionIdRef.current = msg.sessionId;
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
@@ -822,6 +855,9 @@ export function TerminalPane({
             case "error": {
               const safeMsg = stripTerminalControls(msg.message);
               log("server-error", { message: safeMsg });
+              track("server-error", {
+                sessionNotFound: safeMsg === "Session not found",
+              });
               if (safeMsg === "Session not found" && sessionIdRef.current && isLegacyPtySessionId(sessionIdRef.current)) {
                 log("session-not-found-reset");
                 sessionIdRef.current = null;
@@ -875,11 +911,16 @@ export function TerminalPane({
           .then((wsUrl) => {
             if (disposed || isClosingRef.current) {
               log("connect-ws-abort", { reason: disposed ? "disposed" : "closing" });
+              track("connect-abort", { reason: disposed ? "disposed" : "closing" });
               return;
             }
             log("connect-ws-url", {
               urlIncludesCwd: wsUrl.includes("cwd="),
               urlIncludesToken: wsUrl.includes("token="),
+            });
+            track("connect", {
+              urlIncludesToken: wsUrl.includes("token="),
+              hasCwdQuery: wsUrl.includes("cwd="),
             });
             const ws = new WebSocket(wsUrl);
             bindWs(ws, true);

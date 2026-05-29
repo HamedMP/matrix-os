@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@clerk/ui/themes/shadcn.css";
 @import "fumadocs-ui/css/purple.css";
 @import "fumadocs-ui/css/preset.css";
 
@@ -8,21 +9,21 @@
 /* ── Brand palette overrides (sage/stone) ── */
 @theme {
   --color-fd-background: #FAFAF9;
-  --color-fd-primary: #323D2E;
-  --color-fd-border: #E5E5E4;
-  --color-fd-accent: #F2F5F3;
-  --color-fd-accent-foreground: #1C1917;
-  --color-fd-muted: #F2F5F3;
-  --color-fd-muted-foreground: #6B7280;
-  --color-fd-foreground: #1C1917;
-  --color-fd-secondary: #F2F5F3;
-  --color-fd-secondary-foreground: #1C1917;
+  --color-fd-primary: #434E3F;
+  --color-fd-border: #D6D3C8;
+  --color-fd-accent: #F4F1E8;
+  --color-fd-accent-foreground: #434E3F;
+  --color-fd-muted: #F4F1E8;
+  --color-fd-muted-foreground: #5C5A4F;
+  --color-fd-foreground: #32352E;
+  --color-fd-secondary: #F4F1E8;
+  --color-fd-secondary-foreground: #434E3F;
   --color-fd-card: #FFFFFF;
-  --color-fd-card-foreground: #1C1917;
+  --color-fd-card-foreground: #32352E;
   --color-fd-popover: #FFFFFF;
-  --color-fd-popover-foreground: #1C1917;
-  --color-fd-primary-foreground: #FAFAF9;
-  --color-fd-ring: #8CC7BE;
+  --color-fd-popover-foreground: #32352E;
+  --color-fd-primary-foreground: #FAFAF5;
+  --color-fd-ring: #D06F25;
 }
 
 .dark {
@@ -72,31 +73,36 @@ html, body {
   --font-hand: "Caveat", cursive;
   --radius: 0.75rem;
 
+  /* Light tokens unified with the landing palette (forest / ember / cream). */
   --background: #FAFAF9;
-  --foreground: #1C1917;
+  --foreground: #32352E;
   --card: #FFFFFF;
-  --card-foreground: #1C1917;
+  --card-foreground: #32352E;
   --popover: #FFFFFF;
-  --popover-foreground: #1C1917;
-  --primary: #1C1917;
-  --primary-foreground: #FAFAF9;
-  --secondary: #F2F5F3;
-  --secondary-foreground: #1C1917;
-  --muted: #F2F5F3;
-  --muted-foreground: #6B7280;
-  --accent: #8CC7BE;
-  --accent-foreground: #1C1917;
+  --popover-foreground: #32352E;
+  --primary: #434E3F;
+  --primary-foreground: #FAFAF5;
+  --secondary: #F4F1E8;
+  --secondary-foreground: #434E3F;
+  --muted: #F4F1E8;
+  --muted-foreground: #5C5A4F;
+  --accent: #ECE9D8;
+  --accent-foreground: #434E3F;
   --destructive: #EF4444;
   --success: #22C55E;
   --warning: #EAB308;
-  --border: #E5E5E4;
-  --input: #E5E5E4;
-  --ring: #8CC7BE;
+  --border: #D6D3C8;
+  --input: #D6D3C8;
+  --ring: #D06F25;
 
-  /* Brand palette */
+  /* Brand palette (landing source of truth) */
+  --forest: #434E3F;
+  --deep: #32352E;
+  --ember: #D06F25;
+  --cream: #E0E1CA;
+  --page-bg: #E2E2CF;
   --sage: #8CC7BE;
   --moss: #6A8A7A;
-  --forest: #323D2E;
   --stone: #FAFAF9;
   --ink: #1C1917;
   --lichen: #9AA48C;
@@ -147,6 +153,11 @@ html, body {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-forest: var(--forest);
+  --color-deep: var(--deep);
+  --color-ember: var(--ember);
+  --color-cream: var(--cream);
+  --color-page: var(--page-bg);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
