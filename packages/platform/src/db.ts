@@ -1,5 +1,10 @@
 import { Kysely, PostgresDialect, sql, type Transaction } from 'kysely';
 import pg from 'pg';
+import type {
+  BillingEntitlementSource,
+  BillingEntitlementStatus,
+  MatrixBillingPlanSlug,
+} from './billing.js';
 
 const DEFAULT_PLATFORM_DB_URL =
   process.env.PLATFORM_DATABASE_URL ??
@@ -77,6 +82,57 @@ interface ProviderDeletionQueueTable {
   created_at: string;
   last_error: string | null;
   completed_at: string | null;
+}
+
+interface BillingCustomersTable {
+  clerk_user_id: string;
+  stripe_customer_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BillingEntitlementsTable {
+  clerk_user_id: string;
+  source: string;
+  plan_slug: string;
+  status: string;
+  max_runtime_slots: number;
+  included_runtime_slots: number;
+  addon_runtime_slots: number;
+  default_server_type: string;
+  allowed_server_types: string;
+  stripe_subscription_id: string | null;
+  stripe_price_id: string | null;
+  grace_period_ends_at: string | null;
+  effective_from: string;
+  effective_until: string | null;
+  updated_at: string;
+}
+
+interface BillingEntitlementOverridesTable {
+  id: string;
+  clerk_user_id: string;
+  plan_slug: string;
+  status: string;
+  max_runtime_slots: number;
+  included_runtime_slots: number;
+  addon_runtime_slots: number;
+  default_server_type: string;
+  allowed_server_types: string;
+  reason: string;
+  created_by: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+interface BillingWebhookEventsTable {
+  stripe_event_id: string;
+  event_type: string;
+  created_at_from_stripe: string;
+  processed_at: string;
+  status: string;
+  error_code: string | null;
 }
 
 interface PortAssignmentsTable {
@@ -177,6 +233,10 @@ export interface PlatformDatabase {
   host_bundle_channels: HostBundleChannelsTable;
   host_bundle_release_channels: HostBundleReleaseChannelsTable;
   provider_deletion_queue: ProviderDeletionQueueTable;
+  billing_customers: BillingCustomersTable;
+  billing_entitlements: BillingEntitlementsTable;
+  billing_entitlement_overrides: BillingEntitlementOverridesTable;
+  billing_webhook_events: BillingWebhookEventsTable;
   port_assignments: PortAssignmentsTable;
   device_codes: DeviceCodesTable;
   matrix_users: MatrixUsersTable;
@@ -297,6 +357,70 @@ export interface ProviderDeletionQueueRecord {
   completedAt: string | null;
 }
 
+export interface BillingCustomerRecord {
+  clerkUserId: string;
+  stripeCustomerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewBillingCustomer {
+  clerkUserId: string;
+  stripeCustomerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingEntitlementRecord {
+  clerkUserId: string;
+  source: BillingEntitlementSource;
+  planSlug: MatrixBillingPlanSlug | 'internal';
+  status: BillingEntitlementStatus;
+  maxRuntimeSlots: number;
+  includedRuntimeSlots: number;
+  addonRuntimeSlots: number;
+  defaultServerType: string;
+  allowedServerTypes: string[];
+  stripeSubscriptionId: string | null;
+  stripePriceId: string | null;
+  gracePeriodEndsAt: string | null;
+  effectiveFrom: string;
+  effectiveUntil: string | null;
+  updatedAt: string;
+}
+
+export type NewBillingEntitlement = BillingEntitlementRecord;
+
+export interface BillingEntitlementOverrideRecord {
+  id: string;
+  clerkUserId: string;
+  planSlug: MatrixBillingPlanSlug | 'internal';
+  status: 'active';
+  maxRuntimeSlots: number;
+  includedRuntimeSlots: number;
+  addonRuntimeSlots: number;
+  defaultServerType: string;
+  allowedServerTypes: string[];
+  reason: string;
+  createdBy: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export type NewBillingEntitlementOverride = BillingEntitlementOverrideRecord;
+
+export interface BillingWebhookEventRecord {
+  stripeEventId: string;
+  eventType: string;
+  createdAtFromStripe: string;
+  processedAt: string;
+  status: string;
+  errorCode: string | null;
+}
+
+export type NewBillingWebhookEvent = BillingWebhookEventRecord;
+
 export interface NewUserMachine {
   machineId: string;
   clerkUserId: string;
@@ -410,6 +534,68 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS billing_customers (
+      clerk_user_id TEXT PRIMARY KEY,
+      stripe_customer_id TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS billing_entitlements (
+      clerk_user_id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      plan_slug TEXT NOT NULL,
+      status TEXT NOT NULL,
+      max_runtime_slots INTEGER NOT NULL,
+      included_runtime_slots INTEGER NOT NULL,
+      addon_runtime_slots INTEGER NOT NULL,
+      default_server_type TEXT NOT NULL,
+      allowed_server_types TEXT NOT NULL,
+      stripe_subscription_id TEXT,
+      stripe_price_id TEXT,
+      grace_period_ends_at TEXT,
+      effective_from TEXT NOT NULL,
+      effective_until TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_billing_entitlements_status ON billing_entitlements(status)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_billing_entitlements_subscription ON billing_entitlements(stripe_subscription_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS billing_entitlement_overrides (
+      id TEXT PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL,
+      plan_slug TEXT NOT NULL,
+      status TEXT NOT NULL,
+      max_runtime_slots INTEGER NOT NULL,
+      included_runtime_slots INTEGER NOT NULL,
+      addon_runtime_slots INTEGER NOT NULL,
+      default_server_type TEXT NOT NULL,
+      allowed_server_types TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      expires_at TEXT,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_billing_overrides_user ON billing_entitlement_overrides(clerk_user_id, revoked_at, expires_at)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS billing_webhook_events (
+      stripe_event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      created_at_from_stripe TEXT NOT NULL,
+      processed_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error_code TEXT
+    )
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS host_bundle_releases (
@@ -661,6 +847,13 @@ export async function runInPlatformTransaction<T>(
   return db.transaction(fn);
 }
 
+export async function runBillingWebhookTransaction<T>(
+  db: PlatformDB,
+  fn: (trx: PlatformDB) => Promise<T>,
+): Promise<T> {
+  return db.transaction(fn);
+}
+
 function mapContainer(row: ContainersTable): ContainerRecord {
   return {
     handle: row.handle,
@@ -829,6 +1022,136 @@ function toProviderDeletionRow(record: NewProviderDeletionQueueRecord): Provider
   };
 }
 
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) return [];
+    throw err;
+  }
+}
+
+function mapBillingCustomer(row: BillingCustomersTable): BillingCustomerRecord {
+  return {
+    clerkUserId: row.clerk_user_id,
+    stripeCustomerId: row.stripe_customer_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBillingCustomerRow(record: NewBillingCustomer): BillingCustomersTable {
+  return {
+    clerk_user_id: record.clerkUserId,
+    stripe_customer_id: record.stripeCustomerId,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function mapBillingEntitlement(row: BillingEntitlementsTable): BillingEntitlementRecord {
+  return {
+    clerkUserId: row.clerk_user_id,
+    source: row.source as BillingEntitlementSource,
+    planSlug: row.plan_slug as MatrixBillingPlanSlug | 'internal',
+    status: row.status as BillingEntitlementStatus,
+    maxRuntimeSlots: row.max_runtime_slots,
+    includedRuntimeSlots: row.included_runtime_slots,
+    addonRuntimeSlots: row.addon_runtime_slots,
+    defaultServerType: row.default_server_type,
+    allowedServerTypes: parseStringArray(row.allowed_server_types),
+    stripeSubscriptionId: row.stripe_subscription_id,
+    stripePriceId: row.stripe_price_id,
+    gracePeriodEndsAt: row.grace_period_ends_at,
+    effectiveFrom: row.effective_from,
+    effectiveUntil: row.effective_until,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBillingEntitlementRow(record: NewBillingEntitlement): BillingEntitlementsTable {
+  return {
+    clerk_user_id: record.clerkUserId,
+    source: record.source,
+    plan_slug: record.planSlug,
+    status: record.status,
+    max_runtime_slots: record.maxRuntimeSlots,
+    included_runtime_slots: record.includedRuntimeSlots,
+    addon_runtime_slots: record.addonRuntimeSlots,
+    default_server_type: record.defaultServerType,
+    allowed_server_types: JSON.stringify(record.allowedServerTypes),
+    stripe_subscription_id: record.stripeSubscriptionId,
+    stripe_price_id: record.stripePriceId,
+    grace_period_ends_at: record.gracePeriodEndsAt,
+    effective_from: record.effectiveFrom,
+    effective_until: record.effectiveUntil,
+    updated_at: record.updatedAt,
+  };
+}
+
+function mapBillingOverride(row: BillingEntitlementOverridesTable): BillingEntitlementOverrideRecord {
+  return {
+    id: row.id,
+    clerkUserId: row.clerk_user_id,
+    planSlug: row.plan_slug as MatrixBillingPlanSlug | 'internal',
+    status: row.status as 'active',
+    maxRuntimeSlots: row.max_runtime_slots,
+    includedRuntimeSlots: row.included_runtime_slots,
+    addonRuntimeSlots: row.addon_runtime_slots,
+    defaultServerType: row.default_server_type,
+    allowedServerTypes: parseStringArray(row.allowed_server_types),
+    reason: row.reason,
+    createdBy: row.created_by,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+    createdAt: row.created_at,
+  };
+}
+
+function toBillingOverrideRow(record: NewBillingEntitlementOverride): BillingEntitlementOverridesTable {
+  return {
+    id: record.id,
+    clerk_user_id: record.clerkUserId,
+    plan_slug: record.planSlug,
+    status: record.status,
+    max_runtime_slots: record.maxRuntimeSlots,
+    included_runtime_slots: record.includedRuntimeSlots,
+    addon_runtime_slots: record.addonRuntimeSlots,
+    default_server_type: record.defaultServerType,
+    allowed_server_types: JSON.stringify(record.allowedServerTypes),
+    reason: record.reason,
+    created_by: record.createdBy,
+    expires_at: record.expiresAt,
+    revoked_at: record.revokedAt,
+    created_at: record.createdAt,
+  };
+}
+
+function mapBillingWebhookEvent(row: BillingWebhookEventsTable): BillingWebhookEventRecord {
+  return {
+    stripeEventId: row.stripe_event_id,
+    eventType: row.event_type,
+    createdAtFromStripe: row.created_at_from_stripe,
+    processedAt: row.processed_at,
+    status: row.status,
+    errorCode: row.error_code,
+  };
+}
+
+function toBillingWebhookEventRow(record: NewBillingWebhookEvent): BillingWebhookEventsTable {
+  return {
+    stripe_event_id: record.stripeEventId,
+    event_type: record.eventType,
+    created_at_from_stripe: record.createdAtFromStripe,
+    processed_at: record.processedAt,
+    status: record.status,
+    error_code: record.errorCode,
+  };
+}
+
 export async function insertContainer(db: PlatformDB, record: NewContainer): Promise<void> {
   await db.ready;
   await db.executor.insertInto('containers').values(toContainerRow(record)).execute();
@@ -885,6 +1208,158 @@ export async function listContainers(db: PlatformDB, status?: string): Promise<C
 export async function deleteContainer(db: PlatformDB, handle: string): Promise<void> {
   await db.ready;
   await db.executor.deleteFrom('containers').where('handle', '=', handle).execute();
+}
+
+export async function upsertBillingCustomer(db: PlatformDB, record: NewBillingCustomer): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('billing_customers')
+    .values(toBillingCustomerRow(record))
+    .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
+      stripe_customer_id: record.stripeCustomerId,
+      updated_at: record.updatedAt,
+    }))
+    .execute();
+}
+
+export async function insertBillingCustomerIfAbsent(db: PlatformDB, record: NewBillingCustomer): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('billing_customers')
+    .values(toBillingCustomerRow(record))
+    .onConflict((oc) => oc.column('clerk_user_id').doNothing())
+    .execute();
+}
+
+export async function getBillingCustomerByClerkUserId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingCustomerRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_customers')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .executeTakeFirst();
+  return row ? mapBillingCustomer(row) : undefined;
+}
+
+export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
+  await db.ready;
+  const row = toBillingEntitlementRow(record);
+  await db.executor
+    .insertInto('billing_entitlements')
+    .values(row)
+    .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
+      source: row.source,
+      plan_slug: row.plan_slug,
+      status: row.status,
+      max_runtime_slots: row.max_runtime_slots,
+      included_runtime_slots: row.included_runtime_slots,
+      addon_runtime_slots: row.addon_runtime_slots,
+      default_server_type: row.default_server_type,
+      allowed_server_types: row.allowed_server_types,
+      stripe_subscription_id: row.stripe_subscription_id,
+      stripe_price_id: row.stripe_price_id,
+      grace_period_ends_at: row.grace_period_ends_at,
+      effective_from: row.effective_from,
+      effective_until: row.effective_until,
+      updated_at: row.updated_at,
+    }).where('billing_entitlements.updated_at', '<=', row.updated_at))
+    .execute();
+}
+
+export async function getBillingEntitlement(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingEntitlementRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_entitlements')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .executeTakeFirst();
+  return row ? mapBillingEntitlement(row) : undefined;
+}
+
+export async function upsertBillingOverride(db: PlatformDB, record: NewBillingEntitlementOverride): Promise<void> {
+  await db.ready;
+  const row = toBillingOverrideRow(record);
+  await db.executor
+    .insertInto('billing_entitlement_overrides')
+    .values(row)
+    .onConflict((oc) => oc.column('id').doUpdateSet({
+      plan_slug: row.plan_slug,
+      status: row.status,
+      max_runtime_slots: row.max_runtime_slots,
+      included_runtime_slots: row.included_runtime_slots,
+      addon_runtime_slots: row.addon_runtime_slots,
+      default_server_type: row.default_server_type,
+      allowed_server_types: row.allowed_server_types,
+      reason: row.reason,
+      created_by: row.created_by,
+      expires_at: row.expires_at,
+    }))
+    .execute();
+}
+
+export async function getBillingOverride(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingEntitlementOverrideRecord | undefined> {
+  await db.ready;
+  const now = new Date().toISOString();
+  const row = await db.executor
+    .selectFrom('billing_entitlement_overrides')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('revoked_at', 'is', null)
+    .where((eb) => eb.or([
+      eb('expires_at', 'is', null),
+      eb('expires_at', '>', now),
+    ]))
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ? mapBillingOverride(row) : undefined;
+}
+
+export async function revokeBillingOverride(db: PlatformDB, id: string, revokedAt: string): Promise<boolean> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('billing_entitlement_overrides')
+    .set({ revoked_at: revokedAt })
+    .where('id', '=', id)
+    .where('revoked_at', 'is', null)
+    .returning('id')
+    .executeTakeFirst();
+  return Boolean(row);
+}
+
+export async function insertBillingWebhookEvent(
+  db: PlatformDB,
+  record: NewBillingWebhookEvent,
+): Promise<{ inserted: boolean }> {
+  await db.ready;
+  const result = await db.executor
+    .insertInto('billing_webhook_events')
+    .values(toBillingWebhookEventRow(record))
+    .onConflict((oc) => oc.column('stripe_event_id').doNothing())
+    .returning('stripe_event_id')
+    .executeTakeFirst();
+  return { inserted: Boolean(result?.stripe_event_id) };
+}
+
+export async function getBillingWebhookEvent(
+  db: PlatformDB,
+  stripeEventId: string,
+): Promise<BillingWebhookEventRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_webhook_events')
+    .selectAll()
+    .where('stripe_event_id', '=', stripeEventId)
+    .executeTakeFirst();
+  return row ? mapBillingWebhookEvent(row) : undefined;
 }
 
 export async function insertUserMachine(db: PlatformDB, record: NewUserMachine): Promise<void> {
