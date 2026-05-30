@@ -78,6 +78,7 @@ export function CronSection() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount-only load of cron jobs from the gateway (external async read); setJobs lands in the awaited fetch result inside loadJobs, which is the documented allowed pattern.
     loadJobs();
   }, [loadJobs]);
 

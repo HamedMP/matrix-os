@@ -115,6 +115,7 @@ export function ChatPopover({
       !userClosedDuringBusyRef.current &&
       !vocalActive
     ) {
+      // react-doctor-disable-next-line react-doctor/no-prop-callback-in-effect -- not state mirroring: this is an imperative "open the chat" command fired only on the busy false->true rising edge (guarded by prevBusyRef + the userClosedDuringBusyRef latch). `open` is genuinely owned by the parent controlled component; lifting it further would not change that this must trigger on a busy edge, equivalent to firing from an event.
       setOpen(true);
     }
     prevBusyRef.current = busy;

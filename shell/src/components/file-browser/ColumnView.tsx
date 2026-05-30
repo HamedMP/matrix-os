@@ -26,6 +26,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
   const [columns, setColumns] = useState<Column[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded async load of the Miller-column directory listings for the selected path: each fetch carries the controller's signal, the previous load is aborted before a new one starts and again in cleanup, and the resulting columns are not derivable in render.
   useEffect(() => {
     abortRef.current?.abort();
     const controller = new AbortController();

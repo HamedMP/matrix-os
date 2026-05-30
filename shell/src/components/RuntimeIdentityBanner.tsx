@@ -49,6 +49,7 @@ export function RuntimeIdentityBanner() {
   const [resetting, setResetting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps) with AbortController + AbortSignal.timeout and an abort in cleanup; this is the correct fetch-on-mount pattern and uses Promise.allSettled so neither request blocks the other.
   useEffect(() => {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);

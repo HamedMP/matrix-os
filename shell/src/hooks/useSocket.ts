@@ -219,6 +219,8 @@ export function useSocket() {
     const unsubState = subscribeConnectionState(() => {
       setConnected(connectionState === "connected");
     });
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- cannot be a lazy useState initializer: connectionState is a mutable module-level store shared across all useSocket consumers, so reading it during render would be impure; syncing here after subscribe is what closes the gap between initial render and subscription
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- external-store sync: re-reads the module-level connectionState immediately after subscribing to catch any transition that landed between the initial render and this effect running, preventing a missed-update race
     setConnected(connectionState === "connected");
 
     return () => {
@@ -227,6 +229,7 @@ export function useSocket() {
         handlers.delete(handlerRef.current);
       }
     };
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- intentional run-once mount effect: it wires up the shared socket and a connection-state subscription. Its only references (ensureConnected, subscribeConnectionState, the module-level connectionState store, the stable setConnected setter, and handlerRef) are non-reactive, so an empty dep array is correct and re-running would re-subscribe needlessly
   }, []);
 
   return { connected, subscribe, send };

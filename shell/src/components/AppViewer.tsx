@@ -156,6 +156,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   }, [refreshKey]);
 
   // Handle bridge messages from iframe
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers a window "message" listener; the fetch fires from the iframe bridge handler when a postMessage arrives (event-driven, not on mount/render) and already carries AbortSignal.timeout.
   useEffect(() => {
     const handler: BridgeHandler = {
       sendToKernel(text) {
@@ -240,6 +241,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   // leaves the iframe stuck on "Refreshing session..." when the race loses.
   useEffect(() => {
     if (!slug) return;
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async session bootstrap: reset the loading gate before the awaited openAppSession call, which flips sessionReady back true in .finally; guarded by the cancelled flag in cleanup.
     setSessionReady(false);
     let cancelled = false;
     openAppSession(slug, { gatewayUrl: GATEWAY_URL })
@@ -256,8 +258,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     };
   }, [slug]);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- guarded async app-HTML load: the setIframeHtml calls live in mutually-exclusive branches (clear-on-not-ready vs set-on-success), the fetch carries AbortSignal.timeout, and the cancelled flag in cleanup prevents post-unmount writes. The HTML is bootstrapped imperatively (srcdoc injection), not server-render-able here.
   useEffect(() => {
     if (!slug || !sessionReady) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- clears the previously-loaded srcdoc when slug/session changes so a stale app's HTML is never shown while the new one loads; not derivable in render because the loaded HTML is the async result of the fetch below.
       setIframeHtml(null);
       return;
     }

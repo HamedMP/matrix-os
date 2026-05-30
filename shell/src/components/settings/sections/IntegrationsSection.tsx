@@ -86,6 +86,7 @@ function groupByService(connections: ConnectedService[]): Map<string, ConnectedS
   return groups;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the available/connected lists, load/error flags, and the many independent per-action progress flags (connecting, disconnecting, checkingStatus, renaming, etc.) are distinct UI concerns, not a single cohesive state machine; a reducer would not simplify them.
 export function IntegrationsSection() {
   const [available, setAvailable] = useState<ServiceDef[]>([]);
   const [connected, setConnected] = useState<ConnectedService[]>([]);
@@ -190,6 +191,7 @@ export function IntegrationsSection() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount load of available + connected integrations from the gateway (external async read); state lands in the awaited fetch results inside loadData, which is the documented allowed pattern.
     loadData();
   }, [loadData]);
 
@@ -323,6 +325,7 @@ export function IntegrationsSection() {
     }
   }, [connected]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown must clear whichever poll interval/timeout is live at cleanup time; pollRef/pollTimeoutRef are reassigned by handleConnect, so snapshotting them at mount would always capture the initial null and never clear an active poll.
   useEffect(() => {
     return () => {
       if (pollRef.current) {

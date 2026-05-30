@@ -99,6 +99,7 @@ export function useDesktopConfig() {
   const setDockOrder = useDesktopConfigStore((s) => s.setDockOrder);
   const gatewayUrl = getGatewayUrl();
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the load resolves, not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
     fetchDesktopConfig(gatewayUrl).then((cfg) => {
       setConfig(cfg);

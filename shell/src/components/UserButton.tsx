@@ -29,6 +29,7 @@ export function UserButton() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- intentional SSR hydration guard: `mounted` must be false on the server and flip to true only after mount so the Clerk <UserButton> (which reads browser-only auth state) renders the static Placeholder during SSR/first paint and avoids a hydration mismatch. A lazy initializer cannot express "false on server, true on client".
     setMounted(true);
   }, []);
 

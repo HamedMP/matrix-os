@@ -28,6 +28,7 @@ export function ModuleGraph() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async data load: fetchModules awaits the gateway and only then setModules; the same loader is reused by the file-watcher subscription below, so the state is genuine async-fetched data, not derivable in render.
     fetchModules();
   }, [fetchModules]);
 

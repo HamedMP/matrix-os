@@ -312,6 +312,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     }
   }, [playAudio, enqueueWords, clearWordReveal]);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConnected/setError/setSubtitle/setVoiceState calls here fire from async WebSocket lifecycle handlers (onopen -> startMic, onclose, onerror) and teardown, representing one connection's lifecycle transitions; they never run synchronously during render, so this is not a render-time cascade
   useEffect(() => {
     if (!enabled) return;
 

@@ -49,6 +49,7 @@ export function useTaskBoard() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- intentional one-shot mount load of the initial task list; bounded by AbortSignal.timeout(10s). Live updates afterward arrive over the WebSocket subscription below, so this is a single bootstrap read, not render-driven data fetching
     fetch(`${GATEWAY_URL}/api/tasks`, { signal: AbortSignal.timeout(10_000) })
       .then((res) => res.json())
       .then((data: unknown) => {

@@ -404,6 +404,7 @@ export const CodeBlockContent = ({
     let cancelled = false;
 
     // Reset to raw tokens when code changes (shows current code, not stale tokens)
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async syntax-highlight loader: highlightCode resolves the real tokens later via the subscription below. The synchronous reset shows the cached/raw tokens immediately so stale highlighting from a previous `code` is never displayed while the async result is pending; the async result is not derivable in render.
     setTokenized(highlightCode(code, language) ?? rawTokens);
 
     // Subscribe to async highlighting result
@@ -463,6 +464,7 @@ export const CodeBlockCopyButton = ({
   className,
   ...props
 }: CodeBlockCopyButtonProps) => {
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- false positive: `isCopied` IS read during render (the `Icon = isCopied ? CheckIcon : CopyIcon` line below) to swap the button icon, so it must trigger a re-render. A ref would not re-render and the copied checkmark would never appear.
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<number>(0);
   const { code } = useContext(CodeBlockContext);

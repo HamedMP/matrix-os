@@ -53,11 +53,15 @@ export function ResponseOverlay({
 
   const show = busy || messages.length > 0;
 
+  // Auto-scroll to the bottom when a new message arrives or the last message's
+  // streaming content grows. Depending on the whole `messages` array would
+  // re-fire on every unrelated reference change, so we track these two values.
+  const lastMessageContent = messages[messages.length - 1]?.content;
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, messages[messages.length - 1]?.content]);
+  }, [messages.length, lastMessageContent]);
 
   const getDefaultPos = useCallback(
     () => ({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { EyeIcon, PencilIcon, SaveIcon } from "lucide-react";
 
@@ -12,15 +12,21 @@ interface MarkdownEditorProps {
 }
 
 export function MarkdownEditor({ content, onSave, placeholder, saving }: MarkdownEditorProps) {
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- editable draft buffer, not a mirror of `content`: seeded from the prop, then diverges as the user types, committed via onSave, and reset to `content` on the prev-prop edge below. It cannot be computed in render because it holds uncommitted user input.
   const [value, setValue] = useState(content);
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [dirty, setDirty] = useState(false);
+  // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror of `content`: `prevContent` IS read in render (the `content !== prevContent` guard below). It must be state, not a ref, so the corrective synchronous re-render runs and resets the draft when the incoming content changes.
+  const [prevContent, setPrevContent] = useState(content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  // Reset the local draft when the incoming content prop changes (render-time
+  // prev-prop pattern) so a fresh load discards any in-progress edits.
+  if (content !== prevContent) {
+    setPrevContent(content);
     setValue(content);
     setDirty(false);
-  }, [content]);
+  }
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value);

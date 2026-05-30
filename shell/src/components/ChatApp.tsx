@@ -141,6 +141,7 @@ export function ChatApp({
   onSubmit,
   mobile = false,
 }: ChatAppProps) {
+  // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields (sidebarOpen, searchQuery, setupOpen, model, channels) are independent UI concerns with separate update sites and lifecycles, not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
@@ -149,7 +150,9 @@ export function ChatApp({
     initialHermesSetupRef.current ??= readHermesSetup();
     return initialHermesSetupRef.current;
   };
+  // react-doctor-disable-next-line react-hooks-js/refs -- the ref read happens inside a lazy useState initializer (first render only); initialHermesSetupRef caches the one-time localStorage read so both useState initializers share a single readHermesSetup() result without re-reading storage.
   const [model, setModel] = useState(() => getInitialHermesSetup().model);
+  // react-doctor-disable-next-line react-hooks-js/refs -- lazy useState initializer reading the same one-time cached Hermes setup (see model above); ref read is first-render-only.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const grouped = useMemo(() => groupMessages(messages), [messages]);
   const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);

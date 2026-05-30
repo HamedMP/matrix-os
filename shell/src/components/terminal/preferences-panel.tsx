@@ -24,6 +24,7 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
   const setCursorStyle = useTerminalSettings((s) => s.setCursorStyle);
   const setSmoothScroll = useTerminalSettings((s) => s.setSmoothScroll);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-effect-event-handler, react-doctor/no-fetch-in-effect -- guarded preferences load: runs only when `sessionName` is set, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. The setters hydrate the terminal-settings store from one server response (not a synchronous render cascade), and the load is render-driven, not a user event. A data-fetching library is unnecessary for this one-shot session read.
   useEffect(() => {
     if (!sessionName || typeof fetch !== "function") {
       return;

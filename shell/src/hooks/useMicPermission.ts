@@ -24,6 +24,7 @@ export function useMicPermission() {
       }
     }
 
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- cannot lazy-init this useState: the real value comes from the async navigator.permissions.query Promise (and Firefox falls back to "prompt" on rejection), so "checking" is a deliberate pending placeholder resolved here on mount, not derivable in render
     check();
     return () => {
       if (permStatus) permStatus.onchange = null;

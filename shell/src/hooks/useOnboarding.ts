@@ -538,7 +538,7 @@ export function useOnboarding(): OnboardingHook {
         setError(msg.message as string);
         break;
     }
-  }, [playAudio, refreshReadiness]);
+  }, [playAudio, refreshReadiness, enqueueWords, clearWordReveal]);
 
   const connect = useCallback(async (): Promise<WebSocket | null> => {
     const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");

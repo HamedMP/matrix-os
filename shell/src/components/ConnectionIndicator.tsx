@@ -58,6 +58,7 @@ export function ConnectionIndicator() {
   const state = useConnectionHealth((s) => s.state);
   const [status, setStatus] = useState<RuntimeStatus>({ reachability: "checking" });
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- polling loop: every setStatus call fires either synchronously to reset the gauge on disconnect or from async fetch/timer callbacks (never a synchronous cascade); a reducer would not change the self-rescheduling sequencing and the cancelled flag guards post-unmount writes.
   useEffect(() => {
     if (state === "connected") return;
     let cancelled = false;
@@ -77,6 +78,7 @@ export function ConnectionIndicator() {
         });
     };
 
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- resets the gauge to "checking" each time the connection leaves "connected", before the async loadRuntimeStatus poll resolves; reflects live runtime reachability, not derivable in render.
     setStatus({ reachability: "checking" });
     refresh();
 

@@ -17,6 +17,7 @@ const BG_TYPES: { id: BgType; label: string }[] = [
 ];
 const WALLPAPER_FETCH_TIMEOUT_MS = 10_000;
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- bgType plus the per-mode color/gradient/wallpaper fields are independent editor inputs, not a single cohesive state machine; a reducer would not simplify them
 export function BackgroundEditor() {
   const config = useDesktopConfig();
   const [bgType, setBgType] = useState<BgType>(config.background.type);
@@ -27,7 +28,12 @@ export function BackgroundEditor() {
   const [wallpapers, setWallpapers] = useState<string[]>([]);
   const [selectedWallpaper, setSelectedWallpaper] = useState("");
 
-  useEffect(() => {
+  // Sync the editor inputs from the persisted background config using the
+  // render-time prev-prop pattern instead of an effect.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror: `prevBackground` IS read in render (the guard below). It must be state, not a ref, so the corrective synchronous re-render re-seeds the editor inputs when the persisted config changes.
+  const [prevBackground, setPrevBackground] = useState(config.background);
+  if (config.background !== prevBackground) {
+    setPrevBackground(config.background);
     const bg = config.background;
     setBgType(bg.type);
     if (bg.type === "solid") setSolidColor(bg.color);
@@ -37,9 +43,10 @@ export function BackgroundEditor() {
       setGradAngle(bg.angle ?? 135);
     }
     if (bg.type === "wallpaper") setSelectedWallpaper(bg.name);
-  }, [config.background]);
+  }
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- wallpapers are loaded from the gateway on mount (external async read); they cannot be initialized synchronously in useState, and useSyncExternalStore does not fit a one-shot fetch
     fetchWallpapers();
   }, []);
 

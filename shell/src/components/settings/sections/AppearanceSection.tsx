@@ -38,6 +38,7 @@ type BgMode = "pattern" | "solid" | "image";
 
 /* ── Component ─────────────────────────────────── */
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- preset/background-mode/color/wallpaper inputs are independent appearance controls, not a single cohesive state machine; a reducer would not simplify them
 export function AppearanceSection() {
   useTheme(); // keep theme applied
   const config = useDesktopConfig();
@@ -65,11 +66,16 @@ export function AppearanceSection() {
 
   const dock = config.dock;
 
-  useEffect(() => {
+  // Sync the editor inputs from the persisted background config using the
+  // render-time prev-prop pattern instead of an effect.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror: `prevBackground` IS read in render (the guard below). It must be state, not a ref, so the corrective synchronous re-render re-seeds the solid/wallpaper inputs when the persisted config changes.
+  const [prevBackground, setPrevBackground] = useState(config.background);
+  if (config.background !== prevBackground) {
+    setPrevBackground(config.background);
     const bg = config.background;
     if (bg.type === "solid") setSolidColor(bg.color);
     if (bg.type === "wallpaper") setSelectedWallpaper(bg.name);
-  }, [config.background]);
+  }
 
   const fetchWallpapers = useCallback(async () => {
     try {
@@ -84,6 +90,7 @@ export function AppearanceSection() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount-only load of wallpapers from the gateway (external async read); setState lands in the fetch callback, which is the documented allowed pattern
     fetchWallpapers();
   }, [fetchWallpapers]);
 

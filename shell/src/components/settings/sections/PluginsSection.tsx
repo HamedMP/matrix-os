@@ -52,14 +52,24 @@ export function PluginsSection() {
   const [error, setError] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps): the request carries AbortSignal.timeout, the `cancelled` flag gates every setState, and the controller aborts in cleanup, so this is the correct fetch-on-mount pattern; a data-fetching library would add no safety here.
   useEffect(() => {
-    fetch(`${GATEWAY}/api/plugins`)
+    let cancelled = false;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+
+    fetch(`${GATEWAY}/api/plugins`, { signal })
       .then((r) => {
         if (!r.ok) throw new Error();
         return r.json();
       })
-      .then(setPlugins)
-      .catch(() => setError(true));
+      .then((data) => { if (!cancelled) setPlugins(data); })
+      .catch(() => { if (!cancelled) setError(true); });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, []);
 
   return (

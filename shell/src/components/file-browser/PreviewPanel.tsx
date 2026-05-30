@@ -45,8 +45,10 @@ export function PreviewPanel() {
       : selectedName
     : null;
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- guarded async stat + text-preview load for the single selected file (selectedFullPath): the loading -> data transition is the result of fetches React batches, both fetches share an AbortController whose signal gates every setState and is aborted in cleanup, and neither the stat metadata nor the file text is derivable in render.
   useEffect(() => {
     if (!selectedFullPath || !showPreviewPanel) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- clears stale stat/preview when the selection is empty or the panel is hidden; the next values are the async results of the fetches below, not derivable in render.
       setStat(null);
       setPreview(null);
       return;

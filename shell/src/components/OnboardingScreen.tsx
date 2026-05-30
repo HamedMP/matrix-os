@@ -19,6 +19,7 @@ interface OnboardingScreenProps {
   onOpenManualSetup: () => void;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the seven states (started, phase, showMicDialog, showModePicker, splitVisible, continueExiting, entranceStage) are independent transition/dialog flags driven from separate timers and event handlers, not one related state machine; collapsing them into a reducer would couple unrelated animation phases and is not a mechanical, behavior-identical change.
 export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const mic = useMicPermission();
@@ -59,17 +60,22 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
   // Fade out ambient audio when done
   useEffect(() => {
     if (ob.alreadyComplete) return;
+    let completeTimer: number | undefined;
     if (ob.stage === "done" && gainNodeRef.current && audioCtxRef.current) {
       const gain = gainNodeRef.current;
       const ctx = audioCtxRef.current;
       gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 2);
-      setTimeout(onComplete, 2000);
+      completeTimer = window.setTimeout(onComplete, 2000);
     } else if (ob.stage === "done") {
-      setTimeout(onComplete, 800);
+      completeTimer = window.setTimeout(onComplete, 800);
     }
+    return () => {
+      if (completeTimer !== undefined) window.clearTimeout(completeTimer);
+    };
   }, [ob.stage, ob.alreadyComplete, onComplete]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must cancel whatever timer/frame is pending and tear down whatever audio nodes exist at teardown, so it must read .current at cleanup time; snapshotting these refs at mount would always capture their initial null values and never clean up.
   useEffect(() => {
     return () => {
       if (continueTimerRef.current !== null) {
@@ -269,6 +275,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
                 )}
 
                 <div className="grid max-h-[52vh] w-full items-stretch gap-2 overflow-y-auto pr-1 sm:gap-3 md:max-h-none md:grid-cols-[1fr_auto_1fr_auto_1fr] md:overflow-visible md:pr-0">
+                  {/* react-doctor-disable-next-line react-hooks-js/refs -- the mode-picker buttons wire to handlers (handleTalkToMe/onOpenManualSetup/onComplete) that legitimately read the imperative timer/audio refs (continueTimerRef, ambientRef, audioCtxRef) inside their own callbacks, never during render; those refs hold animation-frame/timer handles and an AudioContext that must not trigger re-renders. */}
                   {[
                     {
                       label: "Talk to Aoede",

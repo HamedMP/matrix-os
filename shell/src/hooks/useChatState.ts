@@ -49,6 +49,7 @@ export function useChatState(): ChatState {
   // Tracks the requestId of the in-flight run so abortCurrent() can target
   // the right server-side AbortController. Cleared on terminal events.
   const currentRequestIdRef = useRef<string | null>(null);
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of sessionId, read synchronously inside the async WS message handler (which is registered once via a stable subscribe and must not re-subscribe on every sessionId change); writing it in render keeps the mirror current for those deferred reads
   sessionRef.current = sessionId;
 
   useEffect(() => {
@@ -90,6 +91,7 @@ export function useChatState(): ChatState {
     send({ type: "switch_session", sessionId });
   }, [sessionId, send]);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the multiple setState calls (setBusy/setCurrentTool/setQueue/setSessionId/setMessages) all fire from inside the async WebSocket message handler in response to discrete server events (a run's init -> tool -> result/error/aborted transition), never synchronously during render, so they are event-driven transitions and not a render-time cascade
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
       if (msg.type === "kernel:init") {

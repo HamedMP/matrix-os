@@ -263,7 +263,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       currentPath, selectedPaths, entries, quickLookPath, renamingPath,
       navigate, goBack, goForward, select, selectAll, copy, cut, paste,
       deleteFiles, duplicate, createFolder, togglePreviewPanel,
-      setQuickLookPath, openFile, refresh,
+      setQuickLookPath, openFile,
     ],
   );
 

@@ -18,10 +18,12 @@ function useThemeStyle() {
   const [style, setStyle] = useState<string>("flat");
   useEffect(() => {
     const root = document.documentElement;
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- syncs from an external DOM source: the `data-theme-style` attribute is mutated outside React (by the theme system) and is not derivable in render; the mount read + MutationObserver mirror is the canonical external-store subscription
     setStyle(root.getAttribute("data-theme-style") ?? "flat");
     const observer = new MutationObserver(() => {
       setStyle(root.getAttribute("data-theme-style") ?? "flat");
     });
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- observer subscription that keeps `style` mirrored to the external DOM attribute; the value originates outside React, not from a render-time initializer
     observer.observe(root, { attributes: true, attributeFilter: ["data-theme-style"] });
     return () => observer.disconnect();
   }, []);
@@ -83,6 +85,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
 
+  // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- `contentFocused` is event-captured (set true on the overlay pointerdown), not derivable from props; this effect resets it to false when the canvas starts scrolling or the window loses focus so the click-to-interact overlay reappears. Computing it in render would discard the user's click.
   useEffect(() => {
     if (isCanvasScrolling || !isFocused) setContentFocused(false);
   }, [isCanvasScrolling, isFocused]);

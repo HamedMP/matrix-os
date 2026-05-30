@@ -9,6 +9,7 @@ interface InlineRenameProps {
 }
 
 export function InlineRename({ name, onCommit, onCancel }: InlineRenameProps) {
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- editable rename buffer, not a mirror of `name`: it seeds from the current name once, then holds the user's in-progress edits, which must not be overwritten when the prop is unchanged.
   const [value, setValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(false);

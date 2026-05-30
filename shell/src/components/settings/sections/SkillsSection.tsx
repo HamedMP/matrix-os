@@ -53,6 +53,7 @@ function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}) {
   });
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- skills list, expand toggle, dialog open flag, saving flag, and the create-form fields are independent UI concerns, not a single cohesive state machine; a reducer would not simplify them.
 export function SkillsSection() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -86,6 +87,7 @@ export function SkillsSection() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount-only load of installed skills from the gateway (external async read); setSkills lands in the awaited fetch result inside loadSkills, which is the documented allowed pattern.
     loadSkills();
   }, [loadSkills]);
 

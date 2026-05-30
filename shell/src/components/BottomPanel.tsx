@@ -45,7 +45,9 @@ export function BottomPanel() {
 
   useEffect(() => {
     const pref = loadPreference();
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- localStorage-backed preference is browser-only: reading it in a lazy initializer would render different markup on the server (defaults) vs client (stored), causing a hydration mismatch, so it is applied after mount.
     setOpen(pref.open);
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- localStorage-backed preference is browser-only; applied after mount with setOpen above to avoid an SSR/client hydration mismatch.
     setTab(pref.tab);
   }, []);
 
@@ -86,10 +88,13 @@ export function BottomPanel() {
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
   const toggleRef = useRef(toggle);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync so the run-once command-registration effect below (deps [register, unregister]) invokes the freshest callback without re-registering commands on every render.
   toggleRef.current = toggle;
   const openTerminalRef = useRef(openTerminalWindow);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see toggleRef above.
   openTerminalRef.current = openTerminalWindow;
   const launchClaudeRef = useRef(launchClaudeCodeWindow);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see toggleRef above.
   launchClaudeRef.current = launchClaudeCodeWindow;
 
   useEffect(() => {

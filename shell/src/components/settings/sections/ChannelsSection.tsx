@@ -52,11 +52,21 @@ const CHANNEL_DEFS = [
 export function ChannelsSection() {
   const [channels, setChannels] = useState<Record<string, Record<string, unknown>>>({});
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps): the request carries AbortSignal.timeout, the `cancelled` flag gates the setState, and the controller aborts in cleanup, so this is the correct fetch-on-mount pattern; a data-fetching library would add no safety here.
   useEffect(() => {
-    fetch(`${GATEWAY}/api/settings/channels`)
+    let cancelled = false;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+
+    fetch(`${GATEWAY}/api/settings/channels`, { signal })
       .then((r) => r.ok ? r.json() : {})
-      .then(setChannels)
+      .then((data) => { if (!cancelled) setChannels(data); })
       .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, []);
 
   async function handleSave(channelId: string, values: Record<string, string>): Promise<boolean> {

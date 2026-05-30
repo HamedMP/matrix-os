@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useEffectEvent, useCallback, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { CreditCardIcon, SearchIcon, ServerIcon, UserIcon } from "lucide-react";
@@ -35,9 +35,11 @@ function MenuBarClock() {
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- SSR-safe wall clock: server cannot render a stable client time, so `now` stays null until mount and a lazy initializer / useState(new Date()) would produce a hydration mismatch and a visible time jump.
     setNow(new Date());
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the only setState is setNow, fired from setTimeout/setInterval callbacks (never a synchronous cascade); depending on [now] is intentional so the tick re-aligns to the next minute boundary after each update.
   useEffect(() => {
     if (!now) return;
     const ms = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
@@ -62,6 +64,7 @@ function MenuBarUser() {
   const { active: billingActive } = useMatrixBillingAccess();
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- SSR mount gate: the server must render the placeholder icon, so `mounted` starts false and flips true only on the client; initializing it true would render the Clerk UserButton during SSR and break hydration.
     setMounted(true);
   }, []);
 
@@ -135,14 +138,15 @@ function MenuDropdown({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const onCloseEvent = useEffectEvent(onClose);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      if (ref.current && !ref.current.contains(e.target as Node)) onCloseEvent();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseEvent();
     };
     document.addEventListener("pointerdown", onClick);
     document.addEventListener("keydown", onKey);
@@ -150,7 +154,7 @@ function MenuDropdown({
       document.removeEventListener("pointerdown", onClick);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   return (
     <div className="relative" ref={ref}>

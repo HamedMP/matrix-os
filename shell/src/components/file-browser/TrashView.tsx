@@ -36,6 +36,7 @@ export function TrashView() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- on-mount async load of the trash listing from the gateway; `load` toggles the loading gate and stores the fetched entries, none of which is derivable in render.
     load();
   }, [load]);
 

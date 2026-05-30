@@ -27,6 +27,8 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
   const [isSupported, setIsSupported] = useState(false);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- cannot lazy-init this useState: the value reads navigator.mediaDevices and window.MediaRecorder, which are undefined during SSR; deferring the feature-detection to a mount effect keeps server and client render output identical and avoids a hydration mismatch
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- one-shot client-only feature detection: MediaRecorder/getUserMedia support cannot be derived in render because the browser globals are unavailable until after hydration, so it is set once on mount
     setIsSupported(
       typeof navigator.mediaDevices?.getUserMedia === "function" && typeof window.MediaRecorder === "function"
     );
@@ -91,6 +93,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
     };
 
     return ws;
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- playAudio is intentionally omitted: it is a stable useCallback([]) declared below connectWs, so listing it here would be a use-before-declaration error while adding no reactivity (its identity never changes); getWsUrl and opts are the only deps that can invalidate this callback
   }, [getWsUrl, opts]);
 
   const startRecording = useCallback(async () => {
@@ -192,6 +195,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
         audioContextRef.current = null;
       }
     };
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown: it must close whatever ws/recorder/audioContext is live in the refs at teardown time, so it reads .current at cleanup; an empty dep array is required so this runs exactly once on unmount and never re-tears-down mid-session
   }, []);
 
   return {
