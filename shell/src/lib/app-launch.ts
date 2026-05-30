@@ -33,6 +33,10 @@ export function iconUrlForSlug(slug: string | undefined): string | undefined {
   return `/icons/${encodeURIComponent(slug)}.${extension}`;
 }
 
+export function canAutoGenerateIconForSlug(slug: string | undefined): boolean {
+  return Boolean(slug && SAFE_ICON_SLUG.test(slug) && !SHIPPED_SVG_ICON_SLUGS.has(slug));
+}
+
 function slugFromLaunchUrl(launchUrl: string | undefined): string | null {
   if (!launchUrl) return null;
   try {

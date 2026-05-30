@@ -287,7 +287,9 @@ describe("T711: GET /api/apps", () => {
           continue;
         }
         const manifest = JSON.parse(readFileSync(fullPath, "utf8")) as { icon?: unknown };
-        if (typeof manifest.icon === "string" && !shippedIcons.has(manifest.icon)) {
+        if (typeof manifest.icon !== "string" || manifest.icon.length === 0) {
+          missing.push(`${fullPath.replace(`${repoRoot}/`, "")}: missing icon`);
+        } else if (!shippedIcons.has(manifest.icon)) {
           missing.push(`${fullPath.replace(`${repoRoot}/`, "")}: ${manifest.icon}`);
         }
       }

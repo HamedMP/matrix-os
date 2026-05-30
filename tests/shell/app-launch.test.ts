@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAppLaunchPath, iconUrlForSlug, terminalContextLaunchPath } from "../../shell/src/lib/app-launch.js";
+import {
+  canAutoGenerateIconForSlug,
+  canonicalAppLaunchPath,
+  iconUrlForSlug,
+  terminalContextLaunchPath,
+} from "../../shell/src/lib/app-launch.js";
 
 describe("app launch helpers", () => {
   it("canonicalizes runtime apps to slug routes before iframe rendering", () => {
@@ -30,6 +35,14 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("folder")).toBe("/icons/folder.svg");
     expect(iconUrlForSlug("chat")).toBe("/icons/chat.svg");
     expect(iconUrlForSlug("game-center")).toBe("/icons/game-center.png");
+  });
+
+  it("does not auto-generate icons for shipped SVG built-ins", () => {
+    expect(canAutoGenerateIconForSlug("terminal")).toBe(false);
+    expect(canAutoGenerateIconForSlug("folder")).toBe(false);
+    expect(canAutoGenerateIconForSlug("chat")).toBe(false);
+    expect(canAutoGenerateIconForSlug("custom-tool")).toBe(true);
+    expect(canAutoGenerateIconForSlug("games/minesweeper")).toBe(false);
   });
 
   it("keeps project context for valid project slugs that are not icon slugs", () => {

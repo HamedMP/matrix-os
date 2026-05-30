@@ -54,6 +54,7 @@ import { OnboardingScreen } from "./OnboardingScreen";
 import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { versionedIconUrl } from "@/lib/icon-url";
+import { canAutoGenerateIconForSlug, iconUrlForSlug } from "@/lib/app-launch";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -70,11 +71,6 @@ const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 const MATRIX_SHIMMER =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
-
-function iconUrlForSlug(slug: string | undefined): string | undefined {
-  if (!slug) return undefined;
-  return `/icons/${encodeURIComponent(slug)}.png`;
-}
 
 function MatrixFirstRunLoading() {
   return (
@@ -699,7 +695,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const checkAndGenerateIcon = useCallback((slug: string) => {
     if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
     checkedRef.current.add(slug);
-    const iconPath = `/icons/${slug}.png`;
+    const iconPath = iconUrlForSlug(slug);
+    if (!iconPath) return;
     fetch(`${GATEWAY_URL}${iconPath}`, {
       method: "HEAD",
       signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
@@ -707,7 +704,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       if (res.ok) {
         const etag = res.headers.get("etag");
         if (etag) {
-          const versionedUrl = versionedIconUrl(`/icons/${slug}.png`, etag);
+          const versionedUrl = versionedIconUrl(iconPath, etag);
           wmSetApps((prev) =>
             prev.map((a) =>
               nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
@@ -716,7 +713,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             ),
           );
         }
-      } else {
+      } else if (canAutoGenerateIconForSlug(slug)) {
         regenerateIcon(slug);
       }
     }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));

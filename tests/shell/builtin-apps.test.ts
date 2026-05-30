@@ -19,6 +19,7 @@ describe("built-in app helpers", () => {
 
   it("identifies terminal instances and normalized built-ins", () => {
     expect(isBuiltInAppPath("__terminal__:1712345678-a3bc")).toBe(true);
+    expect(isBuiltInAppPath("__preview-window__")).toBe(true);
     expect(isBuiltInAppPath("apps/workspace/index.html")).toBe(true);
     expect(isBuiltInAppPath("apps/notes/index.html")).toBe(false);
   });
