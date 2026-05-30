@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
@@ -10,6 +10,22 @@ import {
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from "../../packages/platform/src/ws-upgrade.js";
+
+const originalAppDomainHosts = process.env.MATRIX_APP_DOMAIN_HOSTS;
+const originalCodeDomainHosts = process.env.MATRIX_CODE_DOMAIN_HOSTS;
+
+afterEach(() => {
+  restoreEnv("MATRIX_APP_DOMAIN_HOSTS", originalAppDomainHosts);
+  restoreEnv("MATRIX_CODE_DOMAIN_HOSTS", originalCodeDomainHosts);
+});
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}
 
 describe("websocket upgrade path helpers", () => {
   it("accepts normal websocket paths", () => {
@@ -47,6 +63,20 @@ describe("websocket upgrade path helpers", () => {
     expect(isAppDomainHost("app.localhost:3000")).toBe(true);
     expect(isAppDomainHost("legacy.matrix-os.com")).toBe(false);
     expect(isAppDomainHost("malicious.example.com")).toBe(false);
+  });
+
+  it("accepts explicitly configured staging app-domain hosts", () => {
+    process.env.MATRIX_APP_DOMAIN_HOSTS = "staging-app.matrix-os.com";
+
+    expect(isAppDomainHost("staging-app.matrix-os.com")).toBe(true);
+    expect(isAppDomainHost("staging-app.matrix-os.com:443")).toBe(true);
+    expect(isSessionRoutedHost("staging-app.matrix-os.com")).toBe(true);
+  });
+
+  it("ignores malformed configured app-domain hosts", () => {
+    process.env.MATRIX_APP_DOMAIN_HOSTS = "https://staging-app.matrix-os.com, staging app";
+
+    expect(isAppDomainHost("staging-app.matrix-os.com")).toBe(false);
   });
 
   it("accepts app and code domains as session-routed websocket hosts", () => {

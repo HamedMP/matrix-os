@@ -28,11 +28,11 @@ export function getWebSocketUpgradeHost(
 }
 
 export function isAppDomainHost(host: string): boolean {
-  return /^app\.matrix-os\.com(?::\d+)?$/i.test(host) || /^app\.localhost(?::\d+)?$/i.test(host);
+  return isAllowedSessionHost(host, ["app.matrix-os.com", "app.localhost"], process.env.MATRIX_APP_DOMAIN_HOSTS);
 }
 
 export function isCodeDomainHost(host: string): boolean {
-  return /^code\.matrix-os\.com(?::\d+)?$/i.test(host) || /^code\.localhost(?::\d+)?$/i.test(host);
+  return isAllowedSessionHost(host, ["code.matrix-os.com", "code.localhost"], process.env.MATRIX_CODE_DOMAIN_HOSTS);
 }
 
 export function isSessionRoutedHost(host: string): boolean {
@@ -61,6 +61,34 @@ export function getSessionRoutedWebSocketHost(
     return "app.matrix-os.com";
   }
   return host;
+}
+
+function isAllowedSessionHost(host: string, defaults: readonly string[], extraHosts: string | undefined): boolean {
+  const normalizedHost = normalizeSessionHost(host);
+  if (!normalizedHost) return false;
+
+  if (defaults.some((allowed) => normalizedHost === allowed)) {
+    return true;
+  }
+
+  return parseSessionHostAllowlist(extraHosts).some((allowed) => normalizedHost === allowed);
+}
+
+function normalizeSessionHost(host: string): string | null {
+  const normalized = host.trim().toLowerCase().replace(/:\d+$/, "");
+  if (!/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function parseSessionHostAllowlist(value: string | undefined): string[] {
+  if (!value) return [];
+
+  return value
+    .split(",")
+    .map((entry) => normalizeSessionHost(entry))
+    .filter((entry): entry is string => entry !== null);
 }
 
 function parseWebSocketUpgradeUrl(path: string): URL | null {

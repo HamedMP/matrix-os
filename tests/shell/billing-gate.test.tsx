@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -79,7 +79,7 @@ describe("BillingGate", () => {
     vi.resetModules();
   });
 
-  it.each(["matrix_starter", "matrix_builder", "matrix_max", "early_adopter"])(
+  it.each(["matrix_starter", "matrix_builder", "matrix_max"])(
     "renders Matrix OS when the signed-in user has the %s plan",
     async (plan) => {
     vi.unstubAllEnvs();
@@ -100,6 +100,25 @@ describe("BillingGate", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
     },
   );
+
+  it("does not unlock Matrix OS for the legacy Clerk early_adopter plan", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = "early_adopter";
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await waitFor(() => expect(screen.getByText("Start checkout & provision")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+  });
 
   it("keeps the shell visible behind locked billing settings when the user has not subscribed", async () => {
     vi.unstubAllEnvs();
@@ -125,7 +144,7 @@ describe("BillingGate", () => {
         name: "Appearance Locked until billing is active",
       }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect(screen.getByRole("button", { name: "Continue to Stripe" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
@@ -171,7 +190,7 @@ describe("BillingGate", () => {
     expect(navigationState.replace).toHaveBeenCalledWith("/");
   });
 
-  it("keeps direct checkout success navigation on the Stripe checkout panel", async () => {
+  it("keeps direct checkout success navigation on the checkout panel", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");
     clerkState.isLoaded = true;
@@ -187,11 +206,11 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByRole("button", { name: "Continue to Stripe" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
-  it("records a checkout attempt before opening Stripe checkout", async () => {
+  it("records a checkout attempt before opening checkout", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
@@ -206,8 +225,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    await screen.findByRole("button", { name: "Continue to Stripe" });
-    fireEvent.click(screen.getByRole("button", { name: "Continue to Stripe" }));
+    await screen.findByRole("button", { name: "Continue to pay" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     expect(
       Number(window.sessionStorage.getItem("matrix.billing.checkoutAttemptAt")),

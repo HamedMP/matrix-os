@@ -14,6 +14,7 @@ import {
   MapPinIcon,
   MemoryStickIcon,
   ServerIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import {
   MATRIX_BILLING_REGIONS,
@@ -26,6 +27,7 @@ type BillingInterval = "monthly" | "annual";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
+const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
 
 type BillingTelemetryProperties = {
   mode: BillingPanelMode;
@@ -127,7 +129,7 @@ function CheckoutPanel({
         <div className="mb-2">
           <p className="text-sm font-semibold text-deep">Start checkout &amp; provision</p>
           <p className="mt-0.5 text-xs leading-5 text-forest/60">
-            Stripe checkout opens securely. Matrix provisions after billing is active.
+            Secure checkout opens before Matrix provisions this computer.
           </p>
         </div>
       )}
@@ -159,10 +161,26 @@ function CheckoutPanel({
         ) : (
           <CreditCardIcon className="size-4" aria-hidden="true" />
         )}
-        {checkoutLoading ? "Opening checkout" : "Continue to Stripe"}
+        {checkoutLoading ? "Opening checkout" : "Continue to pay"}
       </button>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-forest/65">
+        <span className="inline-flex items-center gap-1">
+          <ShieldCheckIcon className="size-3.5" aria-hidden="true" />
+          Secure checkout
+        </span>
+        <span className="text-forest/25" aria-hidden="true">|</span>
+        <span className="sr-only">Accepted cards:</span>
+        {acceptedPaymentMarks.map((mark) => (
+          <span
+            key={mark}
+            className="inline-flex h-5 items-center rounded border border-forest/15 bg-white px-2 text-[10px] font-bold uppercase tracking-normal text-deep shadow-sm"
+          >
+            {mark}
+          </span>
+        ))}
+      </div>
       <p className="mt-3 text-center text-[11px] leading-5 text-forest/50">
-        No trial. Plan changes and coupons are handled through Stripe.
+        No trial. Plan changes and coupons are handled in the billing portal.
       </p>
       {checkoutError && (
         <p className="mt-2 text-center text-xs text-red-600">{checkoutError}</p>

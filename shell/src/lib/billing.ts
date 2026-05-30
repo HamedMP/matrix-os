@@ -4,7 +4,6 @@ export const MATRIX_BILLING_PLAN_SLUGS = [
   "matrix_starter",
   "matrix_builder",
   "matrix_max",
-  "early_adopter",
 ] as const;
 export const MATRIX_BILLING_RETURN_PATH = "/";
 export const MATRIX_BILLING_SUCCESS_RETURN_PATH = "/?checkout=success";

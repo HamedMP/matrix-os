@@ -49,7 +49,7 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("surfaces the subscription state and Stripe checkout action", async () => {
+  it("surfaces the subscription state and checkout action", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
 
@@ -62,7 +62,10 @@ describe("BillingSection", () => {
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
     expect(screen.getByText("Manage your hosted Matrix computer")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Continue to Stripe" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+    expect(screen.getByText("Secure checkout")).toBeTruthy();
+    expect(screen.getByText("Visa")).toBeTruthy();
+    expect(screen.getByText("Mastercard")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByTestId("pricing-table")).toBeNull();
@@ -94,7 +97,7 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
   });
 
-  it("lets users choose annual billing before Stripe checkout", async () => {
+  it("lets users choose annual billing before checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -114,7 +117,7 @@ describe("BillingSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Continue to Stripe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -153,11 +156,11 @@ describe("BillingSection", () => {
     expect(screen.getByText("ash")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
     expect(screen.getByText("Start checkout & provision")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Continue to Stripe" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it.each(["matrix_starter", "matrix_builder", "matrix_max", "early_adopter"])(
+  it.each(["matrix_starter", "matrix_builder", "matrix_max"])(
     "marks billing as active when Clerk grants the %s plan",
     async (plan) => {
     clerkState.isLoaded = true;
@@ -176,4 +179,17 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
     },
   );
+
+  it("does not mark billing active for the legacy Clerk early_adopter plan", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = "early_adopter";
+
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+  });
 });
