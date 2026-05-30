@@ -1,6 +1,11 @@
 import type { useAuth } from "@clerk/nextjs";
 
-export const MATRIX_BILLING_PLAN_SLUGS = ["early_adopter"] as const;
+export const MATRIX_BILLING_PLAN_SLUGS = [
+  "matrix_starter",
+  "matrix_builder",
+  "matrix_max",
+  "early_adopter",
+] as const;
 export const MATRIX_BILLING_RETURN_PATH = "/";
 export const MATRIX_BILLING_SUCCESS_RETURN_PATH = "/?checkout=success";
 export const MATRIX_BILLING_DEFAULT_APP_URL = "https://app.matrix-os.com";

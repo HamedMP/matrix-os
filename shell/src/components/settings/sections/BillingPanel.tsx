@@ -33,6 +33,27 @@ const shouldRenderClerkPricing =
 
 export type BillingPanelMode = "settings" | "provisioning";
 
+const CHECKOUT_OVERLAY_Z_INDEX = 10_000;
+const checkoutOverlayAppearance = {
+  elements: {
+    drawerBackdrop: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
+    },
+    drawerRoot: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
+    },
+    drawerContent: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
+    },
+    modalBackdrop: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
+    },
+    modalContent: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
+    },
+  },
+};
+
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
 
 type BillingTelemetryProperties = {
@@ -216,7 +237,7 @@ function CheckoutPanel({
           : "checkout_redirect_pending",
       telemetryPropertiesRef.current,
     );
-  }, [checkoutTelemetryKey]);
+  }, [checkoutTelemetryKey, redirectUrl]);
 
   return (
     <div
@@ -237,6 +258,7 @@ function CheckoutPanel({
           <PricingTable
             for="user"
             newSubscriptionRedirectUrl={redirectUrl}
+            checkoutProps={{ appearance: checkoutOverlayAppearance }}
             fallback={<BillingTableFallback />}
           />
         </BillingTableBoundary>

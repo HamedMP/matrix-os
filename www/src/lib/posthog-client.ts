@@ -8,6 +8,7 @@ import {
 
 type ClientProperties = Record<string, string | number | boolean | undefined>;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
+type PostHogLoadState = typeof posthog & { __loaded?: boolean };
 
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
@@ -16,6 +17,7 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest",
 });
 let initialized = false;
+const posthogClient = posthog as PostHogLoadState;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
@@ -38,7 +40,10 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  if (initialized) return;
+  if (initialized || posthogClient.__loaded) {
+    initialized = true;
+    return;
+  }
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
   posthog.init(currentConfig.token, {
     ...(apiHost ? { api_host: apiHost } : {}),

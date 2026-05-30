@@ -12,6 +12,7 @@ type PostHogLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 type PostHogWithLogger = typeof posthog & {
   logger?: Partial<Record<PostHogLogLevel, (message: string, properties?: Record<string, string | number | boolean>) => void>>;
 };
+type PostHogLoadState = typeof posthog & { __loaded?: boolean };
 
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
@@ -20,6 +21,7 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST,
 });
 let initialized = false;
+const posthogClient = posthog as PostHogLoadState;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
@@ -66,7 +68,10 @@ export function capturePostHogLog(
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  if (initialized) return;
+  if (initialized || posthogClient.__loaded) {
+    initialized = true;
+    return;
+  }
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: false });
   posthog.init(currentConfig.token, {
     ...(apiHost ? { api_host: apiHost } : {}),
