@@ -9,6 +9,7 @@ type PostHogLoadState = { __loaded?: boolean };
 type PostHogConsentClient = PostHogLoadState & {
   get_explicit_consent_status(): ConsentStatus | undefined;
   opt_in_capturing(): void;
+  opt_out_capturing(): void;
 };
 
 const COOKIE_CONSENT_STORAGE_KEY = "matrix_posthog_cookie_consent";
@@ -150,20 +151,18 @@ export function PostHogCookieBanner({
       "aria-label": "Cookie consent",
       "aria-live": "polite",
       style: bannerStyle,
-      className:
-        "fixed inset-x-3 bottom-3 z-[10000] mx-auto flex max-w-4xl flex-col gap-4 rounded-lg border border-white/15 bg-[#101411]/95 p-4 text-white shadow-2xl shadow-black/35 backdrop-blur md:inset-x-6 md:bottom-6 md:flex-row md:items-center md:justify-between",
     },
     createElement(
       "div",
       { style: contentStyle },
       createElement(
         "p",
-        { className: "max-w-2xl text-sm leading-6 text-white/82", style: copyStyle },
+        { style: copyStyle },
         "Tiny cookie checkpoint. Optional analytics help us improve Matrix OS, and all analytics data stays in the EU.",
       ),
       createElement(
         "div",
-        { className: "flex shrink-0 flex-col gap-2 sm:flex-row", style: actionsStyle },
+        { style: actionsStyle },
         createElement(
           "button",
           {
@@ -175,10 +174,11 @@ export function PostHogCookieBanner({
               color: "#434e3f",
               fontWeight: 500,
             },
-            className:
-              "rounded-md border border-white/20 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
             onClick: () => {
               persistCookieConsent("declined");
+              if (posthogClient.__loaded) {
+                posthogClient.opt_out_capturing();
+              }
               setConsentStatus("denied");
             },
           },
@@ -195,8 +195,6 @@ export function PostHogCookieBanner({
               color: "#fafaf9",
               fontWeight: 600,
             },
-            className:
-              "rounded-md bg-white px-4 py-2 text-sm font-semibold text-[#101411] transition hover:bg-white/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
             onClick: () => {
               persistCookieConsent("accepted");
               if (posthogClient.__loaded) {
