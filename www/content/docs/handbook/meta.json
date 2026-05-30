@@ -1,0 +1,16 @@
+{
+  "root": true,
+  "title": "Handbook",
+  "description": "How the Matrix OS team works",
+  "icon": "BookMarked",
+  "pages": [
+    "index",
+    "vision",
+    "teams",
+    "engineering",
+    "cloud-development",
+    "agent-teams",
+    "releases",
+    "user-operations"
+  ]
+}

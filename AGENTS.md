@@ -46,6 +46,38 @@ Key principles:
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
 - After major features: run `/update-docs` to sync all documentation
 
+## Engineering Operating Model
+
+Read `docs/dev/engineering-practices.md` when onboarding, planning multi-step
+work, opening PRs, or operating coding-agent teams through Matrix/Symphony.
+
+Default workflow:
+
+1. Classify the ticket type first: shell/UI, default app, agentic harness,
+   gateway/API, platform/VPS, integration, auth/billing, CLI/cloud coding, or
+   docs/process.
+2. Ask to run Spec Kit before implementing large or cross-boundary work: 2+
+   packages, endpoints/WebSockets/IPC/file I/O, persistence, background jobs,
+   provider integrations, VPS/release/auth changes, or likely >1000 additions.
+3. Preserve Spec Kit phase boundaries as Graphite stacked PR boundaries. Keep
+   each layer reviewable, use Conventional Commit PR titles, and include backend
+   invariants when required.
+4. Use Symphony/Matrix-managed Zellij sessions for Linear-ticket agent work when
+   available. Agents should read the ticket, this file, the engineering
+   practices guide, relevant specs, and the project `WORKFLOW.md` before editing.
+5. Use Inngest only for durable website/control-plane workflows such as
+   Clerk/Stripe/waitlist/email events that need retries, sleeps, replayable
+   `step.run` history, and operator visibility. Do not move gateway runtime
+   loops, Symphony polling, or customer VPS health checks into Inngest.
+6. For shell/default-app/runtime changes, preview in Canvas first and use a
+   personal or shared dev VPS when local source mode cannot show what users
+   actually see. Use SSH port forwarding only for private raw dev ports.
+7. Run the review pipeline and keep fixing automated review comments until
+   Greptile reports 5/5 or each remaining finding is explicitly deferred in the
+   PR body with a follow-up issue.
+8. Customer-facing runtime changes ship through the VPS host-bundle release path;
+   never use Docker Compose or image rebuilds as the production customer rollout.
+
 ## Mandatory Code Patterns
 
 These patterns were identified as recurring defects across 4+ PRs (~317 unresolved review comments). Violations are the #1 source of bugs. Full analysis: `docs/dev/pr-review-analysis.md`
@@ -125,13 +157,17 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 
 ## Setup
 
+Primary development happens on a Matrix dev VPS. Local setup remains supported
+for fast tests, mobile/desktop/native tooling, Docker internals, offline work,
+and special local infrastructure.
+
 ```bash
 git clone https://github.com/hamedmp/matrix-os.git && cd matrix-os
-flox activate        # provisions Node 24, pnpm 10, bun, git + runs pnpm install
-bun run dev          # local source dev only; production runs on per-user VPS host services
+pnpm install
+docker compose -f docker-compose.dev-vps.yml up -d --build  # dev VPS hot reload
 ```
 
-Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full guide: `docs/dev/onboarding.md`
+For local development, install Node 24+, pnpm 10, bun, and optional Docker/OrbStack manually, or use Flox if preferred. Full guide: `docs/dev/onboarding.md`
 
 ## Project Structure
 
@@ -156,6 +192,7 @@ bun run test:watch        # Vitest watch mode
 bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
 bun run test:coverage     # coverage report
 bun run test:e2e          # end-to-end tests
+bun run lint              # shell lint
 
 bun run dev               # local dev: gateway + proxy + shell
 bun run dev:gateway       # gateway only
@@ -187,12 +224,14 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
 - **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
 - **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
+- **Approvals**: personal dev VPS hot reload is engineer-owned; personal customer-like VPS `matrix-update` is engineer-owned; shared `dev` deploy needs merged PR + green CI + clean automated review; `canary`/`beta` needs release owner approval; `stable` needs explicit release owner approval after live health checks.
 - **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. EU PostHog uses `https://eu.i.posthog.com`.
 - **User data invariant**: updates may replace `/opt/matrix/app` only. Never overwrite owner data under `$MATRIX_HOME` (`/home/matrix/home`), especially `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, identity/profile/session/state files, logs, memory, or conversations. Template sync may add/upgrade OS-owned files, but protected user paths must be skipped.
 - **Local emergency build**: `set -a; source .env; set +a; HOST_BUNDLE_VERSION=<version> HOST_BUNDLE_CHANNEL=<channel> MATRIX_BUILD_SHA=$(git rev-parse HEAD) MATRIX_BUILD_REF=main ./scripts/build-host-bundle.sh`.
 - **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
 - **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
 - **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
+- **Monitor**: use Grafana VPS Fleet Overview, `matrix_vps_info`, `matrix_vps_healthy`, platform `/vps/:machineId/status`, systemd health, and customer gateway `/health`. Legacy container dashboards are not proof of production customer VPS health.
 - **Feature test VMs**: for risky shell/onboarding/platform changes, prefer a disposable test VPS over the user's primary computer. Use the same Clerk login, switch via `https://app.matrix-os.com/runtime` or explicit `https://app.matrix-os.com/vm/<handle>`, deploy exact bundle versions, and ask the user whether to delete the test VM after validation to avoid extra Hetzner charges.
 - **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
 
@@ -237,8 +276,10 @@ Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line
 
 ```bash
 bun run typecheck           # tsc --noEmit for all packages
+bun run check:patterns:diff # CLAUDE.md pattern scanner (changed files only)
 bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
 bun run test                # unit tests
+bun run test:e2e            # end-to-end tests
 ```
 
 ### Three Review Passes
@@ -299,9 +340,13 @@ Do not request review while still pushing commits. Either declare a review commi
 
 Read these on demand, not every session:
 
+- `docs/dev/engineering-practices.md` -- standard Matrix engineering workflow: ticket types, Spec Kit, Graphite, dev VPS previews, Symphony, review loops, onboarding
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
+- `docs/dev/dev-vps.md` -- when previewing or coding Matrix on a shared/personal dev VPS
+- `docs/dev/symphony.md` -- when operating Matrix-native Linear ticket agents
+- `docs/dev/user-operations.md` -- when working on Clerk waitlist, Inngest provisioning, PostHog support debugging, or email workflows
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS

@@ -1,0 +1,96 @@
+---
+title: Engineering
+description: Ticket classification, Spec Kit, Graphite, review loops, and common Matrix patterns.
+---
+
+# Engineering
+
+Matrix engineering is cloud-first, agent-assisted, and review-driven.
+
+## Default Loop
+
+1. Pick work from Linear or GitHub with a clear outcome.
+2. Classify the ticket type.
+3. Ask for Spec Kit if the work is large or crosses trust boundaries.
+4. Split implementation into Graphite stack layers.
+5. Write failing tests first.
+6. Implement, verify, and preview in Matrix.
+7. Open PRs with Conventional Commit titles.
+8. Fix automated review comments until the PR is clean.
+9. Release through the right channel when customer VPSes need the change.
+
+## Ticket Types
+
+| Type | Typical paths | Workflow |
+| --- | --- | --- |
+| Shell/UI | `shell/`, Canvas, Desktop, mobile | Canvas first, then Desktop; verify screenshots for visible changes. |
+| Default apps | `home/apps/**`, `home/system/icons/**` | Vite + React, shipped icon, build default apps, add app tests. |
+| Agentic harness | `packages/kernel/`, Symphony, Hermes, sessions | Spike undocumented SDK/runtime behavior before spec. |
+| Gateway/API | `packages/gateway/**` | Zod at route boundary, `bodyLimit`, auth matrix, generic errors. |
+| Platform/VPS | `packages/platform/**`, `distro/customer-vps/**` | Spec Kit, mocked Hetzner/R2 tests, host-bundle verification. |
+| Integrations | Pipedream, Linear, provider APIs | Platform-owned secrets; no provider tokens on customer VPSes or in agents. |
+| Auth/billing | Clerk, Stripe, org access | Explicit auth source of truth and adversarial tests. |
+| User ops | Waitlist, Inngest, PostHog, email | Operator runbook, idempotent workflows, no customer-visible raw errors. |
+
+## When To Use Spec Kit
+
+Use Spec Kit before implementing when a ticket:
+
+- touches two or more packages or runtime surfaces;
+- adds endpoints, WebSockets, IPC, file I/O, persistence, background jobs, or
+  provider integrations;
+- changes VPS provisioning, release, routing, auth, billing, or owner data;
+- is likely to exceed 1000 additions or 20 files;
+- needs a product or security decision that is not already obvious.
+
+Small scoped fixes can skip new specs, but not tests or security rules.
+
+## Graphite
+
+Use one stack layer per spec phase or user-story slice. Keep layers reviewable.
+
+Typical stack:
+
+1. `docs(spec): add <feature> spec`
+2. `feat(<area>): add contracts and storage`
+3. `feat(<area>): add runtime wiring`
+4. `feat(<area>): add shell/app surface`
+5. `test(<area>): add e2e or deployment coverage`
+6. `docs(<area>): publish docs`
+
+## Review Loop
+
+Before deep review:
+
+```bash
+bun run typecheck
+bun run check:patterns:diff
+bun run check:patterns
+bun run test
+bun run test:e2e
+```
+
+Then run the review pipeline:
+
+- mechanical pattern sweep;
+- trust-boundary sweep;
+- atomicity and failure-mode review;
+- runtime contract review for platform, VPS, tunnels, containers, or release
+  changes.
+
+Automated review is a loop. Fix CRITICAL/HIGH findings before merge and keep
+iterating until Greptile reports 5/5 or every remaining finding is explicitly
+deferred with a follow-up.
+
+## Common Patterns
+
+- 2+ related DB writes use a transaction.
+- Optimistic concurrency belongs in the write statement.
+- External `fetch()` calls use `AbortSignal.timeout(...)`.
+- Mutating Hono routes use `bodyLimit`.
+- User-controlled paths go through safe path resolution.
+- In-memory `Map`/`Set` collections have caps and eviction.
+- Client-facing errors are generic; detailed errors stay in logs.
+- WebSocket messages are schema-validated after JSON parsing.
+- Customer-facing runtime ships through host bundles, not Docker Compose.
+

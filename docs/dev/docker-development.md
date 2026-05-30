@@ -1,6 +1,10 @@
 # Docker Development Guide
 
-Matrix OS uses Docker as the primary local development environment via OrbStack on macOS. This ensures dev/prod parity.
+Matrix OS uses a Matrix dev VPS as the primary development environment. Local
+Docker remains supported for Docker-specific debugging, local infrastructure,
+offline work, and cases where a local containerized runtime is more practical
+than a dev VPS. Production customer runtime is VPS-native host services, not a
+Docker Compose rollout.
 
 ## Prerequisites
 

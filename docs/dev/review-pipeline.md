@@ -24,6 +24,12 @@ PR opens
   +-- Human Review (if needed)                --> architecture, design, product decisions
 ```
 
+Automated review is a loop, not a one-time signal. After Greptile or an
+equivalent reviewer posts findings, fix the findings, update the PR, and request
+another pass until the PR reaches 5/5. CRITICAL and HIGH findings must be fixed
+before merge. Any remaining lower-severity finding must be explicitly deferred in
+the PR body with a follow-up issue or clear rationale.
+
 ### What Each Stage Catches
 
 | Stage | Category | Example from PR #30 |
@@ -122,6 +128,10 @@ No deep review until the author either:
 2. Marks the PR as **ready for review** and stops pushing.
 
 Reviewing a moving target guarantees second-order regressions — the PR #30 post-mortem showed later fix-wave commits introducing new issues that weren't in the original diff.
+
+For automated review loops, freeze each requested pass as well. If you continue
+pushing unrelated work after requesting Greptile, treat the next result as a new
+review cycle and re-run the local gates.
 
 ## The Review Passes
 
@@ -245,7 +255,7 @@ If you are an AI agent (Claude, Copilot, etc.) writing or reviewing code for Mat
 
 1. **Before writing code**: Run `bun run check:patterns` to see current violations. Don't add new ones.
 
-2. **Before opening a PR**: Run `bun run typecheck && bun run check:patterns && bun run test`. All must pass.
+2. **Before opening a PR**: Run `bun run typecheck`, `bun run check:patterns:diff`, `bun run check:patterns`, `bun run test`, and `bun run test:e2e` when the touched area can affect end-to-end behavior. All must pass or be documented as an unrelated baseline failure.
 
 3. **When reviewing a PR**: Use the three-pass structure above. Do NOT review line-by-line. Post ONE structured summary + inline comments only for CRITICAL/HIGH.
 
@@ -254,6 +264,9 @@ If you are an AI agent (Claude, Copilot, etc.) writing or reviewing code for Mat
 5. **Never repeat findings across passes**. Each finding belongs to exactly one pass.
 
 6. **Include "What Looked Good"** in every review. Calibration matters — silent approval of good patterns reinforces them.
+
+7. **For implementation agents**: keep working review comments until Greptile
+   reports 5/5 or the human owner explicitly accepts a documented deferral.
 
 ## CI Workflow Reference
 

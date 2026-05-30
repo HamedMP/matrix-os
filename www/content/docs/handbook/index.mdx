@@ -1,0 +1,76 @@
+---
+title: Matrix Handbook
+description: How Matrix OS engineers, operators, and coding agents work.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Matrix Handbook
+
+This handbook explains how we work on Matrix OS. It is written for humans and
+coding agents. The goal is to make context cheap: anyone joining a ticket should
+understand what matters, which environment to use, when to plan, how to split
+work, how to release, and how to support users.
+
+<Callout type="info" title="Cloud-first by default">
+  Matrix is built from Matrix. The default engineering workspace is a Matrix dev
+  VPS with shell, code-server, Zellij, agent CLIs, hot reload, and authenticated
+  previews. Local development is supported for native mobile/desktop work,
+  hardware, offline work, Docker internals, and tight test loops.
+</Callout>
+
+## Chapters
+
+<Cards>
+  <Card
+    title="Why Matrix Exists"
+    description="The Web 4 vision, product bet, and operating principles."
+    href="/docs/handbook/vision"
+  />
+  <Card
+    title="Teams"
+    description="How we split ownership across small, agent-amplified teams."
+    href="/docs/handbook/teams"
+  />
+  <Card
+    title="Engineering"
+    description="Ticket types, Spec Kit, Graphite, TDD, security, and common patterns."
+    href="/docs/handbook/engineering"
+  />
+  <Card
+    title="Cloud Development"
+    description="Personal dev VPS, shared dev, local fallback, previews, and setup."
+    href="/docs/handbook/cloud-development"
+  />
+  <Card
+    title="Agent Teams"
+    description="Symphony, Linear, Zellij sessions, and managing coding agents."
+    href="/docs/handbook/agent-teams"
+  />
+  <Card
+    title="Releases"
+    description="Host bundles, approvals, channel rollout, monitoring, and rollback."
+    href="/docs/handbook/releases"
+  />
+  <Card
+    title="User Operations"
+    description="Waitlist approval, provisioning, Inngest, PostHog, support, and email."
+    href="/docs/handbook/user-operations"
+  />
+</Cards>
+
+## What We Borrowed
+
+The structure is inspired by public operating handbooks from engineering-led
+companies, especially PostHog's public handbook. The useful pattern is:
+
+- explain the mission first;
+- keep team ownership small and visible;
+- give engineers enough context to make decisions;
+- make working practices public;
+- write down concrete runbooks instead of relying on oral tradition.
+
+Matrix applies that pattern to an AI-native operating system where engineers
+also manage teams of coding agents.
+

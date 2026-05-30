@@ -1,0 +1,60 @@
+---
+title: Teams
+description: How Matrix splits engineering ownership into small, agent-amplified teams.
+---
+
+# Teams
+
+Matrix should be built by small teams with clear ownership. A team can be one
+person plus agents, or a few engineers plus agents. The important part is that
+ownership is explicit.
+
+## Team Shape
+
+Each team owns:
+
+- a mission;
+- one or more product/runtime surfaces;
+- the user or internal customer it serves;
+- its backlog labels or Linear rules;
+- relevant metrics and support queues;
+- release and rollback notes for its surface.
+
+Teams should be small enough to ship without constant coordination. When a
+project crosses boundaries, use a Spec Kit plan and Graphite stack rather than a
+giant cross-team PR.
+
+## Current Ownership Map
+
+| Team / Cell | Mission | Owns |
+| --- | --- | --- |
+| Kernel & Agent Runtime | Make AI a reliable OS kernel. | Claude Agent SDK path, tools, hooks, skills, prompts, agent sessions, Hermes/Agent/Codex/Claude integration. |
+| Shell & Apps | Make the OS feel usable, fast, and polished. | Canvas, Desktop, mobile shell, default apps, app runtime, design system, browser behavior. |
+| Cloud Coding & Symphony | Make Matrix the best place to manage coding agents. | Projects, worktrees, Zellij sessions, code-server, Symphony, Linear, review loops. |
+| Platform & Fleet | Make customer VPSes reliable and easy to operate. | Clerk routing, provisioning, Hetzner, Cloudflare, R2, host bundles, release channels, Grafana. |
+| Integrations & User Ops | Make real users successful. | Pipedream, connected services, waitlist, Inngest, PostHog, support debugging, email. |
+| Website & Docs | Make the product understandable and trustworthy. | `www/`, public docs, handbook, onboarding content, changelog-quality launch notes. |
+
+## Team Rules
+
+- Own the whole user path, not only code in a directory.
+- Talk directly to users and operators for the surface you own.
+- Keep support and debugging loops close to the team that owns the feature.
+- Do not create ambiguous shared ownership for security, auth, data, or release
+  behavior.
+- If ownership is fuzzy, write it down and propose a new owner or temporary
+  project team.
+
+## Agent Staffing
+
+Every team can run coding agents, but the team is still responsible for the
+outcome. Agents should receive:
+
+- the ticket;
+- `AGENTS.md`;
+- the relevant handbook page;
+- the relevant spec or instruction to ask for Spec Kit;
+- the project `WORKFLOW.md`;
+- the expected Graphite stack layer;
+- the checks required before handoff.
+

@@ -17,6 +17,11 @@ Prefer stacked PRs when a feature crosses review boundaries such as:
 Keep each PR under the normal review target: ideally under 1000 additions and
 20 files, never over 3000 additions or 50 files without splitting.
 
+For Spec Kit work, default to one Graphite layer per implementation phase or
+user-story slice from `tasks.md`. A phase is too large if reviewers cannot
+understand its source of truth, auth boundary, failure modes, and verification
+from that PR alone.
+
 ## Setup
 
 Install and authenticate the Graphite CLI, then initialize it once in the repo:
@@ -126,6 +131,10 @@ create new ones.
   `feat(messages): add permission gates`.
 - Backend PR bodies must include the required Invariants section from
   `docs/dev/review-pipeline.md`.
+- Each stack layer must run the focused tests for the files it touches, plus the
+  pre-PR gates before deep review.
+- Keep fixing automated review comments for each layer until Greptile reports
+  5/5 or every remaining finding is explicitly deferred in that PR body.
 - Spec Kit features should preserve `tasks.md` phase boundaries as stack
   boundaries. The Speckit task template and implementation skill both expect
   multi-phase features to map phases/user stories to Graphite layers.

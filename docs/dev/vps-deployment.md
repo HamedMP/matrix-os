@@ -403,7 +403,46 @@ curl http://localhost:8080/health   # {"status":"ok"}
 curl https://api.matrix-os.com/health
 ```
 
+## Monitoring And Health
+
+Production customer runtime health is VPS-native. Use container dashboards only
+for legacy shared-container paths or local Docker development.
+
+Fleet view:
+
+- Grafana: VPS Fleet Overview dashboard.
+- Prometheus: `matrix_vps_info` and `matrix_vps_healthy`.
+- Platform API: `GET /vps/:machineId/status` with `PLATFORM_SECRET`.
+
+Customer VPS sample check:
+
+```bash
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
+systemctl is-active matrix-gateway matrix-shell matrix-code matrix-sync-agent
+journalctl -u matrix-gateway -u matrix-shell -n 200 --no-pager
+pg_isready --host=127.0.0.1 --username=matrix --dbname=matrix
+curl -fsS http://127.0.0.1:4000/health
+```
+
+Legacy/local container health:
+
+- `platform_containers_total`
+- `platform_container_cpu_percent`
+- `platform_container_memory_bytes`
+- `platform_container_memory_limit_bytes`
+- `distro/monitor.sh`
+- Grafana container detail dashboards
+
+These metrics can help while old paths exist, but they do not prove customer VPS
+gateway/shell/code health.
+
 ## Step 5: Vercel + Clerk + Inngest
+
+Inngest is used for durable website/control-plane workflows. The current
+production path is Clerk `user.created` -> Inngest `provision-matrix-os` ->
+platform `/containers/provision` -> customer VPS provisioning when
+`CUSTOMER_VPS_ENABLED=true`.
 
 ### Vercel Environment Variables
 
@@ -422,6 +461,19 @@ curl https://api.matrix-os.com/health
 3. Enable **Username** field (used as Matrix OS handle)
 4. Webhooks: URL `https://matrix-os.com/api/inngest`, events `user.created` + `user.deleted`, Inngest template
 5. Admin: set `publicMetadata.role = "admin"` on your user
+
+### Inngest Configuration
+
+- Endpoint: `https://matrix-os.com/api/inngest`
+- Client: `www/src/inngest/client.ts`
+- Served functions: `www/src/app/api/inngest/route.ts`
+- Current function: `www/src/inngest/provision-user.ts`
+- Required env on Vercel: `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`,
+  `PLATFORM_API_URL`, `PLATFORM_SECRET`
+
+Use Inngest for durable signup/provisioning, billing, waitlist, and email
+workflows that need retries and per-step visibility. Do not use it for customer
+VPS systemd health, gateway request handling, or Symphony polling.
 
 ### User Flow
 
