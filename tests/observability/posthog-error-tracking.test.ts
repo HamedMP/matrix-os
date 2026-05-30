@@ -583,7 +583,8 @@ describe("PostHog error tracking", () => {
     expect(platformAuthRoutes).toContain('"cli_device_code_created"');
     expect(platformAuthRoutes).toContain('"cli_device_token_issued"');
     expect(platformAuthRoutes).toContain('"cli_runtime_lookup_resolved"');
-    expect(platformMain).toContain("captureEvent: capturePlatformEvent");
+    expect(platformMain).toContain("MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN");
+    expect(platformMain).toContain("auth_event: event");
     expect(gatewayServer).not.toContain('captureGatewayProductEvent("terminal_input"');
     expect(gatewayServer).not.toContain('captureGatewayProductEvent("message_text"');
   });
