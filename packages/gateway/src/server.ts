@@ -24,6 +24,7 @@ import {
   resolveWritableFileApiPath,
 } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
+import { getMissingFileFallback } from "./file-fallbacks.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
@@ -2930,7 +2931,11 @@ export async function createGateway(config: GatewayConfig) {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveServedFilePath(filePath);
     if (!fullPath) return c.text("Forbidden", 403);
-    if (!existsSync(fullPath)) return c.text("Not found", 404);
+    if (!existsSync(fullPath)) {
+      const fallback = getMissingFileFallback(filePath);
+      if (fallback) return c.body(null, 200, { "content-type": fallback.contentType });
+      return c.text("Not found", 404);
+    }
     if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
     return c.body(null, 200);
   });
@@ -2944,6 +2949,8 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     if (!existsSync(fullPath)) {
+      const fallback = getMissingFileFallback(filePath);
+      if (fallback) return c.body(fallback.body, 200, { "content-type": fallback.contentType });
       return c.text("Not found", 404);
     }
 

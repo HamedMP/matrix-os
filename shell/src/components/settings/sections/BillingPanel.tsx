@@ -6,20 +6,27 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import {
+  ArrowUpRightIcon,
   CheckIcon,
   CreditCardIcon,
   CpuIcon,
+  ExternalLinkIcon,
   Loader2Icon,
   MapPinIcon,
   MemoryStickIcon,
+  PlusIcon,
+  ReceiptTextIcon,
   ServerIcon,
   ShieldCheckIcon,
+  XCircleIcon,
 } from "lucide-react";
 import {
   MATRIX_BILLING_REGIONS,
   MATRIX_BILLING_SERVER_PROFILES,
 } from "@/lib/billing";
+import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 
 export type BillingPanelMode = "settings" | "provisioning";
@@ -28,6 +35,12 @@ type BillingInterval = "monthly" | "annual";
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
 const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
+const billingPlanNames: Record<string, string> = {
+  matrix_starter: "Starter",
+  matrix_builder: "Builder",
+  matrix_max: "Max",
+  internal: "Internal",
+};
 
 type BillingTelemetryProperties = {
   mode: BillingPanelMode;
@@ -187,6 +200,225 @@ function CheckoutPanel({
       )}
     </div>
   );
+}
+
+function BillingPortalButton({
+  entitlement,
+  label = "Open billing portal",
+}: {
+  entitlement: BillingEntitlementSummary | null;
+  label?: string;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const portalAvailable = entitlement?.source === "stripe" && Boolean(entitlement.stripeSubscriptionId);
+
+  async function openPortal() {
+    if (!portalAvailable) return;
+    setLoading(true);
+    setError(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    try {
+      const response = await fetch("/billing/portal", {
+        method: "POST",
+        credentials: "include",
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      const body = (await response.json().catch(() => null)) as { url?: string } | null;
+      if (!response.ok || !body?.url) {
+        throw new Error("portal_unavailable");
+      }
+      window.location.assign(body.url);
+    } catch (err: unknown) {
+      setError("Billing portal is unavailable. Try again in a moment.");
+      capturePostHogLog("error", "billing portal_error", {
+        source: "settings-billing",
+        error_kind: err instanceof Error ? err.message : typeof err,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={openPortal}
+        disabled={!portalAvailable || loading}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-forest px-3.5 text-sm font-semibold text-ember-foreground transition-colors hover:bg-forest/90 disabled:cursor-not-allowed disabled:opacity-55"
+      >
+        {loading ? (
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <ExternalLinkIcon className="size-4" aria-hidden="true" />
+        )}
+        {loading ? "Opening portal" : label}
+      </button>
+      {!portalAvailable && (
+        <p className="mt-2 text-xs leading-5 text-forest/55">
+          This account is managed internally, so receipts and plan changes are handled by the Matrix team.
+        </p>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function ActiveBillingPanel({
+  entitlement,
+  accessReason,
+}: {
+  entitlement: BillingEntitlementSummary | null;
+  accessReason: string | null;
+}) {
+  const planName = entitlement ? billingPlanNames[entitlement.planSlug] ?? entitlement.planSlug : "Active";
+  const status = entitlement?.status ? formatStatus(entitlement.status) : accessReason === "legacy_clerk_plan" ? "Legacy plan" : "Active";
+  const machineProfile = resolveMachineProfile(entitlement?.defaultServerType);
+  const allowedProfiles = (entitlement?.allowedServerTypes ?? [])
+    .map(resolveMachineProfile)
+    .filter((profile): profile is NonNullable<ReturnType<typeof resolveMachineProfile>> => Boolean(profile));
+  const totalComputers = entitlement?.maxRuntimeSlots ?? 1;
+  const includedComputers = entitlement?.includedRuntimeSlots ?? 1;
+  const addonComputers = entitlement?.addonRuntimeSlots ?? 0;
+  const graceLabel = entitlement?.gracePeriodEndsAt ? formatDate(entitlement.gracePeriodEndsAt) : null;
+
+  return (
+    <div className="space-y-3">
+      <section className="rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
+              Current plan
+            </p>
+            <h3 className="mt-2 text-2xl font-semibold tracking-tight text-deep">
+              {planName}
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-forest/65">
+              {status}. Your Matrix computers stay available while billing is active
+              {graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.
+            </p>
+          </div>
+          <BillingPortalButton entitlement={entitlement} />
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <BillingMetric label="Status" value={status} />
+          <BillingMetric label="Computers" value={`${totalComputers}`} detail={`${includedComputers} included${addonComputers ? `, ${addonComputers} add-on` : ""}`} />
+          <BillingMetric
+            label="Machine"
+            value={machineProfile?.label ?? entitlement?.defaultServerType ?? "Included"}
+            detail={machineProfile ? `${machineProfile.hetznerType} · ${profileSpec(machineProfile)}` : undefined}
+          />
+          <BillingMetric label="Add-ons" value={addonComputers ? `${addonComputers} active` : "None"} detail="Extra machines and storage appear here" />
+        </div>
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-3">
+        <BillingAction
+          icon={<ArrowUpRightIcon className="size-4" aria-hidden="true" />}
+          title="Upgrade or downgrade"
+          description={`Switch between ${allowedProfiles.length ? allowedProfiles.map((profile) => profile.label).join(", ") : "Starter, Builder, and Max"} without deleting data or machines.`}
+          action={<BillingPortalButton entitlement={entitlement} label="Change plan" />}
+        />
+        <BillingAction
+          icon={<PlusIcon className="size-4" aria-hidden="true" />}
+          title="Add-ons"
+          description="Add extra machines first; storage and other Hetzner-backed capacity can be attached as add-ons as they launch."
+          action={<BillingPortalButton entitlement={entitlement} label="Manage add-ons" />}
+        />
+        <BillingAction
+          icon={<ReceiptTextIcon className="size-4" aria-hidden="true" />}
+          title="Receipts and payment"
+          description="View invoices, receipts, tax details, payment methods, coupons, and billing email in the portal."
+          action={<BillingPortalButton entitlement={entitlement} label="View receipts" />}
+        />
+      </section>
+
+      <section className="rounded-[22px] border border-forest/12 bg-white p-4">
+        <div className="flex gap-3">
+          <XCircleIcon className="mt-0.5 size-4 shrink-0 text-forest/45" aria-hidden="true" />
+          <div>
+            <h4 className="text-sm font-semibold text-deep">Canceling</h4>
+            <p className="mt-1 text-sm leading-6 text-forest/65">
+              Canceling is handled in the billing portal. Your machines and owner data are not deleted automatically; access remains while billing is active and through the configured three-day grace window.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function BillingMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-forest/10 bg-white p-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-forest/45">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-deep">{value}</p>
+      {detail && <p className="mt-1 text-xs leading-5 text-forest/55">{detail}</p>}
+    </div>
+  );
+}
+
+function BillingAction({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action: ReactNode;
+}) {
+  return (
+    <div className="rounded-[22px] border border-forest/12 bg-white p-4">
+      <div className="flex items-center gap-2 text-deep">
+        <span className="inline-flex size-8 items-center justify-center rounded-xl bg-[#f4efe3] text-ember">
+          {icon}
+        </span>
+        <h4 className="text-sm font-semibold">{title}</h4>
+      </div>
+      <p className="mt-3 min-h-16 text-sm leading-6 text-forest/65">{description}</p>
+      <div className="mt-3">{action}</div>
+    </div>
+  );
+}
+
+function resolveMachineProfile(serverType: string | null | undefined) {
+  if (!serverType) return null;
+  return MATRIX_BILLING_SERVER_PROFILES.find(
+    (profile) => profile.hetznerType.toLowerCase() === serverType.toLowerCase(),
+  ) ?? null;
+}
+
+function formatStatus(status: string): string {
+  return status
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
 }
 
 function profileSpec(profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number]): string {
@@ -461,10 +693,14 @@ function HeroSelectionPreview({
 
 export function BillingPanel({
   active,
+  entitlement,
+  accessReason,
   mode = "settings",
   onCheckoutIntent,
 }: {
   active: boolean | null;
+  entitlement?: BillingEntitlementSummary | null;
+  accessReason?: string | null;
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
 }) {
@@ -552,11 +788,7 @@ export function BillingPanel({
   };
 
   if (active === true) {
-    return (
-      <div className="rounded-xl border border-forest/20 bg-forest/5 p-4 text-sm text-forest">
-        Billing is active for this Matrix account.
-      </div>
-    );
+    return <ActiveBillingPanel entitlement={entitlement ?? null} accessReason={accessReason ?? null} />;
   }
 
   if (active === null) {

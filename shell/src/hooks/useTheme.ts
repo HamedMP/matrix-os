@@ -116,7 +116,7 @@ export async function saveTheme(theme: Theme): Promise<void> {
 async function fetchTheme(): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
-    const res = await fetch(`${gatewayUrl}/api/theme`, {
+    const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
       signal: AbortSignal.timeout(10_000),
     });
     if (res.ok) return res.json();

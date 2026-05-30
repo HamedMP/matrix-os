@@ -172,13 +172,70 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    expect(screen.getByText("Active")).toBeTruthy();
-    expect(
-      screen.getByText("Billing is active for this Matrix account."),
-    ).toBeTruthy();
+    expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Current plan")).toBeTruthy();
+    expect(screen.getAllByText("Legacy plan").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByTestId("pricing-table")).toBeNull();
     },
   );
+
+  it("shows current Stripe plan details and portal actions when billing is active", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          access: { runtimeProxyAllowed: true, reason: "active" },
+          entitlement: {
+            source: "stripe",
+            planSlug: "matrix_builder",
+            status: "active",
+            maxRuntimeSlots: 3,
+            includedRuntimeSlots: 2,
+            addonRuntimeSlots: 1,
+            defaultServerType: "cpx32",
+            allowedServerTypes: ["cpx22", "cpx32"],
+            stripeSubscriptionId: "sub_123",
+            stripePriceId: "price_123",
+            gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+            effectiveFrom: "2026-05-30T00:00:00.000Z",
+            effectiveUntil: null,
+            updatedAt: "2026-05-30T00:00:00.000Z",
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValue(
+        new Response(JSON.stringify({ url: "https://billing.stripe.test/session" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getAllByText("Builder").length).toBeGreaterThanOrEqual(1));
+    expect(screen.getByText("Current plan")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
+    expect(screen.getByText(/CPX32/)).toBeTruthy();
+    expect(screen.getByText("Receipts and payment")).toBeTruthy();
+    expect(screen.getByText("Canceling")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "View receipts" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/billing/portal",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
 
   it("does not mark billing active for the legacy Clerk early_adopter plan", async () => {
     clerkState.isLoaded = true;

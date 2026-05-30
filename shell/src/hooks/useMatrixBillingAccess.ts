@@ -9,16 +9,41 @@ const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 
 type BillingStatusSnapshot = {
   userId: string;
-  active: boolean;
+  state: BillingAccessRemoteState;
   checkedAt: number;
 };
 
 let billingStatusSnapshot: BillingStatusSnapshot | null = null;
-let billingStatusRequest: { userId: string; promise: Promise<boolean> } | null = null;
+let billingStatusRequest: { userId: string; promise: Promise<BillingAccessRemoteState> } | null = null;
 
 type BillingAccessState = {
   active: boolean | null;
   checking: boolean;
+  entitlement: BillingEntitlementSummary | null;
+  accessReason: string | null;
+};
+
+export type BillingEntitlementSummary = {
+  source: "stripe" | "override";
+  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max" | "internal";
+  status: string;
+  maxRuntimeSlots: number;
+  includedRuntimeSlots: number;
+  addonRuntimeSlots: number;
+  defaultServerType: string;
+  allowedServerTypes: string[];
+  stripeSubscriptionId: string | null;
+  stripePriceId: string | null;
+  gracePeriodEndsAt: string | null;
+  effectiveFrom: string;
+  effectiveUntil: string | null;
+  updatedAt: string;
+};
+
+type BillingAccessRemoteState = {
+  active: boolean;
+  entitlement: BillingEntitlementSummary | null;
+  accessReason: string | null;
 };
 
 export function useMatrixBillingAccess(): BillingAccessState {
@@ -27,24 +52,24 @@ export function useMatrixBillingAccess(): BillingAccessState {
     () => (isLoaded && isSignedIn ? hasMatrixBillingAccess(has) : false),
     [has, isLoaded, isSignedIn],
   );
-  const [remoteActive, setRemoteActive] = useState<boolean | null>(null);
+  const [remoteState, setRemoteState] = useState<BillingAccessRemoteState | null>(null);
   const [remoteChecked, setRemoteChecked] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || legacyActive) {
-      setRemoteActive(null);
+      setRemoteState(null);
       setRemoteChecked(!isLoaded || !isSignedIn || legacyActive);
       return;
     }
     if (!userId) {
-      setRemoteActive(false);
+      setRemoteState({ active: false, entitlement: null, accessReason: null });
       setRemoteChecked(true);
       return;
     }
     const cached = readCachedBillingStatus(userId);
     if (cached !== null) {
-      setRemoteActive(cached);
+      setRemoteState(cached);
       setRemoteChecked(true);
       return;
     }
@@ -52,15 +77,15 @@ export function useMatrixBillingAccess(): BillingAccessState {
     let retryTimeoutId: number | undefined;
     setRemoteChecked(false);
     readRemoteBillingStatus(userId)
-      .then((active) => {
+      .then((state) => {
         if (disposed) return;
-        setRemoteActive(active);
+        setRemoteState(state);
         setRemoteChecked(true);
       })
       .catch((error: unknown) => {
         if (disposed) return;
         console.warn("[billing] unable to read Stripe billing status", error);
-        setRemoteActive(null);
+        setRemoteState(null);
         setRemoteChecked(false);
         retryTimeoutId = window.setTimeout(() => {
           setRetryTick((current) => current + 1);
@@ -72,11 +97,16 @@ export function useMatrixBillingAccess(): BillingAccessState {
     };
   }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
 
-  if (!isLoaded) return { active: null, checking: true };
-  if (!isSignedIn) return { active: false, checking: false };
-  if (legacyActive) return { active: true, checking: false };
-  if (!remoteChecked) return { active: null, checking: true };
-  return { active: remoteActive === true, checking: false };
+  if (!isLoaded) return { active: null, checking: true, entitlement: null, accessReason: null };
+  if (!isSignedIn) return { active: false, checking: false, entitlement: null, accessReason: null };
+  if (legacyActive) return { active: true, checking: false, entitlement: null, accessReason: "legacy_clerk_plan" };
+  if (!remoteChecked) return { active: null, checking: true, entitlement: null, accessReason: null };
+  return {
+    active: remoteState?.active === true,
+    checking: false,
+    entitlement: remoteState?.entitlement ?? null,
+    accessReason: remoteState?.accessReason ?? null,
+  };
 }
 
 export function resetMatrixBillingAccessCacheForTests(): void {
@@ -84,13 +114,13 @@ export function resetMatrixBillingAccessCacheForTests(): void {
   billingStatusRequest = null;
 }
 
-function readCachedBillingStatus(userId: string): boolean | null {
+function readCachedBillingStatus(userId: string): BillingAccessRemoteState | null {
   if (!billingStatusSnapshot || billingStatusSnapshot.userId !== userId) return null;
   if (Date.now() - billingStatusSnapshot.checkedAt > BILLING_STATUS_CACHE_TTL_MS) return null;
-  return billingStatusSnapshot.active;
+  return billingStatusSnapshot.state;
 }
 
-function readRemoteBillingStatus(userId: string): Promise<boolean> {
+function readRemoteBillingStatus(userId: string): Promise<BillingAccessRemoteState> {
   if (billingStatusRequest?.userId === userId) return billingStatusRequest.promise;
 
   const controller = new AbortController();
@@ -106,15 +136,20 @@ function readRemoteBillingStatus(userId: string): Promise<boolean> {
       if (response.status >= 500 || response.status === 429) {
         throw new Error("billing_status_retryable");
       }
-      if (!response.ok) return false;
+      if (!response.ok) return { active: false, entitlement: null, accessReason: null };
       const body = (await response.json()) as {
-        access?: { runtimeProxyAllowed?: boolean };
+        access?: { runtimeProxyAllowed?: boolean; reason?: string };
+        entitlement?: BillingEntitlementSummary | null;
       };
-      return body.access?.runtimeProxyAllowed === true;
+      return {
+        active: body.access?.runtimeProxyAllowed === true,
+        entitlement: body.entitlement ?? null,
+        accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
+      };
     })
-    .then((active) => {
-      billingStatusSnapshot = { userId, active, checkedAt: Date.now() };
-      return active;
+    .then((state) => {
+      billingStatusSnapshot = { userId, state, checkedAt: Date.now() };
+      return state;
     })
     .finally(() => {
       window.clearTimeout(timeoutId);

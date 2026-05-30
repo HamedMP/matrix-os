@@ -11,7 +11,7 @@ export function BillingSection({
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
 }) {
-  const { active } = useMatrixBillingAccess();
+  const { active, entitlement, accessReason } = useMatrixBillingAccess();
 
   return (
     <div className="mx-auto max-w-5xl space-y-3 p-3 sm:p-4">
@@ -40,6 +40,8 @@ export function BillingSection({
 
       <BillingPanel
         active={active}
+        entitlement={entitlement}
+        accessReason={accessReason}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
       />

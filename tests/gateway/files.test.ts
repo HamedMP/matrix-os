@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { getMissingFileFallback } from "../../packages/gateway/src/file-fallbacks.js";
 import {
   isDeniedFileApiPath,
   resolveExistingFileApiPath,
@@ -84,5 +85,13 @@ describe("/files/* path containment", () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  it("serves an empty module registry fallback when modules.json is missing", () => {
+    expect(getMissingFileFallback("system/modules.json")).toEqual({
+      body: "[]",
+      contentType: "application/json",
+    });
+    expect(getMissingFileFallback("system/theme.json")).toBeNull();
   });
 });
