@@ -219,27 +219,35 @@ Use this only when completion is blocked by missing required tools or missing au
     - Revert every temporary proof edit before commit/push.
     - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
     - If app-touching, run runtime validation and capture screenshots/recordings. Upload media to Linear using the `linear` skill's `fileUpload` flow and embed in the workpad comment.
+    - If shell-touching, test the shell through the Docker dev environment:
+      run `bun run docker` and validate the changed shell path there. Use
+      `bun run docker:full` only when the tested path requires proxy,
+      platform, or conduit services.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
+8.  Before committing or pushing, verify no generated ticket/runtime home directories are tracked in the PR:
+    - Run `git status --short` and `git diff --name-only origin/main...HEAD`.
+    - Remove any accidental runtime-home tree such as `.mat42-runtime-home/` from the index and working tree. These are local/generated homes, not repository artifacts.
+    - If such a directory was generated during validation, record the cleanup in the workpad `Notes` section.
+9.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
     - Ensure the GitHub PR has label `symphony` (add it if missing).
-9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
-10. Update the workpad comment with final checklist status and validation notes.
+10. Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
+11. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
     - Add final handoff notes (commit + validation summary) in the same workpad comment.
     - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
     - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
     - Do not post any additional completion summary comment.
-11. Before moving to `Human Review`, poll PR feedback and checks:
+12. Before moving to `Human Review`, poll PR feedback and checks:
     - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
     - Run the full PR feedback sweep protocol.
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move issue to `Human Review`.
+13. Only then move issue to `Human Review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
-13. For `Todo` tickets that already had a PR attached at kickoff:
+14. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.
     - Then move to `Human Review`.
