@@ -41,6 +41,9 @@ export interface StripeCheckoutSessionInput {
   priceId: string;
   mode: 'subscription';
   automaticTax: boolean;
+  allowPromotionCodes: boolean;
+  successUrl: string;
+  cancelUrl: string;
 }
 
 export interface StripeBillingClient {
@@ -52,7 +55,7 @@ export interface StripeBillingClient {
    */
   createCustomer(input: { clerkUserId: string; idempotencyKey: string }): Promise<{ id: string }>;
   createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string }>;
-  createPortalSession(input: { customerId: string }): Promise<{ url: string }>;
+  createPortalSession(input: { customerId: string; returnUrl: string }): Promise<{ url: string }>;
   constructWebhookEvent(rawBody: string, signature: string, webhookSecret: string): StripeWebhookEvent;
 }
 
@@ -112,6 +115,9 @@ export function createBillingRoutes(options: {
         priceId,
         mode: 'subscription',
         automaticTax: true,
+        allowPromotionCodes: true,
+        successUrl: resolveBillingReturnUrl(env, 'success'),
+        cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
       });
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
@@ -130,7 +136,10 @@ export function createBillingRoutes(options: {
       }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
-      const session = await options.stripe.createPortalSession({ customerId: customer.stripeCustomerId });
+      const session = await options.stripe.createPortalSession({
+        customerId: customer.stripeCustomerId,
+        returnUrl: resolveBillingReturnUrl(env, 'portal'),
+      });
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] portal creation failed:', err instanceof Error ? err.message : String(err));
@@ -265,6 +274,17 @@ function resolvePriceId(
 ): string | undefined {
   const key = `STRIPE_PRICE_${planSlug.toUpperCase()}_${interval.toUpperCase()}`;
   return env[key];
+}
+
+function resolveBillingReturnUrl(env: NodeJS.ProcessEnv, state: 'success' | 'canceled' | 'portal'): string {
+  if (state === 'success' && env.STRIPE_CHECKOUT_SUCCESS_URL) return env.STRIPE_CHECKOUT_SUCCESS_URL;
+  if (state === 'canceled' && env.STRIPE_CHECKOUT_CANCEL_URL) return env.STRIPE_CHECKOUT_CANCEL_URL;
+  if (state === 'portal' && env.STRIPE_PORTAL_RETURN_URL) return env.STRIPE_PORTAL_RETURN_URL;
+  const appUrl = env.NEXT_PUBLIC_MATRIX_APP_URL ?? env.PLATFORM_PUBLIC_URL ?? 'https://app.matrix-os.com';
+  const url = new URL(appUrl);
+  url.searchParams.set('billing', state);
+  if (state === 'success') url.searchParams.set('checkout', 'success');
+  return url.toString();
 }
 
 function isSubscriptionEvent(type: string): boolean {
