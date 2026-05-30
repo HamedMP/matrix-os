@@ -9,8 +9,10 @@ export const docs = defineDocs({
       extractLinkReferences: true,
     },
     async mdxOptions(environment) {
-      const { remarkSteps } = await import('fumadocs-core/mdx-plugins/remark-steps');
-      const { remarkMdxMermaid } = await import('fumadocs-core/mdx-plugins');
+      const [{ remarkSteps }, { remarkMdxMermaid }] = await Promise.all([
+        import('fumadocs-core/mdx-plugins/remark-steps'),
+        import('fumadocs-core/mdx-plugins'),
+      ]);
 
       return applyMdxPreset({
         rehypeCodeOptions: {

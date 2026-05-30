@@ -1,6 +1,8 @@
 "use client";
 
-import { type ReactNode, useState, useEffect, useRef, useCallback, useId } from "react";
+import { type ReactNode, useState, useEffect, useRef, useId } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   PrinterIcon,
@@ -38,7 +40,12 @@ function Cite({ n }: { n: number }) {
       <label htmlFor={`sn${id}`} className="sidenote-toggle">
         <sup>[{n}]</sup>
       </label>
-      <input type="checkbox" id={`sn${id}`} className="sidenote-checkbox" />
+      <input
+        type="checkbox"
+        id={`sn${id}`}
+        className="sidenote-checkbox"
+        aria-label={`Toggle footnote ${n}`}
+      />
       <span className="sidenote">
         <sup>{n}</sup>
         {references[n]}
@@ -49,38 +56,44 @@ function Cite({ n }: { n: number }) {
 
 function useActiveSection(ids: string[]): string | undefined {
   const [active, setActive] = useState<string | undefined>(ids[0]);
-  const visibleRef = useRef(new Set<string>());
-
-  const findClosest = useCallback(() => {
-    let closest: string | undefined;
-    let minDist = Infinity;
-    for (const id of ids) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      const dist = Math.abs(el.getBoundingClientRect().top - 100);
-      if (dist < minDist) {
-        minDist = dist;
-        closest = id;
-      }
-    }
-    return closest;
-  }, [ids]);
+  const visibleRef = useRef<Set<string>>(null);
+  if (visibleRef.current === null) {
+    visibleRef.current = new Set<string>();
+  }
 
   useEffect(() => {
+    const visible = visibleRef.current;
+    if (!visible) return;
+
+    const findClosest = () => {
+      let closest: string | undefined;
+      let minDist = Infinity;
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const dist = Math.abs(el.getBoundingClientRect().top - 100);
+        if (dist < minDist) {
+          minDist = dist;
+          closest = id;
+        }
+      }
+      return closest;
+    };
+
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            visibleRef.current.add(entry.target.id);
+            visible.add(entry.target.id);
           } else {
-            visibleRef.current.delete(entry.target.id);
+            visible.delete(entry.target.id);
           }
         }
 
-        if (visibleRef.current.size === 0) {
+        if (visible.size === 0) {
           setActive(findClosest());
         } else {
-          const first = ids.find((id) => visibleRef.current.has(id));
+          const first = ids.find((id) => visible.has(id));
           setActive(first);
         }
       },
@@ -93,7 +106,7 @@ function useActiveSection(ids: string[]): string | undefined {
     }
 
     return () => observer.disconnect();
-  }, [ids, findClosest]);
+  }, [ids]);
 
   return active;
 }
@@ -120,123 +133,133 @@ function copyLink() {
 
 const sectionIds = sections.map((s) => s.id);
 
-export function WhitepaperContent() {
-  const [tocOpen, setTocOpen] = useState(false);
-  const activeSection = useActiveSection(sectionIds);
-
+function TopBar({
+  tocOpen,
+  setTocOpen,
+}: {
+  tocOpen: boolean;
+  setTocOpen: (open: boolean) => void;
+}) {
   return (
-    <>
-      {/* Top bar */}
-      <header className="fixed top-0 left-0 right-0 z-50 print:hidden">
-        <div className="mx-auto max-w-5xl px-4 pt-4">
-          <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 px-5 py-2.5 shadow-sm backdrop-blur-xl">
-            <a href="/" className="flex items-center gap-2.5 group">
-              <img
-                src="/rabbit.svg"
-                alt="Matrix OS"
-                className="size-7 rounded-lg shadow-sm"
-              />
-              <span className="text-sm font-semibold tracking-tight text-foreground">
-                Matrix OS
-              </span>
-            </a>
+    <header className="fixed top-0 left-0 right-0 z-50 print:hidden">
+      <div className="mx-auto max-w-5xl px-4 pt-4">
+        <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 px-5 py-2.5 shadow-sm backdrop-blur-xl">
+          <Link href="/" className="flex items-center gap-2.5 group">
+            <Image
+              src="/rabbit.svg"
+              alt="Matrix OS"
+              width={28}
+              height={28}
+              className="size-7 rounded-lg shadow-sm"
+            />
+            <span className="text-sm font-semibold tracking-tight text-foreground">
+              Matrix OS
+            </span>
+          </Link>
 
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline text-xs text-muted-foreground">
-                {READING_TIME}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground"
-                asChild
-              >
-                <a href="https://github.com/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" title="GitHub">
-                  <GithubIcon className="size-4" />
-                </a>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground"
-                asChild
-              >
-                <a href="https://deepwiki.com/HamedMP/matrix-os/" target="_blank" rel="noopener noreferrer" title="DeepWiki">
-                  <BookOpenIcon className="size-4" />
-                </a>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground"
-                onClick={copyLink}
-                title="Copy link"
-              >
-                <LinkIcon className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => window.print()}
-                title="Download PDF"
-              >
-                <PrinterIcon className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground lg:hidden"
-                onClick={() => setTocOpen(!tocOpen)}
-              >
-                {tocOpen ? (
-                  <XIcon className="size-4" />
-                ) : (
-                  <MenuIcon className="size-4" />
-                )}
-              </Button>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline text-xs text-muted-foreground">
+              {READING_TIME}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              asChild
+            >
+              <a href="https://github.com/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" title="GitHub">
+                <GithubIcon className="size-4" />
+              </a>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              asChild
+            >
+              <a href="https://deepwiki.com/HamedMP/matrix-os/" target="_blank" rel="noopener noreferrer" title="DeepWiki">
+                <BookOpenIcon className="size-4" />
+              </a>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={copyLink}
+              title="Copy link"
+            >
+              <LinkIcon className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => window.print()}
+              title="Download PDF"
+            >
+              <PrinterIcon className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground lg:hidden"
+              onClick={() => setTocOpen(!tocOpen)}
+            >
+              {tocOpen ? (
+                <XIcon className="size-4" />
+              ) : (
+                <MenuIcon className="size-4" />
+              )}
+            </Button>
           </div>
         </div>
-      </header>
+      </div>
+    </header>
+  );
+}
 
-      <div className="mx-auto max-w-7xl px-4 pt-24 pb-20">
-        <div className="lg:grid lg:grid-cols-[200px_1fr] lg:gap-10">
-          {/* TOC sidebar */}
-          <aside
-            className={`${tocOpen ? "block" : "hidden"} lg:block print:hidden`}
-          >
-            <nav className="sticky top-24">
-              <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                Contents
-              </p>
-              <ul className="relative space-y-0.5 border-l border-border">
-                {sections.map((s) => {
-                  const isActive = activeSection === s.id;
-                  return (
-                    <li key={s.id}>
-                      <a
-                        href={`#${s.id}`}
-                        onClick={() => setTocOpen(false)}
-                        className={`-ml-px block border-l-2 py-1 pl-4 text-[13px] leading-snug transition-all duration-200 ${
-                          isActive
-                            ? "border-primary font-medium text-foreground"
-                            : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
-                        }`}
-                      >
-                        {s.label}
-                      </a>
-                    </li>
-                  );
-                })}
-              </ul>
-            </nav>
-          </aside>
+function TocSidebar({
+  tocOpen,
+  setTocOpen,
+  activeSection,
+}: {
+  tocOpen: boolean;
+  setTocOpen: (open: boolean) => void;
+  activeSection: string | undefined;
+}) {
+  return (
+    <aside className={`${tocOpen ? "block" : "hidden"} lg:block print:hidden`}>
+      <nav className="sticky top-24">
+        <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Contents
+        </p>
+        <ul className="relative space-y-0.5 border-l border-border">
+          {sections.map((s) => {
+            const isActive = activeSection === s.id;
+            return (
+              <li key={s.id}>
+                <a
+                  href={`#${s.id}`}
+                  onClick={() => setTocOpen(false)}
+                  className={`-ml-px block border-l-2 py-1 pl-4 text-[13px] leading-snug transition-all duration-200 ${
+                    isActive
+                      ? "border-primary font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
+                  }`}
+                >
+                  {s.label}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    </aside>
+  );
+}
 
-          {/* Main content */}
-          <div className="paper-surface">
-          <article className="prose-paper">
-            {/* Title block */}
+function TitleBlock() {
+  return (
             <div className="mb-14 pb-10" style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
               <p className="mb-3 font-sans text-xs uppercase tracking-[0.12em]" style={{ color: "#999" }}>
                 Whitepaper
@@ -255,8 +278,11 @@ export function WhitepaperContent() {
                 <span>February 2026</span>
               </div>
             </div>
+  );
+}
 
-            {/* --- Abstract --- */}
+function AbstractSection() {
+  return (
             <section id="abstract" className="paper-abstract">
               <h2>Abstract</h2>
               <p>
@@ -275,8 +301,11 @@ export function WhitepaperContent() {
                 federated identity.
               </p>
             </section>
+  );
+}
 
-            {/* --- 1. Introduction --- */}
+function IntroductionSection() {
+  return (
             <section id="introduction">
               <h2>1. Introduction</h2>
               <p>
@@ -318,8 +347,11 @@ export function WhitepaperContent() {
                 architecture that makes this possible and the vision it enables.
               </p>
             </section>
+  );
+}
 
-            {/* --- 2. Related Work --- */}
+function RelatedWorkSection() {
+  return (
             <section id="related-work">
               <h2>2. Related Work</h2>
 
@@ -395,8 +427,11 @@ export function WhitepaperContent() {
                 improvements.
               </p>
             </section>
+  );
+}
 
-            {/* --- 3. Architecture --- */}
+function ArchitectureSection() {
+  return (
             <section id="architecture">
               <h2>3. Architecture</h2>
 
@@ -539,8 +574,11 @@ export function WhitepaperContent() {
                 created by the kernel itself, making the system self-expanding.
               </p>
             </section>
+  );
+}
 
-            {/* --- 4. Novel Paradigms --- */}
+function NovelParadigmsSection() {
+  return (
             <section id="novel-paradigms">
               <h2>4. Novel Computing Paradigms</h2>
               <div className="paper-insight">
@@ -626,8 +664,11 @@ export function WhitepaperContent() {
                 first-class citizens.
               </p>
             </section>
+  );
+}
 
-            {/* --- 5. Implementation --- */}
+function ImplementationSection() {
+  return (
             <section id="implementation">
               <h2>5. Implementation</h2>
 
@@ -694,8 +735,11 @@ export function WhitepaperContent() {
                 definitions.
               </p>
             </section>
+  );
+}
 
-            {/* --- 6. Web 4 Vision --- */}
+function Web4VisionSection() {
+  return (
             <section id="web4-vision">
               <h2>6. The Web 4 Vision</h2>
               <p>
@@ -768,8 +812,11 @@ export function WhitepaperContent() {
                 shared between developer and platform.
               </p>
             </section>
+  );
+}
 
-            {/* --- 7. Evaluation --- */}
+function EvaluationSection() {
+  return (
             <section id="evaluation">
               <h2>7. Evaluation</h2>
 
@@ -847,8 +894,11 @@ export function WhitepaperContent() {
                 is a natural next step.
               </p>
             </section>
+  );
+}
 
-            {/* --- 8. Conclusion --- */}
+function ConclusionSection() {
+  return (
             <section id="conclusion">
               <h2>8. Conclusion</h2>
               <p>
@@ -878,8 +928,11 @@ export function WhitepaperContent() {
                 </p>
               </div>
             </section>
+  );
+}
 
-            {/* --- References --- */}
+function ReferencesSection() {
+  return (
             <section id="references">
               <h2>References</h2>
               <ol className="ref-list text-sm">
@@ -888,23 +941,67 @@ export function WhitepaperContent() {
                 ))}
               </ol>
             </section>
+  );
+}
 
-            {/* Back to top */}
+function BackToTop() {
+  return (
             <div className="mt-16 pt-8 print:hidden" style={{ borderTop: "1px solid rgba(0,0,0,0.08)" }}>
               <div className="flex items-center justify-between font-sans text-sm" style={{ color: "#999" }}>
-                <a href="/" className="hover:text-foreground transition-colors">
+                <Link href="/" className="hover:text-foreground transition-colors">
                   matrix-os.com
-                </a>
-                <a
-                  href="#"
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                   className="flex items-center gap-1.5 hover:text-foreground transition-colors"
                 >
                   <ChevronUpIcon className="size-3.5" />
                   Back to top
-                </a>
+                </button>
               </div>
             </div>
-          </article>
+  );
+}
+
+function ArticleBody() {
+  return (
+    <article className="prose-paper">
+      <TitleBlock />
+      <AbstractSection />
+      <IntroductionSection />
+      <RelatedWorkSection />
+      <ArchitectureSection />
+      <NovelParadigmsSection />
+      <ImplementationSection />
+      <Web4VisionSection />
+      <EvaluationSection />
+      <ConclusionSection />
+      <ReferencesSection />
+      <BackToTop />
+    </article>
+  );
+}
+
+export function WhitepaperContent() {
+  const [tocOpen, setTocOpen] = useState(false);
+  const activeSection = useActiveSection(sectionIds);
+
+  return (
+    <>
+      <TopBar tocOpen={tocOpen} setTocOpen={setTocOpen} />
+
+      <div className="mx-auto max-w-7xl px-4 pt-24 pb-20">
+        <div className="lg:grid lg:grid-cols-[200px_1fr] lg:gap-10">
+          <TocSidebar
+            tocOpen={tocOpen}
+            setTocOpen={setTocOpen}
+            activeSection={activeSection}
+          />
+
+          {/* Main content */}
+          <div className="paper-surface">
+            <ArticleBody />
           </div>
         </div>
       </div>

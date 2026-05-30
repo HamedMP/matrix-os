@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import { SignUp } from "@clerk/nextjs";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
 import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
 import { getSignupFallbackRedirectUrl } from "@/inngest/provision-status";
+
+export const metadata: Metadata = {
+  title: "Sign up",
+  description: "Create your Matrix OS account to get started with your cloud computer.",
+};
 
 export default function SignUpPage() {
   return (

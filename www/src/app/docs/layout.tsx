@@ -1,5 +1,6 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { RootProvider } from 'fumadocs-ui/provider/next';
+import Image from 'next/image';
 import { source } from '@/lib/source';
 import { baseOptions } from '@/lib/layout.shared';
 import type { ReactNode } from 'react';
@@ -22,8 +23,13 @@ export default function Layout({ children }: { children: ReactNode }) {
           ...base.nav,
           title: (
             <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src='/rabbit.svg' alt='Matrix OS' className='size-5 rounded' />
+              <Image
+                src='/rabbit.svg'
+                alt='Matrix OS'
+                width={20}
+                height={20}
+                className='size-5 rounded'
+              />
               <span className='font-medium max-md:hidden'>Matrix OS</span>
             </>
           ),

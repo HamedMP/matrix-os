@@ -1,16 +1,24 @@
 'use client';
 
-import { use, useEffect, useId, useState } from 'react';
+import { use, useId, useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 
+// Client-only mount gate: mermaid renders via a dynamic import + theme read that have no
+// server equivalent. useSyncExternalStore returns false during SSR/hydration (matching the
+// server) and true on the client afterward, so the chart only renders client-side without a
+// setState-in-effect cascade or hydration flicker.
+const subscribeNoop = () => () => {};
+const getMountedSnapshot = () => true;
+const getMountedServerSnapshot = () => false;
+
 export function Mermaid({ chart }: { chart: string }) {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    subscribeNoop,
+    getMountedSnapshot,
+    getMountedServerSnapshot,
+  );
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return;
+  if (!mounted) return null;
   return <MermaidContent chart={chart} />;
 }
 
@@ -28,6 +36,7 @@ function cachePromise<T>(key: string, setPromise: () => Promise<T>): Promise<T> 
 function MermaidContent({ chart }: { chart: string }) {
   const id = useId();
   const { resolvedTheme } = useTheme();
+  // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading mermaid this way is intentional code-splitting, not a defect.
   const { default: mermaid } = use(cachePromise('mermaid', () => import('mermaid')));
 
   mermaid.initialize({
@@ -51,6 +60,7 @@ function MermaidContent({ chart }: { chart: string }) {
       ref={(container) => {
         if (container) bindFunctions?.(container);
       }}
+      // react-doctor-disable-next-line react-doctor/no-danger -- svg is produced by the mermaid library from static MDX chart definitions (not user input); rendering it requires raw HTML injection and there is no React-children equivalent.
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

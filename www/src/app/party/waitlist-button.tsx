@@ -1,22 +1,24 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect, useEffectEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { MailIcon, XIcon } from "lucide-react";
 
 export function WaitlistButton() {
   const [open, setOpen] = useState(false);
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = () => setOpen(false);
+
+  const onEscape = useEffectEvent(() => close());
 
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape") onEscape();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [open, close]);
+  }, [open]);
 
   useEffect(() => {
     if (open) {
@@ -60,6 +62,7 @@ export function WaitlistButton() {
           <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
             <span className="text-sm font-semibold">Join the waitlist</span>
             <button
+              type="button"
               onClick={close}
               className="size-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
             >
@@ -68,6 +71,7 @@ export function WaitlistButton() {
           </div>
           {/* Tally embed — uses their official widget script */}
           <div className="flex-1 relative">
+            {/* react-doctor-disable-next-line react-doctor/iframe-missing-sandbox -- trusted Tally embed needs both allow-scripts and allow-same-origin to run the hosted form */}
             <iframe
               data-tally-src="https://tally.so/r/rj6pl5?formEventsForwarding=1"
               width="100%"
@@ -76,6 +80,7 @@ export function WaitlistButton() {
               marginHeight={0}
               marginWidth={0}
               title="Matrix Signup"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
               className="absolute inset-0 border-0"
             />
           </div>

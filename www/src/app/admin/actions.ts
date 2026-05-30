@@ -20,6 +20,7 @@ async function requireAdmin() {
   if (metadata?.role !== "admin") throw new Error("Not authorized");
 }
 
+// react-doctor-disable-next-line react-doctor/server-auth-actions -- authorized via requireAdmin() (currentUser + admin-role check) on the first line
 export async function fetchContainers() {
   await requireAdmin();
   try {
@@ -34,6 +35,7 @@ export async function fetchContainers() {
   }
 }
 
+// react-doctor-disable-next-line react-doctor/server-auth-actions -- authorized via requireAdmin() (currentUser + admin-role check) on the first line
 export async function containerAction(method: string, path: string) {
   await requireAdmin();
   try {

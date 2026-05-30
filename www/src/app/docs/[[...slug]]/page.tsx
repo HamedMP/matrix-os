@@ -8,6 +8,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { Mermaid } from '@/components/mdx/mermaid';
 import { source, getPageImage } from '@/lib/source';
 import { notFound } from 'next/navigation';
+import { after } from 'next/server';
 import type { Metadata } from 'next';
 import { Feedback } from '@/components/feedback/client';
 import { LLMCopyButton, ViewOptions } from '@/components/page-actions';
@@ -15,12 +16,15 @@ import type { PageFeedback } from '@/components/feedback/schema';
 
 async function onFeedback(feedback: PageFeedback) {
   'use server';
-  console.log(
-    '[docs-feedback]',
-    feedback.opinion,
-    feedback.url,
-    feedback.message,
-  );
+  after(() => {
+    // react-doctor-disable-next-line react-doctor/server-after-nonblocking -- already wrapped in after(); the rule cannot see through the callback closure
+    console.log(
+      '[docs-feedback]',
+      feedback.opinion,
+      feedback.url,
+      feedback.message,
+    );
+  });
   return {};
 }
 
