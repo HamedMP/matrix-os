@@ -12,7 +12,7 @@ import { WorkspaceCanvas } from "./WorkspaceCanvas";
 import { CanvasGroupRect } from "./CanvasGroup";
 import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
-import { autoArrangeWindows } from "./CanvasToolbar";
+import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { CanvasMinimap } from "./CanvasMinimap";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];

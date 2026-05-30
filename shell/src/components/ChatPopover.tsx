@@ -672,6 +672,7 @@ const ChatInputBar = memo(function ChatInputBar({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           placeholder={busy ? "Queue another message…" : "What do you want to say?"}
+          // react-doctor-disable-next-line react-doctor/no-autofocus -- chat input inside a dialog popover that mounts only when the user opens it; focus is essential so they can type immediately
           autoFocus
           className={cn(
             "flex-1 bg-transparent text-sm text-foreground outline-none",

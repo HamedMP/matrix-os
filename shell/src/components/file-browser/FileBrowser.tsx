@@ -271,6 +271,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
     <div
       ref={containerRef}
       className="flex flex-col h-full outline-none"
+      // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex -- intentional focus target: this container hosts the file browser keyboard shortcut handler (arrows, copy/paste, F2, Enter)
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >

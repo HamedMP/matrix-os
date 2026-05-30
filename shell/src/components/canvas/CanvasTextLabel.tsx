@@ -138,6 +138,7 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
               onKeyDown={onKeyDown}
               className="bg-transparent border-b border-primary text-xl font-bold outline-none min-w-[60px]"
               style={{ color: label.color }}
+              // react-doctor-disable-next-line react-doctor/no-autofocus -- inline label editor mounts only on explicit double-click (not page load); focus is essential so the user can type immediately
               autoFocus
             />
           ) : (

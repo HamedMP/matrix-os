@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { fileToBase64 } from "@/components/ai-elements/attachments-utils";
 
 export interface AttachmentFile {
   file: File;
@@ -33,15 +34,6 @@ function isTextFile(file: File): boolean {
   );
 }
 
-export function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 export type AttachmentPreviewProps = HTMLAttributes<HTMLDivElement> & {
   file: File;
   preview?: string;
@@ -57,6 +49,7 @@ export function AttachmentPreview({ file, preview, className, ...props }: Attach
         )}
         {...props}
       >
+        {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- blob: object URL from URL.createObjectURL(local attachment); next/image cannot optimize ephemeral client object URLs */}
         <img
           src={preview}
           alt={file.name}

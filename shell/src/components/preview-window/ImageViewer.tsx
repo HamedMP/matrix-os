@@ -53,6 +53,7 @@ export function ImageViewer({ path }: ImageViewerProps) {
           backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px",
         }}
       >
+        {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs */}
         <img
           src={`${GATEWAY_URL}/files/${path}`}
           alt={path.split("/").pop()}

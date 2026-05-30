@@ -1,6 +1,8 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
+import Image from "next/image";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -9,6 +11,46 @@ interface BeforeInstallPromptEvent extends Event {
 
 const DISMISS_KEY = "matrix-os:pwa-install-dismissed";
 const DISMISS_DAYS = 14;
+
+const CONTAINER_STYLE: CSSProperties = {
+  position: "fixed",
+  left: "50%",
+  bottom: "max(env(safe-area-inset-bottom, 0px), 16px)",
+  transform: "translateX(-50%)",
+  zIndex: 9999,
+  width: "min(420px, calc(100vw - 24px))",
+  background: "var(--card, #1c241b)",
+  color: "var(--foreground, #f4ede0)",
+  border: "1px solid var(--border, rgba(244,237,224,0.15))",
+  borderRadius: 14,
+  padding: "12px 14px",
+  boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
+  display: "flex",
+  gap: 12,
+  alignItems: "center",
+};
+
+const INSTALL_BUTTON_STYLE: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  padding: "8px 12px",
+  borderRadius: 8,
+  border: "none",
+  background: "var(--primary, #c2703a)",
+  color: "var(--primary-foreground, #fff)",
+  cursor: "pointer",
+};
+
+const DISMISS_BUTTON_STYLE: CSSProperties = {
+  fontSize: 16,
+  padding: "6px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--border, rgba(244,237,224,0.15))",
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+  opacity: 0.6,
+};
 
 function isDismissed(): boolean {
   if (typeof window === "undefined") return true;
@@ -100,28 +142,9 @@ export function InstallPrompt() {
   if (dismissed || (!deferred && !iosHint)) return null;
 
   return (
-    <div
-      role="dialog"
-      aria-label="Install Matrix OS"
-      style={{
-        position: "fixed",
-        left: "50%",
-        bottom: "max(env(safe-area-inset-bottom, 0px), 16px)",
-        transform: "translateX(-50%)",
-        zIndex: 9999,
-        width: "min(420px, calc(100vw - 24px))",
-        background: "var(--card, #1c241b)",
-        color: "var(--foreground, #f4ede0)",
-        border: "1px solid var(--border, rgba(244,237,224,0.15))",
-        borderRadius: 14,
-        padding: "12px 14px",
-        boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
-        display: "flex",
-        gap: 12,
-        alignItems: "center",
-      }}
-    >
-      <img
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- native <dialog> defaults to display:none and requires imperative show()/showModal(); this is a persistently-rendered positioned banner, so role="dialog" preserves behavior.
+    <div role="dialog" aria-label="Install Matrix OS" style={CONTAINER_STYLE}>
+      <Image
         src="/icon-192.png"
         alt=""
         width={40}
@@ -132,7 +155,7 @@ export function InstallPrompt() {
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
           Install Matrix OS
         </div>
-        <div style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.35 }}>
+        <div style={{ fontSize: 12, opacity: 0.75, lineHeight: 1.35 }}>
           {iosHint
             ? "Tap Share, then \"Add to Home Screen\" to install."
             : "Add to your home screen for a faster, full-screen shell."}
@@ -140,38 +163,11 @@ export function InstallPrompt() {
       </div>
       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
         {deferred && (
-          <button
-            type="button"
-            onClick={() => void install()}
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "none",
-              background: "var(--primary, #c2703a)",
-              color: "var(--primary-foreground, #fff)",
-              cursor: "pointer",
-            }}
-          >
+          <button type="button" onClick={() => void install()} style={INSTALL_BUTTON_STYLE}>
             Install
           </button>
         )}
-        <button
-          type="button"
-          aria-label="Dismiss"
-          onClick={dismiss}
-          style={{
-            fontSize: 16,
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: "1px solid var(--border, rgba(244,237,224,0.15))",
-            background: "transparent",
-            color: "inherit",
-            cursor: "pointer",
-            opacity: 0.6,
-          }}
-        >
+        <button type="button" aria-label="Dismiss" onClick={dismiss} style={DISMISS_BUTTON_STYLE}>
           ×
         </button>
       </div>

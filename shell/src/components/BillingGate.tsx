@@ -223,10 +223,10 @@ export function BillingGate({ children }: { children: ReactNode }) {
   if (!isLoaded || billingChecking) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
-        <div className="flex items-center gap-2 text-sm" role="status">
+        <output className="flex items-center gap-2 text-sm">
           <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Loading billing status
-        </div>
+        </output>
       </main>
     );
   }
@@ -238,10 +238,10 @@ export function BillingGate({ children }: { children: ReactNode }) {
   if (!hasBillingAccess && checkoutReturnRequested && !checkoutAttemptChecked) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
-        <div className="flex items-center gap-2 text-sm" role="status">
+        <output className="flex items-center gap-2 text-sm">
           <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Checking billing status...
-        </div>
+        </output>
       </main>
     );
   }

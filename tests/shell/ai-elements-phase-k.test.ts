@@ -53,7 +53,7 @@ describe("T2101: attachments", () => {
 
   it("fileToBase64 is exported as a function", async () => {
     const mod = await import(
-      "../../shell/src/components/ai-elements/attachments"
+      "../../shell/src/components/ai-elements/attachments-utils"
     );
     expect(typeof mod.fileToBase64).toBe("function");
   });
@@ -72,12 +72,15 @@ describe("T2102: reasoning display", () => {
       "../../shell/src/components/ai-elements/reasoning"
     );
     expect(mod.Reasoning).toBeDefined();
-    expect(mod.extractThinking).toBeDefined();
+    const utils = await import(
+      "../../shell/src/components/ai-elements/reasoning-utils"
+    );
+    expect(utils.extractThinking).toBeDefined();
   });
 
   it("extractThinking extracts thinking block from content", async () => {
     const { extractThinking } = await import(
-      "../../shell/src/components/ai-elements/reasoning"
+      "../../shell/src/components/ai-elements/reasoning-utils"
     );
 
     const result = extractThinking(
@@ -89,7 +92,7 @@ describe("T2102: reasoning display", () => {
 
   it("extractThinking returns empty thinking for no block", async () => {
     const { extractThinking } = await import(
-      "../../shell/src/components/ai-elements/reasoning"
+      "../../shell/src/components/ai-elements/reasoning-utils"
     );
 
     const result = extractThinking("Just a regular message.");
@@ -99,7 +102,7 @@ describe("T2102: reasoning display", () => {
 
   it("extractThinking handles multi-line thinking", async () => {
     const { extractThinking } = await import(
-      "../../shell/src/components/ai-elements/reasoning"
+      "../../shell/src/components/ai-elements/reasoning-utils"
     );
 
     const content = `<thinking>
@@ -116,7 +119,7 @@ The final answer.`;
 
   it("extractThinking only matches at the start of content", async () => {
     const { extractThinking } = await import(
-      "../../shell/src/components/ai-elements/reasoning"
+      "../../shell/src/components/ai-elements/reasoning-utils"
     );
 
     const result = extractThinking(
@@ -137,12 +140,15 @@ describe("T2103: suggestion chips", () => {
     );
     expect(mod.SuggestionChips).toBeDefined();
     expect(mod.SuggestionChip).toBeDefined();
-    expect(mod.DEFAULT_SUGGESTIONS).toBeDefined();
+    const utils = await import(
+      "../../shell/src/components/ai-elements/suggestions-utils"
+    );
+    expect(utils.DEFAULT_SUGGESTIONS).toBeDefined();
   });
 
   it("DEFAULT_SUGGESTIONS has 3 items", async () => {
     const { DEFAULT_SUGGESTIONS } = await import(
-      "../../shell/src/components/ai-elements/suggestions"
+      "../../shell/src/components/ai-elements/suggestions-utils"
     );
     expect(DEFAULT_SUGGESTIONS).toHaveLength(3);
     expect(DEFAULT_SUGGESTIONS).toContain("What can you do?");
@@ -152,7 +158,7 @@ describe("T2103: suggestion chips", () => {
 
   it("parseSuggestions extracts suggestions from comment", async () => {
     const { parseSuggestions } = await import(
-      "../../shell/src/components/ai-elements/suggestions"
+      "../../shell/src/components/ai-elements/suggestions-utils"
     );
 
     const content =
@@ -163,7 +169,7 @@ describe("T2103: suggestion chips", () => {
 
   it("parseSuggestions returns empty array for no comment", async () => {
     const { parseSuggestions } = await import(
-      "../../shell/src/components/ai-elements/suggestions"
+      "../../shell/src/components/ai-elements/suggestions-utils"
     );
 
     const result = parseSuggestions("Just a message.");
@@ -172,7 +178,7 @@ describe("T2103: suggestion chips", () => {
 
   it("parseSuggestions handles malformed JSON gracefully", async () => {
     const { parseSuggestions } = await import(
-      "../../shell/src/components/ai-elements/suggestions"
+      "../../shell/src/components/ai-elements/suggestions-utils"
     );
 
     const result = parseSuggestions("<!-- suggestions: not-json -->");
@@ -181,7 +187,7 @@ describe("T2103: suggestion chips", () => {
 
   it("parseSuggestions filters non-string values", async () => {
     const { parseSuggestions } = await import(
-      "../../shell/src/components/ai-elements/suggestions"
+      "../../shell/src/components/ai-elements/suggestions-utils"
     );
 
     const result = parseSuggestions(
@@ -198,12 +204,15 @@ describe("T2104: plan component", () => {
       "../../shell/src/components/ai-elements/plan"
     );
     expect(mod.Plan).toBeDefined();
-    expect(mod.parsePlan).toBeDefined();
+    const utils = await import(
+      "../../shell/src/components/ai-elements/plan-utils"
+    );
+    expect(utils.parsePlan).toBeDefined();
   });
 
   it("parsePlan extracts plan steps from code block", async () => {
     const { parsePlan } = await import(
-      "../../shell/src/components/ai-elements/plan"
+      "../../shell/src/components/ai-elements/plan-utils"
     );
 
     const content = `Here is the plan:
@@ -227,21 +236,21 @@ Let me start.`;
 
   it("parsePlan returns null for no plan block", async () => {
     const { parsePlan } = await import(
-      "../../shell/src/components/ai-elements/plan"
+      "../../shell/src/components/ai-elements/plan-utils"
     );
     expect(parsePlan("No plan here.")).toBeNull();
   });
 
   it("parsePlan returns null for invalid JSON", async () => {
     const { parsePlan } = await import(
-      "../../shell/src/components/ai-elements/plan"
+      "../../shell/src/components/ai-elements/plan-utils"
     );
     expect(parsePlan("```plan\nnot json\n```")).toBeNull();
   });
 
   it("parsePlan filters invalid step objects", async () => {
     const { parsePlan } = await import(
-      "../../shell/src/components/ai-elements/plan"
+      "../../shell/src/components/ai-elements/plan-utils"
     );
 
     const content =
@@ -260,12 +269,15 @@ describe("T2104: task component", () => {
     );
     expect(mod.Task).toBeDefined();
     expect(mod.TaskList).toBeDefined();
-    expect(mod.parseTask).toBeDefined();
+    const utils = await import(
+      "../../shell/src/components/ai-elements/task-utils"
+    );
+    expect(utils.parseTask).toBeDefined();
   });
 
   it("parseTask extracts task from code block", async () => {
     const { parseTask } = await import(
-      "../../shell/src/components/ai-elements/task"
+      "../../shell/src/components/ai-elements/task-utils"
     );
 
     const content = `Working on it:
@@ -281,21 +293,21 @@ describe("T2104: task component", () => {
 
   it("parseTask returns null for no task block", async () => {
     const { parseTask } = await import(
-      "../../shell/src/components/ai-elements/task"
+      "../../shell/src/components/ai-elements/task-utils"
     );
     expect(parseTask("No task here.")).toBeNull();
   });
 
   it("parseTask returns null for invalid JSON", async () => {
     const { parseTask } = await import(
-      "../../shell/src/components/ai-elements/task"
+      "../../shell/src/components/ai-elements/task-utils"
     );
     expect(parseTask("```task\nnot json\n```")).toBeNull();
   });
 
   it("parseTask returns null for missing required fields", async () => {
     const { parseTask } = await import(
-      "../../shell/src/components/ai-elements/task"
+      "../../shell/src/components/ai-elements/task-utils"
     );
     expect(parseTask('```task\n{"title":"Only title"}\n```')).toBeNull();
     expect(parseTask('```task\n{"status":"pending"}\n```')).toBeNull();

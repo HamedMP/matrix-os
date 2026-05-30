@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isCanonicalShellSessionId,
   terminalWebSocketPathForSession,
-} from "../../shell/src/components/terminal/TerminalPane.js";
+} from "../../shell/src/components/terminal/terminal-session-id.js";
 
 class MockTerminalWebSocket {
   static instances: MockTerminalWebSocket[] = [];

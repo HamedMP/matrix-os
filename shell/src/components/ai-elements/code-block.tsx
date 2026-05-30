@@ -178,7 +178,7 @@ const createRawTokens = (code: string): TokenizedCode => ({
 });
 
 // Synchronous highlight with callback for async results
-export const highlightCode = (
+const highlightCode = (
   code: string,
   language: BundledLanguage,
   // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-callbacks)

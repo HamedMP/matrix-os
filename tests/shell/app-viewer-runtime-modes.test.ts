@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   APP_IFRAME_SANDBOX,
   injectBridgeIntoAppHtml,
-} from "../../shell/src/components/AppViewer.js";
+} from "../../shell/src/components/app-viewer-helpers.js";
 
 // These tests verify the AppViewer decision logic without rendering React components.
 // The actual AppViewer.tsx modification is tested here by verifying the URL construction

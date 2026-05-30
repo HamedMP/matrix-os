@@ -53,6 +53,7 @@ export function QuickLook() {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
+      // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- custom overlay modal with backdrop; native <dialog> would change top-layer/focus semantics
       role="dialog"
       aria-modal="true"
     >
@@ -89,14 +90,17 @@ export function QuickLook() {
 
         <div className="flex-1 overflow-auto p-4 min-h-0">
           {isImage(quickLookPath) ? (
+            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs
             <img
               src={`${GATEWAY_URL}/files/${fullPath}`}
               alt={quickLookPath}
               className="max-w-full max-h-full mx-auto object-contain"
             />
           ) : isAudio(quickLookPath) ? (
+            // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user audio file preview; no caption track exists
             <audio controls className="w-full" src={`${GATEWAY_URL}/files/${fullPath}`} />
           ) : isVideo(quickLookPath) ? (
+            // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user video file preview; no caption track exists
             <video controls className="w-full max-h-96" src={`${GATEWAY_URL}/files/${fullPath}`} />
           ) : content !== null ? (
             <pre className="text-xs font-mono whitespace-pre-wrap break-all">

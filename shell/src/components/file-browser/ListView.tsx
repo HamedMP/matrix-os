@@ -93,7 +93,7 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
     <div className="overflow-auto h-full" role="grid" aria-label="File list">
       <table className="w-full text-sm">
         <thead className="sticky top-0 bg-background border-b">
-          <tr role="row">
+          <tr>
             {(["name", "size", "modified", "type"] as const).map((col) => (
               <th
                 key={col}
@@ -115,7 +115,6 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
             return (
               <tr
                 key={entry.name}
-                role="row"
                 className={cn(
                   "cursor-default hover:bg-accent/50 transition-colors",
                   selected && "bg-accent",
@@ -123,7 +122,7 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
                 onClick={(e) => select(entry.name, e.metaKey || e.ctrlKey)}
                 onDoubleClick={() => handleDoubleClick(entry)}
               >
-                <td className="px-3 py-1 flex items-center gap-2" role="gridcell">
+                <td className="px-3 py-1 flex items-center gap-2">
                   <Icon
                     className={cn(
                       "size-4 shrink-0",
@@ -147,13 +146,13 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
                     <span className="truncate">{entry.name}</span>
                   )}
                 </td>
-                <td className="px-3 py-1 text-muted-foreground" role="gridcell">
+                <td className="px-3 py-1 text-muted-foreground">
                   {entry.type === "file" ? formatSize(entry.size) : `${entry.children ?? "--"} items`}
                 </td>
-                <td className="px-3 py-1 text-muted-foreground" role="gridcell">
+                <td className="px-3 py-1 text-muted-foreground">
                   {formatDate(entry.modified)}
                 </td>
-                <td className="px-3 py-1 text-muted-foreground" role="gridcell">
+                <td className="px-3 py-1 text-muted-foreground">
                   {getTypeLabel(entry)}
                 </td>
               </tr>

@@ -11,10 +11,14 @@ import {
   Message,
   MessageContent,
 } from "@/components/ai-elements/message";
-import { Reasoning, extractThinking } from "@/components/ai-elements/reasoning";
-import { SuggestionChips, DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions";
-import { Plan, parsePlan } from "@/components/ai-elements/plan";
-import { Task, parseTask } from "@/components/ai-elements/task";
+import { Reasoning } from "@/components/ai-elements/reasoning";
+import { extractThinking } from "@/components/ai-elements/reasoning-utils";
+import { SuggestionChips } from "@/components/ai-elements/suggestions";
+import { DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions-utils";
+import { Plan } from "@/components/ai-elements/plan";
+import { parsePlan } from "@/components/ai-elements/plan-utils";
+import { Task } from "@/components/ai-elements/task";
+import { parseTask } from "@/components/ai-elements/task-utils";
 import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Button } from "@/components/ui/button";

@@ -82,13 +82,10 @@ interface SystemReleaseList {
 }
 
 import {
-  normalizeMatrixReleaseTag,
-  isNewer,
   releaseActionLabel,
   severityBadgeStyle,
   resolveSystemUpdateState,
 } from "./system-update-state";
-export { normalizeMatrixReleaseTag, isNewer, releaseActionLabel, severityBadgeStyle, resolveSystemUpdateState };
 
 const RELEASE_CHANNELS = ["stable", "canary", "beta", "dev"] as const;
 type ReleaseChannel = typeof RELEASE_CHANNELS[number];

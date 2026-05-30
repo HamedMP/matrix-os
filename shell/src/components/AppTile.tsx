@@ -42,6 +42,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           }`}
         >
           {showImage ? (
+            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
             <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
           ) : (
             initial
@@ -49,6 +50,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         </div>
         {onTogglePin && (
           <span
+            // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this pin toggle is nested inside the outer tile <button>, and nesting interactive elements is invalid HTML
             role="button"
             onClick={(e) => {
               e.stopPropagation();

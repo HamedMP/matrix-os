@@ -4,12 +4,6 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-export const DEFAULT_SUGGESTIONS = [
-  "What can you do?",
-  "Build me an app",
-  "Show my files",
-];
-
 export type SuggestionChipProps = Omit<HTMLAttributes<HTMLButtonElement>, "onSelect"> & {
   label: string;
   onSelect: (label: string) => void;
@@ -62,6 +56,7 @@ export function SuggestionChips({
         "flex flex-wrap gap-2 justify-center",
         className,
       )}
+      // react-doctor-disable-next-line jsx-a11y/prefer-tag-over-role -- role="group" has no behavior-preserving native tag; the rule's suggested <address> is for contact info and adds italic styling
       role="group"
       aria-label="Suggested messages"
       {...props}
@@ -76,21 +71,4 @@ export function SuggestionChips({
       ))}
     </div>
   );
-}
-
-export function parseSuggestions(content: string): string[] {
-  const match = content.match(
-    /<!-- suggestions: (.*?) -->/,
-  );
-  if (match) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (Array.isArray(parsed)) {
-        return parsed.filter((s): s is string => typeof s === "string");
-      }
-    } catch {
-      // ignore parse errors
-    }
-  }
-  return [];
 }

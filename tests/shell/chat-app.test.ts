@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createHermesConfiguredPrompt } from "../../shell/src/components/ChatApp.js";
+import { createHermesConfiguredPrompt } from "../../shell/src/components/chat-app-hermes.js";
 
 describe("createHermesConfiguredPrompt", () => {
   it("keeps the submitted prompt plain for the default Hermes configuration", () => {

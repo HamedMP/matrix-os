@@ -250,7 +250,9 @@ function Scene({
 
   return (
     <mesh ref={circleRef}>
+      {/* react-doctor-disable-next-line react-doctor/no-unknown-property -- valid react-three-fiber prop */}
       <circleGeometry args={[3.5, 64]} />
+      {/* react-doctor-disable-next-line react-doctor/no-unknown-property -- valid react-three-fiber prop */}
       <shaderMaterial
         uniforms={uniforms}
         fragmentShader={fragmentShader}

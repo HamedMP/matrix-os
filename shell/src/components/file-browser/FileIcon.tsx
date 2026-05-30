@@ -52,6 +52,7 @@ export function FileIcon({
         "hover:bg-accent/50 transition-colors",
         selected && "bg-accent ring-1 ring-primary/30",
       )}
+      // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- gridcell in a non-table flex grid (IconView role="grid"); no native HTML element maps to the ARIA gridcell role
       role="gridcell"
       aria-selected={selected}
       onClick={onClick}

@@ -301,6 +301,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         {/* Centered title with icon */}
         <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 relative z-10">
           {iconUrl ? (
+            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
             <img src={iconUrl} alt="" className="size-4 rounded-md object-cover shrink-0" draggable={false} />
           ) : (
             <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
@@ -349,6 +350,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         {/* Left: icon + title */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {iconUrl ? (
+            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
             <img src={iconUrl} alt="" className="size-4 object-cover shrink-0" style={{ imageRendering: "auto" }} draggable={false} />
           ) : (
             <span className="size-4 flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -366,7 +368,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
             style={{
               ...win98Bevel,
-              fontSize: "10px",
+              fontSize: "12px",
               lineHeight: 1,
             }}
             onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
@@ -379,7 +381,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
             style={{
               ...win98Bevel,
-              fontSize: "10px",
+              fontSize: "12px",
               lineHeight: 1,
             }}
             onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
@@ -513,6 +515,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         {isPreview ? (
           <>
             {iconUrl ? (
+              // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
               <img src={iconUrl} alt={win.title} className="size-16 object-contain opacity-50" draggable={false} />
             ) : (
               <span className="text-3xl font-semibold text-muted-foreground/20">

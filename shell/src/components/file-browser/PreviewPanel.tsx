@@ -105,6 +105,7 @@ export function PreviewPanel() {
     <div className="w-56 border-l border-border overflow-y-auto p-3 text-sm shrink-0">
       <div className="flex flex-col items-center gap-2 mb-4">
         {isImage(stat.name) && stat.type === "file" ? (
+          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs
           <img
             src={`${GATEWAY_URL}/files/${stat.path}`}
             alt={stat.name}

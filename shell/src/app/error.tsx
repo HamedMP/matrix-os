@@ -1,26 +1,25 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { createErrorId, describeUnknownError } from "../lib/error-boundary-utils";
 import { capturePostHogException, reportClientError } from "../lib/posthog-client";
 
+const LOGO_MARK_STYLE: CSSProperties = {
+  WebkitMaskImage: "url('/matrix-logo.svg')",
+  WebkitMaskPosition: "center",
+  WebkitMaskRepeat: "no-repeat",
+  WebkitMaskSize: "contain",
+  maskImage: "url('/matrix-logo.svg')",
+  maskPosition: "center",
+  maskRepeat: "no-repeat",
+  maskSize: "contain",
+};
+
 function MatrixLogoMark() {
   return (
     <div className="relative flex size-16 items-center justify-center rounded-2xl border border-forest/15 bg-[#fbf7ed] shadow-[0_18px_50px_rgba(83,68,48,0.12)]">
-      <div
-        className="size-9 bg-deep"
-        aria-hidden="true"
-        style={{
-          WebkitMaskImage: "url('/matrix-logo.svg')",
-          WebkitMaskPosition: "center",
-          WebkitMaskRepeat: "no-repeat",
-          WebkitMaskSize: "contain",
-          maskImage: "url('/matrix-logo.svg')",
-          maskPosition: "center",
-          maskRepeat: "no-repeat",
-          maskSize: "contain",
-        }}
-      />
+      <div className="size-9 bg-deep" aria-hidden="true" style={LOGO_MARK_STYLE} />
     </div>
   );
 }
