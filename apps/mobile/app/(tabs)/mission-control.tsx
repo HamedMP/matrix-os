@@ -189,6 +189,13 @@ export default function MissionControlScreen() {
   const [state, dispatch] = useReducer(missionReducer, INITIAL_MISSION_STATE);
   const { tasks, cronJobs, filter, refreshing, selectedTask, showAddForm, newTaskInput } = state;
 
+  // Keep a live ref of tasks so deferred Alert callbacks read the latest list
+  // (the reducer has no functional-update form for the async delete callback).
+  const tasksRef = useRef(tasks);
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
   const fetchData = useCallback(async () => {
     if (!client) return;
     try {
@@ -266,13 +273,6 @@ export default function MissionControlScreen() {
     "in-progress": tasks.filter((t) => t.status === "in-progress").length,
     completed: tasks.filter((t) => t.status === "completed").length,
   }), [tasks]);
-
-  // Keep a live ref of tasks so deferred Alert callbacks read the latest list
-  // (the reducer has no functional-update form for the async delete callback).
-  const tasksRef = useRef(tasks);
-  useEffect(() => {
-    tasksRef.current = tasks;
-  }, [tasks]);
 
   const filteredTasks = filter === "all"
     ? tasks

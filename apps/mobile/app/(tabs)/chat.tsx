@@ -102,6 +102,10 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList<Message>>(null);
   const prevConnectionState = useRef(connectionState);
   const isFocusedRef = useRef(true);
+  // Mirrors whether the head message is a streaming (non-tool) assistant message,
+  // so we can decide synchronously whether an incoming kernel:text starts a NEW
+  // assistant message — the setMessages updater runs deferred and can't drive that.
+  const headIsStreamingAssistantRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -185,13 +189,15 @@ export default function ChatScreen() {
           setBusy(true);
           break;
         case "kernel:text": {
-          let startedNewMessage = false;
+          // Decide synchronously (the updater below runs deferred, so a flag set
+          // inside it would still be false here).
+          const startedNewMessage = !headIsStreamingAssistantRef.current;
+          headIsStreamingAssistantRef.current = true;
           setMessages((prev) => {
             const last = prev[0];
             if (last?.role === "assistant" && !last.tool) {
               return [{ ...last, content: last.content + msg.text }, ...prev.slice(1)];
             }
-            startedNewMessage = true;
             return [
               { id: nextId(), role: "assistant", content: msg.text, timestamp: Date.now() },
               ...prev,
@@ -203,6 +209,7 @@ export default function ChatScreen() {
           break;
         }
         case "kernel:tool_start":
+          headIsStreamingAssistantRef.current = false;
           setMessages((prev) => [
             {
               id: nextId(),
@@ -229,6 +236,7 @@ export default function ChatScreen() {
           break;
         case "kernel:error":
           setBusy(false);
+          headIsStreamingAssistantRef.current = false;
           setMessages((prev) => [
             {
               id: nextId(),
@@ -255,6 +263,9 @@ export default function ChatScreen() {
         content: trimmed,
         timestamp: Date.now(),
       };
+      // A user message becomes the new head, so the next assistant token starts
+      // a fresh assistant message.
+      headIsStreamingAssistantRef.current = false;
       setMessages((prev) => [userMsg, ...prev]);
 
       const sent = client.sendMessage(trimmed, sessionIdRef.current);
