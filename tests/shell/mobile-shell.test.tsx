@@ -13,6 +13,22 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: () => <div data-testid="terminal-app" />,
 }));
 
+vi.mock("@clerk/nextjs", () => ({
+  PricingTable: () => <div data-testid="pricing-table" />,
+  useAuth: () => ({
+    isLoaded: true,
+    isSignedIn: true,
+    has: () => false,
+  }),
+  UserButton: Object.assign(
+    ({ children }: { children?: React.ReactNode }) => <div data-testid="clerk-user-button">{children}</div>,
+    {
+      MenuItems: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+      Link: ({ href, label }: { href: string; label: string; labelIcon?: React.ReactElement }) => <a href={href}>{label}</a>,
+    },
+  ),
+}));
+
 vi.mock("@/hooks/useTheme", () => ({
   DEFAULT_THEME: {
     name: "test",
