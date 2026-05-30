@@ -222,6 +222,7 @@ function CheckoutPanel({
   telemetryProperties: BillingTelemetryProperties;
 }) {
   const checkoutTelemetryKey = `${redirectUrl ? "redirect" : "pending"}:${shouldRenderClerkPricing ? "clerk" : "fallback"}`;
+  const redirectUrlRef = useRef(redirectUrl);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
   useEffect(() => {
@@ -229,15 +230,20 @@ function CheckoutPanel({
   }, [telemetryProperties]);
 
   useEffect(() => {
+    redirectUrlRef.current = redirectUrl;
+  }, [redirectUrl]);
+
+  useEffect(() => {
+    const currentRedirectUrl = redirectUrlRef.current;
     captureBillingTelemetry(
-      redirectUrl && shouldRenderClerkPricing
+      currentRedirectUrl && shouldRenderClerkPricing
         ? "checkout_pricing_table_available"
-        : redirectUrl
+        : currentRedirectUrl
           ? "checkout_local_preview_unavailable"
           : "checkout_redirect_pending",
       telemetryPropertiesRef.current,
     );
-  }, [checkoutTelemetryKey, redirectUrl]);
+  }, [checkoutTelemetryKey]);
 
   return (
     <div

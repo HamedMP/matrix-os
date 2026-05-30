@@ -2,13 +2,13 @@
 
 import posthog from "posthog-js";
 import {
+  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
 
 type ClientProperties = Record<string, string | number | boolean | undefined>;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
-type PostHogLoadState = typeof posthog & { __loaded?: boolean };
 
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
@@ -17,7 +17,6 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest",
 });
 let initialized = false;
-const posthogClient = posthog as PostHogLoadState;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
@@ -40,10 +39,14 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  if (initialized || posthogClient.__loaded) {
-    initialized = true;
-    return;
-  }
+  initializeWwwPostHog(getPostHogVisitorCountry(), currentConfig);
+}
+
+export function initializeWwwPostHog(
+  visitorCountry?: string | null,
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig || initialized) return;
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
   posthog.init(currentConfig.token, {
     ...(apiHost ? { api_host: apiHost } : {}),
@@ -51,8 +54,14 @@ function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
     defaults: "2026-01-30",
     capture_exceptions: true,
     debug: process.env.NODE_ENV === "development",
+    ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);
   initialized = true;
+}
+
+function getPostHogVisitorCountry(): string | null {
+  if (typeof document === "undefined") return null;
+  return document.documentElement.dataset.posthogVisitorCountry ?? null;
 }
 
 function sanitizeProperties(properties: ClientProperties): Record<string, string | number | boolean> {

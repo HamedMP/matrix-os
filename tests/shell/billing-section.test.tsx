@@ -30,6 +30,7 @@ vi.mock("@clerk/nextjs", () => ({
       data-redirect={props.newSubscriptionRedirectUrl}
       data-drawer-backdrop-z={props.checkoutProps?.appearance?.elements?.drawerBackdrop?.zIndex}
       data-drawer-root-z={props.checkoutProps?.appearance?.elements?.drawerRoot?.zIndex}
+      data-drawer-content-z={props.checkoutProps?.appearance?.elements?.drawerContent?.zIndex}
       data-modal-backdrop-z={props.checkoutProps?.appearance?.elements?.modalBackdrop?.zIndex}
       data-modal-content-z={props.checkoutProps?.appearance?.elements?.modalContent?.zIndex}
       data-testid="pricing-table"
@@ -81,6 +82,9 @@ describe("BillingSection", () => {
       "10000",
     );
     expect(screen.getByTestId("pricing-table").getAttribute("data-drawer-root-z")).toBe(
+      "10001",
+    );
+    expect(screen.getByTestId("pricing-table").getAttribute("data-drawer-content-z")).toBe(
       "10001",
     );
     expect(screen.getByTestId("pricing-table").getAttribute("data-modal-backdrop-z")).toBe(

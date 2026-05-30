@@ -2,6 +2,7 @@
 
 import posthog from "posthog-js";
 import {
+  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
@@ -12,7 +13,6 @@ type PostHogLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 type PostHogWithLogger = typeof posthog & {
   logger?: Partial<Record<PostHogLogLevel, (message: string, properties?: Record<string, string | number | boolean>) => void>>;
 };
-type PostHogLoadState = typeof posthog & { __loaded?: boolean };
 
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
@@ -21,7 +21,6 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST,
 });
 let initialized = false;
-const posthogClient = posthog as PostHogLoadState;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
@@ -68,12 +67,18 @@ export function capturePostHogLog(
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  if (initialized || posthogClient.__loaded) {
-    initialized = true;
-    return;
-  }
+  initializeShellPostHog(getPostHogVisitorCountry(), currentConfig);
+}
+
+export function initializeShellPostHog(
+  visitorCountry?: string | null,
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig || initialized) return;
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: false });
   posthog.init(currentConfig.token, {
+    // Shell has no local PostHog /ingest proxy, so an unset api_host lets
+    // posthog-js use its default endpoint.
     ...(apiHost ? { api_host: apiHost } : {}),
     ui_host: currentConfig.uiHost,
     defaults: "2026-01-30",
@@ -85,8 +90,14 @@ function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
       environment: process.env.NODE_ENV,
       serviceVersion: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
     },
+    ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);
   initialized = true;
+}
+
+function getPostHogVisitorCountry(): string | null {
+  if (typeof document === "undefined") return null;
+  return document.documentElement.dataset.posthogVisitorCountry ?? null;
 }
 
 function sanitizeProperties(properties: ClientProperties): Record<string, string | number | boolean> {
