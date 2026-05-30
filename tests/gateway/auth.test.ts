@@ -265,6 +265,16 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("allows internal upgrade requests to reach the route-scoped upgrade token check", async () => {
+    const mw = authMiddleware(undefined);
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/internal/upgrade", "Bearer upgrade-token", undefined, "10.77.77.77"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("rate-limits integrations webhook separately from auth failures", async () => {
     // The integrations webhook limiter is more permissive (120/min) than the
     // failed-auth limiter (10/min) because legit providers retry aggressively.

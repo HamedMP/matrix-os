@@ -24,6 +24,14 @@ handle)`. That is fail-closed, but old VPSes can drift if they were provisioned
 with a previous secret or token format. The outbound agent fixes this by letting
 the VPS initiate trust refreshes and receive token-rotation commands.
 
+Provisioning must also write the same per-host token to `MATRIX_AUTH_TOKEN`.
+Older gateway bundles mounted global bearer auth before `/api/internal/upgrade`;
+without `MATRIX_AUTH_TOKEN`, the request was rejected before the route-specific
+`UPGRADE_TOKEN` check could run. Current gateway auth explicitly lets
+`/api/internal/upgrade` reach its route-scoped token verifier, but the host env
+must still keep `UPGRADE_TOKEN`, `MATRIX_AUTH_TOKEN`, and
+`MATRIX_CODE_PROXY_TOKEN` populated and aligned.
+
 ## Standard Release Flow
 
 1. Merge to `main` and wait for the `Host Bundle Release` workflow.
@@ -98,10 +106,15 @@ release probes and upgrade triggers with `401`, or times out entirely.
 3. If both fail, use break-glass SSH:
 
    ```bash
+   ssh root@<vps-ip> 'grep -E "^(MATRIX_HANDLE|UPGRADE_TOKEN|MATRIX_AUTH_TOKEN|MATRIX_CODE_PROXY_TOKEN)=" /opt/matrix/env/host.env'
    ssh matrix@<vps-ip> 'sudo -n /opt/matrix/bin/matrix-update stable'
    ssh matrix@<vps-ip> 'cat /opt/matrix/release.json'
    ssh matrix@<vps-ip> 'systemctl is-active matrix-gateway matrix-shell matrix-sync-agent'
    ```
+
+   If `UPGRADE_TOKEN` exists but `MATRIX_AUTH_TOKEN` is missing on an older
+   bundle, repair the host env by setting `MATRIX_AUTH_TOKEN` to the same
+   per-host token value, restart `matrix-gateway`, and re-run the inbound deploy.
 
 4. If SSH is unavailable, treat the VPS as unmanaged drift. Repair requires
    Hetzner console/rescue access or reprovision/recover through backup restore.

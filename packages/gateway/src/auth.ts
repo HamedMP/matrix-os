@@ -84,6 +84,11 @@ const APP_IFRAME_PREFIXES = ["/apps/"];
 const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
+// These endpoints own bearer validation in their route handlers because they
+// use service-specific tokens instead of the user/session MATRIX_AUTH_TOKEN.
+const ROUTE_SCOPED_BEARER_PATHS = [
+  "/api/internal/upgrade",
+];
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
@@ -184,6 +189,14 @@ export function authMiddleware(
     if (HMAC_WEBHOOK_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       const ip = getClientIp(c);
       if (!webhookRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    if (ROUTE_SCOPED_BEARER_PATHS.some((p) => normalizedPath === p)) {
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);
