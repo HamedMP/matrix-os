@@ -1244,6 +1244,19 @@ export async function getBillingCustomerByClerkUserId(
   return row ? mapBillingCustomer(row) : undefined;
 }
 
+export async function getBillingCustomerByStripeCustomerId(
+  db: PlatformDB,
+  stripeCustomerId: string,
+): Promise<BillingCustomerRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_customers')
+    .selectAll()
+    .where('stripe_customer_id', '=', stripeCustomerId)
+    .executeTakeFirst();
+  return row ? mapBillingCustomer(row) : undefined;
+}
+
 export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
   await db.ready;
   const row = toBillingEntitlementRow(record);
