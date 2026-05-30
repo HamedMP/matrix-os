@@ -27,10 +27,15 @@ export async function fetchContainers() {
     const res = await fetch(`${PLATFORM_API_URL}/containers`, {
       cache: "no-store",
       headers: authHeaders(),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return [];
     return await res.json();
-  } catch {
+  } catch (err: unknown) {
+    console.error(
+      "[admin] fetchContainers request failed:",
+      err instanceof Error ? err.message : err,
+    );
     return [];
   }
 }
@@ -42,9 +47,14 @@ export async function containerAction(method: string, path: string) {
     const res = await fetch(`${PLATFORM_API_URL}${path}`, {
       method,
       headers: authHeaders(),
+      signal: AbortSignal.timeout(10000),
     });
     return { ok: res.ok, status: res.status };
-  } catch {
+  } catch (err: unknown) {
+    console.error(
+      "[admin] containerAction request failed:",
+      err instanceof Error ? err.message : err,
+    );
     return { ok: false, status: 500 };
   }
 }

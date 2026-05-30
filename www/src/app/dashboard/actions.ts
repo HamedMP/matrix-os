@@ -19,11 +19,21 @@ export async function provisionInstance(): Promise<{ error?: string }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
 
-  const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ handle, clerkUserId: user.id }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ handle, clerkUserId: user.id }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err: unknown) {
+    console.error(
+      "[dashboard] provision request failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return { error: "Provisioning is temporarily unavailable. Please try again." };
+  }
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -82,10 +92,20 @@ export async function upgradeContainer(): Promise<{ error?: string }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
 
-  const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}/upgrade`, {
-    method: "POST",
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${PLATFORM_API_URL}/containers/${handle}/upgrade`, {
+      method: "POST",
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err: unknown) {
+    console.error(
+      "[dashboard] upgrade request failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return { error: "Upgrade is temporarily unavailable. Please try again." };
+  }
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

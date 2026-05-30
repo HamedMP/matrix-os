@@ -22,14 +22,28 @@ export function Mermaid({ chart }: { chart: string }) {
   return <MermaidContent chart={chart} />;
 }
 
+// Bounded LRU cache (insertion-order Map): caps memory so a page with many
+// distinct charts/themes can't grow the cache without bound.
+const CACHE_MAX_ENTRIES = 100;
 const cache = new Map<string, Promise<unknown>>();
 
 function cachePromise<T>(key: string, setPromise: () => Promise<T>): Promise<T> {
   const cached = cache.get(key);
-  if (cached) return cached as Promise<T>;
+  if (cached) {
+    // Refresh recency: re-insert so the most-recently used key is last.
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached as Promise<T>;
+  }
 
   const promise = setPromise();
   cache.set(key, promise);
+  // Evict least-recently-used entries beyond the cap.
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
   return promise;
 }
 
