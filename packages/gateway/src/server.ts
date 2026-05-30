@@ -199,6 +199,11 @@ import {
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
+import {
+  CLIENT_ERROR_LOG_BODY_LIMIT,
+  ClientErrorReportSchema,
+  writeClientErrorReport,
+} from "./client-error-log.js";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -2739,6 +2744,7 @@ export async function createGateway(config: GatewayConfig) {
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
+  const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
   app.route("/", createWorkspaceRoutes({
     homePath,
     zellijRuntime: workspaceZellijRuntime,
@@ -3848,6 +3854,31 @@ export async function createGateway(config: GatewayConfig) {
     }
     pushAdapter.removeToken(body.token);
     return c.json({ ok: true });
+  });
+
+  app.post("/api/client-errors", clientErrorBodyLimit, async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[client-error-log] Failed to parse client error report:", err);
+      }
+      return c.json({ error: "Invalid client error report" }, 400);
+    }
+
+    const parsed = ClientErrorReportSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid client error report" }, 400);
+    }
+
+    try {
+      await writeClientErrorReport(homePath, parsed.data);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      console.warn("[client-error-log] Failed to persist client error report:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Unable to record client error" }, 500);
+    }
   });
 
   // T978-T979: Settings API routes

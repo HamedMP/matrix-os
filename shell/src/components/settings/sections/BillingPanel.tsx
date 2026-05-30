@@ -119,7 +119,13 @@ function CheckoutPanel({
         },
         body: JSON.stringify({ planSlug, interval: billingInterval }),
       });
-      const body = (await response.json().catch(() => null)) as { url?: string } | null;
+      const body = (await response.json().catch((err: unknown) => {
+        captureBillingTelemetry("checkout_response_parse_error", {
+          ...telemetryPropertiesRef.current,
+          error_kind: err instanceof Error ? err.name : typeof err,
+        });
+        return null;
+      })) as { url?: string } | null;
       if (!response.ok || !body?.url) {
         throw new Error("checkout_unavailable");
       }
@@ -226,7 +232,13 @@ function BillingPortalButton({
         headers: { accept: "application/json" },
         signal: controller.signal,
       });
-      const body = (await response.json().catch(() => null)) as { url?: string } | null;
+      const body = (await response.json().catch((err: unknown) => {
+        capturePostHogLog("warn", "billing portal_response_parse_error", {
+          source: "settings-billing",
+          error_kind: err instanceof Error ? err.name : typeof err,
+        });
+        return null;
+      })) as { url?: string } | null;
       if (!response.ok || !body?.url) {
         throw new Error("portal_unavailable");
       }

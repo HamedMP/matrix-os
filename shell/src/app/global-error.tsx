@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createErrorId, describeUnknownError } from "../lib/error-boundary-utils";
-import { capturePostHogException } from "../lib/posthog-client";
+import { capturePostHogException, reportClientError } from "../lib/posthog-client";
 
 export default function GlobalError({
   error,
@@ -16,6 +16,11 @@ export default function GlobalError({
 
   useEffect(() => {
     capturePostHogException(error, {
+      source: "shell-global-error-boundary",
+      digest: error.digest,
+      errorId,
+    });
+    reportClientError(error, {
       source: "shell-global-error-boundary",
       digest: error.digest,
       errorId,
