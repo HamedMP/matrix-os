@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Caches
+.cache/
+
+# Temporary files
+tmp/
+
+# Logs (regenerated)
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

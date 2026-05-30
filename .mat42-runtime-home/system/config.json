@@ -1,0 +1,73 @@
+{
+  "homePath": "~/matrixos",
+  "kernel": {
+    "model": "claude-opus-4-6",
+    "effort": "high",
+    "maxTurns": 80
+  },
+  "gateway": {
+    "port": 4000
+  },
+  "shell": {
+    "port": 3000
+  },
+  "heartbeat": {
+    "everyMinutes": 30,
+    "activeHours": { "start": "08:00", "end": "22:00" }
+  },
+  "approval": {
+    "enabled": true,
+    "timeout": 30000,
+    "requireApproval": ["Bash:destructive", "Write:system"],
+    "autoApprove": ["Read", "list_tasks", "read_state"]
+  },
+  "voice": {
+    "enabled": true,
+    "tts": {
+      "provider": "auto"
+    },
+    "stt": {
+      "provider": "whisper"
+    },
+    "telephony": {
+      "mode": "managed"
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "brave",
+        "braveApiKey": "${BRAVE_API_KEY}",
+        "perplexityApiKey": "${PERPLEXITY_API_KEY}",
+        "grokApiKey": "${XAI_API_KEY}"
+      },
+      "fetch": {
+        "maxChars": 50000,
+        "cacheTtlMinutes": 15,
+        "firecrawlApiKey": "${FIRECRAWL_API_KEY}"
+      }
+    },
+    "embeddings": {
+      "openai_key": "",
+      "model": "text-embedding-3-small",
+      "dimensions": 256
+    }
+  },
+  "browser": {
+    "enabled": false,
+    "headless": true,
+    "defaultProfile": "default",
+    "timeout": 30000,
+    "idleTimeout": 300000
+  },
+  "channels": {
+    "telegram": { "enabled": false, "token": "", "allowFrom": [] },
+    "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },
+    "discord": { "enabled": false, "token": "", "allowFrom": [] },
+    "slack": { "enabled": false, "botToken": "", "appToken": "", "allowFrom": [] }
+  },
+  "plugins": {
+    "list": [],
+    "configs": {}
+  }
+}

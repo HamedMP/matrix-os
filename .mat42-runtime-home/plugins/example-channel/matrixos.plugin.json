@@ -1,0 +1,13 @@
+{
+  "id": "example-channel",
+  "name": "Example Channel",
+  "version": "0.1.0",
+  "description": "Skeleton for building a channel adapter plugin",
+  "channels": ["example"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "apiKey": { "type": "string" }
+    }
+  }
+}

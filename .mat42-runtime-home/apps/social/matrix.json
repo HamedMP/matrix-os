@@ -1,0 +1,72 @@
+{
+  "name": "Social",
+  "description": "Social network: feed, profiles, follows, posts",
+  "runtime": "vite",
+  "category": "social",
+  "icon": "social",
+  "author": "system",
+  "version": "2.0.0",
+  "permissions": [
+    "network"
+  ],
+  "storage": {
+    "tables": {
+      "posts": {
+        "columns": {
+          "author_id": "text",
+          "content": "text",
+          "type": "text",
+          "media_urls": "text",
+          "app_ref": "text",
+          "parent_id": "text",
+          "likes_count": "integer",
+          "comments_count": "integer"
+        },
+        "indexes": [
+          "author_id",
+          "type",
+          "created_at",
+          "likes_count",
+          "parent_id"
+        ]
+      },
+      "likes": {
+        "columns": {
+          "post_id": "text",
+          "user_id": "text"
+        },
+        "indexes": [
+          "post_id",
+          "user_id"
+        ]
+      },
+      "follows": {
+        "columns": {
+          "follower_id": "text",
+          "followee_id": "text"
+        },
+        "indexes": [
+          "follower_id",
+          "followee_id"
+        ]
+      }
+    }
+  },
+  "slug": "social",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Calculator",
+  "description": "Scientific calculator with history",
+  "runtime": "vite",
+  "category": "utility",
+  "icon": "calculator",
+  "author": "system",
+  "version": "1.0.0",
+  "slug": "calculator",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
+}
