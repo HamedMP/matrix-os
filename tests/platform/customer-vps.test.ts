@@ -18,6 +18,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
+import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import {
   buildCustomerVpsR2Key,
@@ -71,6 +72,27 @@ describe('platform/customer-vps', () => {
     return { service, hetzner, systemStore };
   }
 
+  function activeEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEntitlement {
+    return {
+      clerkUserId: 'user_123',
+      source: 'stripe',
+      planSlug: 'matrix_builder',
+      status: 'active',
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx32',
+      allowedServerTypes: ['cpx22', 'cpx32'],
+      stripeSubscriptionId: 'sub_123',
+      stripePriceId: 'price_builder_monthly',
+      gracePeriodEndsAt: '2026-05-30T00:00:00.000Z',
+      effectiveFrom: '2026-05-01T00:00:00.000Z',
+      effectiveUntil: null,
+      updatedAt: '2026-05-30T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
   it('defaults new customer VPS provisioning to the beta host bundle channel', () => {
     const config = loadCustomerVpsConfig({
       PLATFORM_PUBLIC_URL: 'https://app.matrix-os.com',
@@ -92,6 +114,107 @@ describe('platform/customer-vps', () => {
     const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
+  });
+
+  it('uses the active billing entitlement server type when provisioning new machines', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+    });
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+      serverType: 'cpx32',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+      serverType: 'cpx32',
+    });
+  });
+
+  it('falls back to the first allowed billing server type when the default is missing', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        defaultServerType: '',
+        allowedServerTypes: ['cpx22', 'cpx32'],
+      })),
+    });
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+      serverType: 'cpx22',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+      serverType: 'cpx22',
+    });
+  });
+
+  it('allows provisioning during the three-day billing grace period', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        status: 'past_due',
+        gracePeriodEndsAt: '2026-04-27T00:00:00.000Z',
+      })),
+    });
+
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice' })).resolves.toMatchObject({
+      status: 'provisioning',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+  });
+
+  it('blocks new machine provisioning after billing access expires', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        status: 'past_due',
+        gracePeriodEndsAt: '2026-04-25T23:59:59.000Z',
+      })),
+    });
+
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice' })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
+  it('blocks extra machines beyond the entitlement slot count without deleting existing machines', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 })),
+    });
+
+    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice-tools', runtimeSlot: 'tools' })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+
+    expect(hetzner.createServer).toHaveBeenCalledTimes(1);
+    await expect(getUserMachine(db, primary.machineId)).resolves.toMatchObject({
+      handle: 'alice',
+      deletedAt: null,
+    });
+  });
+
+  it('rejects requested Hetzner server types outside the entitlement catalog', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22'],
+        defaultServerType: 'cpx22',
+      })),
+    });
+
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx52' })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
   });
 
   it('pins channel image versions to the current immutable host bundle release at provision time', async () => {
@@ -567,6 +690,43 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.11',
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
+  });
+
+  it('recovers a legacy machine with no stored server type using the first allowed billing type', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+    ];
+    const hetzner = createMockHetznerClient({
+      createServer: vi
+        .fn()
+        .mockResolvedValueOnce({ id: 123456, status: 'running', publicIPv4: '203.0.113.10' })
+        .mockResolvedValueOnce({ id: 789012, status: 'running', publicIPv4: '203.0.113.11' }),
+    });
+    const { service } = createService({
+      hetzner,
+      systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
+      machineIdFactory: () => machineIds.shift()!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        defaultServerType: '',
+        allowedServerTypes: ['cpx22', 'cpx32'],
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    await updateUserMachine(db, provisioned.machineId, { serverType: null });
+
+    const recovered = await service.recover({ clerkUserId: 'user_123' });
+
+    expect(recovered.status).toBe('recovering');
+    expect(vi.mocked(hetzner.createServer).mock.calls[1]?.[0]).toMatchObject({
+      serverType: 'cpx22',
+    });
   });
 
   it('recovers the requested runtime slot without touching primary', async () => {

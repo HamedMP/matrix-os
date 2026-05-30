@@ -4,6 +4,7 @@ export type CustomerVpsFailureCode =
   | 'provider_timeout'
   | 'r2_unavailable'
   | 'invalid_state'
+  | 'billing_required'
   | 'not_found'
   | 'registration_rejected'
   | 'unknown';

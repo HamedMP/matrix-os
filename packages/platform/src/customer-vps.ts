@@ -9,10 +9,12 @@ import {
   getUserMachine,
   insertUserMachine,
   insertProviderDeletion,
+  listActiveUserMachinesByClerkId,
   listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
   listStaleUserMachines,
+  lockUserMachineProvisioning,
   markProviderDeletionCompleted,
   markProviderDeletionFailed,
   runInPlatformTransaction,
@@ -43,6 +45,10 @@ import type {
   RegisterRequest,
   RecoverRequest,
 } from './customer-vps-schema.js';
+import {
+  getRuntimeAccessDecision,
+  type BillingEntitlement,
+} from './billing.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -120,6 +126,7 @@ export interface CustomerVpsServiceDeps {
   postgresPasswordFactory?: () => string;
   now?: () => Date;
   fetchDispatcher?: import('undici').Dispatcher;
+  resolveBillingEntitlement?: (clerkUserId: string) => Promise<BillingEntitlement | null | undefined>;
 }
 
 const DEFAULT_CLOUD_INIT_TEMPLATE = [
@@ -287,6 +294,65 @@ function buildRecoveryServerName(handle: string, machineId: string): string {
   return `${buildServerName(handle).slice(0, 54)}-${suffix}`;
 }
 
+function billingUpgradeRequired(): CustomerVpsError {
+  return new CustomerVpsError(402, 'billing_required', 'Billing upgrade required');
+}
+
+function resolveDefaultEntitlementServerType(entitlement: BillingEntitlement): string {
+  const allowedServerTypes = entitlement.allowedServerTypes.filter((serverType) => serverType.length > 0);
+  if (entitlement.defaultServerType && allowedServerTypes.includes(entitlement.defaultServerType)) {
+    return entitlement.defaultServerType;
+  }
+  const fallbackServerType = allowedServerTypes[0];
+  if (!fallbackServerType) {
+    throw billingUpgradeRequired();
+  }
+  return fallbackServerType;
+}
+
+async function resolveBillingProvisionContext(
+  deps: CustomerVpsServiceDeps,
+  input: ProvisionRequest,
+  now: Date,
+): Promise<{ entitlement: BillingEntitlement; serverType: string } | null> {
+  if (!deps.resolveBillingEntitlement) {
+    return null;
+  }
+  const entitlement = await deps.resolveBillingEntitlement(input.clerkUserId);
+  const access = getRuntimeAccessDecision(entitlement, now);
+  if (!entitlement || !access.runtimeProxyAllowed) {
+    throw billingUpgradeRequired();
+  }
+  const serverType = input.serverType ?? resolveDefaultEntitlementServerType(entitlement);
+  if (!entitlement.allowedServerTypes.includes(serverType)) {
+    throw billingUpgradeRequired();
+  }
+  return { entitlement, serverType };
+}
+
+async function resolveBillingRecoveryContext(
+  deps: CustomerVpsServiceDeps,
+  clerkUserId: string,
+  existingServerType: string | null,
+  now: Date,
+): Promise<{ serverType: string } | null> {
+  if (!deps.resolveBillingEntitlement) {
+    return null;
+  }
+  const entitlement = await deps.resolveBillingEntitlement(clerkUserId);
+  const access = getRuntimeAccessDecision(entitlement, now);
+  if (!entitlement || !access.runtimeProxyAllowed) {
+    throw billingUpgradeRequired();
+  }
+  const serverType = existingServerType && entitlement.allowedServerTypes.includes(existingServerType)
+    ? existingServerType
+    : resolveDefaultEntitlementServerType(entitlement);
+  if (!entitlement.allowedServerTypes.includes(serverType)) {
+    throw billingUpgradeRequired();
+  }
+  return { serverType };
+}
+
 export function createCustomerVpsService(deps: CustomerVpsServiceDeps): CustomerVpsService {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
@@ -395,15 +461,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
   return {
     async provision(input) {
+      const request = { ...input, runtimeSlot: input.runtimeSlot ?? 'primary' };
       const currentTime = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
+      const billingContext = await resolveBillingProvisionContext(deps, request, currentTime);
 
       const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
         deps.db,
-        input.clerkUserId,
-        input.runtimeSlot,
+        request.clerkUserId,
+        request.runtimeSlot,
       );
       if (existingBeforeBundleResolve) {
         return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
@@ -412,7 +480,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
-        input,
+        request,
         machineId,
         registration.token,
         postgresPassword,
@@ -420,18 +488,27 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
 
       const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
-        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId, input.runtimeSlot);
+        if (billingContext) {
+          await lockUserMachineProvisioning(trx, request.clerkUserId);
+        }
+        const existing = await getActiveUserMachineByClerkId(trx, request.clerkUserId, request.runtimeSlot);
         if (existing) {
           return { existing };
         }
+        if (billingContext) {
+          const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
+          if (activeMachines.length >= billingContext.entitlement.maxRuntimeSlots) {
+            throw billingUpgradeRequired();
+          }
+        }
         await insertUserMachine(trx, {
           machineId,
-          clerkUserId: input.clerkUserId,
-          handle: input.handle,
-          runtimeSlot: input.runtimeSlot,
+          clerkUserId: request.clerkUserId,
+          handle: request.handle,
+          runtimeSlot: request.runtimeSlot,
           status: 'provisioning',
           imageVersion: bundleRef.imageVersion,
-          serverType: deps.config.serverType,
+          serverType: billingContext?.serverType ?? deps.config.serverType,
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
@@ -450,12 +527,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let serverIdForCompensation: number | null = null;
       try {
         const server = await deps.hetzner.createServer({
-          name: buildServerName(input.handle),
+          name: buildServerName(request.handle),
+          serverType: billingContext?.serverType ?? deps.config.serverType,
           userData,
           labels: {
             app: 'matrix-os',
-            clerk_user_id: input.clerkUserId,
-            runtime_slot: input.runtimeSlot,
+            clerk_user_id: request.clerkUserId,
+            runtime_slot: request.runtimeSlot,
             machine_id: machineId,
           },
         });
@@ -476,7 +554,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               providerServerId: serverIdForCompensation,
               reason: 'provision_compensation',
               machineId,
-              handle: input.handle,
+              handle: request.handle,
               err: cleanupErr,
             });
           }
@@ -575,6 +653,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
       const currentTime = now();
+      const billingContext = await resolveBillingRecoveryContext(
+        deps,
+        active.clerkUserId,
+        active.serverType,
+        currentTime,
+      );
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
       const postgresPassword = postgresPasswordFactory();
@@ -608,6 +692,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         );
         const server = await deps.hetzner.createServer({
           name: buildRecoveryServerName(existing.handle, machineId),
+          serverType: billingContext?.serverType ?? active.serverType ?? deps.config.serverType,
           userData,
           labels: {
             app: 'matrix-os',

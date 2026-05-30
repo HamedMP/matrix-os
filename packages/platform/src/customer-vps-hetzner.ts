@@ -8,6 +8,7 @@ export interface CreateHetznerServerInput {
   name: string;
   userData: string;
   labels: Record<string, string>;
+  serverType?: string;
 }
 
 export interface HetznerServer {
@@ -105,7 +106,7 @@ export function createHetznerClient(
         method: 'POST',
         body: JSON.stringify({
           name: input.name,
-          server_type: config.serverType,
+          server_type: input.serverType ?? config.serverType,
           image: config.image,
           location: config.location,
           ssh_keys: config.sshKeyName ? [config.sshKeyName] : undefined,

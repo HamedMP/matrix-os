@@ -410,6 +410,11 @@ export interface BillingEntitlementOverrideRecord {
 
 export type NewBillingEntitlementOverride = BillingEntitlementOverrideRecord;
 
+export interface BillingEntitlementStateRecord {
+  entitlement?: BillingEntitlementRecord;
+  override?: BillingEntitlementOverrideRecord;
+}
+
 export interface BillingWebhookEventRecord {
   stripeEventId: string;
   eventType: string;
@@ -852,6 +857,18 @@ export async function runBillingWebhookTransaction<T>(
   fn: (trx: PlatformDB) => Promise<T>,
 ): Promise<T> {
   return db.transaction(fn);
+}
+
+export async function lockUserMachineProvisioning(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<void> {
+  await db.ready;
+  await sql`
+    SELECT pg_advisory_xact_lock(
+      ('x' || substr(md5(${`user_machines:${clerkUserId}`}), 1, 16))::bit(64)::bigint
+    )
+  `.execute(db.executor);
 }
 
 function mapContainer(row: ContainersTable): ContainerRecord {
@@ -1334,6 +1351,39 @@ export async function getBillingOverride(
     .orderBy('created_at', 'desc')
     .executeTakeFirst();
   return row ? mapBillingOverride(row) : undefined;
+}
+
+export async function getBillingEntitlementState(
+  db: PlatformDB,
+  clerkUserId: string,
+  nowIso = new Date().toISOString(),
+): Promise<BillingEntitlementStateRecord> {
+  await db.ready;
+  const result = await sql<{
+    entitlement: BillingEntitlementsTable | null;
+    override: BillingEntitlementOverridesTable | null;
+  }>`
+    SELECT
+      (
+        SELECT row_to_json(e)
+        FROM billing_entitlements e
+        WHERE e.clerk_user_id = ${clerkUserId}
+      ) AS entitlement,
+      (
+        SELECT row_to_json(o)
+        FROM billing_entitlement_overrides o
+        WHERE o.clerk_user_id = ${clerkUserId}
+          AND o.revoked_at IS NULL
+          AND (o.expires_at IS NULL OR o.expires_at > ${nowIso})
+        ORDER BY o.created_at DESC
+        LIMIT 1
+      ) AS override
+  `.execute(db.executor);
+  const row = result.rows[0];
+  return {
+    entitlement: row?.entitlement ? mapBillingEntitlement(row.entitlement) : undefined,
+    override: row?.override ? mapBillingOverride(row.override) : undefined,
+  };
 }
 
 export async function revokeBillingOverride(db: PlatformDB, id: string, revokedAt: string): Promise<boolean> {

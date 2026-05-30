@@ -16,6 +16,7 @@ import {
   getContainerByClerkId,
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
+  getBillingEntitlementState,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   listActiveUserMachinesByClerkId,
@@ -63,6 +64,14 @@ import {
   EntitlementStatusSchema,
   type EntitlementAccessDecision,
 } from './profile-routing.js';
+import {
+  computeEffectiveEntitlement,
+  getRuntimeAccessDecision,
+  parseBillingEntitlementRecord,
+  parseBillingOverrideRecord,
+  type BillingEntitlement,
+  type RuntimeAccessDecision,
+} from './billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
@@ -72,7 +81,7 @@ import {
   createPlatformLaunchEvidenceLoader,
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
-import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
@@ -200,6 +209,7 @@ const ProvisionBodySchema = z.object({
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
+  serverType: HetznerServerTypeSchema.optional(),
 });
 
 const SocialSendBodySchema = z.object({
@@ -531,6 +541,56 @@ function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): En
     return deriveEntitlementAccess({ status: 'changed' });
   }
   return deriveEntitlementAccess({ status: parsed.data });
+}
+
+function stripeBillingEntitlementsEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.MATRIX_STRIPE_BILLING_ENABLED === 'true' || env.MATRIX_BILLING_PROVIDER === 'stripe';
+}
+
+async function resolveEffectiveBillingEntitlement(
+  db: PlatformDB,
+  clerkUserId: string,
+  now = new Date(),
+): Promise<BillingEntitlement | null> {
+  const { entitlement, override } = await getBillingEntitlementState(db, clerkUserId, now.toISOString());
+  return computeEffectiveEntitlement({
+    stripeEntitlement: parseBillingEntitlementRecord(entitlement),
+    override: parseBillingOverrideRecord(override),
+    now,
+  });
+}
+
+async function getRuntimeEntitlementDecisionForUser(
+  db: PlatformDB,
+  clerkUserId: string,
+  env: NodeJS.ProcessEnv,
+  now = new Date(),
+): Promise<EntitlementAccessDecision> {
+  if (!stripeBillingEntitlementsEnabled(env)) {
+    return getRuntimeEntitlementDecision(env);
+  }
+  return billingAccessToProfileDecision(
+    getRuntimeAccessDecision(await resolveEffectiveBillingEntitlement(db, clerkUserId, now), now),
+  );
+}
+
+function billingAccessToProfileDecision(decision: RuntimeAccessDecision): EntitlementAccessDecision {
+  if (decision.runtimeProxyAllowed) {
+    return {
+      status: 'active',
+      runtimeProxyAllowed: true,
+      ownerDataPreserved: true,
+      ownerDataExportable: true,
+      remediation: null,
+    };
+  }
+  return {
+    status: decision.reason === 'no_entitlement' ? 'missing' : 'expired',
+    runtimeProxyAllowed: false,
+    ownerDataPreserved: true,
+    ownerDataExportable: true,
+    remediation: 'Renew paid runtime access or ask an operator to grant access.',
+  };
 }
 
 function buildCodeSessionCookie(token: string): string {
@@ -2475,7 +2535,7 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
-      const entitlement = getRuntimeEntitlementDecision(appEnv);
+      const entitlement = await getRuntimeEntitlementDecisionForUser(db, machine.clerkUserId, appEnv);
       if (!entitlement.runtimeProxyAllowed) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
@@ -2608,7 +2668,11 @@ export function createApp(deps: {
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
     }
-    const entitlement = getRuntimeEntitlementDecision(appEnv);
+    const entitlement = runningMachine
+      ? await getRuntimeEntitlementDecisionForUser(db, runningMachine.clerkUserId, appEnv)
+      : requestedActiveMachine
+        ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, appEnv)
+      : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url);
       if (!entitlement.runtimeProxyAllowed) {
@@ -2994,13 +3058,13 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName, runtimeSlot } = parsed.data;
+    const { handle, clerkUserId, displayName, runtimeSlot, serverType } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
-        const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot });
+        const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot, serverType });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
         if (matrixProvisioner) {
@@ -3607,6 +3671,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         : createNoopCustomerVpsSystemStore(),
       cloudInitTemplate,
       fetchDispatcher: customerVpsProxyDispatcher,
+      resolveBillingEntitlement: stripeBillingEntitlementsEnabled(process.env)
+        ? (clerkUserId) => resolveEffectiveBillingEntitlement(db, clerkUserId)
+        : undefined,
     });
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (reconciliationIntervalMs > 0) {
@@ -3798,7 +3865,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     }
     const record = await getContainer(db, identity.handle);
     if (!runningMachine && !record) { socket.destroy(); return; }
-    const entitlement = getRuntimeEntitlementDecision(appEnv);
+    const entitlement = runningMachine
+      ? await getRuntimeEntitlementDecisionForUser(db, runningMachine.clerkUserId, appEnv)
+      : requestedActiveMachine
+        ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, appEnv)
+      : getRuntimeEntitlementDecision(appEnv);
     let activeUpstream: Socket | null = null;
     const onSocketError = () => activeUpstream?.destroy();
     socket.on('error', onSocketError);

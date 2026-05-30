@@ -360,6 +360,62 @@ export function getRuntimeAccessDecision(
   };
 }
 
+export function parseBillingEntitlementRecord(record: {
+  clerkUserId: string;
+  source: string;
+  planSlug: string;
+  status: string;
+  maxRuntimeSlots: number;
+  includedRuntimeSlots: number;
+  addonRuntimeSlots: number;
+  defaultServerType: string;
+  allowedServerTypes: string[];
+  stripeSubscriptionId: string | null;
+  stripePriceId: string | null;
+  gracePeriodEndsAt: string | null;
+  effectiveFrom: string;
+  effectiveUntil: string | null;
+  updatedAt: string;
+} | null | undefined): BillingEntitlement | null {
+  if (!record) return null;
+  if (!isEntitlementSource(record.source) || !isPlanSlug(record.planSlug) || !isEntitlementStatus(record.status)) {
+    return null;
+  }
+  return {
+    ...record,
+    source: record.source,
+    planSlug: record.planSlug,
+    status: record.status,
+  };
+}
+
+export function parseBillingOverrideRecord(record: {
+  id: string;
+  clerkUserId: string;
+  planSlug: string;
+  status: string;
+  maxRuntimeSlots: number;
+  includedRuntimeSlots: number;
+  addonRuntimeSlots: number;
+  defaultServerType: string;
+  allowedServerTypes: string[];
+  reason: string;
+  createdBy: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+} | null | undefined): BillingEntitlementOverride | null {
+  if (!record) return null;
+  if (!isPlanSlug(record.planSlug) || record.status !== 'active') {
+    return null;
+  }
+  return {
+    ...record,
+    planSlug: record.planSlug,
+    status: record.status,
+  };
+}
+
 export function computeEffectiveEntitlement(input: {
   stripeEntitlement?: BillingEntitlement | null;
   override?: BillingEntitlementOverride | null;
@@ -386,4 +442,25 @@ export function computeEffectiveEntitlement(input: {
     };
   }
   return input.stripeEntitlement ?? null;
+}
+
+function isEntitlementSource(value: string): value is BillingEntitlementSource {
+  return value === 'stripe' || value === 'override';
+}
+
+function isPlanSlug(value: string): value is BillingEntitlement['planSlug'] {
+  return value === 'matrix_starter' || value === 'matrix_builder' || value === 'matrix_max' || value === 'internal';
+}
+
+function isEntitlementStatus(value: string): value is BillingEntitlementStatus {
+  return (
+    value === 'active' ||
+    value === 'trialing' ||
+    value === 'past_due' ||
+    value === 'canceled' ||
+    value === 'incomplete' ||
+    value === 'unpaid' ||
+    value === 'ended' ||
+    value === 'none'
+  );
 }
