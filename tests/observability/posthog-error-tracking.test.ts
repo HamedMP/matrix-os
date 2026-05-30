@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import {
+  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
+  getPostHogVisitorCountry,
+  requiresPostHogCookieConsent,
   resolvePostHogClientApiHost,
 } from "../../packages/observability/src/client.ts";
 import {
@@ -57,8 +60,45 @@ describe("PostHog error tracking", () => {
     );
 
     const shellClient = await readFile("shell/instrumentation-client.ts", "utf8");
+    const wwwClient = await readFile("www/instrumentation-client.ts", "utf8");
     expect(shellClient).toContain("resolvePostHogClientApiHost");
     expect(shellClient).toContain("allowRelativeApiHost: false");
+    expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(wwwClient).toContain("buildPostHogCookieConsentInitOptions");
+  });
+
+  it("extracts visitor country from deployment geolocation headers", () => {
+    expect(
+      getPostHogVisitorCountry(
+        new Headers({
+          "x-vercel-ip-country": "se",
+        }),
+      ),
+    ).toBe("SE");
+    expect(
+      getPostHogVisitorCountry(
+        new Headers({
+          "cf-ipcountry": "DE",
+        }),
+      ),
+    ).toBe("DE");
+    expect(getPostHogVisitorCountry(new Headers({ "x-vercel-ip-country": "unknown" }))).toBeNull();
+    expect(getPostHogVisitorCountry(new Headers({ "x-vercel-ip-country": "123" }))).toBeNull();
+  });
+
+  it("requires explicit PostHog cookie consent for European visitors", () => {
+    expect(requiresPostHogCookieConsent("SE")).toBe(true);
+    expect(requiresPostHogCookieConsent("de")).toBe(true);
+    expect(requiresPostHogCookieConsent("NO")).toBe(true);
+    expect(requiresPostHogCookieConsent("GB")).toBe(true);
+    expect(requiresPostHogCookieConsent("CH")).toBe(true);
+    expect(requiresPostHogCookieConsent("US")).toBe(false);
+    expect(requiresPostHogCookieConsent(null)).toBe(false);
+  });
+
+  it("uses PostHog cookieless mode until explicit cookie consent is granted", () => {
+    expect(buildPostHogCookieConsentInitOptions("SE")).toEqual({ cookieless_mode: "on_reject" });
+    expect(buildPostHogCookieConsentInitOptions("US")).toEqual({});
   });
 
   it("stays disabled when no PostHog token is configured", async () => {
@@ -543,7 +583,8 @@ describe("PostHog error tracking", () => {
     expect(platformAuthRoutes).toContain('"cli_device_code_created"');
     expect(platformAuthRoutes).toContain('"cli_device_token_issued"');
     expect(platformAuthRoutes).toContain('"cli_runtime_lookup_resolved"');
-    expect(platformMain).toContain("captureEvent: capturePlatformEvent");
+    expect(platformMain).toContain("MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN");
+    expect(platformMain).toContain("auth_event: event");
     expect(gatewayServer).not.toContain('captureGatewayProductEvent("terminal_input"');
     expect(gatewayServer).not.toContain('captureGatewayProductEvent("message_text"');
   });

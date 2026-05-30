@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Inter, JetBrains_Mono, Caveat, Cormorant_Garamond, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/react";
+import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
+import { PostHogCookieBanner } from "@/components/PostHogCookieBanner";
 import "./globals.css";
 
 const inter = Inter({
@@ -65,13 +68,19 @@ export const metadata: Metadata = {
   ],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const visitorCountry = getPostHogVisitorCountry(await headers());
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-posthog-visitor-country={visitorCountry ?? undefined}
+    >
       <head>
         <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />
         <link rel="dns-prefetch" href="https://eu.i.posthog.com" />
@@ -81,6 +90,7 @@ export default function RootLayout({
       <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
         <ClerkProvider>
           {children}
+          <PostHogCookieBanner visitorCountry={visitorCountry} />
           <Analytics />
         </ClerkProvider>
       </body>

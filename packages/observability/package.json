@@ -14,6 +14,11 @@
       "import": "./dist/client.js",
       "default": "./dist/client.js"
     },
+    "./cookie-consent": {
+      "types": "./src/cookie-consent.ts",
+      "import": "./dist/cookie-consent.js",
+      "default": "./dist/cookie-consent.js"
+    },
     "./events": {
       "types": "./src/events.ts",
       "import": "./dist/events.js",
@@ -26,6 +31,10 @@
   "dependencies": {
     "hono": "^4.11.9",
     "posthog-node": "^5.24.15"
+  },
+  "peerDependencies": {
+    "posthog-js": "^1.376.0",
+    "react": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

@@ -2278,7 +2278,12 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: platformPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
-        captureEvent: capturePlatformEvent,
+        captureEvent: (event, properties) => {
+          capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
+            auth_event: event,
+            ...properties,
+          });
+        },
       }),
     );
   }
