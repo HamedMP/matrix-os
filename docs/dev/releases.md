@@ -16,6 +16,9 @@ For installable CLI releases, use [CLI Release Process](cli-release.md). CLI ver
 - Host bundle release validation is blocking. If typecheck, tests, public build-env validation, build, publish, or registration fails, do not publish or deploy the bundle.
 - CLI releases are manual through `.github/workflows/release.yml`; bump `packages/sync-client/package.json`, run the sync-client checks, and dispatch the workflow with the same semver.
 - Fleet upgrade operations, blocked-machine handling, and the durable control-plane setup are documented in [Fleet Upgrade Operations](fleet-upgrade-operations.md).
+- Staging platform containers and disposable feature VPSes are temporary test
+  surfaces. Tear them down before promoting a feature to `stable`; see
+  [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
 ## Version Scheme
 
@@ -112,6 +115,11 @@ Release metadata also records:
      -H "Content-Type: application/json" \
      -d '{"version":"v0.X.0"}'
    ```
+
+   If this version should be the default for newly provisioned customer VPSes,
+   make sure the provisioner reads the `stable` channel or set the configured
+   customer image/version default to the same version. Do not leave new-user
+   provisioning pointed at a feature preview or staging channel.
 
 7. Existing VPSes update or downgrade by channel/version:
 

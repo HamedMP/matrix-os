@@ -155,4 +155,23 @@ Add checks for the branch under test. Examples:
 
 ## Cleanup
 
-Ask the owner before deleting the preview VPS because it creates real Hetzner resources. When it is no longer needed, delete or deactivate only the preview handle/runtime slot and leave the user's `primary` runtime untouched.
+Ask the owner before deleting the preview VPS because it creates real Hetzner resources. When it is no longer needed, delete only the preview handle/runtime slot and leave the user's `primary` runtime untouched.
+
+Use the platform delete route so Hetzner cleanup and platform deletion metadata
+stay consistent:
+
+```bash
+machine_id="$(
+  curl --fail --silent --show-error \
+    -H "Authorization: Bearer $PLATFORM_SECRET" \
+    "${PLATFORM_API_URL%/}/vps/fleet" \
+    | jq -r '.machines[] | select(.handle == "hamed-clerk") | .machineId'
+)"
+
+curl --fail --silent --show-error \
+  -X DELETE "${PLATFORM_API_URL%/}/vps/${machine_id}" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+For the full staging platform plus feature VPS lifecycle, use
+[Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
