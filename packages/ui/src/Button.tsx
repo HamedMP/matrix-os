@@ -56,6 +56,7 @@ const sizeStyles: Record<ButtonSize, React.CSSProperties> = {
 export function Button({
   variant = "primary",
   size = "md",
+  type = "button",
   className,
   style,
   disabled,
@@ -64,6 +65,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
+      type={type}
       className={cn("matrix-btn", `matrix-btn-${variant}`, className)}
       style={{
         ...baseStyle,
