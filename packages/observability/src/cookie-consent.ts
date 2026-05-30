@@ -12,6 +12,8 @@ type PostHogConsentClient = PostHogLoadState & {
 };
 
 const COOKIE_CONSENT_STORAGE_KEY = "matrix_posthog_cookie_consent";
+const POSTHOG_LOAD_POLL_INTERVAL_MS = 100;
+const POSTHOG_LOAD_MAX_RETRIES = 50;
 const posthogClient = posthog as unknown as PostHogConsentClient;
 
 function hasDeclinedCookieConsent(): boolean {
@@ -54,6 +56,7 @@ export function PostHogCookieBanner({
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
+    let retries = 0;
 
     function refreshConsentStatus() {
       if (cancelled) return;
@@ -62,7 +65,10 @@ export function PostHogCookieBanner({
         return;
       }
       if (!posthogClient.__loaded) {
-        timeout = setTimeout(refreshConsentStatus, 100);
+        if (retries < POSTHOG_LOAD_MAX_RETRIES) {
+          retries += 1;
+          timeout = setTimeout(refreshConsentStatus, POSTHOG_LOAD_POLL_INTERVAL_MS);
+        }
         return;
       }
       setConsentStatus(posthogClient.get_explicit_consent_status() ?? "pending");
