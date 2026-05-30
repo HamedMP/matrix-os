@@ -38,6 +38,8 @@ describe("app launch helpers", () => {
   });
 
   it("does not auto-generate icons for shipped SVG built-ins", () => {
+    expect(canAutoGenerateIconForSlug(undefined)).toBe(false);
+    expect(canAutoGenerateIconForSlug("")).toBe(false);
     expect(canAutoGenerateIconForSlug("terminal")).toBe(false);
     expect(canAutoGenerateIconForSlug("folder")).toBe(false);
     expect(canAutoGenerateIconForSlug("chat")).toBe(false);

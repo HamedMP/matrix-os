@@ -12,6 +12,17 @@ export function createErrorId(error: Error & { digest?: string }): string {
   return `mx-${(hash >>> 0).toString(36)}-${suffix}`;
 }
 
+function describeStringifyFailure(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  try {
+    return String(error);
+  } catch (nestedError: unknown) {
+    return nestedError instanceof Error
+      ? `unprintable stringify failure: ${nestedError.message}`
+      : `unprintable stringify failure: ${typeof nestedError}`;
+  }
+}
+
 export function describeUnknownError(error: unknown): string {
   if (error instanceof globalThis.Error) return `${error.name}: ${error.message}`;
   try {
@@ -19,7 +30,7 @@ export function describeUnknownError(error: unknown): string {
   } catch (stringifyError: unknown) {
     console.warn(
       "[error-boundary] failed to stringify unknown error:",
-      stringifyError instanceof Error ? stringifyError.message : typeof stringifyError,
+      describeStringifyFailure(stringifyError),
     );
     return typeof error;
   }
