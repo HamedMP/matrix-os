@@ -30,6 +30,7 @@ export function ApiKeyInput({ onSubmit, result, onSkip }: ApiKeyInputProps) {
         <input
           type="password"
           placeholder="sk-ant-..."
+          aria-label="Anthropic API key"
           value={key}
           onChange={(e) => setKey(e.target.value)}
           onKeyDown={(e) => {

@@ -801,6 +801,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       ref={containerRef}
       className="flex flex-col h-full w-full"
       style={{ background: "var(--background)" }}
+      role="application"
+      aria-label="Terminal"
       onKeyDown={handleKeyDown}
     >
       <TerminalAppContext.Provider value={storeApi}>
@@ -1050,6 +1052,9 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
           return (
             <div
               key={tab.id}
+              role="tab"
+              tabIndex={0}
+              aria-selected={active}
               className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               style={{
                 ...TAB_ITEM_BASE_STYLE,
@@ -1063,6 +1068,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               }}
               draggable
               onClick={() => ctx.setActiveTab(tab.id)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ctx.setActiveTab(tab.id); } }}
               onDragStart={() => { dragIndexRef.current = i; }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); if (dragIndexRef.current !== null && dragIndexRef.current !== i) ctx.reorderTabs(dragIndexRef.current, i); dragIndexRef.current = null; }}
@@ -1247,7 +1253,7 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async network load of the projects list when the Projects tab becomes active; the data is fetched from the gateway (AbortSignal-guarded) and cannot be derived in render
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the projects list when the Projects tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
@@ -1277,7 +1283,7 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async network load of the shell-session list when the Shells tab becomes active; the data is fetched from the gateway (AbortSignal-guarded) and cannot be derived in render
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the shell-session list when the Shells tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "shells") void fetchShells();
   }, [fetchShells, tab]);
 
@@ -1332,7 +1338,7 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async network load of the workspace-session list when the Agents tab becomes active; the data is fetched from the gateway (AbortSignal-guarded) and cannot be derived in render
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the workspace-session list when the Agents tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "sessions") void fetchSessions();
   }, [fetchSessions, tab]);
 
@@ -2031,7 +2037,12 @@ interface ProjectCardProps {
 function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelect, isSelected }: ProjectCardProps) {
   const [hover, setHover] = useState(false);
   return (
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this selectable card contains nested interactive <button> children (Shell/Claude/Zellij actions), and nesting a button inside a button is invalid HTML; role="button" + tabIndex + keyboard handler is the correct accessible pattern here.
     <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected}
+      aria-label={`Select project ${project.name}`}
       className="cursor-pointer transition-colors"
       style={{
         margin: "3px 8px",
@@ -2043,6 +2054,7 @@ function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelec
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
       onDoubleClick={onOpenShell}
       title={`${project.path}\nDouble-click to open terminal`}
     >
@@ -2159,8 +2171,10 @@ function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[
 function TreeItem({ node, depth, selectedPath, onToggle, onSelect, onOpenTerminal }: { node: TreeNode; depth: number; selectedPath: string | null; onToggle: (n: TreeNode) => void; onSelect: (n: TreeNode) => void; onOpenTerminal: (path: string) => void }) {
   return (
     <>
-      <div
-        className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-[var(--accent)] transition-colors"
+      <button
+        type="button"
+        aria-label={node.name}
+        className="w-full text-left flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-[var(--accent)] transition-colors"
         style={{ paddingLeft: 8 + depth * 12, background: selectedPath === node.path ? "var(--accent)" : undefined, color: (node.gitStatus && GIT_COLORS[node.gitStatus]) ?? "var(--foreground)" }}
         onClick={() => { if (node.type === "directory") { onToggle(node); onSelect(node); } }}
         onDoubleClick={() => { if (node.type === "directory") onOpenTerminal(node.path); }}
@@ -2168,7 +2182,7 @@ function TreeItem({ node, depth, selectedPath, onToggle, onSelect, onOpenTermina
         {node.type === "directory" ? <span className="text-[10px] opacity-60" style={{ width: 10 }}>{node.expanded ? "▾" : "▸"}</span> : <span style={{ width: 10 }} />}
         <span className="truncate flex-1">{node.name}</span>
         {node.type === "directory" && (node.changedCount ?? 0) > 0 && <span className="text-[9px] px-1 rounded" style={{ background: "var(--warning)", color: "var(--card)", opacity: 0.8 }}>{node.changedCount}</span>}
-      </div>
+      </button>
       {node.expanded && node.children?.map(c => <TreeItem key={c.path} node={c} depth={depth + 1} selectedPath={selectedPath} onToggle={onToggle} onSelect={onSelect} onOpenTerminal={onOpenTerminal} />)}
     </>
   );

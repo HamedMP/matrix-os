@@ -24,14 +24,14 @@ export function RichContent({ children, onAction }: RichContentProps) {
 
   return (
     <>
-      {segments.map((seg, i) => {
+      {segments.map((seg) => {
         switch (seg.type) {
           case "markdown":
-            return <MessageResponse key={i}>{seg.content}</MessageResponse>;
+            return <MessageResponse key={`md:${seg.content}`}>{seg.content}</MessageResponse>;
           case "ui:cards":
             return (
               <CardGrid
-                key={i}
+                key={`cards:${seg.data.map((c) => c.title).join("|")}`}
                 cards={seg.data}
                 onSelect={(card: UICardData) =>
                   onAction?.(card.title)
@@ -41,7 +41,7 @@ export function RichContent({ children, onAction }: RichContentProps) {
           case "ui:options":
             return (
               <OptionList
-                key={i}
+                key={`options:${seg.data.map((o) => o.value ?? o.label).join("|")}`}
                 options={seg.data}
                 onSelect={(opt: UIOptionData) =>
                   onAction?.(opt.value ?? opt.label)
@@ -49,7 +49,7 @@ export function RichContent({ children, onAction }: RichContentProps) {
               />
             );
           case "ui:status":
-            return <StatusBanner key={i} status={seg.data} />;
+            return <StatusBanner key={`status:${seg.data.level}:${seg.data.message}`} status={seg.data} />;
         }
       })}
     </>

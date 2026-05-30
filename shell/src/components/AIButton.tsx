@@ -18,6 +18,7 @@ export function AIButton({ appName, appPath, sessionId }: AIButtonProps) {
   const { send } = useSocket();
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- the textarea is only mounted when `open` is true, so it cannot be focused from the click handler that sets open=true; focusing after the conditional mount requires an effect keyed on `open`.
     if (open) inputRef.current?.focus();
   }, [open]);
 
@@ -57,6 +58,7 @@ export function AIButton({ appName, appPath, sessionId }: AIButtonProps) {
       <textarea
         ref={inputRef}
         value={input}
+        aria-label={`Customize ${appName} with AI`}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {

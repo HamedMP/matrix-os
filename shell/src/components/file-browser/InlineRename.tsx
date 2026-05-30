@@ -51,6 +51,7 @@ export function InlineRename({ name, onCommit, onCancel }: InlineRenameProps) {
   return (
     <input
       ref={inputRef}
+      aria-label="Rename"
       className="text-xs bg-background border rounded px-1 py-0.5 w-full text-center outline-none focus:ring-1 focus:ring-primary"
       value={value}
       onChange={(e) => setValue(e.target.value)}

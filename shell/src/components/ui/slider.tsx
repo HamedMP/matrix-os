@@ -38,6 +38,7 @@ function Slider({
         />
       </SliderPrimitive.Track>
       {_values.map((_, i) => (
+        // react-doctor-disable-next-line react-doctor/no-array-index-key, react-doctor/no-array-index-as-key -- slider thumbs are positional and their numeric values may repeat, so the array index is the only stable identity for this immutable list
         <SliderPrimitive.Thumb
           data-slot="slider-thumb"
           key={i}

@@ -67,7 +67,9 @@ export function QuickLook() {
       role="dialog"
       aria-modal="true"
     >
-      <div
+      <button
+        type="button"
+        aria-label="Close preview"
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
         onClick={() => setQuickLookPath(null)}
       />
@@ -108,10 +110,10 @@ export function QuickLook() {
             />
           ) : isAudio(quickLookPath) ? (
             // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user audio file preview; no caption track exists
-            <audio controls className="w-full" src={`${GATEWAY_URL}/files/${fullPath}`} />
+            <audio controls aria-label={`Audio preview: ${quickLookPath}`} className="w-full" src={`${GATEWAY_URL}/files/${fullPath}`} />
           ) : isVideo(quickLookPath) ? (
             // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user video file preview; no caption track exists
-            <video controls className="w-full max-h-96" src={`${GATEWAY_URL}/files/${fullPath}`} />
+            <video controls aria-label={`Video preview: ${quickLookPath}`} className="w-full max-h-96" src={`${GATEWAY_URL}/files/${fullPath}`} />
           ) : content !== null ? (
             <pre className="text-xs font-mono whitespace-pre-wrap break-all">
               {content}

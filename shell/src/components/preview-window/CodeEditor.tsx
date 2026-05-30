@@ -93,6 +93,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
     const view = viewRef.current;
     if (!view) return;
     const currentDoc = view.state.doc.toString();
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- syncs the imperative CodeMirror view with an external prop change (file reloaded from disk), not a side effect derivable from a local UI event; there is no triggering event handler to move this into.
     if (currentDoc !== content) {
       view.dispatch({
         changes: { from: 0, to: currentDoc.length, insert: content },

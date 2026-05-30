@@ -54,6 +54,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
   const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
+  // react-doctor-disable-next-line react-doctor/no-event-handler -- false positive: `isFocused` is a derived store value, not a DOM event handler. It is read by the reset effect below (already justified for set-state-in-effect / no-adjust-state-on-prop-change), which must remain an effect because it fires on programmatic canvas scroll / focus loss where no event exists to move the logic into.
   const isFocused = focusedWindowId === win.id;
   const isFullscreen = fullscreenWindowId === win.id;
   const showTitles = useCanvasSettings((s) => s.showTitles);
@@ -494,6 +495,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   );
 
   return (
+    // react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational positioning wrapper, not a control. The onMouseDown is a pure pointer convenience that raises window focus/z-index; keyboard users focus the window by tabbing into its own interactive children (title-bar buttons and the app content), so no role/onKeyDown is needed. Giving this whole-window container (which wraps an app iframe) a button role would mislabel it for assistive tech.
     <div
       ref={wrapperRef}
       className="absolute"

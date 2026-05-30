@@ -203,6 +203,7 @@ export const MessageBranchContent = ({
 }: MessageBranchContentProps) => {
   const { currentBranch, setBranches, branches } = useMessageBranch();
   const childrenArray = useMemo(
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- pure data normalization of the `children` prop into an array for rendering, not a DOM event handler; there is no side effect to move to a parent.
     () => (Array.isArray(children) ? children : [children]),
     [children]
   );

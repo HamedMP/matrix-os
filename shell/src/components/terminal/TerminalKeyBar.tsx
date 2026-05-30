@@ -191,9 +191,9 @@ export function TerminalKeyBar({
       </div>
       {expanded && (
         <div style={{ display: "grid", gap: 4 }}>
-          {KEYBOARD_ROWS.map((row, index) => (
+          {KEYBOARD_ROWS.map((row) => (
             <div
-              key={index}
+              key={row.map((k) => k.label).join("")}
               style={{
                 display: "flex",
                 justifyContent: "center",

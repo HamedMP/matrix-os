@@ -228,6 +228,7 @@ export function ChatApp({
             <SearchIcon className="size-3.5 text-muted-foreground" />
             <input
               type="text"
+              aria-label="Search chats"
               placeholder="Search chats..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -351,9 +352,9 @@ export function ChatApp({
           <div className="flex flex-1 flex-col min-h-0">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
-                {grouped.map((group, i) => {
+                {grouped.map((group) => {
                   if (group.type === "tool_group") {
-                    return <ToolCallGroup key={`tg-${i}`} tools={group.messages} />;
+                    return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
                   }
                   const msg = group.message;
                   return (
@@ -582,6 +583,7 @@ function ChatInput({
   });
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
     if (autoFocus) textareaRef.current?.focus();
   }, [autoFocus]);
 

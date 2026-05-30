@@ -28,7 +28,7 @@ export function MarkdownEditor({ content, onSave, placeholder, saving }: Markdow
     setDirty(false);
   }
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleMarkdownChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value);
     setDirty(e.target.value !== content);
   }, [content]);
@@ -81,8 +81,9 @@ export function MarkdownEditor({ content, onSave, placeholder, saving }: Markdow
         <textarea
           ref={textareaRef}
           value={value}
-          onChange={handleChange}
+          onChange={handleMarkdownChange}
           placeholder={placeholder}
+          aria-label="Markdown editor"
           className="min-h-[300px] p-4 font-mono text-sm bg-background resize-y focus:outline-none"
           spellCheck={false}
         />

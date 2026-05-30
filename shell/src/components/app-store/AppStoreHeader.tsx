@@ -48,6 +48,7 @@ export function AppStoreHeader({
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search..."
+            aria-label="Search apps"
             className="h-9 w-full rounded-full border-0 bg-muted/80 pl-9 pr-8 text-sm outline-none placeholder:text-muted-foreground/60 focus:bg-muted focus:ring-2 focus:ring-primary/20 transition-all"
           />
           {search && (
@@ -79,6 +80,7 @@ export function AppStoreHeader({
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search apps..."
+            aria-label="Search apps"
             className="h-9 w-full rounded-full border-0 bg-muted/80 pl-9 pr-8 text-sm outline-none placeholder:text-muted-foreground/60 focus:bg-muted focus:ring-2 focus:ring-primary/20 transition-all"
           />
           {search && (

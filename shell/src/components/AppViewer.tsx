@@ -77,6 +77,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
+  // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appNameFromPath(path);
 
   useFileWatcher(

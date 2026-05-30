@@ -341,6 +341,7 @@ function SessionsSidebar({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
+            aria-label="Search conversations"
             className="flex-1 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground/55"
           />
         </div>
@@ -673,6 +674,7 @@ const ChatInputBar = memo(function ChatInputBar({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           placeholder={busy ? "Queue another message…" : "What do you want to say?"}
+          aria-label="Chat message"
           // react-doctor-disable-next-line react-doctor/no-autofocus -- chat input inside a dialog popover that mounts only when the user opens it; focus is essential so they can type immediately
           autoFocus
           className={cn(

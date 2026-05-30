@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useId } from "react";
 import { saveTheme, useTheme, DEFAULT_THEME, type Theme } from "@/hooks/useTheme";
 import { RETRO_THEME } from "@/lib/theme-presets";
 import { saveDesktopConfig, useDesktopConfig, buildMeshGradient, type DesktopConfig } from "@/hooks/useDesktopConfig";
@@ -43,6 +43,8 @@ export function AppearanceSection() {
   useTheme(); // keep theme applied
   const config = useDesktopConfig();
   const setDock = useDesktopConfigStore((s) => s.setDock);
+  const solidColorId = useId();
+  const dockSizeId = useId();
 
   const [activePreset, setActivePreset] = useState("sage");
   const [bgMode, setBgMode] = useState<BgMode>(
@@ -311,11 +313,13 @@ export function AppearanceSection() {
         {/* Solid */}
         {bgMode === "solid" && (
           <div className="flex items-center gap-3 py-2">
-            <label className="relative">
+            <label htmlFor={solidColorId} className="relative">
               <input
+                id={solidColorId}
                 type="color"
                 value={solidColor}
                 onChange={(e) => handleSolidChange(e.target.value)}
+                aria-label="Solid background color"
                 className="absolute inset-0 opacity-0 cursor-pointer"
               />
               <div
@@ -403,14 +407,16 @@ export function AppearanceSection() {
 
         {/* Size */}
         <div className="flex items-center gap-3">
-          <span className="text-sm min-w-[70px]">Size</span>
+          <label htmlFor={dockSizeId} className="text-sm min-w-[70px]">Size</label>
           <input
+            id={dockSizeId}
             type="range"
             min={36}
             max={64}
             step={2}
             value={dock.size}
             onChange={(e) => saveDock({ ...dock, size: Number(e.target.value) })}
+            aria-label="Dock size"
             className="flex-1 h-1 accent-primary cursor-pointer"
           />
           <span className="text-xs text-muted-foreground font-mono w-10 text-right">{dock.size}px</span>

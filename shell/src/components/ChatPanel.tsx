@@ -112,9 +112,9 @@ export function ChatPanel({
 
       <Conversation>
         <ConversationContent className="gap-4 px-4 py-3">
-          {useMemo(() => groupMessages(messages), [messages]).map((group, i) => {
+          {useMemo(() => groupMessages(messages), [messages]).map((group) => {
             if (group.type === "tool_group") {
-              return <ToolCallGroup key={`tg-${i}`} tools={group.messages} />;
+              return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
             }
             const msg = group.message;
             const isVoice = msg.metadata?.source === "voice";

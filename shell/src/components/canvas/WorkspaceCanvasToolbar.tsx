@@ -30,6 +30,7 @@ export function WorkspaceCanvasToolbar() {
           onChange={(event) => setQuery(event.target.value)}
           className="h-8 w-44 bg-transparent text-xs outline-none"
           placeholder="Search canvas"
+          aria-label="Search canvas"
         />
       </div>
       {NODE_TYPES.map((item) => (

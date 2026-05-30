@@ -54,10 +54,17 @@ export function FileIcon({
       )}
       // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- gridcell in a non-table flex grid (IconView role="grid"); no native HTML element maps to the ARIA gridcell role
       role="gridcell"
+      tabIndex={0}
       aria-selected={selected}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onDoubleClick?.();
+        }
+      }}
     >
       <Icon
         className={cn(

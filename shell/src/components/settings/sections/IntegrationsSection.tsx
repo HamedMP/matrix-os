@@ -512,6 +512,7 @@ export function IntegrationsSection() {
                             {renamingId === conn.id ? (
                               <input
                                 type="text"
+                                aria-label="Account label"
                                 // react-doctor-disable-next-line react-doctor/no-autofocus -- inline rename field rendered only after user clicks rename; focus is essential to the edit affordance
                                 autoFocus
                                 value={renameDraft}
@@ -661,6 +662,7 @@ export function IntegrationsSection() {
                     to /connect on first AND subsequent connects. */}
                 <input
                   type="text"
+                  aria-label="Account label"
                   placeholder={isConnected ? "Label for additional account" : "Label (optional, e.g. Work, Personal)"}
                   value={connecting === service.id ? "" : (connectLabels[service.id] ?? "")}
                   onChange={(e) => setConnectLabels((prev) => ({ ...prev, [service.id]: e.target.value }))}

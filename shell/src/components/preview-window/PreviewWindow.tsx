@@ -29,10 +29,13 @@ export function PreviewWindow() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center border-b overflow-x-auto shrink-0">
+      <div className="flex items-center border-b overflow-x-auto shrink-0" role="tablist">
         {tabs.map((tab) => (
           <div
             key={tab.id}
+            role="tab"
+            tabIndex={0}
+            aria-selected={tab.id === activeTabId}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-default border-r select-none min-w-0 shrink-0",
               "hover:bg-accent/30 transition-colors",
@@ -42,6 +45,12 @@ export function PreviewWindow() {
             onClick={() => setActiveTab(tab.id)}
             onAuxClick={(e) => {
               if (e.button === 1) closeTab(tab.id);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setActiveTab(tab.id);
+              }
             }}
           >
             {unsavedTabs.has(tab.id) && (

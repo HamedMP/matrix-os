@@ -65,9 +65,18 @@ export function SearchResults({ onOpenFile }: SearchResultsProps) {
       {searchResults.map((result) => (
         <div
           key={result.path}
+          // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- search-result row wraps block-level <div> children (name, path, content matches); a native <button> may only contain phrasing content, so role="button" is required here.
+          role="button"
+          tabIndex={0}
           className="flex items-start gap-2 px-3 py-2 hover:bg-accent/50 cursor-default border-b border-border/30"
           onClick={() => handleClick(result)}
           onDoubleClick={() => handleDoubleClick(result)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleDoubleClick(result);
+            }
+          }}
         >
           {result.type === "directory" ? (
             <FolderIcon className="size-4 text-blue-400 shrink-0 mt-0.5" />
@@ -84,9 +93,9 @@ export function SearchResults({ onOpenFile }: SearchResultsProps) {
             {result.matches
               .filter((m) => m.type === "content")
               .slice(0, 2)
-              .map((m, i) => (
+              .map((m) => (
                 <div
-                  key={i}
+                  key={`${result.path}:${m.line ?? ""}:${m.text}`}
                   className="text-xs text-muted-foreground mt-0.5 truncate"
                 >
                   <span className="text-muted-foreground/60">
