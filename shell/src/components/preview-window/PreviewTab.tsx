@@ -90,6 +90,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
               {(["source", "preview"] as const).map((m) => (
                 <button
                   key={m}
+                  type="button"
                   className={`px-2 py-0.5 ${tab.mode === m ? "bg-accent" : ""}`}
                   onClick={() => setMode(tab.id, m)}
                 >

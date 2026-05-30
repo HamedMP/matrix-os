@@ -91,6 +91,7 @@ export function CanvasGroupRect({ group }: CanvasGroupProps) {
         <div className="size-2.5 rounded-full" style={{ backgroundColor: group.color }} />
         <span className="text-xs font-medium text-foreground/80">{group.label}</span>
         <button
+          type="button"
           className="ml-auto text-xs text-muted-foreground/60 hover:text-foreground transition-colors"
           onClick={(e) => {
             e.stopPropagation();

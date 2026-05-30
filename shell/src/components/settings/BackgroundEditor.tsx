@@ -146,6 +146,7 @@ export function BackgroundEditor() {
             {BG_TYPES.map((t) => (
               <button
                 key={t.id}
+                type="button"
                 onClick={() => selectType(t.id)}
                 className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                   bgType === t.id
@@ -237,6 +238,7 @@ export function BackgroundEditor() {
               {wallpapers.map((name) => (
                 <div key={name} className="relative group">
                   <button
+                    type="button"
                     onClick={() => handleWallpaperSelect(name)}
                     className={`w-full aspect-video rounded-md border overflow-hidden transition-all ${
                       selectedWallpaper === name
@@ -251,6 +253,7 @@ export function BackgroundEditor() {
                     />
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleDeleteWallpaper(name)}
                     className="absolute top-1 right-1 size-5 rounded-full bg-destructive text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >

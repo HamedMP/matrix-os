@@ -378,6 +378,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
               </select>
             </div>
             <button
+              type="button"
               onClick={() => void refreshReleaseData(selectedChannel)}
               disabled={releaseLoading || upgrading}
               className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
@@ -430,6 +431,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           {canInstallSelectedChannel && (
             <div className="pt-1">
               <button
+                type="button"
                 onClick={handleUpgrade}
                 disabled={upgrading || systemUpdatesLocked}
                 className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
@@ -489,6 +491,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
                       </p>
                     </div>
                     <button
+                      type="button"
                       onClick={() => release.version && void startUpdate({ version: release.version })}
                       disabled={!canInstallRelease || upgrading || systemUpdatesLocked}
                       className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"

@@ -45,6 +45,7 @@ function TrafficLights({ onClose, closeDisabled = false }: { onClose: () => void
   return (
     <div className="group/traffic flex items-center gap-1.5">
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           if (closeDisabled) return;
@@ -61,6 +62,7 @@ function TrafficLights({ onClose, closeDisabled = false }: { onClose: () => void
         </span>
       </button>
       <button
+        type="button"
         className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors opacity-50 cursor-default"
         aria-label="Minimize"
         disabled
@@ -70,6 +72,7 @@ function TrafficLights({ onClose, closeDisabled = false }: { onClose: () => void
         </span>
       </button>
       <button
+        type="button"
         className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors opacity-50 cursor-default"
         aria-label="Maximize"
         disabled
@@ -195,6 +198,7 @@ export function Settings({
                   return (
                     <button
                       key={section.id}
+                      type="button"
                       onClick={() => {
                         if (!locked) setActiveSection(section.id);
                       }}

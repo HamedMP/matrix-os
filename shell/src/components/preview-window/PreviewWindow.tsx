@@ -49,6 +49,7 @@ export function PreviewWindow() {
             )}
             <span className="truncate max-w-32">{tab.name}</span>
             <button
+              type="button"
               className="size-4 rounded hover:bg-accent flex items-center justify-center shrink-0"
               onClick={(e) => {
                 e.stopPropagation();

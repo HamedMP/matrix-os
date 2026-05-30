@@ -135,6 +135,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         </span>
       )}
       <button
+        type="button"
         onClick={() => setCaseSensitive((v) => !v)}
         title="Case Sensitive"
         style={{
@@ -151,6 +152,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         Aa
       </button>
       <button
+        type="button"
         onClick={findPrevious}
         title="Previous Match (Shift+Enter)"
         style={{
@@ -165,6 +167,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         &uarr;
       </button>
       <button
+        type="button"
         onClick={findNext}
         title="Next Match (Enter)"
         style={{
@@ -179,6 +182,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         &darr;
       </button>
       <button
+        type="button"
         onClick={close}
         title="Close (Escape)"
         style={{

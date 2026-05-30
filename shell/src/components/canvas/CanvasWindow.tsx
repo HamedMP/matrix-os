@@ -270,6 +270,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         {/* macOS traffic lights */}
         <div className="group/traffic flex items-center gap-1.5 shrink-0 relative z-10">
           <button
+            type="button"
             className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
             onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
             aria-label="Close"
@@ -279,6 +280,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             </span>
           </button>
           <button
+            type="button"
             className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
             onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
             aria-label="Minimize"
@@ -288,6 +290,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             </span>
           </button>
           <button
+            type="button"
             className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
             onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
             aria-label="Fullscreen"
@@ -359,6 +362,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         {/* Right: Win98 window buttons */}
         <div className="flex items-center gap-0.5 shrink-0">
           <button
+            type="button"
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
             style={{
               ...win98Bevel,
@@ -371,6 +375,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             <Minus className="size-2.5" />
           </button>
           <button
+            type="button"
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
             style={{
               ...win98Bevel,
@@ -383,6 +388,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             <Maximize2 className="size-2.5" />
           </button>
           <button
+            type="button"
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
             style={{
               ...win98Bevel,

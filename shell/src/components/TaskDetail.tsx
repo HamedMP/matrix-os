@@ -39,6 +39,7 @@ export function TaskDetail({ task, onClose }: TaskDetailProps) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <span className="text-sm font-medium truncate">Task Detail</span>
         <button
+          type="button"
           onClick={onClose}
           className="size-6 flex items-center justify-center rounded hover:bg-muted transition-colors"
         >

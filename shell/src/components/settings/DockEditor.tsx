@@ -42,6 +42,7 @@ export function DockEditor() {
             {POSITIONS.map((p) => (
               <button
                 key={p.id}
+                type="button"
                 onClick={() => save({ ...dock, position: p.id })}
                 className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                   dock.position === p.id

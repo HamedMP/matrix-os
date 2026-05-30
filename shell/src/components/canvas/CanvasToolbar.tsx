@@ -104,6 +104,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
   return (
     <>
       <button
+        type="button"
         onClick={zoomOut}
         className="p-1 rounded hover:bg-muted transition-colors"
         aria-label="Zoom out"
@@ -124,6 +125,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       />
 
       <button
+        type="button"
         onClick={zoomIn}
         className="p-1 rounded hover:bg-muted transition-colors"
         aria-label="Zoom in"
@@ -133,6 +135,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       </button>
 
       <button
+        type="button"
         onClick={() => resetZoom()}
         className="px-1.5 py-0.5 text-xs font-mono rounded hover:bg-muted transition-colors min-w-[3rem] text-center"
         title="Reset to 100% (Cmd+1)"
@@ -143,6 +146,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       <div className="w-px h-4 bg-border" />
 
       <button
+        type="button"
         onClick={onFitAll}
         className="p-1 rounded hover:bg-muted transition-colors"
         aria-label="Fit all"
@@ -152,6 +156,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       </button>
 
       <button
+        type="button"
         onClick={autoArrangeWindows}
         className="p-1 rounded hover:bg-muted transition-colors"
         aria-label="Auto-align apps"
@@ -163,6 +168,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       <div className="w-px h-4 bg-border" />
 
       <button
+        type="button"
         onClick={onAddLabel}
         className="p-1 rounded hover:bg-muted transition-colors"
         aria-label="Add text label"
@@ -172,6 +178,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       </button>
 
       <button
+        type="button"
         onClick={toggleGrid}
         className={`p-1 rounded transition-colors ${gridEnabled ? "bg-muted text-foreground" : "hover:bg-muted text-muted-foreground"}`}
         aria-label="Toggle dot grid"
@@ -181,6 +188,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       </button>
 
       <button
+        type="button"
         onClick={toggleShowTitles}
         className={`p-1 rounded transition-colors ${showTitles ? "bg-muted text-foreground" : "hover:bg-muted text-muted-foreground"}`}
         aria-label="Toggle app titles"
@@ -208,6 +216,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
 
       <div className="flex items-center rounded-md bg-muted/50 p-0.5 gap-0.5">
         <button
+          type="button"
           onClick={() => setNavMode("scroll")}
           className={`p-1 rounded transition-colors ${navMode === "scroll" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
           aria-label="Scroll to navigate"
@@ -216,6 +225,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
           <MousePointer className="size-3.5" />
         </button>
         <button
+          type="button"
           onClick={() => setNavMode("grab")}
           className={`p-1 rounded transition-colors ${navMode === "grab" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
           aria-label="Click and drag to navigate"

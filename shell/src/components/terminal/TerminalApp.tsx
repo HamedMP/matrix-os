@@ -745,6 +745,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               <div className="text-center">
                 <p className="text-sm mb-2">No terminal tabs open</p>
                 <button
+                  type="button"
                   className="text-xs px-3 py-1.5 rounded cursor-pointer"
                   style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
                   onClick={() => addTab(DEFAULT_CWD)}
@@ -854,6 +855,7 @@ function ToolbarBtn({ onClick, title, children, variant = "default" }: ToolbarBt
         : { bg: "transparent", color: "var(--muted-foreground)", border: "transparent" };
   return (
     <button
+      type="button"
       className="cursor-pointer transition-colors flex items-center justify-center gap-1.5"
       style={{
         height: 28,
@@ -1003,6 +1005,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
               </span>
               <button
+                type="button"
                 className="cursor-pointer flex items-center justify-center transition-colors"
                 onClick={(e) => { e.stopPropagation(); ctx.closeTab(tab.id); }}
                 style={{
@@ -1289,6 +1292,7 @@ function LocalTerminalSidebar() {
         className="absolute left-2 top-2 z-20"
       >
         <button
+          type="button"
           className="flex items-center justify-center rounded cursor-pointer hover:bg-[var(--accent)] transition-colors"
           style={{
             width: 30,
@@ -1474,6 +1478,7 @@ function LocalTerminalSidebar() {
         <SidebarRailButton label="Files" icon={<FilesIcon size={16} strokeWidth={1.8} />} active={tab === "files"} onClick={() => selectSidebarTab("files")} />
         <div style={{ flex: 1 }} />
         <button
+          type="button"
           className="flex items-center justify-center cursor-pointer transition-colors"
           style={{
             width: 32,
@@ -1526,6 +1531,7 @@ function LocalTerminalSidebar() {
             </div>
             {tab === "shells" ? (
               <button
+                type="button"
                 onClick={() => void createManagedShell()}
                 disabled={creatingShell}
                 className="flex items-center gap-1.5 cursor-pointer"
@@ -1565,6 +1571,7 @@ function LocalTerminalSidebar() {
               }}
             />
             <button
+              type="button"
               onClick={() => {
                 if (tab === "projects") void fetchProjects();
                 if (tab === "shells") void fetchShells();
@@ -1683,6 +1690,7 @@ function LocalTerminalSidebar() {
           <div className="flex items-center gap-1 px-2 py-1.5 text-[10px] shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
             {!isAtRoot && (
               <button
+                type="button"
                 className="text-xs opacity-60 hover:opacity-100 cursor-pointer"
                 onClick={() => { const p = rootPath.split("/").filter(Boolean); p.pop(); setRootPath(p.join("/") || ""); }}
                 style={{ color: "var(--muted-foreground)" }}
@@ -1735,6 +1743,7 @@ function SidebarRailButton({
 }) {
   return (
     <button
+      type="button"
       aria-label={label}
       onClick={onClick}
       className="flex items-center justify-center cursor-pointer transition-colors"
@@ -1937,6 +1946,7 @@ function SessionActionBtn({
 }) {
   return (
     <button
+      type="button"
       aria-label={`${label} ${sessionId}`}
       onClick={onClick}
       disabled={disabled}
@@ -2063,6 +2073,7 @@ function ProjectActionBtn({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className="text-[10px] cursor-pointer transition-colors"
       style={{
