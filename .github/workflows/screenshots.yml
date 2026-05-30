@@ -25,6 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: Decide whether screenshots are needed
+        timeout-minutes: 2
         id: screenshots
         uses: actions/github-script@v9
         with:
@@ -107,6 +108,7 @@ jobs:
 
       - name: Run Playwright tests
         if: steps.screenshots.outputs.should_run == 'true'
+        timeout-minutes: 15
         run: cd shell && pnpm exec playwright test --update-snapshots
 
       - name: Upload test artifacts
