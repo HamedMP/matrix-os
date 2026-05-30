@@ -13,9 +13,11 @@ interface PaneGridProps {
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
   shouldDestroyPane?: (paneId: string) => boolean;
+  allowRemoteResize?: boolean;
+  suppressNativeKeyboard?: boolean;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <PaneNodeRenderer
@@ -26,6 +28,8 @@ export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessio
         onSessionAttached={onSessionAttached}
         shouldCachePane={shouldCachePane}
         shouldDestroyPane={shouldDestroyPane}
+        allowRemoteResize={allowRemoteResize}
+        suppressNativeKeyboard={suppressNativeKeyboard}
       />
     </div>
   );
@@ -39,9 +43,11 @@ interface PaneNodeRendererProps {
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
   shouldDestroyPane?: (paneId: string) => boolean;
+  allowRemoteResize?: boolean;
+  suppressNativeKeyboard?: boolean;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     return (
       <div key={node.id} className="h-full w-full min-h-0 min-w-0">
@@ -58,6 +64,8 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
           onSessionAttached={onSessionAttached}
           shouldCacheOnUnmount={shouldCachePane}
           shouldDestroyOnUnmount={shouldDestroyPane}
+          allowRemoteResize={allowRemoteResize}
+          suppressNativeKeyboard={suppressNativeKeyboard}
         />
       </div>
     );
@@ -75,6 +83,8 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
       onSessionAttached={onSessionAttached}
       shouldCachePane={shouldCachePane}
       shouldDestroyPane={shouldDestroyPane}
+      allowRemoteResize={allowRemoteResize}
+      suppressNativeKeyboard={suppressNativeKeyboard}
     />
   );
 }
@@ -90,9 +100,11 @@ interface SplitContainerProps {
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
   shouldDestroyPane?: (paneId: string) => boolean;
+  allowRemoteResize?: boolean;
+  suppressNativeKeyboard?: boolean;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentRatio, setCurrentRatio] = useState(ratio);
 
@@ -146,6 +158,8 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           onSessionAttached={onSessionAttached}
           shouldCachePane={shouldCachePane}
           shouldDestroyPane={shouldDestroyPane}
+          allowRemoteResize={allowRemoteResize}
+          suppressNativeKeyboard={suppressNativeKeyboard}
         />
       </div>
       <div
@@ -162,6 +176,8 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           onSessionAttached={onSessionAttached}
           shouldCachePane={shouldCachePane}
           shouldDestroyPane={shouldDestroyPane}
+          allowRemoteResize={allowRemoteResize}
+          suppressNativeKeyboard={suppressNativeKeyboard}
         />
       </div>
     </div>

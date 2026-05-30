@@ -21,7 +21,7 @@ import { useTerminalSettings } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
 import { TerminalKeyBar } from "./TerminalKeyBar";
-import { isCanonicalShellSessionId } from "./TerminalPane";
+import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./TerminalPane";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 export { TERMINAL_INPUT_EVENT };
@@ -35,6 +35,28 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
       detail: { paneId, data },
     }),
   );
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.clipboard) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+  if (!ok) {
+    throw new Error("execCommand copy failed");
+  }
 }
 
 const DEFAULT_CWD = "projects";
@@ -260,6 +282,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
     for (const sessionId of uniqueIds) {
       const isCanonical = isCanonicalShellSessionId(sessionId);
+      const isLegacyPty = isLegacyPtySessionId(sessionId);
+      if (!isCanonical && !isLegacyPty) {
+        continue;
+      }
       const path = isCanonical
         ? `/api/terminal/sessions/${encodeURIComponent(sessionId)}?force=1`
         : `/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`;
@@ -683,7 +709,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     >
       <TerminalAppContext.Provider value={storeApi}>
         <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} />
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
           {!mobile && <LocalTerminalSidebar />}
           {activeTab ? (
             <div
@@ -699,6 +725,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   onSessionAttached={handleSessionAttached}
                   shouldCachePane={shouldCachePane}
                   shouldDestroyPane={shouldDestroyPane}
+                  allowRemoteResize={!mobile}
+                  suppressNativeKeyboard={mobile}
                 />
                 {mobile && (
                   <TerminalKeyBar
@@ -913,11 +941,6 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const dragIndexRef = useRef<number | null>(null);
 
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
-  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
-  const activePaneId = activeTab ? ctx.focusedPaneId ?? getFirstPaneId(activeTab.paneTree) : null;
-  const activeCwd = activeTab && activePaneId
-    ? getPaneCwd(activeTab.paneTree, activePaneId) ?? defaultCwd
-    : defaultCwd;
 
   return (
     <div
@@ -942,8 +965,6 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
       >
         {ctx.tabs.map((tab, i) => {
           const active = tab.id === ctx.activeTabId;
-          const tabPaneId = getFirstPaneId(tab.paneTree);
-          const tabSessionId = getPaneSessionId(tab.paneTree, tabPaneId);
           return (
             <div
               key={tab.id}
@@ -976,24 +997,10 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
                 }}
               />
               <span
-                className="flex min-w-0 flex-col leading-tight"
+                className="min-w-0 truncate"
                 style={{ overflow: "hidden" }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
-                {(ctx.mobile || active) && (
-                  <span
-                    style={{
-                      color: "var(--muted-foreground)",
-                      fontSize: 10,
-                      fontWeight: 400,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                    }}
-                  >
-                    {active ? formatCwd(activeCwd) : tabSessionId ?? formatCwd(getPaneCwd(tab.paneTree, tabPaneId) ?? defaultCwd)}
-                  </span>
-                )}
               </span>
               <button
                 className="cursor-pointer flex items-center justify-center transition-colors"
@@ -1235,7 +1242,9 @@ function LocalTerminalSidebar() {
         return;
       }
       const data = (await res.json()) as { sessions?: WorkspaceSessionSummary[] };
-      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+      setSessions(Array.isArray(data.sessions)
+        ? data.sessions.filter((session) => typeof session.id === "string" && session.id.length > 0)
+        : []);
     } catch (err: unknown) {
       console.warn("Failed to load workspace sessions:", err instanceof Error ? err.message : err);
       setSessionsError("Could not reach gateway");
@@ -1276,10 +1285,20 @@ function LocalTerminalSidebar() {
 
   if (!ctx.sidebarOpen) {
     return (
-      <div className="flex flex-col items-center py-2 gap-2 shrink-0" style={{ width: 44, background: "var(--card)", borderRight: "1px solid var(--border)" }}>
+      <div
+        className="absolute left-2 top-2 z-20"
+      >
         <button
           className="flex items-center justify-center rounded cursor-pointer hover:bg-[var(--accent)] transition-colors"
-          style={{ width: 30, height: 30, fontSize: 14 }}
+          style={{
+            width: 30,
+            height: 30,
+            fontSize: 14,
+            background: "var(--card)",
+            color: "var(--foreground)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
+          }}
           onClick={() => ctx.setSidebarOpen(true)}
           title="Open sidebar (Ctrl+Shift+B)"
         >
@@ -1361,6 +1380,10 @@ function LocalTerminalSidebar() {
   };
 
   const openWorkspaceTransport = async (session: WorkspaceSessionSummary, mode: "observe" | "takeover") => {
+    if (!session.id) {
+      setSessionsError("Session is missing an id");
+      return;
+    }
     try {
       const res = await fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(session.id)}/${mode}`, {
         method: "POST",
@@ -1752,6 +1775,16 @@ function ShellCard({
       : shell.status === "degraded"
         ? "var(--warning)"
         : "var(--muted-foreground)";
+  const [copied, setCopied] = useState(false);
+  const copyAttachCommand = async () => {
+    try {
+      await copyTextToClipboard(`matrix shell connect ${shell.name}`);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (err: unknown) {
+      console.warn("Failed to copy shell attach command:", err instanceof Error ? err.message : err);
+    }
+  };
   return (
     <div
       style={{
@@ -1772,17 +1805,26 @@ function ShellCard({
             flexShrink: 0,
           }}
         />
-        <span
+        <button
+          type="button"
+          aria-label={`Copy attach command for ${shell.name}`}
           className="min-w-0 flex-1 truncate"
           style={{
             color: "var(--foreground)",
             fontSize: 12,
             fontWeight: 650,
             fontFamily: "var(--font-mono, ui-monospace, monospace)",
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            textAlign: "left",
+            cursor: "copy",
           }}
+          title={copied ? "Copied" : `Copy: matrix shell connect ${shell.name}`}
+          onClick={() => void copyAttachCommand()}
         >
           {shell.name}
-        </span>
+        </button>
         <span style={{ color: "var(--muted-foreground)", fontSize: 10, whiteSpace: "nowrap" }}>
           {shell.attachedClients ?? 0} attached
         </span>
