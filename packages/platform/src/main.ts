@@ -72,6 +72,11 @@ import {
   type BillingEntitlement,
   type RuntimeAccessDecision,
 } from './billing.js';
+import { createBillingRoutes } from './billing-routes.js';
+import {
+  createStripeBillingClient,
+  createUnavailableStripeBillingClient,
+} from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
@@ -1973,6 +1978,20 @@ export function createApp(deps: {
   }
   app.capturePlatformEvent = capturePlatformEvent;
 
+  async function resolveBillingClerkUserId(c: Context): Promise<string | null> {
+    try {
+      if (!clerkAuth) return null;
+      const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
+      if (!token) return null;
+      const result = await clerkAuth.verify(token);
+      return result.authenticated && result.userId ? result.userId : null;
+    } catch (err: unknown) {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[billing] Clerk verification failed: ${kind}`);
+      return null;
+    }
+  }
+
   app.use('*', async (c, next) => {
     const started = performance.now();
     let status = 500;
@@ -2347,6 +2366,15 @@ export function createApp(deps: {
       }),
     );
   }
+
+  app.route('/billing', createBillingRoutes({
+    db,
+    stripe: appEnv.STRIPE_SECRET_KEY
+      ? createStripeBillingClient({ secretKey: appEnv.STRIPE_SECRET_KEY })
+      : createUnavailableStripeBillingClient(),
+    env: appEnv,
+    resolveClerkUserId: resolveBillingClerkUserId,
+  }));
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway

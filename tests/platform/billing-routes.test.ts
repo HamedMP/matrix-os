@@ -77,6 +77,9 @@ describe('platform billing routes', () => {
       priceId: 'price_builder_annual',
       mode: 'subscription',
       automaticTax: true,
+      allowPromotionCodes: true,
+      successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success',
+      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     }));
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
       expect.not.objectContaining({ payment_method_types: expect.anything() }),
@@ -237,7 +240,10 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: 'https://billing.stripe.test/session' });
-    expect(stripe.createPortalSession).toHaveBeenCalledWith({ customerId: 'cus_123' });
+    expect(stripe.createPortalSession).toHaveBeenCalledWith({
+      customerId: 'cus_123',
+      returnUrl: 'https://app.matrix-os.com/?billing=portal',
+    });
   });
 
   it('rejects portal creation when the Stripe client timeout exceeds the API budget', async () => {

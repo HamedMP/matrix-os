@@ -273,6 +273,99 @@ describe("platform proxy routing", () => {
     });
   });
 
+  it("serves platform billing routes before app-domain VPS proxying", async () => {
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_alice",
+      source: "stripe",
+      planSlug: "matrix_builder",
+      status: "active",
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: "cpx32",
+      allowedServerTypes: ["cpx22", "cpx32"],
+      stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+      effectiveFrom: "2026-05-30T00:00:00.000Z",
+      effectiveUntil: null,
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: { planSlug: "matrix_builder" },
+      access: { runtimeProxyAllowed: true },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns unauthorized instead of leaking Clerk verification failures on billing routes", async () => {
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("jwks timeout")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("returns a generic billing-unavailable error when Stripe checkout is not configured", async () => {
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: {
+        STRIPE_PRICE_MATRIX_BUILDER_MONTHLY: "price_builder_monthly",
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/billing/checkout", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ planSlug: "matrix_builder", interval: "monthly" }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Billing unavailable" });
+  });
+
   it("builds customer VPS websocket upgrade headers without leaking browser credentials or query JWTs", async () => {
     const issued = await issueSyncJwt({
       secret: JWT_SECRET,
