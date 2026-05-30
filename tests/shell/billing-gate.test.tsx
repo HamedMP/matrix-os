@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -168,6 +168,52 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
     expect(screen.getByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("bypasses cached inactive billing status after returning from checkout", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await screen.findByRole("button", { name: "Continue to pay" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    window.history.replaceState({}, "", "/?checkout=success");
+    window.sessionStorage.setItem("matrix.billing.checkoutAttemptAt", String(Date.now()));
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(navigationState.replace).toHaveBeenCalledWith("/");
   });
 
   it("cleans the checkout success query once the plan is active", async () => {

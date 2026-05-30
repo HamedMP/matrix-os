@@ -6,6 +6,7 @@ import { hasMatrixBillingAccess } from "@/lib/billing";
 
 const BILLING_STATUS_TIMEOUT_MS = 10_000;
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
+const BILLING_STATUS_RETRY_MS = 3_000;
 
 type BillingStatusSnapshot = {
   userId: string;
@@ -67,7 +68,8 @@ export function useMatrixBillingAccess(): BillingAccessState {
       setRemoteChecked(true);
       return;
     }
-    const cached = readCachedBillingStatus(userId);
+    const checkoutReturnRequested = isCheckoutSuccessReturn();
+    const cached = checkoutReturnRequested ? null : readCachedBillingStatus(userId);
     if (cached !== null) {
       setRemoteState(cached);
       setRemoteChecked(true);
@@ -76,11 +78,16 @@ export function useMatrixBillingAccess(): BillingAccessState {
     let disposed = false;
     let retryTimeoutId: number | undefined;
     setRemoteChecked(false);
-    readRemoteBillingStatus(userId)
+    readRemoteBillingStatus(userId, { skipInactiveCache: checkoutReturnRequested })
       .then((state) => {
         if (disposed) return;
         setRemoteState(state);
         setRemoteChecked(true);
+        if (checkoutReturnRequested && !state.active) {
+          retryTimeoutId = window.setTimeout(() => {
+            setRetryTick((current) => current + 1);
+          }, BILLING_STATUS_RETRY_MS);
+        }
       })
       .catch((error: unknown) => {
         if (disposed) return;
@@ -89,7 +96,7 @@ export function useMatrixBillingAccess(): BillingAccessState {
         setRemoteChecked(false);
         retryTimeoutId = window.setTimeout(() => {
           setRetryTick((current) => current + 1);
-        }, 3000);
+        }, BILLING_STATUS_RETRY_MS);
       });
     return () => {
       disposed = true;
@@ -120,7 +127,15 @@ function readCachedBillingStatus(userId: string): BillingAccessRemoteState | nul
   return billingStatusSnapshot.state;
 }
 
-function readRemoteBillingStatus(userId: string): Promise<BillingAccessRemoteState> {
+function isCheckoutSuccessReturn(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("checkout") === "success";
+}
+
+function readRemoteBillingStatus(
+  userId: string,
+  options: { skipInactiveCache?: boolean } = {},
+): Promise<BillingAccessRemoteState> {
   if (billingStatusRequest?.userId === userId) return billingStatusRequest.promise;
 
   const controller = new AbortController();
@@ -148,7 +163,9 @@ function readRemoteBillingStatus(userId: string): Promise<BillingAccessRemoteSta
       };
     })
     .then((state) => {
-      billingStatusSnapshot = { userId, state, checkedAt: Date.now() };
+      if (state.active || !options.skipInactiveCache) {
+        billingStatusSnapshot = { userId, state, checkedAt: Date.now() };
+      }
       return state;
     })
     .finally(() => {
