@@ -35,6 +35,7 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("folder")).toBe("/icons/folder.svg");
     expect(iconUrlForSlug("chat")).toBe("/icons/chat.svg");
     expect(iconUrlForSlug("game-center")).toBe("/icons/game-center.png");
+    expect(iconUrlForSlug("my_app")).toBe("/icons/my_app.png");
   });
 
   it("does not auto-generate icons for shipped SVG built-ins", () => {
@@ -44,6 +45,7 @@ describe("app launch helpers", () => {
     expect(canAutoGenerateIconForSlug("folder")).toBe(false);
     expect(canAutoGenerateIconForSlug("chat")).toBe(false);
     expect(canAutoGenerateIconForSlug("custom-tool")).toBe(true);
+    expect(canAutoGenerateIconForSlug("my_app")).toBe(true);
     expect(canAutoGenerateIconForSlug("games/minesweeper")).toBe(false);
   });
 

@@ -1,6 +1,5 @@
 export const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
-/** Icon slugs are intentionally hyphen-only (no underscores) to match gateway icon storage keys. */
-const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 const SHIPPED_SVG_ICON_SLUGS = new Set([
   "calendar",
