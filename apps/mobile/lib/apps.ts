@@ -28,7 +28,7 @@ const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
 
 const SAFE_APP_SLUG_SEGMENT = /^[a-z0-9][a-z0-9_-]*$/;
 
-export const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
+const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Chat",
     description: "Talk to your Matrix OS kernel.",
@@ -174,13 +174,6 @@ function slugifyName(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug || "app";
-}
-
-export function appDetailHref(slug: string): Href {
-  return {
-    pathname: "/apps/[...slug]",
-    params: { slug: slug.split("/") },
-  } as unknown as Href;
 }
 
 export function appRuntimeHref(slug: string): Href {

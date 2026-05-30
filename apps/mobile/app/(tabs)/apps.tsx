@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
+  StyleSheet,
   TextInput,
   Text,
   View,
@@ -133,7 +134,7 @@ function AppCard({
             numberOfLines={1}
             style={{
               fontFamily: fonts.mono,
-              fontSize: 11,
+              fontSize: 12,
               color: colors.light.mutedForeground,
             }}
           >
@@ -146,7 +147,7 @@ function AppCard({
               style={{
                 maxWidth: 88,
                 fontFamily: fonts.mono,
-                fontSize: 10,
+                fontSize: 12,
                 color: colors.light.mutedForeground,
               }}
             >
@@ -233,29 +234,63 @@ function ContinueAppCard({
   );
 }
 
+interface AppsState {
+  apps: MatrixAppEntry[];
+  refreshing: boolean;
+  loading: boolean;
+  query: string;
+  lastActiveAppSlug: string | null;
+}
+
+type AppsAction =
+  | { type: "appsLoaded"; apps: MatrixAppEntry[] }
+  | { type: "refreshStart" }
+  | { type: "refreshEnd" }
+  | { type: "queryChanged"; query: string }
+  | { type: "lastActiveAppSlugChanged"; slug: string | null };
+
+const initialAppsState: AppsState = {
+  apps: [],
+  refreshing: false,
+  loading: true,
+  query: "",
+  lastActiveAppSlug: null,
+};
+
+function appsReducer(state: AppsState, action: AppsAction): AppsState {
+  switch (action.type) {
+    case "appsLoaded":
+      return { ...state, apps: action.apps, loading: false };
+    case "refreshStart":
+      return { ...state, refreshing: true };
+    case "refreshEnd":
+      return { ...state, refreshing: false };
+    case "queryChanged":
+      return { ...state, query: action.query };
+    case "lastActiveAppSlugChanged":
+      return { ...state, lastActiveAppSlug: action.slug };
+    default:
+      return state;
+  }
+}
+
 export default function AppsScreen() {
   const { client } = useGateway();
-  const [apps, setApps] = useState<MatrixAppEntry[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [lastActiveAppSlug, setLastActiveAppSlug] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(appsReducer, initialAppsState);
+  const { apps, refreshing, loading, query, lastActiveAppSlug } = state;
 
   const fetchApps = useCallback(async () => {
     if (!client) {
-      setApps(mergeNativeAndRemoteApps([]));
-      setLoading(false);
+      dispatch({ type: "appsLoaded", apps: mergeNativeAndRemoteApps([]) });
       return;
     }
 
     try {
       const nextApps = await client.getApps();
-      setApps(mergeNativeAndRemoteApps(nextApps));
+      dispatch({ type: "appsLoaded", apps: mergeNativeAndRemoteApps(nextApps) });
     } catch (err) {
       console.warn("[mobile] failed to fetch apps", err instanceof Error ? err.message : String(err));
-      setApps(mergeNativeAndRemoteApps([]));
-    } finally {
-      setLoading(false);
+      dispatch({ type: "appsLoaded", apps: mergeNativeAndRemoteApps([]) });
     }
   }, [client]);
 
@@ -265,14 +300,14 @@ export default function AppsScreen() {
 
   useEffect(() => {
     loadMobileShellState()
-      .then((state) => setLastActiveAppSlug(state.lastActiveAppSlug))
+      .then((shellState) => dispatch({ type: "lastActiveAppSlugChanged", slug: shellState.lastActiveAppSlug }))
       .catch((err: unknown) => {
         console.warn("[mobile] failed to load app open state", err instanceof Error ? err.message : String(err));
       });
   }, []);
 
   const handleOpenApp = useCallback((slug: string) => {
-    setLastActiveAppSlug(slug);
+    dispatch({ type: "lastActiveAppSlugChanged", slug });
     loadMobileShellState()
       .then((state) => saveMobileShellState({
         ...state,
@@ -300,9 +335,9 @@ export default function AppsScreen() {
   }, [apps, lastActiveAppSlug]);
 
   const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
+    dispatch({ type: "refreshStart" });
     await fetchApps();
-    setRefreshing(false);
+    dispatch({ type: "refreshEnd" });
   }, [fetchApps]);
 
   const renderItem = useCallback(
@@ -317,26 +352,21 @@ export default function AppsScreen() {
     [client, handleOpenApp, lastActiveAppSlug],
   );
 
+  const refreshControl = useMemo(
+    () => (
+      <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
+    ),
+    [refreshing, handleRefresh],
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.light.background }}>
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md }}>
-        <View
-          style={{
-            minHeight: 44,
-            borderRadius: radius.full,
-            borderWidth: 1,
-            borderColor: colors.light.border,
-            backgroundColor: colors.light.card,
-            paddingHorizontal: spacing.lg,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: spacing.sm,
-          }}
-        >
+        <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color={colors.light.mutedForeground} />
           <TextInput
             value={query}
-            onChangeText={setQuery}
+            onChangeText={(text) => dispatch({ type: "queryChanged", query: text })}
             placeholder="Search apps"
             placeholderTextColor={colors.light.mutedForeground}
             style={{
@@ -348,7 +378,7 @@ export default function AppsScreen() {
             }}
           />
           {query ? (
-            <Pressable onPress={() => setQuery("")}>
+            <Pressable onPress={() => dispatch({ type: "queryChanged", query: "" })}>
               <Ionicons name="close-circle" size={18} color={colors.light.mutedForeground} />
             </Pressable>
           ) : null}
@@ -370,25 +400,10 @@ export default function AppsScreen() {
             keyExtractor={(item) => getAppSlug(item)}
             contentInsetAdjustmentBehavior="automatic"
             contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 112, gap: spacing.md }}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
-            }
+            refreshControl={refreshControl}
             ListEmptyComponent={
               <View style={{ alignItems: "center", paddingVertical: 72, paddingHorizontal: spacing.xl }}>
-                <View
-                  style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 18,
-                    borderCurve: "continuous",
-                    backgroundColor: colors.light.card,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderWidth: 1,
-                    borderColor: colors.light.border,
-                    marginBottom: spacing.lg,
-                  }}
-                >
+                <View style={styles.emptyIcon}>
                   <Ionicons name="apps-outline" size={36} color={colors.light.primary} />
                 </View>
                 <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 17, color: colors.light.foreground }}>
@@ -414,3 +429,29 @@ export default function AppsScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  searchBar: {
+    minHeight: 44,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    paddingHorizontal: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
+    borderCurve: "continuous",
+    backgroundColor: colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    marginBottom: spacing.lg,
+  },
+});

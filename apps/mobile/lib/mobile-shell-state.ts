@@ -21,7 +21,7 @@ const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
 const SAFE_TERMINAL_SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export function createDefaultMobileShellState(surface: MobileShellSurface = "native-mobile"): MobileShellState {
+function createDefaultMobileShellState(surface: MobileShellSurface = "native-mobile"): MobileShellState {
   return {
     surface,
     mode: "launcher",

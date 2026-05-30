@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useReducer, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -73,6 +73,68 @@ function formatRelativeTime(ms: number): string {
   return `in ${days}d`;
 }
 
+function renderRightActions() {
+  return (
+    <View style={swipeStyles.deleteAction}>
+      <Ionicons name="trash-outline" size={20} color="#fff" />
+      <Text style={swipeStyles.actionText}>Delete</Text>
+    </View>
+  );
+}
+
+interface MissionState {
+  tasks: Task[];
+  cronJobs: unknown[];
+  filter: FilterStatus;
+  refreshing: boolean;
+  selectedTask: Task | null;
+  showAddForm: boolean;
+  newTaskInput: string;
+}
+
+type MissionAction =
+  | { type: "dataLoaded"; tasks: Task[]; cronJobs: unknown[] }
+  | { type: "tasksSet"; tasks: Task[] }
+  | { type: "setFilter"; filter: FilterStatus }
+  | { type: "setRefreshing"; value: boolean }
+  | { type: "selectTask"; task: Task | null }
+  | { type: "setShowAddForm"; value: boolean }
+  | { type: "setNewTaskInput"; value: string }
+  | { type: "taskAdded" };
+
+const INITIAL_MISSION_STATE: MissionState = {
+  tasks: [],
+  cronJobs: [],
+  filter: "all",
+  refreshing: false,
+  selectedTask: null,
+  showAddForm: false,
+  newTaskInput: "",
+};
+
+function missionReducer(state: MissionState, action: MissionAction): MissionState {
+  switch (action.type) {
+    case "dataLoaded":
+      return { ...state, tasks: action.tasks, cronJobs: action.cronJobs };
+    case "tasksSet":
+      return { ...state, tasks: action.tasks };
+    case "setFilter":
+      return { ...state, filter: action.filter };
+    case "setRefreshing":
+      return { ...state, refreshing: action.value };
+    case "selectTask":
+      return { ...state, selectedTask: action.task };
+    case "setShowAddForm":
+      return { ...state, showAddForm: action.value };
+    case "setNewTaskInput":
+      return { ...state, newTaskInput: action.value };
+    case "taskAdded":
+      return { ...state, newTaskInput: "", showAddForm: false };
+    default:
+      return state;
+  }
+}
+
 interface SwipeableTaskCardProps {
   task: Task;
   onPress: () => void;
@@ -89,13 +151,6 @@ function SwipeableTaskCard({ task, onPress, onComplete, onDelete }: SwipeableTas
       <Text style={swipeStyles.actionText}>
         {task.status === "completed" ? "Reopen" : "Complete"}
       </Text>
-    </View>
-  );
-
-  const renderRightActions = () => (
-    <View style={swipeStyles.deleteAction}>
-      <Ionicons name="trash-outline" size={20} color="#fff" />
-      <Text style={swipeStyles.actionText}>Delete</Text>
     </View>
   );
 
@@ -131,13 +186,8 @@ function SwipeableTaskCard({ task, onPress, onComplete, onDelete }: SwipeableTas
 
 export default function MissionControlScreen() {
   const { client } = useGateway();
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [cronJobs, setCronJobs] = useState<unknown[]>([]);
-  const [filter, setFilter] = useState<FilterStatus>("all");
-  const [refreshing, setRefreshing] = useState(false);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newTaskInput, setNewTaskInput] = useState("");
+  const [state, dispatch] = useReducer(missionReducer, INITIAL_MISSION_STATE);
+  const { tasks, cronJobs, filter, refreshing, selectedTask, showAddForm, newTaskInput } = state;
 
   const fetchData = useCallback(async () => {
     if (!client) return;
@@ -146,8 +196,7 @@ export default function MissionControlScreen() {
         client.getTasks(),
         client.getCron(),
       ]);
-      setTasks(tasksData as Task[]);
-      setCronJobs(cronData);
+      dispatch({ type: "dataLoaded", tasks: tasksData as Task[], cronJobs: cronData });
     } catch {
       // silently handle fetch errors
     }
@@ -161,17 +210,16 @@ export default function MissionControlScreen() {
     if (process.env.EXPO_OS === "ios") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    setRefreshing(true);
+    dispatch({ type: "setRefreshing", value: true });
     await fetchData();
-    setRefreshing(false);
+    dispatch({ type: "setRefreshing", value: false });
   }, [fetchData]);
 
   const handleAddTask = useCallback(async () => {
     if (!client || !newTaskInput.trim()) return;
     try {
       await client.createTask(newTaskInput.trim());
-      setNewTaskInput("");
-      setShowAddForm(false);
+      dispatch({ type: "taskAdded" });
       await fetchData();
     } catch {
       Alert.alert("Error", "Failed to create task");
@@ -202,7 +250,7 @@ export default function MissionControlScreen() {
           onPress: async () => {
             try {
               await client.deleteTask(task.id);
-              setTasks((prev) => prev.filter((t) => t.id !== task.id));
+              dispatch({ type: "tasksSet", tasks: tasksRef.current.filter((t) => t.id !== task.id) });
             } catch {
               Alert.alert("Error", "Failed to delete task");
             }
@@ -219,6 +267,13 @@ export default function MissionControlScreen() {
     completed: tasks.filter((t) => t.status === "completed").length,
   }), [tasks]);
 
+  // Keep a live ref of tasks so deferred Alert callbacks read the latest list
+  // (the reducer has no functional-update form for the async delete callback).
+  const tasksRef = useRef(tasks);
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
   const filteredTasks = filter === "all"
     ? tasks
     : tasks.filter((t) => t.status === filter);
@@ -227,12 +282,23 @@ export default function MissionControlScreen() {
     ({ item }: ListRenderItemInfo<Task>) => (
       <SwipeableTaskCard
         task={item}
-        onPress={() => setSelectedTask(item)}
+        onPress={() => dispatch({ type: "selectTask", task: item })}
         onComplete={() => handleCompleteTask(item)}
         onDelete={() => handleDeleteTask(item)}
       />
     ),
     [handleCompleteTask, handleDeleteTask],
+  );
+
+  const refreshControl = useMemo(
+    () => (
+      <RefreshControl
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        tintColor={colors.light.primary}
+      />
+    ),
+    [refreshing, handleRefresh],
   );
 
   return (
@@ -245,7 +311,7 @@ export default function MissionControlScreen() {
           return (
             <Pressable
               key={f.value}
-              onPress={() => setFilter(f.value)}
+              onPress={() => dispatch({ type: "setFilter", filter: f.value })}
               style={[
                 styles.filterChip,
                 isActive ? styles.filterChipActive : styles.filterChipInactive,
@@ -270,13 +336,7 @@ export default function MissionControlScreen() {
         keyExtractor={(item) => item.id}
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={colors.light.primary}
-          />
-        }
+        refreshControl={refreshControl}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIcon}>
@@ -345,14 +405,14 @@ export default function MissionControlScreen() {
           <TextInput
             style={styles.addFormInput}
             value={newTaskInput}
-            onChangeText={setNewTaskInput}
+            onChangeText={(value) => dispatch({ type: "setNewTaskInput", value })}
             placeholder="What needs to be done?"
             placeholderTextColor={colors.light.mutedForeground}
             autoFocus
           />
           <View style={styles.addFormButtons}>
             <Pressable
-              onPress={() => setShowAddForm(false)}
+              onPress={() => dispatch({ type: "setShowAddForm", value: false })}
               style={({ pressed }) => [styles.addFormCancel, pressed && styles.buttonPressed]}
             >
               <Text style={styles.addFormCancelText}>Cancel</Text>
@@ -380,7 +440,7 @@ export default function MissionControlScreen() {
       ) : (
         <Animated.View entering={ZoomIn.springify()}>
           <Pressable
-            onPress={() => setShowAddForm(true)}
+            onPress={() => dispatch({ type: "setShowAddForm", value: true })}
             style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
           >
             <Ionicons name="add" size={28} color={colors.light.primaryForeground} />
@@ -392,7 +452,7 @@ export default function MissionControlScreen() {
       {selectedTask && (
         <TaskDetail
           task={selectedTask}
-          onClose={() => setSelectedTask(null)}
+          onClose={() => dispatch({ type: "selectTask", task: null })}
           onStatusChange={async (taskId, status) => {
             if (!client) return;
             try {

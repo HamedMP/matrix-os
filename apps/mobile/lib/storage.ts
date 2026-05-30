@@ -1,10 +1,8 @@
 import * as SecureStore from "expo-secure-store";
 
-const GATEWAYS_KEY = "matrix_os_gateways";
-const ACTIVE_GATEWAY_KEY = "matrix_os_active_gateway";
 const SETTINGS_KEY = "matrix_os_settings";
 export const HOSTED_GATEWAY_URL = "https://app.matrix-os.com";
-export const HOSTED_GATEWAY_ID = "matrix-os-hosted";
+const HOSTED_GATEWAY_ID = "matrix-os-hosted";
 
 export interface GatewayConnection {
   id: string;
@@ -32,48 +30,6 @@ export const HOSTED_GATEWAY: GatewayConnection = {
   name: "Matrix OS Cloud",
   addedAt: 0,
 };
-
-export async function getGateways(): Promise<GatewayConnection[]> {
-  const raw = await SecureStore.getItemAsync(GATEWAYS_KEY);
-  if (!raw) return [];
-  return JSON.parse(raw);
-}
-
-export async function saveGateway(gw: GatewayConnection): Promise<void> {
-  const existing = await getGateways();
-  const idx = existing.findIndex((g) => g.id === gw.id);
-  if (idx >= 0) {
-    existing[idx] = gw;
-  } else {
-    existing.push(gw);
-  }
-  await SecureStore.setItemAsync(GATEWAYS_KEY, JSON.stringify(existing));
-}
-
-export async function removeGateway(id: string): Promise<void> {
-  const existing = await getGateways();
-  const filtered = existing.filter((g) => g.id !== id);
-  await SecureStore.setItemAsync(GATEWAYS_KEY, JSON.stringify(filtered));
-  const active = await getActiveGatewayId();
-  if (active === id) {
-    await SecureStore.deleteItemAsync(ACTIVE_GATEWAY_KEY);
-  }
-}
-
-export async function getActiveGatewayId(): Promise<string | null> {
-  return SecureStore.getItemAsync(ACTIVE_GATEWAY_KEY);
-}
-
-export async function setActiveGatewayId(id: string): Promise<void> {
-  await SecureStore.setItemAsync(ACTIVE_GATEWAY_KEY, id);
-}
-
-export async function getActiveGateway(): Promise<GatewayConnection> {
-  const id = await getActiveGatewayId();
-  if (!id) return HOSTED_GATEWAY;
-  const gateways = await getGateways();
-  return gateways.find((g) => g.id === id) ?? HOSTED_GATEWAY;
-}
 
 export async function getSettings(): Promise<AppSettings> {
   const raw = await SecureStore.getItemAsync(SETTINGS_KEY);

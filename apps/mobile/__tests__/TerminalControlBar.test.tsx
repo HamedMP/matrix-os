@@ -2,7 +2,7 @@ import * as Clipboard from "expo-clipboard";
 import {
   TERMINAL_CONTROL_KEYS,
   sendTerminalClipboardPaste,
-} from "../components/TerminalControlBar";
+} from "../lib/terminal-controls";
 import { buildTerminalControlSequence } from "../lib/terminal-state";
 
 describe("TerminalControlBar", () => {

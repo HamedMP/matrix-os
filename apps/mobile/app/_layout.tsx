@@ -1,4 +1,4 @@
-import { use, useEffect, useState, createContext, useCallback, useRef } from "react";
+import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
@@ -81,17 +81,21 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
   });
 
-  const [authenticated, setAuthenticated] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
+  const ready = authenticated !== undefined;
 
   useEffect(() => {
+    let cancelled = false;
     async function init() {
       const authed = await authenticateBiometric();
-      setAuthenticated(authed);
-      setReady(true);
+      if (!cancelled) setAuthenticated(authed);
     }
 
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- intentional: `authenticated` derives from an async biometric check (authenticateBiometric); there is no synchronous initializer and useSyncExternalStore does not apply to a one-shot promise. Starts undefined and resolves once.
     init();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -122,7 +126,7 @@ export default function RootLayout() {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <Text style={styles.loadingSubtitle}>Authenticating...</Text>
+        <Text style={styles.loadingSubtitle}>Authenticating…</Text>
         <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
       </View>
     );
@@ -247,6 +251,7 @@ function GatewayShell() {
     };
   }, [isLoaded, isSignedIn]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- intentional: read the latest client on unmount; the client is assigned by a later effect, so capturing clientRef.current at mount (null) would skip disconnect.
   useEffect(() => {
     return () => {
       clientRef.current?.disconnect();
@@ -254,9 +259,14 @@ function GatewayShell() {
     };
   }, []);
 
+  const contextValue = useMemo<GatewayContextValue>(
+    () => ({ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }),
+    [client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread],
+  );
+
   return (
     <GestureHandlerRootView style={styles.flex}>
-      <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }}>
+      <GatewayContext.Provider value={contextValue}>
         <Stack
           screenOptions={{
             headerStyle: { backgroundColor: colors.light.background },

@@ -53,8 +53,8 @@ export type TerminalAction =
 
 export const MAX_TERMINAL_OUTPUT_CHARS = 80_000;
 export const MAX_TERMINAL_INPUT_CHARS = 64_000;
-export const MIN_TERMINAL_FONT_SCALE = 0.85;
-export const MAX_TERMINAL_FONT_SCALE = 1.3;
+const MIN_TERMINAL_FONT_SCALE = 0.85;
+const MAX_TERMINAL_FONT_SCALE = 1.3;
 const SAFE_TERMINAL_SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

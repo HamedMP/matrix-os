@@ -1,5 +1,3 @@
-import { useColorScheme } from "react-native";
-
 export const colors = {
   light: {
     background: "#FAFAF9",
@@ -44,11 +42,6 @@ export const colors = {
 } as const;
 
 export type ThemeColors = typeof colors.light | typeof colors.dark;
-
-export function useThemeColors(): ThemeColors {
-  const scheme = useColorScheme();
-  return scheme === "dark" ? colors.dark : colors.light;
-}
 
 export const fonts = {
   sans: "Inter" as const,

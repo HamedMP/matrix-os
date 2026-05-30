@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -25,6 +26,7 @@ import {
 import {
   formatTerminalCwd,
   initialTerminalState,
+  type MobileTerminalSession,
   terminalReducer,
 } from "@/lib/terminal-state";
 import { colors, fonts } from "@/lib/theme";
@@ -64,6 +66,7 @@ export default function TerminalScreen() {
       });
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown intentionally reads the LIVE refs (current connect attempt + active connection) at cleanup time; copying them at mount would capture null/0 and never tear down the real connection
   useEffect(() => {
     return () => {
       connectAttemptRef.current += 1;
@@ -230,48 +233,19 @@ export default function TerminalScreen() {
       style={styles.screen}
       keyboardVerticalOffset={0}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.iconButton}>
-          <Ionicons name="chevron-back" size={20} color={colors.dark.foreground} />
-        </Pressable>
-        <View style={styles.headerTitleGroup}>
-          <Text style={styles.title}>Terminal</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>{cwd}</Text>
-        </View>
-        {state.status === "connecting" ? (
-          <ActivityIndicator color={colors.dark.primary} />
-        ) : (
-          <Pressable accessibilityRole="button" accessibilityLabel="New session" onPress={() => connectSession()} style={styles.iconButton}>
-            <Ionicons name="add" size={21} color={colors.dark.foreground} />
-          </Pressable>
-        )}
-      </View>
+      <TerminalHeader
+        cwd={cwd}
+        paddingTop={insets.top + 8}
+        connecting={state.status === "connecting"}
+        onBack={() => router.back()}
+        onNewSession={() => connectSession()}
+      />
 
-      {runningSessions.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.sessionRow}
-          keyboardShouldPersistTaps="handled"
-        >
-          {runningSessions.map((session) => (
-            <Pressable
-              key={session.sessionId}
-              accessibilityRole="button"
-              accessibilityLabel={`Resume ${formatTerminalCwd(session.cwd)}`}
-              onPress={() => connectSession(session.sessionId)}
-              style={[
-                styles.sessionChip,
-                session.sessionId === state.activeSessionId && styles.sessionChipActive,
-              ]}
-            >
-              <Text style={styles.sessionChipText} numberOfLines={1}>
-                {formatTerminalCwd(session.cwd)}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
+      <SessionChipRow
+        sessions={runningSessions}
+        activeSessionId={state.activeSessionId}
+        onSelect={connectSession}
+      />
 
       {lastRunningSession ? (
         <Pressable
@@ -323,42 +297,178 @@ export default function TerminalScreen() {
         </View>
       )}
 
-      <View style={[styles.commandArea, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <View style={styles.promptRow}>
-          <Text style={styles.promptPath} numberOfLines={1}>{cwd}</Text>
-          <Text style={styles.promptSymbol}>$</Text>
-          <TextInput
-            ref={inputRef}
-            value={state.input}
-            onChangeText={(input) => dispatch({ type: "terminal.input", input })}
-            onSubmitEditing={submitInput}
-            editable={connected}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="send"
-            placeholder={connected ? "command" : "start session"}
-            placeholderTextColor="rgba(234, 236, 234, 0.35)"
-            style={[styles.commandInput, { fontSize: 14 * state.fontScale }]}
-          />
-          <Pressable accessibilityRole="button" accessibilityLabel="Run command" disabled={!connected} onPress={submitInput} style={styles.runButton}>
-            <Ionicons name="return-down-forward" size={18} color={connected ? colors.dark.primary : "rgba(234, 236, 234, 0.32)"} />
-          </Pressable>
-        </View>
-        <View style={styles.actionRow}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Detach" disabled={!connected} onPress={() => connectionRef.current?.detach()} style={styles.actionButton}>
-            <Text style={styles.actionButtonText}>Detach</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Destroy session" disabled={!state.activeSessionId} onPress={destroySession} style={styles.actionButton}>
-            <Text style={styles.actionButtonText}>End</Text>
-          </Pressable>
-        </View>
-        <TerminalControlBar
-          onSend={sendData}
-          onFontScale={(delta) => dispatch({ type: "font.scale", delta })}
-          onClear={() => dispatch({ type: "reset.output" })}
-        />
-      </View>
+      <CommandArea
+        cwd={cwd}
+        paddingBottom={Math.max(insets.bottom, 8)}
+        connected={connected}
+        canDestroy={Boolean(state.activeSessionId)}
+        input={state.input}
+        fontScale={state.fontScale}
+        inputRef={inputRef}
+        onChangeInput={(input) => dispatch({ type: "terminal.input", input })}
+        onSubmit={submitInput}
+        onDetach={() => connectionRef.current?.detach()}
+        onDestroy={destroySession}
+        onSend={sendData}
+        onFontScale={(delta) => dispatch({ type: "font.scale", delta })}
+        onClear={() => dispatch({ type: "reset.output" })}
+      />
     </KeyboardAvoidingView>
+  );
+}
+
+interface TerminalHeaderProps {
+  cwd: string;
+  paddingTop: number;
+  connecting: boolean;
+  onBack: () => void;
+  onNewSession: () => void;
+}
+
+function TerminalHeader({ cwd, paddingTop, connecting, onBack, onNewSession }: TerminalHeaderProps) {
+  return (
+    <View style={[styles.header, { paddingTop }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.iconButton}>
+        <Ionicons name="chevron-back" size={20} color={colors.dark.foreground} />
+      </Pressable>
+      <View style={styles.headerTitleGroup}>
+        <Text style={styles.title}>Terminal</Text>
+        <Text style={styles.subtitle} numberOfLines={1}>{cwd}</Text>
+      </View>
+      {connecting ? (
+        <ActivityIndicator color={colors.dark.primary} />
+      ) : (
+        <Pressable accessibilityRole="button" accessibilityLabel="New session" onPress={onNewSession} style={styles.iconButton}>
+          <Ionicons name="add" size={21} color={colors.dark.foreground} />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+interface SessionChipProps {
+  session: MobileTerminalSession;
+  active: boolean;
+  onSelect: (sessionId: string) => void;
+}
+
+const SessionChip = React.memo(function SessionChip({ session, active, onSelect }: SessionChipProps) {
+  const handlePress = useCallback(() => onSelect(session.sessionId), [onSelect, session.sessionId]);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Resume ${formatTerminalCwd(session.cwd)}`}
+      onPress={handlePress}
+      style={active ? styles.sessionChipActiveCombined : styles.sessionChip}
+    >
+      <Text style={styles.sessionChipText} numberOfLines={1}>
+        {formatTerminalCwd(session.cwd)}
+      </Text>
+    </Pressable>
+  );
+});
+
+interface SessionChipRowProps {
+  sessions: MobileTerminalSession[];
+  activeSessionId: string | null;
+  onSelect: (sessionId: string) => void;
+}
+
+function SessionChipRow({ sessions, activeSessionId, onSelect }: SessionChipRowProps) {
+  const keyExtractor = useCallback((session: MobileTerminalSession) => session.sessionId, []);
+  const renderItem = useCallback(
+    ({ item: session }: { item: MobileTerminalSession }) => (
+      <SessionChip
+        session={session}
+        active={session.sessionId === activeSessionId}
+        onSelect={onSelect}
+      />
+    ),
+    [activeSessionId, onSelect],
+  );
+  if (sessions.length === 0) return null;
+  return (
+    <FlatList
+      horizontal
+      data={sessions}
+      keyExtractor={keyExtractor}
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.sessionRow}
+      keyboardShouldPersistTaps="handled"
+      renderItem={renderItem}
+    />
+  );
+}
+
+interface CommandAreaProps {
+  cwd: string;
+  paddingBottom: number;
+  connected: boolean;
+  canDestroy: boolean;
+  input: string;
+  fontScale: number;
+  inputRef: React.RefObject<TextInput | null>;
+  onChangeInput: (input: string) => void;
+  onSubmit: () => void;
+  onDetach: () => void;
+  onDestroy: () => void;
+  onSend: (data: string) => void;
+  onFontScale: (delta: number) => void;
+  onClear: () => void;
+}
+
+function CommandArea({
+  cwd,
+  paddingBottom,
+  connected,
+  canDestroy,
+  input,
+  fontScale,
+  inputRef,
+  onChangeInput,
+  onSubmit,
+  onDetach,
+  onDestroy,
+  onSend,
+  onFontScale,
+  onClear,
+}: CommandAreaProps) {
+  return (
+    <View style={[styles.commandArea, { paddingBottom }]}>
+      <View style={styles.promptRow}>
+        <Text style={styles.promptPath} numberOfLines={1}>{cwd}</Text>
+        <Text style={styles.promptSymbol}>$</Text>
+        <TextInput
+          ref={inputRef}
+          value={input}
+          onChangeText={onChangeInput}
+          onSubmitEditing={onSubmit}
+          editable={connected}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="send"
+          placeholder={connected ? "command" : "start session"}
+          placeholderTextColor="rgba(234, 236, 234, 0.35)"
+          style={[styles.commandInput, { fontSize: 14 * fontScale }]}
+        />
+        <Pressable accessibilityRole="button" accessibilityLabel="Run command" disabled={!connected} onPress={onSubmit} style={styles.runButton}>
+          <Ionicons name="return-down-forward" size={18} color={connected ? colors.dark.primary : "rgba(234, 236, 234, 0.32)"} />
+        </Pressable>
+      </View>
+      <View style={styles.actionRow}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Detach" disabled={!connected} onPress={onDetach} style={styles.actionButton}>
+          <Text style={styles.actionButtonText}>Detach</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Destroy session" disabled={!canDestroy} onPress={onDestroy} style={styles.actionButton}>
+          <Text style={styles.actionButtonText}>End</Text>
+        </Pressable>
+      </View>
+      <TerminalControlBar
+        onSend={onSend}
+        onFontScale={onFontScale}
+        onClear={onClear}
+      />
+    </View>
   );
 }
 
@@ -417,7 +527,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(140, 199, 190, 0.14)",
     backgroundColor: "rgba(234, 236, 234, 0.07)",
   },
-  sessionChipActive: {
+  sessionChipActiveCombined: {
+    maxWidth: 180,
+    paddingHorizontal: 12,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 11,
+    borderWidth: 1,
     backgroundColor: "rgba(140, 199, 190, 0.18)",
     borderColor: "rgba(140, 199, 190, 0.38)",
   },
