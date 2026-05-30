@@ -79,6 +79,7 @@ function CheckoutPanel({
   onCheckoutIntent,
   telemetryProperties,
   planSlug,
+  regionSlug,
   billingInterval,
   onBillingIntervalChange,
 }: {
@@ -86,6 +87,7 @@ function CheckoutPanel({
   onCheckoutIntent?: () => void;
   telemetryProperties: BillingTelemetryProperties;
   planSlug: string;
+  regionSlug: string;
   billingInterval: BillingInterval;
   onBillingIntervalChange: (interval: BillingInterval) => void;
 }) {
@@ -117,7 +119,7 @@ function CheckoutPanel({
           "content-type": "application/json",
           accept: "application/json",
         },
-        body: JSON.stringify({ planSlug, interval: billingInterval }),
+        body: JSON.stringify({ planSlug, interval: billingInterval, regionSlug }),
       });
       const body = (await response.json().catch((err: unknown) => {
         captureBillingTelemetry("checkout_response_parse_error", {
@@ -841,6 +843,7 @@ export function BillingPanel({
           onCheckoutIntent={onCheckoutIntent}
           telemetryProperties={telemetryProperties}
           planSlug={selectedProfile.planSlug}
+          regionSlug={selectedRegion.featureSlug}
           billingInterval={billingInterval}
           onBillingIntervalChange={handleBillingIntervalChange}
         />

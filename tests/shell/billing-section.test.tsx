@@ -115,6 +115,7 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
@@ -123,7 +124,11 @@ describe("BillingSection", () => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/billing/checkout",
         expect.objectContaining({
-          body: JSON.stringify({ planSlug: "matrix_builder", interval: "annual" }),
+          body: JSON.stringify({
+            planSlug: "matrix_builder",
+            interval: "annual",
+            regionSlug: "region_nbg1",
+          }),
         }),
       ),
     );

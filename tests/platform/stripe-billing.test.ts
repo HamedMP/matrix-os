@@ -20,6 +20,7 @@ describe('platform/stripe-billing', () => {
       mode: 'subscription',
       automaticTax: true,
       allowPromotionCodes: true,
+      regionSlug: 'region_nbg1',
       successUrl: 'https://app.matrix-os.com/?checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     })).resolves.toEqual({ url: 'https://checkout.stripe.test/session' });
@@ -32,6 +33,14 @@ describe('platform/stripe-billing', () => {
       cancel_url: 'https://app.matrix-os.com/?billing=canceled',
       allow_promotion_codes: true,
       automatic_tax: { enabled: true },
+      metadata: {
+        matrix_region_slug: 'region_nbg1',
+      },
+      subscription_data: {
+        metadata: {
+          matrix_region_slug: 'region_nbg1',
+        },
+      },
       tax_id_collection: { enabled: true },
       customer_update: {
         address: 'auto',

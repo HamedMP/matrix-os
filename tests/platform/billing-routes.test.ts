@@ -63,7 +63,7 @@ describe('platform billing routes', () => {
     const res = await app.request('/billing/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'annual' }),
+      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'annual', regionSlug: 'region_nbg1' }),
     });
 
     expect(res.status).toBe(200);
@@ -78,6 +78,7 @@ describe('platform billing routes', () => {
       mode: 'subscription',
       automaticTax: true,
       allowPromotionCodes: true,
+      regionSlug: 'region_nbg1',
       successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     }));
