@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { installPostHogHonoErrorTracking, MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
+import { installPostHogHonoErrorTracking, MATRIX_TELEMETRY_EVENTS, type MatrixTelemetryEvent } from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -1759,7 +1759,7 @@ export type PlatformApp = Hono<{
   };
 }> & {
   capturePlatformEvent(
-    event: string,
+    event: MatrixTelemetryEvent,
     properties: Record<string, string | number | boolean | null | undefined>,
   ): void;
   shutdownPostHog(): Promise<void>;
@@ -1900,7 +1900,7 @@ export function createApp(deps: {
   });
   const posthogShutdowns: Array<() => Promise<void>> = [() => posthogErrorTracker.shutdown()];
   function capturePlatformEvent(
-    event: string,
+    event: MatrixTelemetryEvent,
     properties: Record<string, string | number | boolean | null | undefined>,
   ): void {
     void posthogErrorTracker.captureEvent(event, {
@@ -2278,7 +2278,12 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: platformPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
-        captureEvent: capturePlatformEvent,
+        captureEvent: (event, properties) => {
+          capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
+            auth_event: event,
+            ...properties,
+          });
+        },
       }),
     );
   }

@@ -48,10 +48,14 @@ async function copyTextToClipboard(text: string): Promise<void> {
   textarea.style.opacity = "0";
   document.body.appendChild(textarea);
   textarea.select();
+  let ok = false;
   try {
-    document.execCommand("copy");
+    ok = document.execCommand("copy");
   } finally {
     textarea.remove();
+  }
+  if (!ok) {
+    throw new Error("execCommand copy failed");
   }
 }
 
