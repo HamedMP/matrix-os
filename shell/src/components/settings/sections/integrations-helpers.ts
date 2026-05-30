@@ -1,4 +1,4 @@
-interface ConnectedService {
+export interface ConnectedService {
   id: string;
   service: string;
   account_label: string;

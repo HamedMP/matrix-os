@@ -133,11 +133,9 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
       }}
       onKeyDown={handleKeyDown}
     >
-      <style>{`.matrix-terminal-search-input:focus-visible{outline:2px solid var(--primary, ${primary});outline-offset:1px;border-radius:2px;}`}</style>
       <input
         ref={inputRef}
         type="text"
-        className="matrix-terminal-search-input"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search..."

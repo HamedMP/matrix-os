@@ -3,7 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
-import { hasNewConnectionForService, shouldLogIntegrationWarning } from "./integrations-helpers";
+import {
+  hasNewConnectionForService,
+  shouldLogIntegrationWarning,
+  type ConnectedService,
+} from "./integrations-helpers";
 
 const GATEWAY = getGatewayUrl();
 
@@ -14,15 +18,6 @@ interface ServiceDef {
   icon: string;
   logoUrl?: string;
   actions: Record<string, unknown>;
-}
-
-interface ConnectedService {
-  id: string;
-  service: string;
-  account_label: string;
-  account_email: string | null;
-  status: string;
-  connected_at: string;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
