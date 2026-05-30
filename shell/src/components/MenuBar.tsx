@@ -5,7 +5,7 @@ import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { CreditCardIcon, SearchIcon, ServerIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
-import { hasMatrixBillingAccess } from "@/lib/billing";
+import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 
@@ -58,7 +58,8 @@ function MenuBarClock() {
 
 function MenuBarUser() {
   const [mounted, setMounted] = useState(false);
-  const { isLoaded, isSignedIn, has } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { active: billingActive } = useMatrixBillingAccess();
 
   useEffect(() => {
     setMounted(true);
@@ -72,19 +73,17 @@ function MenuBarUser() {
     );
   }
 
-  const billingActive = hasMatrixBillingAccess(has);
-
   return (
     <div className="flex items-center gap-1.5 [&_.cl-avatarBox]:!size-[18px] [&_.cl-userButtonTrigger]:!p-0 [&_.cl-userButtonTrigger]:!rounded-full [&_.cl-userButtonTrigger]:!shadow-none [&_.cl-userButtonTrigger]:!border-0">
       <span
         className={`hidden items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium sm:inline-flex ${
-          billingActive
+          billingActive === true
             ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
             : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
         }`}
       >
         <CreditCardIcon className="size-3" aria-hidden="true" />
-        {billingActive ? "Active" : "Trial"}
+        {billingActive === true ? "Active" : "Billing"}
       </span>
       <ClerkUserButton
         appearance={{

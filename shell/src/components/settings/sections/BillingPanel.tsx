@@ -1,19 +1,12 @@
 "use client";
 
 import {
-  Component,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ErrorInfo,
-  type KeyboardEvent,
-  type MouseEvent,
-  type ReactNode,
 } from "react";
-import { PricingTable } from "@clerk/nextjs";
 import {
-  CheckCircle2Icon,
   CheckIcon,
   CreditCardIcon,
   CpuIcon,
@@ -28,44 +21,24 @@ import {
 } from "@/lib/billing";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 
-const shouldRenderClerkPricing =
-  process.env.NODE_ENV !== "development";
-
 export type BillingPanelMode = "settings" | "provisioning";
-
-const CHECKOUT_OVERLAY_Z_INDEX = 10_000;
-const checkoutOverlayAppearance = {
-  elements: {
-    drawerBackdrop: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
-    },
-    drawerRoot: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
-    },
-    drawerContent: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
-    },
-    modalBackdrop: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
-    },
-    modalContent: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
-    },
-  },
-};
+type BillingInterval = "monthly" | "annual";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
+const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
 
 type BillingTelemetryProperties = {
   mode: BillingPanelMode;
   billing_state: "active" | "inactive" | "checking";
   selected_profile_slug: string;
   selected_hetzner_type: string;
+  selected_billing_interval: BillingInterval;
   selected_monthly_price_usd?: string;
+  selected_annual_price_usd?: string;
+  selected_price_usd?: string;
   selected_region_slug: string;
   selected_region_location: string;
   selected_region_zone: string;
-  redirect_url_present: boolean;
 };
 
 function captureBillingTelemetry(
@@ -86,143 +59,23 @@ function captureBillingTelemetry(
   );
 }
 
-class BillingTableBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("[billing] Clerk pricing table failed to render", {
-      message: error.message,
-      componentStack: errorInfo.componentStack,
-    });
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <BillingUnavailableCard />;
-    }
-
-    return this.props.children;
-  }
-}
-
-function BillingTableFallback() {
-  return (
-    <div className="flex min-h-48 items-center justify-center rounded-lg border border-border/50 bg-muted/20">
-      <Loader2Icon className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
-    </div>
-  );
-}
-
-function BillingUnavailableCard() {
-  const defaultProfile = MATRIX_BILLING_SERVER_PROFILES[0];
-
-  return (
-    <div className="overflow-hidden rounded-2xl border border-forest/15 bg-white">
-      <div className="flex items-baseline justify-between gap-4 border-b border-forest/10 bg-cream/40 px-6 py-5">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
-            Hosted runtime
-          </p>
-          <h3 className="mt-1 text-xl font-semibold tracking-tight text-deep">
-            Hosted Matrix trial
-          </h3>
-        </div>
-        <div className="text-right">
-          <span className="text-3xl font-semibold tracking-tight text-deep">3 days</span>
-          <p className="text-xs text-forest/60">free, then billed</p>
-        </div>
-      </div>
-
-      <div className="grid gap-3.5 px-6 py-5 text-sm leading-6 text-forest/80">
-        {[
-          "Your own private Matrix cloud computer, provisioned on demand.",
-          `${defaultProfile.label}: ${defaultProfile.vcpus} vCPU, ${defaultProfile.memoryGb} GB memory, ${defaultProfile.diskGb} GB disk.`,
-          `$${defaultProfile.monthlyPriceUsd}/mo after the 3-day trial, with a card on file for the dedicated VPS runtime.`,
-        ].map((item) => (
-          <div key={item} className="flex gap-2.5">
-            <CheckCircle2Icon
-              className="mt-0.5 size-4 shrink-0 text-ember"
-              aria-hidden="true"
-            />
-            <span>{item}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="px-6 pb-6">
-        <button
-          type="button"
-          disabled
-          className="inline-flex h-11 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-forest/90 px-4 text-sm font-semibold text-ember-foreground opacity-90"
-        >
-          <CreditCardIcon className="size-4" aria-hidden="true" />
-          Start trial &amp; provision
-        </button>
-        <p className="mt-3 text-center text-[11px] leading-5 text-forest/45">
-          Billing checkout is unavailable in this local preview. Enable Clerk Billing
-          for this instance to load the live checkout.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function CompactCheckoutFallback() {
-  const profile = MATRIX_BILLING_SERVER_PROFILES[0];
-
-  return (
-    <div className="rounded-2xl border border-forest/15 bg-white p-3.5 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
-        Hosted trial
-      </p>
-      <div className="mt-2 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-lg font-semibold tracking-tight text-deep">
-            3 days free
-          </p>
-          <p className="mt-0.5 text-xs leading-5 text-forest/55">
-            Card required when provisioning starts.
-          </p>
-        </div>
-        <p className="text-right text-lg font-semibold text-deep">
-          ${profile?.monthlyPriceUsd ?? "14"}/mo
-        </p>
-      </div>
-      <button
-        type="button"
-        disabled
-        className="mt-3 inline-flex h-10 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-forest/90 px-4 text-sm font-semibold text-ember-foreground opacity-90"
-      >
-        <CreditCardIcon className="size-4" aria-hidden="true" />
-        Start trial &amp; provision
-      </button>
-      <p className="mt-1.5 text-center text-[11px] leading-5 text-forest/45">
-        Clerk Billing checkout is unavailable in this local preview.
-      </p>
-    </div>
-  );
-}
-
 function CheckoutPanel({
-  redirectUrl,
   mode,
   onCheckoutIntent,
   telemetryProperties,
+  planSlug,
+  billingInterval,
+  onBillingIntervalChange,
 }: {
-  redirectUrl: string | null;
   mode: BillingPanelMode;
   onCheckoutIntent?: () => void;
   telemetryProperties: BillingTelemetryProperties;
+  planSlug: string;
+  billingInterval: BillingInterval;
+  onBillingIntervalChange: (interval: BillingInterval) => void;
 }) {
-  const checkoutTelemetryKey = `${redirectUrl ? "redirect" : "pending"}:${shouldRenderClerkPricing ? "clerk" : "fallback"}`;
-  const redirectUrlRef = useRef(redirectUrl);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
   useEffect(() => {
@@ -230,48 +83,89 @@ function CheckoutPanel({
   }, [telemetryProperties]);
 
   useEffect(() => {
-    redirectUrlRef.current = redirectUrl;
-  }, [redirectUrl]);
+    captureBillingTelemetry("checkout_stripe_available", telemetryPropertiesRef.current);
+  }, []);
 
-  useEffect(() => {
-    const currentRedirectUrl = redirectUrlRef.current;
-    captureBillingTelemetry(
-      currentRedirectUrl && shouldRenderClerkPricing
-        ? "checkout_pricing_table_available"
-        : currentRedirectUrl
-          ? "checkout_local_preview_unavailable"
-          : "checkout_redirect_pending",
-      telemetryPropertiesRef.current,
-    );
-  }, [checkoutTelemetryKey]);
+  async function startCheckout() {
+    setCheckoutLoading(true);
+    setCheckoutError(null);
+    onCheckoutIntent?.();
+    captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    try {
+      const response = await fetch("/billing/checkout", {
+        method: "POST",
+        credentials: "include",
+        signal: controller.signal,
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({ planSlug, interval: billingInterval }),
+      });
+      const body = (await response.json().catch(() => null)) as { url?: string } | null;
+      if (!response.ok || !body?.url) {
+        throw new Error("checkout_unavailable");
+      }
+      window.location.assign(body.url);
+    } catch (error: unknown) {
+      setCheckoutError("Checkout is unavailable. Try again in a moment.");
+      captureBillingTelemetry("checkout_error", {
+        ...telemetryPropertiesRef.current,
+        error_kind: error instanceof Error ? error.message : typeof error,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+      setCheckoutLoading(false);
+    }
+  }
 
   return (
-    <div
-      className="rounded-2xl border border-forest/15 bg-card p-4"
-      onClickCapture={(event) => handleCheckoutClick(event, onCheckoutIntent)}
-      onKeyDownCapture={(event) => handleCheckoutKeyDown(event, onCheckoutIntent)}
-    >
+    <div className="rounded-2xl border border-forest/15 bg-card p-4">
       {mode === "provisioning" && (
         <div className="mb-2">
-          <p className="text-sm font-semibold text-deep">Start trial &amp; provision</p>
+          <p className="text-sm font-semibold text-deep">Start checkout &amp; provision</p>
           <p className="mt-0.5 text-xs leading-5 text-forest/60">
-            Checkout runs here; Matrix starts provisioning after the trial is active.
+            Stripe checkout opens securely. Matrix provisions after billing is active.
           </p>
         </div>
       )}
-      {redirectUrl && shouldRenderClerkPricing ? (
-        <BillingTableBoundary>
-          <PricingTable
-            for="user"
-            newSubscriptionRedirectUrl={redirectUrl}
-            checkoutProps={{ appearance: checkoutOverlayAppearance }}
-            fallback={<BillingTableFallback />}
-          />
-        </BillingTableBoundary>
-      ) : redirectUrl ? (
-        <CompactCheckoutFallback />
-      ) : (
-        <BillingTableFallback />
+      <div className="mb-3 grid grid-cols-2 rounded-xl border border-forest/12 bg-[#f4efe3] p-1">
+        {(["monthly", "annual"] as const).map((interval) => (
+          <button
+            key={interval}
+            type="button"
+            aria-pressed={billingInterval === interval}
+            onClick={() => onBillingIntervalChange(interval)}
+            className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
+              billingInterval === interval
+                ? "bg-white text-deep shadow-sm"
+                : "text-forest/55 hover:text-forest"
+            }`}
+          >
+            {interval === "monthly" ? "Monthly" : "Annual"}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={startCheckout}
+        disabled={checkoutLoading}
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-forest px-4 text-sm font-semibold text-ember-foreground transition-colors hover:bg-forest/90 disabled:cursor-wait disabled:opacity-70"
+      >
+        {checkoutLoading ? (
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <CreditCardIcon className="size-4" aria-hidden="true" />
+        )}
+        {checkoutLoading ? "Opening checkout" : "Continue to Stripe"}
+      </button>
+      <p className="mt-3 text-center text-[11px] leading-5 text-forest/50">
+        No trial. Plan changes and coupons are handled through Stripe.
+      </p>
+      {checkoutError && (
+        <p className="mt-2 text-center text-xs text-red-600">{checkoutError}</p>
       )}
     </div>
   );
@@ -279,6 +173,15 @@ function CheckoutPanel({
 
 function profileSpec(profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number]): string {
   return `${profile.vcpus} vCPU / ${profile.memoryGb} GB RAM / ${profile.diskGb} GB disk`;
+}
+
+function profilePrice(
+  profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number],
+  interval: BillingInterval,
+): string {
+  return interval === "annual"
+    ? profile.annualPriceUsd ?? profile.monthlyPriceUsd ?? ""
+    : profile.monthlyPriceUsd ?? "";
 }
 
 function getNearestRegionSlug(): string {
@@ -300,9 +203,11 @@ function getNearestRegionSlug(): string {
 
 function ServerProfileGrid({
   selectedFeature,
+  billingInterval,
   onSelect,
 }: {
   selectedFeature: string;
+  billingInterval: BillingInterval;
   onSelect: (featureSlug: string) => void;
 }) {
   return (
@@ -337,9 +242,11 @@ function ServerProfileGrid({
             </div>
             <div className="text-right">
               <p className="text-2xl font-semibold tracking-tight text-deep">
-                ${profile.monthlyPriceUsd}
+                ${profilePrice(profile, billingInterval)}
               </p>
-              <p className="text-xs text-forest/50">/mo</p>
+              <p className="text-xs text-forest/50">
+                {billingInterval === "annual" ? "/yr" : "/mo"}
+              </p>
             </div>
           </div>
 
@@ -427,17 +334,19 @@ function RegionList({
   );
 }
 
-function TrialSummary({
+function PlanSummary({
   selectedProfile,
   selectedRegion,
+  billingInterval,
 }: {
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
+  billingInterval: BillingInterval;
 }) {
   return (
     <div className="rounded-2xl border border-forest/15 bg-white p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
-        Trial summary
+        Plan summary
       </p>
       <div className="mt-4 rounded-2xl bg-[#f4efe3] p-4">
         <div className="flex items-start justify-between gap-3">
@@ -450,7 +359,7 @@ function TrialSummary({
             </p>
           </div>
           <p className="text-3xl font-semibold tracking-tight text-deep">
-            ${selectedProfile.monthlyPriceUsd}
+            ${profilePrice(selectedProfile, billingInterval)}
           </p>
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-forest/10 pt-3 text-sm">
@@ -462,7 +371,7 @@ function TrialSummary({
       </div>
       <div className="mt-4 grid gap-2 text-sm text-forest/70">
         {[
-          "3 days free with card on file.",
+          "Billing starts before provisioning.",
           "Dedicated VPS attached after checkout.",
           "Machine size comes from the billing entitlement.",
         ].map((item) => (
@@ -479,9 +388,11 @@ function TrialSummary({
 function HeroSelectionPreview({
   selectedProfile,
   selectedRegion,
+  billingInterval,
 }: {
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
+  billingInterval: BillingInterval;
 }) {
   return (
     <div className="mt-4 grid max-w-2xl gap-3 sm:grid-cols-2">
@@ -497,7 +408,8 @@ function HeroSelectionPreview({
             <p className="text-xs text-forest/50">{selectedProfile.hetznerType}</p>
           </div>
           <p className="text-lg font-semibold text-deep">
-            ${selectedProfile.monthlyPriceUsd}/mo
+            ${profilePrice(selectedProfile, billingInterval)}
+            {billingInterval === "annual" ? "/yr" : "/mo"}
           </p>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-forest/65">
@@ -529,42 +441,12 @@ function HeroSelectionPreview({
   );
 }
 
-function handleCheckoutKeyDown(
-  event: KeyboardEvent<HTMLDivElement>,
-  onCheckoutIntent?: () => void,
-) {
-  if (!onCheckoutIntent) return;
-  if ((event.key === "Enter" || event.key === " ") && isCheckoutIntentTarget(event.target)) {
-    onCheckoutIntent();
-  }
-}
-
-function handleCheckoutClick(
-  event: MouseEvent<HTMLDivElement>,
-  onCheckoutIntent?: () => void,
-) {
-  if (!onCheckoutIntent || !isCheckoutIntentTarget(event.target)) return;
-  onCheckoutIntent();
-}
-
-function isCheckoutIntentTarget(target: EventTarget): boolean {
-  if (!(target instanceof Element)) return false;
-  const action = target.closest("button,a,[role='button']");
-  if (!action) return false;
-  const role = action.getAttribute("role");
-  if (role === "radio" || role === "tab") return false;
-  const label = `${action.textContent ?? ""} ${action.getAttribute("aria-label") ?? ""}`.toLowerCase();
-  return /\b(start|trial|checkout|subscribe|upgrade|continue)\b/.test(label);
-}
-
 export function BillingPanel({
   active,
-  redirectUrl,
   mode = "settings",
   onCheckoutIntent,
 }: {
   active: boolean | null;
-  redirectUrl: string | null;
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
 }) {
@@ -574,6 +456,7 @@ export function BillingPanel({
       "",
   );
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
   const selectedProfile =
     MATRIX_BILLING_SERVER_PROFILES.find(
       (profile) => profile.featureSlug === selectedProfileSlug,
@@ -587,13 +470,15 @@ export function BillingPanel({
       billing_state: active === null ? "checking" : active ? "active" : "inactive",
       selected_profile_slug: selectedProfile.featureSlug,
       selected_hetzner_type: selectedProfile.hetznerType,
+      selected_billing_interval: billingInterval,
       selected_monthly_price_usd: selectedProfile.monthlyPriceUsd ?? undefined,
+      selected_annual_price_usd: selectedProfile.annualPriceUsd ?? undefined,
+      selected_price_usd: profilePrice(selectedProfile, billingInterval) || undefined,
       selected_region_slug: selectedRegion.featureSlug,
       selected_region_location: selectedRegion.location,
       selected_region_zone: selectedRegion.networkZone,
-      redirect_url_present: redirectUrl !== null,
     }),
-    [active, mode, redirectUrl, selectedProfile, selectedRegion],
+    [active, billingInterval, mode, selectedProfile, selectedRegion],
   );
   const initialViewTracked = useRef(false);
   const telemetryPropertiesRef = useRef(telemetryProperties);
@@ -621,6 +506,17 @@ export function BillingPanel({
       selected_profile_slug: nextProfile.featureSlug,
       selected_hetzner_type: nextProfile.hetznerType,
       selected_monthly_price_usd: nextProfile.monthlyPriceUsd ?? undefined,
+      selected_annual_price_usd: nextProfile.annualPriceUsd ?? undefined,
+      selected_price_usd: profilePrice(nextProfile, billingInterval) || undefined,
+    });
+  };
+
+  const handleBillingIntervalChange = (interval: BillingInterval) => {
+    setBillingInterval(interval);
+    captureBillingTelemetry("billing_interval_select", {
+      ...telemetryProperties,
+      selected_billing_interval: interval,
+      selected_price_usd: profilePrice(selectedProfile, interval) || undefined,
     });
   };
 
@@ -637,15 +533,10 @@ export function BillingPanel({
     });
   };
 
-  const handleCheckoutIntent = () => {
-    captureBillingTelemetry("checkout_intent", telemetryProperties);
-    onCheckoutIntent?.();
-  };
-
   if (active === true) {
     return (
       <div className="rounded-xl border border-forest/20 bg-forest/5 p-4 text-sm text-forest">
-        Billing is active for this Clerk account.
+        Billing is active for this Matrix account.
       </div>
     );
   }
@@ -674,19 +565,22 @@ export function BillingPanel({
               : "Manage your hosted Matrix computer"}
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-forest/70">
-            Free account first. The hosted trial starts only when checkout confirms
-            the card and Matrix can attach a dedicated VPS.
+            Choose the plan for your hosted runtime. Billing starts in Stripe before
+            Matrix attaches a dedicated VPS.
           </p>
           <HeroSelectionPreview
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
+            billingInterval={billingInterval}
           />
         </div>
         <CheckoutPanel
-          redirectUrl={redirectUrl}
           mode={mode}
-          onCheckoutIntent={handleCheckoutIntent}
+          onCheckoutIntent={onCheckoutIntent}
           telemetryProperties={telemetryProperties}
+          planSlug={selectedProfile.planSlug}
+          billingInterval={billingInterval}
+          onBillingIntervalChange={handleBillingIntervalChange}
         />
       </section>
 
@@ -697,6 +591,7 @@ export function BillingPanel({
         </div>
         <ServerProfileGrid
           selectedFeature={selectedProfile.featureSlug}
+          billingInterval={billingInterval}
           onSelect={handleProfileSelect}
         />
       </section>
@@ -716,7 +611,11 @@ export function BillingPanel({
 
       {process.env.NODE_ENV === "development" && (
         <div className="hidden">
-          <TrialSummary selectedProfile={selectedProfile} selectedRegion={selectedRegion} />
+          <PlanSummary
+            selectedProfile={selectedProfile}
+            selectedRegion={selectedRegion}
+            billingInterval={billingInterval}
+          />
         </div>
       )}
     </div>

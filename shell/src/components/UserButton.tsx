@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
-import { hasMatrixBillingAccess } from "@/lib/billing";
+import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import {
   Tooltip,
   TooltipContent,
@@ -40,13 +40,12 @@ export function UserButton() {
 }
 
 function MountedUserButton() {
-  const { isLoaded, isSignedIn, has } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { active: billingActive } = useMatrixBillingAccess();
 
   if (!isLoaded || !isSignedIn) {
     return <Placeholder />;
   }
-
-  const billingActive = hasMatrixBillingAccess(has);
 
   return (
     <div className="flex flex-col items-center gap-1">
@@ -69,13 +68,13 @@ function MountedUserButton() {
       </ClerkUserButton>
       <div
         className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
-          billingActive
+          billingActive === true
             ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
             : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
         }`}
       >
         <CreditCardIcon className="size-3" aria-hidden="true" />
-        {billingActive ? "Active" : "Trial"}
+        {billingActive === true ? "Active" : "Billing"}
       </div>
     </div>
   );

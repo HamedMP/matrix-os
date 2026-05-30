@@ -6,8 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2Icon, LogInIcon } from "lucide-react";
 import {
   getMatrixBillingSuccessRedirectUrl,
-  hasMatrixBillingAccess,
 } from "@/lib/billing";
+import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { Settings } from "./Settings";
 
@@ -141,7 +141,7 @@ function SubscriptionConfirmationPending() {
               Confirming your subscription
             </h1>
             <p className="mx-auto max-w-xs text-sm leading-6 text-forest/75">
-              Clerk is activating billing for your Matrix computer. This usually takes a few
+              Stripe is activating billing for your Matrix computer. This usually takes a few
               seconds — your shell will open automatically.
             </p>
           </div>
@@ -159,11 +159,13 @@ function SubscriptionConfirmationPending() {
 }
 
 export function BillingGate({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn, has } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { active: billingActive } = useMatrixBillingAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
-  const hasBillingAccess = isSignedIn ? hasMatrixBillingAccess(has) : false;
+  const hasBillingAccess = isSignedIn ? billingActive === true : false;
+  const billingChecking = isSignedIn && billingActive === null;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
   const lastTrackedState = useRef<string | null>(null);
@@ -218,7 +220,7 @@ export function BillingGate({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  if (!isLoaded) {
+  if (!isLoaded || billingChecking) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
         <div className="flex items-center gap-2 text-sm" role="status">
