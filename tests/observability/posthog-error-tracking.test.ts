@@ -61,10 +61,14 @@ describe("PostHog error tracking", () => {
 
     const shellClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
     const wwwClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
+    const shellLayout = await readFile("shell/src/app/layout.tsx", "utf8");
+    const wwwLayout = await readFile("www/src/app/layout.tsx", "utf8");
     expect(shellClient).toContain("resolvePostHogClientApiHost");
     expect(shellClient).toContain("allowRelativeApiHost: false");
     expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(wwwClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellLayout).not.toContain("PostHogCookieBanner");
+    expect(wwwLayout).toContain("PostHogCookieBanner");
   });
 
   it("extracts visitor country from deployment geolocation headers", () => {
@@ -548,8 +552,8 @@ describe("PostHog error tracking", () => {
     expect(billingPanel).toContain('"profile_select"');
     expect(billingPanel).toContain('"region_select"');
     expect(billingPanel).toContain('"checkout_intent"');
-    expect(billingPanel).toContain('"checkout_pricing_table_available"');
-    expect(billingPanel).toContain('"checkout_local_preview_unavailable"');
+    expect(billingPanel).toContain('"checkout_stripe_available"');
+    expect(billingPanel).toContain('"checkout_error"');
     expect(billingPanel).toContain("selected_hetzner_type");
     expect(billingPanel).toContain("selected_region_slug");
     expect(billingPanel).not.toContain("cardNumber");
@@ -571,7 +575,7 @@ describe("PostHog error tracking", () => {
     expect(landingTelemetry).toContain("[data-ph-event]");
     expect(landingBilling).toContain('"marketing_billing_viewed"');
     expect(landingBilling).toContain('"marketing_billing_cta_clicked"');
-    expect(landingBilling).toContain('"marketing_billing_pricing_error"');
+    expect(landingBilling).toContain('"stripe_static_plans"');
   });
 
   it("tracks shell, gateway, and CLI/TUI product activity without content payloads", async () => {
