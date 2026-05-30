@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
   isSignedIn: true,
+  userId: "user_123",
   activePlan: null as string | null,
 }));
 const navigationState = vi.hoisted(() => ({
@@ -14,15 +15,6 @@ const navigationState = vi.hoisted(() => ({
 }));
 
 vi.mock("@clerk/nextjs", () => ({
-  PricingTable: (props: { for?: string; newSubscriptionRedirectUrl?: string }) => (
-    <div
-      data-for={props.for}
-      data-redirect={props.newSubscriptionRedirectUrl}
-      data-testid="pricing-table"
-    >
-      <button type="button">Start trial</button>
-    </div>
-  ),
   SignIn: () => (
     <div data-testid="sign-in-component">Mock SignIn</div>
   ),
@@ -32,6 +24,7 @@ vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
+    userId: clerkState.userId,
     has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
   }),
 }));
@@ -44,10 +37,25 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("BillingGate", () => {
+  beforeEach(async () => {
+    const { resetMatrixBillingAccessCacheForTests } = await import(
+      "../../shell/src/hooks/useMatrixBillingAccess.js"
+    );
+    resetMatrixBillingAccessCacheForTests();
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  });
+
   afterEach(() => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
+    vi.restoreAllMocks();
   });
 
   it("bypasses billing only for explicit test screenshot runs", async () => {
@@ -71,7 +79,7 @@ describe("BillingGate", () => {
     vi.resetModules();
   });
 
-  it.each(["matrix_starter", "matrix_builder", "matrix_max", "early_adopter"])(
+  it.each(["matrix_starter", "matrix_builder", "matrix_max"])(
     "renders Matrix OS when the signed-in user has the %s plan",
     async (plan) => {
     vi.unstubAllEnvs();
@@ -93,6 +101,25 @@ describe("BillingGate", () => {
     },
   );
 
+  it("does not unlock Matrix OS for the legacy Clerk early_adopter plan", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = "early_adopter";
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await waitFor(() => expect(screen.getByText("Start checkout & provision")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+  });
+
   it("keeps the shell visible behind locked billing settings when the user has not subscribed", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
@@ -108,21 +135,17 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(screen.getByText("Matrix workspace")).toBeTruthy();
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
-    expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
+    expect(await screen.findByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
     expect(
       (screen.getByRole("button", {
         name: "Appearance Locked until billing is active",
       }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect((await screen.findByTestId("pricing-table")).getAttribute("data-for")).toBe(
-      "user",
-    );
-    expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
-      "http://localhost:3000/?checkout=success",
-    );
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+    expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
   it("shows confirmation feedback after a completed checkout redirect", async () => {
@@ -147,6 +170,52 @@ describe("BillingGate", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
+  it("bypasses cached inactive billing status after returning from checkout", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await screen.findByRole("button", { name: "Continue to pay" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    window.history.replaceState({}, "", "/?checkout=success");
+    window.sessionStorage.setItem("matrix.billing.checkoutAttemptAt", String(Date.now()));
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(navigationState.replace).toHaveBeenCalledWith("/");
+  });
+
   it("cleans the checkout success query once the plan is active", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");
@@ -167,7 +236,7 @@ describe("BillingGate", () => {
     expect(navigationState.replace).toHaveBeenCalledWith("/");
   });
 
-  it("keeps direct checkout success navigation on the pricing table", async () => {
+  it("keeps direct checkout success navigation on the checkout panel", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");
     clerkState.isLoaded = true;
@@ -183,11 +252,11 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByTestId("pricing-table")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
-  it("records a checkout attempt before interacting with the pricing table", async () => {
+  it("records a checkout attempt before opening checkout", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
@@ -202,8 +271,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    await screen.findByTestId("pricing-table");
-    fireEvent.click(screen.getByRole("button", { name: /start trial/i }));
+    await screen.findByRole("button", { name: "Continue to pay" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     expect(
       Number(window.sessionStorage.getItem("matrix.billing.checkoutAttemptAt")),

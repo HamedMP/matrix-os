@@ -48,7 +48,7 @@ export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLay
           <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
             {[
               "Free account first",
-              "Card only at trial start",
+              "Stripe checkout at launch",
               "Private hosted runtime",
             ].map((item) => (
               <div

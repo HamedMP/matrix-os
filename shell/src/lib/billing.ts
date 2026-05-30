@@ -4,7 +4,6 @@ export const MATRIX_BILLING_PLAN_SLUGS = [
   "matrix_starter",
   "matrix_builder",
   "matrix_max",
-  "early_adopter",
 ] as const;
 export const MATRIX_BILLING_RETURN_PATH = "/";
 export const MATRIX_BILLING_SUCCESS_RETURN_PATH = "/?checkout=success";
@@ -24,6 +23,7 @@ export type MatrixRegionSlug =
 
 export type MatrixServerProfile = {
   featureSlug: MatrixServerProfileSlug;
+  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max";
   hetznerType: string;
   label: string;
   vcpus: number;
@@ -33,6 +33,7 @@ export type MatrixServerProfile = {
   monthlyCapEur: string;
   hourlyEur: string;
   monthlyPriceUsd: string | null;
+  annualPriceUsd: string | null;
 };
 
 export type MatrixRegion = {
@@ -46,6 +47,7 @@ export type MatrixRegion = {
 export const MATRIX_BILLING_SERVER_PROFILES: MatrixServerProfile[] = [
   {
     featureSlug: "server_cpx22",
+    planSlug: "matrix_starter",
     hetznerType: "CPX22",
     label: "Starter",
     vcpus: 2,
@@ -55,9 +57,11 @@ export const MATRIX_BILLING_SERVER_PROFILES: MatrixServerProfile[] = [
     monthlyCapEur: "8.49",
     hourlyEur: "0.0136",
     monthlyPriceUsd: "14",
+    annualPriceUsd: "140",
   },
   {
     featureSlug: "server_cpx32",
+    planSlug: "matrix_builder",
     hetznerType: "CPX32",
     label: "Builder",
     vcpus: 4,
@@ -67,9 +71,11 @@ export const MATRIX_BILLING_SERVER_PROFILES: MatrixServerProfile[] = [
     monthlyCapEur: "14.49",
     hourlyEur: "0.0232",
     monthlyPriceUsd: "19",
+    annualPriceUsd: "190",
   },
   {
     featureSlug: "server_cpx52",
+    planSlug: "matrix_max",
     hetznerType: "CPX52",
     label: "Max",
     vcpus: 12,
@@ -79,21 +85,9 @@ export const MATRIX_BILLING_SERVER_PROFILES: MatrixServerProfile[] = [
     monthlyCapEur: "36.99",
     hourlyEur: "0.0593",
     monthlyPriceUsd: "49",
+    annualPriceUsd: "490",
   },
 ];
-
-export const MATRIX_TRIAL_WARMUP_SERVER_PROFILE: MatrixServerProfile = {
-  featureSlug: "server_cpx11",
-  hetznerType: "CPX11",
-  label: "Trial warmup",
-  vcpus: 2,
-  cpu: "AMD",
-  memoryGb: 2,
-  diskGb: 40,
-  monthlyCapEur: "6.49",
-  hourlyEur: "0.0104",
-  monthlyPriceUsd: null,
-};
 
 export const MATRIX_BILLING_REGIONS: MatrixRegion[] = [
   {

@@ -1,9 +1,7 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { Badge } from "@/components/ui/badge";
-import { hasMatrixBillingAccess } from "@/lib/billing";
-import { useBillingRedirectUrl } from "@/hooks/useBillingRedirectUrl";
+import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { BillingPanel, type BillingPanelMode } from "./BillingPanel";
 
 export function BillingSection({
@@ -13,9 +11,7 @@ export function BillingSection({
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
 }) {
-  const { isLoaded, has } = useAuth();
-  const redirectUrl = useBillingRedirectUrl();
-  const active = isLoaded ? hasMatrixBillingAccess(has) : null;
+  const { active, entitlement, accessReason } = useMatrixBillingAccess();
 
   return (
     <div className="mx-auto max-w-5xl space-y-3 p-3 sm:p-4">
@@ -24,8 +20,8 @@ export function BillingSection({
           <h2 className="text-lg font-semibold">Billing</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "provisioning"
-              ? "Start the hosted trial from the same place you will later manage billing."
-              : "Manage Matrix OS paid beta access through Clerk Billing."}
+              ? "Choose a hosted runtime plan and launch through secure checkout."
+              : "Manage Matrix OS hosted runtime billing and payment details."}
           </p>
         </div>
         <Badge
@@ -44,7 +40,8 @@ export function BillingSection({
 
       <BillingPanel
         active={active}
-        redirectUrl={redirectUrl}
+        entitlement={entitlement}
+        accessReason={accessReason}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
       />

@@ -34,6 +34,7 @@ const customerCreationInflight = new Map<string, Promise<BillingCustomerRecord>>
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
+  regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
 });
 
 export interface StripeCheckoutSessionInput {
@@ -42,6 +43,7 @@ export interface StripeCheckoutSessionInput {
   mode: 'subscription';
   automaticTax: boolean;
   allowPromotionCodes: boolean;
+  regionSlug: string;
   successUrl: string;
   cancelUrl: string;
 }
@@ -116,6 +118,7 @@ export function createBillingRoutes(options: {
         mode: 'subscription',
         automaticTax: true,
         allowPromotionCodes: true,
+        regionSlug: parsed.data.regionSlug,
         successUrl: resolveBillingReturnUrl(env, 'success'),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
       });

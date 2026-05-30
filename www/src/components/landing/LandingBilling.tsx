@@ -1,18 +1,13 @@
 "use client";
 
-import { PricingTable } from "@clerk/nextjs";
-import type { ErrorInfo, ReactNode } from "react";
-import { Component, useEffect } from "react";
+import { useEffect } from "react";
 import {
   CheckCircle2Icon,
   CreditCardIcon,
-  Loader2Icon,
   ShieldCheckIcon,
   SparklesIcon,
 } from "lucide-react";
 import { capturePostHogEvent } from "@/lib/posthog-client";
-
-const checkoutRedirectUrl = "https://app.matrix-os.com/?checkout=success";
 
 const colors = {
   forest: "#434E3F",
@@ -22,130 +17,84 @@ const colors = {
   mutedFg: "#5C5A4F",
 } as const;
 
-const shouldRenderClerkPricing =
-  process.env.NODE_ENV === "production";
+const plans = [
+  {
+    name: "Starter",
+    monthly: "$14",
+    annual: "$140",
+    machine: "CPX22",
+    specs: "2 vCPU / 4 GB RAM / 80 GB disk",
+  },
+  {
+    name: "Builder",
+    monthly: "$19",
+    annual: "$190",
+    machine: "CPX32",
+    specs: "4 vCPU / 8 GB RAM / 160 GB disk",
+  },
+  {
+    name: "Max",
+    monthly: "$49",
+    annual: "$490",
+    machine: "CPX52",
+    specs: "12 vCPU / 24 GB RAM / 480 GB disk",
+  },
+] as const;
 
-class PricingTableBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("[landing-billing] Clerk pricing table failed to render", {
-      message: error.message,
-      componentStack: errorInfo.componentStack,
-    });
-    capturePostHogEvent("marketing_billing_pricing_error", {
-      surface: "www",
-      location: "landing_pricing",
-      provider: "clerk",
-    });
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <PricingUnavailableCard />;
-    }
-
-    return this.props.children;
-  }
-}
-
-function PricingFallback() {
+function PricingCards() {
   return (
-    <div
-      className="flex min-h-64 items-center justify-center rounded-[14px]"
-      style={{
-        border: `1px solid ${colors.border}`,
-        backgroundColor: "rgba(250,250,245,0.62)",
-      }}
-    >
-      <div
-        className="flex items-center gap-2 text-[13px]"
-        style={{ color: colors.mutedFg }}
-      >
-        <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
-        Preparing launch options
-      </div>
-    </div>
-  );
-}
-
-function PricingUnavailableCard() {
-  return (
-    <div
-      className="rounded-[14px] p-6"
-      style={{
-        border: `1px solid ${colors.border}`,
-        backgroundColor: "rgba(250,250,245,0.72)",
-      }}
-    >
-      <div className="mb-5 flex items-center gap-3">
+    <div className="grid gap-3">
+      {plans.map((plan) => (
         <div
-          className="flex size-10 items-center justify-center rounded-full"
+          key={plan.name}
+          className="rounded-[14px] p-5"
           style={{
-            backgroundColor: "rgba(208,111,37,0.12)",
-            color: colors.ember,
+            border: `1px solid ${colors.border}`,
+            backgroundColor: plan.name === "Builder" ? "rgba(255,247,236,0.9)" : "rgba(250,250,245,0.72)",
           }}
         >
-          <CreditCardIcon className="size-5" aria-hidden="true" />
-        </div>
-        <div>
-          <h3
-            className="text-[18px] font-semibold"
-            style={{ color: colors.forest }}
-          >
-            Launch your Matrix computer
-          </h3>
-          <p className="text-[13px]" style={{ color: colors.mutedFg }}>
-            Start free. Add payment details when you launch.
-          </p>
-        </div>
-      </div>
-
-      <div className="mb-6 flex items-baseline gap-2">
-        <span
-          className="text-[42px] font-semibold leading-none"
-          style={{ color: colors.forest }}
-        >
-          Free
-        </span>
-        <span className="text-[13px]" style={{ color: colors.mutedFg }}>
-          to start exploring
-        </span>
-      </div>
-
-      <div className="mb-6 grid gap-3">
-        {[
-          "Create your account without choosing a paid plan.",
-          "Explore agents, docs, onboarding, and the product direction first.",
-          "Add payment details when you launch the hosted private VPS.",
-        ].map((item) => (
-          <div
-            key={item}
-            className="flex gap-2 text-[13px] leading-[1.6]"
-            style={{ color: colors.mutedFg }}
-          >
-            <CheckCircle2Icon
-              className="mt-0.5 size-4 shrink-0"
-              style={{ color: colors.ember }}
-              aria-hidden="true"
-            />
-            <span>{item}</span>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-[18px] font-semibold" style={{ color: colors.forest }}>
+                {plan.name}
+              </h3>
+              <p className="mt-1 text-[13px]" style={{ color: colors.mutedFg }}>
+                {plan.machine} · {plan.specs}
+              </p>
+            </div>
+            {plan.name === "Builder" && (
+              <span
+                className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]"
+                style={{ backgroundColor: "rgba(208,111,37,0.12)", color: colors.ember }}
+              >
+                Popular
+              </span>
+            )}
           </div>
-        ))}
-      </div>
-
+          <div className="mt-4 flex items-end justify-between gap-4">
+            <div>
+              <span className="text-[34px] font-semibold leading-none" style={{ color: colors.forest }}>
+                {plan.monthly}
+              </span>
+              <span className="ml-1 text-[13px]" style={{ color: colors.mutedFg }}>
+                /mo
+              </span>
+            </div>
+            <p className="text-right text-[12px]" style={{ color: colors.mutedFg }}>
+              {plan.annual}/yr
+            </p>
+          </div>
+          <div className="mt-4 flex gap-2 text-[13px] leading-[1.6]" style={{ color: colors.mutedFg }}>
+            <CheckCircle2Icon className="mt-0.5 size-4 shrink-0" style={{ color: colors.ember }} aria-hidden="true" />
+            <span>Includes one hosted Matrix computer. Extra machines and storage are add-ons.</span>
+          </div>
+        </div>
+      ))}
       <a
-        href="/signup"
+        href="https://app.matrix-os.com/"
         data-ph-event="marketing_billing_cta_clicked"
-        data-ph-location="pricing_fallback"
-        data-ph-target="start_free"
+        data-ph-location="pricing_cards"
+        data-ph-target="choose_plan"
         className="inline-flex h-12 w-full items-center justify-center whitespace-nowrap rounded-full px-5 text-[14px] font-semibold transition-all duration-300 hover:-translate-y-0.5 hover:opacity-95"
         style={{
           backgroundColor: colors.forest,
@@ -153,7 +102,7 @@ function PricingUnavailableCard() {
           boxShadow: "0 12px 28px rgba(67,78,63,0.28)",
         }}
       >
-        Start free
+        Choose a plan
       </a>
     </div>
   );
@@ -164,7 +113,7 @@ export function LandingBilling() {
     capturePostHogEvent("marketing_billing_viewed", {
       surface: "www",
       location: "landing_pricing",
-      pricing_mode: shouldRenderClerkPricing ? "clerk_pricing_table" : "local_fallback",
+      pricing_mode: "stripe_static_plans",
       checkout_redirect_host: "app.matrix-os.com",
     });
   }, []);
@@ -204,7 +153,7 @@ export function LandingBilling() {
             }}
           >
             <SparklesIcon className="size-3.5" aria-hidden="true" />
-            Start free
+            Hosted plans
           </span>
           <h2
             className="mb-6 mt-7 text-[clamp(2rem,4.4vw,3.4rem)] font-semibold leading-[1.05] tracking-[-0.02em]"
@@ -218,17 +167,16 @@ export function LandingBilling() {
             className="mb-7 max-w-[48ch] text-[15px] leading-[1.85]"
             style={{ color: colors.mutedFg }}
           >
-            Start with a free Matrix OS account and see what it can do. Explore
-            the product, learn the workflow, then launch a private hosted Matrix
-            computer only when you actually want one.
+            Choose the hosted Matrix computer you want to run. Billing starts
+            before provisioning because each plan maps to a real dedicated VPS.
           </p>
 
           <div className="mb-9 flex flex-col gap-3 sm:flex-row sm:items-center">
             <a
-              href="/signup"
+              href="https://app.matrix-os.com/"
               data-ph-event="marketing_billing_cta_clicked"
               data-ph-location="pricing_section"
-              data-ph-target="start_free"
+              data-ph-target="choose_plan"
               className="inline-flex h-12 min-w-[180px] items-center justify-center whitespace-nowrap rounded-full px-7 text-[14px] font-semibold transition-all duration-300 hover:-translate-y-0.5 hover:opacity-95"
               style={{
                 backgroundColor: colors.forest,
@@ -236,10 +184,10 @@ export function LandingBilling() {
                 boxShadow: "0 14px 32px rgba(67,78,63,0.24)",
               }}
             >
-              Start free
+              Choose a plan
             </a>
             <span className="text-[13px]" style={{ color: colors.mutedFg }}>
-              Payment details are collected at launch.
+              Monthly and annual billing. No hosted runtime trials.
             </span>
           </div>
 
@@ -248,7 +196,7 @@ export function LandingBilling() {
               {
                 Icon: CheckCircle2Icon,
                 title: "Start before you commit",
-                text: "Create an account, explore the product, and learn the workflow before a card is involved.",
+                text: "Pick a hosted runtime plan only when you are ready to provision a dedicated Matrix computer.",
               },
               {
                 Icon: CreditCardIcon,
@@ -326,20 +274,10 @@ export function LandingBilling() {
                 color: colors.forest,
               }}
             >
-              Pay at launch
+              Stripe checkout
             </span>
           </div>
-          {shouldRenderClerkPricing ? (
-            <PricingTableBoundary>
-              <PricingTable
-                for="user"
-                newSubscriptionRedirectUrl={checkoutRedirectUrl}
-                fallback={<PricingFallback />}
-              />
-            </PricingTableBoundary>
-          ) : (
-            <PricingUnavailableCard />
-          )}
+          <PricingCards />
         </div>
       </div>
     </section>

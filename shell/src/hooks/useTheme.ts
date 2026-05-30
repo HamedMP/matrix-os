@@ -44,6 +44,37 @@ export const DEFAULT_THEME: Theme = {
   radius: "0.75rem",
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringEntries(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+export function normalizeTheme(value: unknown): Theme {
+  if (!isRecord(value)) return DEFAULT_THEME;
+
+  return {
+    ...DEFAULT_THEME,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : DEFAULT_THEME.name,
+    ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
+    ...(value.style === "flat" || value.style === "neumorphic" ? { style: value.style } : {}),
+    colors: {
+      ...DEFAULT_THEME.colors,
+      ...stringEntries(value.colors),
+    },
+    fonts: {
+      ...DEFAULT_THEME.fonts,
+      ...stringEntries(value.fonts),
+    },
+    radius: typeof value.radius === "string" && value.radius.trim() ? value.radius : DEFAULT_THEME.radius,
+  };
+}
+
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
 
@@ -116,10 +147,10 @@ export async function saveTheme(theme: Theme): Promise<void> {
 async function fetchTheme(): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
-    const res = await fetch(`${gatewayUrl}/api/theme`, {
+    const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.ok) return res.json();
+    if (res.ok) return normalizeTheme(await res.json());
   } catch (err: unknown) {
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }

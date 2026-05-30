@@ -9,7 +9,6 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/fira-code/400.css";
 import "@fontsource/fira-code/500.css";
 import "./globals.css";
-import { PostHogCookieBanner } from "@/components/PostHogCookieBanner";
 import { PwaRegister } from "@/components/pwa/PwaRegister";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 
@@ -113,7 +112,6 @@ export default async function RootLayout({
       <html lang="en" data-posthog-visitor-country={visitorCountry ?? undefined}>
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
-          <PostHogCookieBanner visitorCountry={visitorCountry} />
           <PwaRegister />
           <InstallPrompt />
         </body>

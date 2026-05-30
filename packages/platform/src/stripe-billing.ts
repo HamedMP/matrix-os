@@ -41,6 +41,14 @@ export function createStripeBillingClient(options: {
         cancel_url: input.cancelUrl,
         allow_promotion_codes: input.allowPromotionCodes,
         automatic_tax: { enabled: input.automaticTax },
+        metadata: {
+          matrix_region_slug: input.regionSlug,
+        },
+        subscription_data: {
+          metadata: {
+            matrix_region_slug: input.regionSlug,
+          },
+        },
         tax_id_collection: { enabled: true },
         customer_update: {
           address: 'auto',

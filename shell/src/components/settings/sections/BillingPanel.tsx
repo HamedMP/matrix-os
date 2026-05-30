@@ -1,71 +1,59 @@
 "use client";
 
 import {
-  Component,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ErrorInfo,
-  type KeyboardEvent,
-  type MouseEvent,
-  type ReactNode,
 } from "react";
-import { PricingTable } from "@clerk/nextjs";
+import type { ReactNode } from "react";
 import {
-  CheckCircle2Icon,
+  ArrowUpRightIcon,
   CheckIcon,
   CreditCardIcon,
   CpuIcon,
+  ExternalLinkIcon,
   Loader2Icon,
   MapPinIcon,
   MemoryStickIcon,
+  PlusIcon,
+  ReceiptTextIcon,
   ServerIcon,
+  ShieldCheckIcon,
+  XCircleIcon,
 } from "lucide-react";
 import {
   MATRIX_BILLING_REGIONS,
   MATRIX_BILLING_SERVER_PROFILES,
 } from "@/lib/billing";
+import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 
-const shouldRenderClerkPricing =
-  process.env.NODE_ENV !== "development";
-
 export type BillingPanelMode = "settings" | "provisioning";
-
-const CHECKOUT_OVERLAY_Z_INDEX = 10_000;
-const checkoutOverlayAppearance = {
-  elements: {
-    drawerBackdrop: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
-    },
-    drawerRoot: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
-    },
-    drawerContent: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
-    },
-    modalBackdrop: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
-    },
-    modalContent: {
-      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
-    },
-  },
-};
+type BillingInterval = "monthly" | "annual";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
+const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
+const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
+const billingPlanNames: Record<string, string> = {
+  matrix_starter: "Starter",
+  matrix_builder: "Builder",
+  matrix_max: "Max",
+  internal: "Internal",
+};
 
 type BillingTelemetryProperties = {
   mode: BillingPanelMode;
   billing_state: "active" | "inactive" | "checking";
   selected_profile_slug: string;
   selected_hetzner_type: string;
+  selected_billing_interval: BillingInterval;
   selected_monthly_price_usd?: string;
+  selected_annual_price_usd?: string;
+  selected_price_usd?: string;
   selected_region_slug: string;
   selected_region_location: string;
   selected_region_zone: string;
-  redirect_url_present: boolean;
 };
 
 function captureBillingTelemetry(
@@ -86,143 +74,25 @@ function captureBillingTelemetry(
   );
 }
 
-class BillingTableBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("[billing] Clerk pricing table failed to render", {
-      message: error.message,
-      componentStack: errorInfo.componentStack,
-    });
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <BillingUnavailableCard />;
-    }
-
-    return this.props.children;
-  }
-}
-
-function BillingTableFallback() {
-  return (
-    <div className="flex min-h-48 items-center justify-center rounded-lg border border-border/50 bg-muted/20">
-      <Loader2Icon className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
-    </div>
-  );
-}
-
-function BillingUnavailableCard() {
-  const defaultProfile = MATRIX_BILLING_SERVER_PROFILES[0];
-
-  return (
-    <div className="overflow-hidden rounded-2xl border border-forest/15 bg-white">
-      <div className="flex items-baseline justify-between gap-4 border-b border-forest/10 bg-cream/40 px-6 py-5">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
-            Hosted runtime
-          </p>
-          <h3 className="mt-1 text-xl font-semibold tracking-tight text-deep">
-            Hosted Matrix trial
-          </h3>
-        </div>
-        <div className="text-right">
-          <span className="text-3xl font-semibold tracking-tight text-deep">3 days</span>
-          <p className="text-xs text-forest/60">free, then billed</p>
-        </div>
-      </div>
-
-      <div className="grid gap-3.5 px-6 py-5 text-sm leading-6 text-forest/80">
-        {[
-          "Your own private Matrix cloud computer, provisioned on demand.",
-          `${defaultProfile.label}: ${defaultProfile.vcpus} vCPU, ${defaultProfile.memoryGb} GB memory, ${defaultProfile.diskGb} GB disk.`,
-          `$${defaultProfile.monthlyPriceUsd}/mo after the 3-day trial, with a card on file for the dedicated VPS runtime.`,
-        ].map((item) => (
-          <div key={item} className="flex gap-2.5">
-            <CheckCircle2Icon
-              className="mt-0.5 size-4 shrink-0 text-ember"
-              aria-hidden="true"
-            />
-            <span>{item}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="px-6 pb-6">
-        <button
-          type="button"
-          disabled
-          className="inline-flex h-11 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-forest/90 px-4 text-sm font-semibold text-ember-foreground opacity-90"
-        >
-          <CreditCardIcon className="size-4" aria-hidden="true" />
-          Start trial &amp; provision
-        </button>
-        <p className="mt-3 text-center text-[11px] leading-5 text-forest/45">
-          Billing checkout is unavailable in this local preview. Enable Clerk Billing
-          for this instance to load the live checkout.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function CompactCheckoutFallback() {
-  const profile = MATRIX_BILLING_SERVER_PROFILES[0];
-
-  return (
-    <div className="rounded-2xl border border-forest/15 bg-white p-3.5 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
-        Hosted trial
-      </p>
-      <div className="mt-2 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-lg font-semibold tracking-tight text-deep">
-            3 days free
-          </p>
-          <p className="mt-0.5 text-xs leading-5 text-forest/55">
-            Card required when provisioning starts.
-          </p>
-        </div>
-        <p className="text-right text-lg font-semibold text-deep">
-          ${profile?.monthlyPriceUsd ?? "14"}/mo
-        </p>
-      </div>
-      <button
-        type="button"
-        disabled
-        className="mt-3 inline-flex h-10 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-forest/90 px-4 text-sm font-semibold text-ember-foreground opacity-90"
-      >
-        <CreditCardIcon className="size-4" aria-hidden="true" />
-        Start trial &amp; provision
-      </button>
-      <p className="mt-1.5 text-center text-[11px] leading-5 text-forest/45">
-        Clerk Billing checkout is unavailable in this local preview.
-      </p>
-    </div>
-  );
-}
-
 function CheckoutPanel({
-  redirectUrl,
   mode,
   onCheckoutIntent,
   telemetryProperties,
+  planSlug,
+  regionSlug,
+  billingInterval,
+  onBillingIntervalChange,
 }: {
-  redirectUrl: string | null;
   mode: BillingPanelMode;
   onCheckoutIntent?: () => void;
   telemetryProperties: BillingTelemetryProperties;
+  planSlug: string;
+  regionSlug: string;
+  billingInterval: BillingInterval;
+  onBillingIntervalChange: (interval: BillingInterval) => void;
 }) {
-  const checkoutTelemetryKey = `${redirectUrl ? "redirect" : "pending"}:${shouldRenderClerkPricing ? "clerk" : "fallback"}`;
-  const redirectUrlRef = useRef(redirectUrl);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
   useEffect(() => {
@@ -230,55 +100,352 @@ function CheckoutPanel({
   }, [telemetryProperties]);
 
   useEffect(() => {
-    redirectUrlRef.current = redirectUrl;
-  }, [redirectUrl]);
+    captureBillingTelemetry("checkout_stripe_available", telemetryPropertiesRef.current);
+  }, []);
 
-  useEffect(() => {
-    const currentRedirectUrl = redirectUrlRef.current;
-    captureBillingTelemetry(
-      currentRedirectUrl && shouldRenderClerkPricing
-        ? "checkout_pricing_table_available"
-        : currentRedirectUrl
-          ? "checkout_local_preview_unavailable"
-          : "checkout_redirect_pending",
-      telemetryPropertiesRef.current,
-    );
-  }, [checkoutTelemetryKey]);
+  async function startCheckout() {
+    setCheckoutLoading(true);
+    setCheckoutError(null);
+    onCheckoutIntent?.();
+    captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    try {
+      const response = await fetch("/billing/checkout", {
+        method: "POST",
+        credentials: "include",
+        signal: controller.signal,
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({ planSlug, interval: billingInterval, regionSlug }),
+      });
+      const body = (await response.json().catch((err: unknown) => {
+        captureBillingTelemetry("checkout_response_parse_error", {
+          ...telemetryPropertiesRef.current,
+          error_kind: err instanceof Error ? err.name : typeof err,
+        });
+        return null;
+      })) as { url?: string } | null;
+      if (!response.ok || !body?.url) {
+        throw new Error("checkout_unavailable");
+      }
+      window.location.assign(body.url);
+    } catch (error: unknown) {
+      setCheckoutError("Checkout is unavailable. Try again in a moment.");
+      captureBillingTelemetry("checkout_error", {
+        ...telemetryPropertiesRef.current,
+        error_kind: error instanceof Error ? error.message : typeof error,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+      setCheckoutLoading(false);
+    }
+  }
 
   return (
-    <div
-      className="rounded-2xl border border-forest/15 bg-card p-4"
-      onClickCapture={(event) => handleCheckoutClick(event, onCheckoutIntent)}
-      onKeyDownCapture={(event) => handleCheckoutKeyDown(event, onCheckoutIntent)}
-    >
+    <div className="rounded-2xl border border-forest/15 bg-card p-4">
       {mode === "provisioning" && (
         <div className="mb-2">
-          <p className="text-sm font-semibold text-deep">Start trial &amp; provision</p>
+          <p className="text-sm font-semibold text-deep">Start checkout &amp; provision</p>
           <p className="mt-0.5 text-xs leading-5 text-forest/60">
-            Checkout runs here; Matrix starts provisioning after the trial is active.
+            Secure checkout opens before Matrix provisions this computer.
           </p>
         </div>
       )}
-      {redirectUrl && shouldRenderClerkPricing ? (
-        <BillingTableBoundary>
-          <PricingTable
-            for="user"
-            newSubscriptionRedirectUrl={redirectUrl}
-            checkoutProps={{ appearance: checkoutOverlayAppearance }}
-            fallback={<BillingTableFallback />}
-          />
-        </BillingTableBoundary>
-      ) : redirectUrl ? (
-        <CompactCheckoutFallback />
-      ) : (
-        <BillingTableFallback />
+      <div className="mb-3 grid grid-cols-2 rounded-xl border border-forest/12 bg-[#f4efe3] p-1">
+        {(["monthly", "annual"] as const).map((interval) => (
+          <button
+            key={interval}
+            type="button"
+            aria-pressed={billingInterval === interval}
+            onClick={() => onBillingIntervalChange(interval)}
+            className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
+              billingInterval === interval
+                ? "bg-white text-deep shadow-sm"
+                : "text-forest/55 hover:text-forest"
+            }`}
+          >
+            {interval === "monthly" ? "Monthly" : "Annual"}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={startCheckout}
+        disabled={checkoutLoading}
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-forest px-4 text-sm font-semibold text-ember-foreground transition-colors hover:bg-forest/90 disabled:cursor-wait disabled:opacity-70"
+      >
+        {checkoutLoading ? (
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <CreditCardIcon className="size-4" aria-hidden="true" />
+        )}
+        {checkoutLoading ? "Opening checkout" : "Continue to pay"}
+      </button>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-forest/65">
+        <span className="inline-flex items-center gap-1">
+          <ShieldCheckIcon className="size-3.5" aria-hidden="true" />
+          Secure checkout
+        </span>
+        <span className="text-forest/25" aria-hidden="true">|</span>
+        <span className="sr-only">Accepted cards:</span>
+        {acceptedPaymentMarks.map((mark) => (
+          <span
+            key={mark}
+            className="inline-flex h-5 items-center rounded border border-forest/15 bg-white px-2 text-[10px] font-bold uppercase tracking-normal text-deep shadow-sm"
+          >
+            {mark}
+          </span>
+        ))}
+      </div>
+      <p className="mt-3 text-center text-[11px] leading-5 text-forest/50">
+        No trial. Plan changes and coupons are handled in the billing portal.
+      </p>
+      {checkoutError && (
+        <p className="mt-2 text-center text-xs text-red-600">{checkoutError}</p>
       )}
     </div>
   );
 }
 
+function BillingPortalButton({
+  entitlement,
+  label = "Open billing portal",
+}: {
+  entitlement: BillingEntitlementSummary | null;
+  label?: string;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const portalAvailable = entitlement?.source === "stripe" && Boolean(entitlement.stripeSubscriptionId);
+
+  async function openPortal() {
+    if (!portalAvailable) return;
+    setLoading(true);
+    setError(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    try {
+      const response = await fetch("/billing/portal", {
+        method: "POST",
+        credentials: "include",
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      const body = (await response.json().catch((err: unknown) => {
+        capturePostHogLog("warn", "billing portal_response_parse_error", {
+          source: "settings-billing",
+          error_kind: err instanceof Error ? err.name : typeof err,
+        });
+        return null;
+      })) as { url?: string } | null;
+      if (!response.ok || !body?.url) {
+        throw new Error("portal_unavailable");
+      }
+      window.location.assign(body.url);
+    } catch (err: unknown) {
+      setError("Billing portal is unavailable. Try again in a moment.");
+      capturePostHogLog("error", "billing portal_error", {
+        source: "settings-billing",
+        error_kind: err instanceof Error ? err.message : typeof err,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={openPortal}
+        disabled={!portalAvailable || loading}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-forest px-3.5 text-sm font-semibold text-ember-foreground transition-colors hover:bg-forest/90 disabled:cursor-not-allowed disabled:opacity-55"
+      >
+        {loading ? (
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <ExternalLinkIcon className="size-4" aria-hidden="true" />
+        )}
+        {loading ? "Opening portal" : label}
+      </button>
+      {!portalAvailable && (
+        <p className="mt-2 text-xs leading-5 text-forest/55">
+          This account is managed internally, so receipts and plan changes are handled by the Matrix team.
+        </p>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function ActiveBillingPanel({
+  entitlement,
+  accessReason,
+}: {
+  entitlement: BillingEntitlementSummary | null;
+  accessReason: string | null;
+}) {
+  const planName = entitlement ? billingPlanNames[entitlement.planSlug] ?? entitlement.planSlug : "Active";
+  const status = entitlement?.status ? formatStatus(entitlement.status) : accessReason === "legacy_clerk_plan" ? "Legacy plan" : "Active";
+  const machineProfile = resolveMachineProfile(entitlement?.defaultServerType);
+  const allowedProfiles = (entitlement?.allowedServerTypes ?? [])
+    .map(resolveMachineProfile)
+    .filter((profile): profile is NonNullable<ReturnType<typeof resolveMachineProfile>> => Boolean(profile));
+  const totalComputers = entitlement?.maxRuntimeSlots ?? 1;
+  const includedComputers = entitlement?.includedRuntimeSlots ?? 1;
+  const addonComputers = entitlement?.addonRuntimeSlots ?? 0;
+  const graceLabel = entitlement?.gracePeriodEndsAt ? formatDate(entitlement.gracePeriodEndsAt) : null;
+
+  return (
+    <div className="space-y-3">
+      <section className="rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
+              Current plan
+            </p>
+            <h3 className="mt-2 text-2xl font-semibold tracking-tight text-deep">
+              {planName}
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-forest/65">
+              {status}. Your Matrix computers stay available while billing is active
+              {graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.
+            </p>
+          </div>
+          <BillingPortalButton entitlement={entitlement} />
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <BillingMetric label="Status" value={status} />
+          <BillingMetric label="Computers" value={`${totalComputers}`} detail={`${includedComputers} included${addonComputers ? `, ${addonComputers} add-on` : ""}`} />
+          <BillingMetric
+            label="Machine"
+            value={machineProfile?.label ?? entitlement?.defaultServerType ?? "Included"}
+            detail={machineProfile ? `${machineProfile.hetznerType} · ${profileSpec(machineProfile)}` : undefined}
+          />
+          <BillingMetric label="Add-ons" value={addonComputers ? `${addonComputers} active` : "None"} detail="Extra machines and storage appear here" />
+        </div>
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-3">
+        <BillingAction
+          icon={<ArrowUpRightIcon className="size-4" aria-hidden="true" />}
+          title="Upgrade or downgrade"
+          description={`Switch between ${allowedProfiles.length ? allowedProfiles.map((profile) => profile.label).join(", ") : "Starter, Builder, and Max"} without deleting data or machines.`}
+          action={<BillingPortalButton entitlement={entitlement} label="Change plan" />}
+        />
+        <BillingAction
+          icon={<PlusIcon className="size-4" aria-hidden="true" />}
+          title="Add-ons"
+          description="Add extra machines first; storage and other Hetzner-backed capacity can be attached as add-ons as they launch."
+          action={<BillingPortalButton entitlement={entitlement} label="Manage add-ons" />}
+        />
+        <BillingAction
+          icon={<ReceiptTextIcon className="size-4" aria-hidden="true" />}
+          title="Receipts and payment"
+          description="View invoices, receipts, tax details, payment methods, coupons, and billing email in the portal."
+          action={<BillingPortalButton entitlement={entitlement} label="View receipts" />}
+        />
+      </section>
+
+      <section className="rounded-[22px] border border-forest/12 bg-white p-4">
+        <div className="flex gap-3">
+          <XCircleIcon className="mt-0.5 size-4 shrink-0 text-forest/45" aria-hidden="true" />
+          <div>
+            <h4 className="text-sm font-semibold text-deep">Canceling</h4>
+            <p className="mt-1 text-sm leading-6 text-forest/65">
+              Canceling is handled in the billing portal. Your machines and owner data are not deleted automatically; access remains while billing is active and through the configured three-day grace window.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function BillingMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-forest/10 bg-white p-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-forest/45">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-deep">{value}</p>
+      {detail && <p className="mt-1 text-xs leading-5 text-forest/55">{detail}</p>}
+    </div>
+  );
+}
+
+function BillingAction({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action: ReactNode;
+}) {
+  return (
+    <div className="rounded-[22px] border border-forest/12 bg-white p-4">
+      <div className="flex items-center gap-2 text-deep">
+        <span className="inline-flex size-8 items-center justify-center rounded-xl bg-[#f4efe3] text-ember">
+          {icon}
+        </span>
+        <h4 className="text-sm font-semibold">{title}</h4>
+      </div>
+      <p className="mt-3 min-h-16 text-sm leading-6 text-forest/65">{description}</p>
+      <div className="mt-3">{action}</div>
+    </div>
+  );
+}
+
+function resolveMachineProfile(serverType: string | null | undefined) {
+  if (!serverType) return null;
+  return MATRIX_BILLING_SERVER_PROFILES.find(
+    (profile) => profile.hetznerType.toLowerCase() === serverType.toLowerCase(),
+  ) ?? null;
+}
+
+function formatStatus(status: string): string {
+  return status
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 function profileSpec(profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number]): string {
   return `${profile.vcpus} vCPU / ${profile.memoryGb} GB RAM / ${profile.diskGb} GB disk`;
+}
+
+function profilePrice(
+  profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number],
+  interval: BillingInterval,
+): string {
+  return interval === "annual"
+    ? profile.annualPriceUsd ?? profile.monthlyPriceUsd ?? ""
+    : profile.monthlyPriceUsd ?? "";
 }
 
 function getNearestRegionSlug(): string {
@@ -300,9 +467,11 @@ function getNearestRegionSlug(): string {
 
 function ServerProfileGrid({
   selectedFeature,
+  billingInterval,
   onSelect,
 }: {
   selectedFeature: string;
+  billingInterval: BillingInterval;
   onSelect: (featureSlug: string) => void;
 }) {
   return (
@@ -337,9 +506,11 @@ function ServerProfileGrid({
             </div>
             <div className="text-right">
               <p className="text-2xl font-semibold tracking-tight text-deep">
-                ${profile.monthlyPriceUsd}
+                ${profilePrice(profile, billingInterval)}
               </p>
-              <p className="text-xs text-forest/50">/mo</p>
+              <p className="text-xs text-forest/50">
+                {billingInterval === "annual" ? "/yr" : "/mo"}
+              </p>
             </div>
           </div>
 
@@ -427,17 +598,19 @@ function RegionList({
   );
 }
 
-function TrialSummary({
+function PlanSummary({
   selectedProfile,
   selectedRegion,
+  billingInterval,
 }: {
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
+  billingInterval: BillingInterval;
 }) {
   return (
     <div className="rounded-2xl border border-forest/15 bg-white p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
-        Trial summary
+        Plan summary
       </p>
       <div className="mt-4 rounded-2xl bg-[#f4efe3] p-4">
         <div className="flex items-start justify-between gap-3">
@@ -450,7 +623,7 @@ function TrialSummary({
             </p>
           </div>
           <p className="text-3xl font-semibold tracking-tight text-deep">
-            ${selectedProfile.monthlyPriceUsd}
+            ${profilePrice(selectedProfile, billingInterval)}
           </p>
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-forest/10 pt-3 text-sm">
@@ -462,7 +635,7 @@ function TrialSummary({
       </div>
       <div className="mt-4 grid gap-2 text-sm text-forest/70">
         {[
-          "3 days free with card on file.",
+          "Billing starts before provisioning.",
           "Dedicated VPS attached after checkout.",
           "Machine size comes from the billing entitlement.",
         ].map((item) => (
@@ -479,9 +652,11 @@ function TrialSummary({
 function HeroSelectionPreview({
   selectedProfile,
   selectedRegion,
+  billingInterval,
 }: {
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
+  billingInterval: BillingInterval;
 }) {
   return (
     <div className="mt-4 grid max-w-2xl gap-3 sm:grid-cols-2">
@@ -497,7 +672,8 @@ function HeroSelectionPreview({
             <p className="text-xs text-forest/50">{selectedProfile.hetznerType}</p>
           </div>
           <p className="text-lg font-semibold text-deep">
-            ${selectedProfile.monthlyPriceUsd}/mo
+            ${profilePrice(selectedProfile, billingInterval)}
+            {billingInterval === "annual" ? "/yr" : "/mo"}
           </p>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-forest/65">
@@ -529,42 +705,16 @@ function HeroSelectionPreview({
   );
 }
 
-function handleCheckoutKeyDown(
-  event: KeyboardEvent<HTMLDivElement>,
-  onCheckoutIntent?: () => void,
-) {
-  if (!onCheckoutIntent) return;
-  if ((event.key === "Enter" || event.key === " ") && isCheckoutIntentTarget(event.target)) {
-    onCheckoutIntent();
-  }
-}
-
-function handleCheckoutClick(
-  event: MouseEvent<HTMLDivElement>,
-  onCheckoutIntent?: () => void,
-) {
-  if (!onCheckoutIntent || !isCheckoutIntentTarget(event.target)) return;
-  onCheckoutIntent();
-}
-
-function isCheckoutIntentTarget(target: EventTarget): boolean {
-  if (!(target instanceof Element)) return false;
-  const action = target.closest("button,a,[role='button']");
-  if (!action) return false;
-  const role = action.getAttribute("role");
-  if (role === "radio" || role === "tab") return false;
-  const label = `${action.textContent ?? ""} ${action.getAttribute("aria-label") ?? ""}`.toLowerCase();
-  return /\b(start|trial|checkout|subscribe|upgrade|continue)\b/.test(label);
-}
-
 export function BillingPanel({
   active,
-  redirectUrl,
+  entitlement,
+  accessReason,
   mode = "settings",
   onCheckoutIntent,
 }: {
   active: boolean | null;
-  redirectUrl: string | null;
+  entitlement?: BillingEntitlementSummary | null;
+  accessReason?: string | null;
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
 }) {
@@ -574,6 +724,7 @@ export function BillingPanel({
       "",
   );
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
   const selectedProfile =
     MATRIX_BILLING_SERVER_PROFILES.find(
       (profile) => profile.featureSlug === selectedProfileSlug,
@@ -587,13 +738,15 @@ export function BillingPanel({
       billing_state: active === null ? "checking" : active ? "active" : "inactive",
       selected_profile_slug: selectedProfile.featureSlug,
       selected_hetzner_type: selectedProfile.hetznerType,
+      selected_billing_interval: billingInterval,
       selected_monthly_price_usd: selectedProfile.monthlyPriceUsd ?? undefined,
+      selected_annual_price_usd: selectedProfile.annualPriceUsd ?? undefined,
+      selected_price_usd: profilePrice(selectedProfile, billingInterval) || undefined,
       selected_region_slug: selectedRegion.featureSlug,
       selected_region_location: selectedRegion.location,
       selected_region_zone: selectedRegion.networkZone,
-      redirect_url_present: redirectUrl !== null,
     }),
-    [active, mode, redirectUrl, selectedProfile, selectedRegion],
+    [active, billingInterval, mode, selectedProfile, selectedRegion],
   );
   const initialViewTracked = useRef(false);
   const telemetryPropertiesRef = useRef(telemetryProperties);
@@ -621,6 +774,17 @@ export function BillingPanel({
       selected_profile_slug: nextProfile.featureSlug,
       selected_hetzner_type: nextProfile.hetznerType,
       selected_monthly_price_usd: nextProfile.monthlyPriceUsd ?? undefined,
+      selected_annual_price_usd: nextProfile.annualPriceUsd ?? undefined,
+      selected_price_usd: profilePrice(nextProfile, billingInterval) || undefined,
+    });
+  };
+
+  const handleBillingIntervalChange = (interval: BillingInterval) => {
+    setBillingInterval(interval);
+    captureBillingTelemetry("billing_interval_select", {
+      ...telemetryProperties,
+      selected_billing_interval: interval,
+      selected_price_usd: profilePrice(selectedProfile, interval) || undefined,
     });
   };
 
@@ -637,17 +801,8 @@ export function BillingPanel({
     });
   };
 
-  const handleCheckoutIntent = () => {
-    captureBillingTelemetry("checkout_intent", telemetryProperties);
-    onCheckoutIntent?.();
-  };
-
   if (active === true) {
-    return (
-      <div className="rounded-xl border border-forest/20 bg-forest/5 p-4 text-sm text-forest">
-        Billing is active for this Clerk account.
-      </div>
-    );
+    return <ActiveBillingPanel entitlement={entitlement ?? null} accessReason={accessReason ?? null} />;
   }
 
   if (active === null) {
@@ -674,19 +829,23 @@ export function BillingPanel({
               : "Manage your hosted Matrix computer"}
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-forest/70">
-            Free account first. The hosted trial starts only when checkout confirms
-            the card and Matrix can attach a dedicated VPS.
+            Choose the plan for your hosted runtime. Billing starts in Stripe before
+            Matrix attaches a dedicated VPS.
           </p>
           <HeroSelectionPreview
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
+            billingInterval={billingInterval}
           />
         </div>
         <CheckoutPanel
-          redirectUrl={redirectUrl}
           mode={mode}
-          onCheckoutIntent={handleCheckoutIntent}
+          onCheckoutIntent={onCheckoutIntent}
           telemetryProperties={telemetryProperties}
+          planSlug={selectedProfile.planSlug}
+          regionSlug={selectedRegion.featureSlug}
+          billingInterval={billingInterval}
+          onBillingIntervalChange={handleBillingIntervalChange}
         />
       </section>
 
@@ -697,6 +856,7 @@ export function BillingPanel({
         </div>
         <ServerProfileGrid
           selectedFeature={selectedProfile.featureSlug}
+          billingInterval={billingInterval}
           onSelect={handleProfileSelect}
         />
       </section>
@@ -716,7 +876,11 @@ export function BillingPanel({
 
       {process.env.NODE_ENV === "development" && (
         <div className="hidden">
-          <TrialSummary selectedProfile={selectedProfile} selectedRegion={selectedRegion} />
+          <PlanSummary
+            selectedProfile={selectedProfile}
+            selectedRegion={selectedRegion}
+            billingInterval={billingInterval}
+          />
         </div>
       )}
     </div>

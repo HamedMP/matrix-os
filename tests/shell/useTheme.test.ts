@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_THEME, type Theme } from "../../shell/src/hooks/useTheme";
+import { DEFAULT_THEME, normalizeTheme, type Theme } from "../../shell/src/hooks/useTheme";
 
 function themeToCssVars(theme: Theme): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -80,5 +80,40 @@ describe("theme system", () => {
     expect(vars["--background"]).toBe("#001122");
     expect(vars["--primary"]).toBe("#00ccff");
     expect(vars["--foreground"]).toBe("#1c1917");
+  });
+
+  it("normalizes missing persisted theme fields to defaults", () => {
+    const theme = normalizeTheme({});
+
+    expect(theme.colors.background).toBe(DEFAULT_THEME.colors.background);
+    expect(theme.colors.foreground).toBe(DEFAULT_THEME.colors.foreground);
+    expect(theme.fonts.mono).toBe(DEFAULT_THEME.fonts.mono);
+    expect(theme.radius).toBe(DEFAULT_THEME.radius);
+  });
+
+  it("normalizes partial persisted themes without dropping valid overrides", () => {
+    const theme = normalizeTheme({
+      name: "custom",
+      mode: "dark",
+      colors: {
+        background: "#001122",
+        primary: "#00ccff",
+        ignored: 42,
+      },
+      fonts: {
+        sans: "system-ui, sans-serif",
+        ignored: false,
+      },
+      radius: "1rem",
+    });
+
+    expect(theme.name).toBe("custom");
+    expect(theme.mode).toBe("dark");
+    expect(theme.colors.background).toBe("#001122");
+    expect(theme.colors.primary).toBe("#00ccff");
+    expect(theme.colors.foreground).toBe(DEFAULT_THEME.colors.foreground);
+    expect(theme.fonts.sans).toBe("system-ui, sans-serif");
+    expect(theme.fonts.mono).toBe(DEFAULT_THEME.fonts.mono);
+    expect(theme.radius).toBe("1rem");
   });
 });

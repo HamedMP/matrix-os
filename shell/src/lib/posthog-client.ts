@@ -20,6 +20,7 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST,
 });
+const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
 let initialized = false;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
@@ -29,6 +30,38 @@ export function capturePostHogException(error: unknown, properties: ClientProper
     posthog.captureException(error, sanitizeProperties(properties));
   } catch (err: unknown) {
     console.warn("[posthog] Failed to capture client exception:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
+export function reportClientError(error: unknown, properties: ClientProperties = {}) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const payload = {
+      errorId: typeof properties.errorId === "string" ? properties.errorId : undefined,
+      source: typeof properties.source === "string" ? properties.source : undefined,
+      digest: typeof properties.digest === "string" ? properties.digest : undefined,
+      name: error instanceof Error ? error.name : typeof error,
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 1_000),
+      stack: error instanceof Error ? error.stack?.slice(0, 4_000) : undefined,
+      path: `${window.location.pathname}${window.location.search}`.slice(0, 512),
+      userAgent: window.navigator.userAgent.slice(0, 512),
+      buildSha: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
+    };
+
+    if (!payload.errorId) return;
+
+    void fetch("/api/client-errors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      signal: AbortSignal.timeout(CLIENT_ERROR_REPORT_TIMEOUT_MS),
+      body: JSON.stringify(payload),
+    }).catch((err: unknown) => {
+      console.warn("[client-error-log] Failed to report client error:", err instanceof Error ? err.name : typeof err);
+    });
+  } catch (err: unknown) {
+    console.warn("[client-error-log] Failed to prepare client error report:", err instanceof Error ? err.name : typeof err);
   }
 }
 

@@ -24,6 +24,7 @@ import {
   resolveWritableFileApiPath,
 } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
+import { getMissingFileFallback } from "./file-fallbacks.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
@@ -198,6 +199,11 @@ import {
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
+import {
+  CLIENT_ERROR_LOG_BODY_LIMIT,
+  ClientErrorReportSchema,
+  writeClientErrorReport,
+} from "./client-error-log.js";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -2738,6 +2744,7 @@ export async function createGateway(config: GatewayConfig) {
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
+  const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
   app.route("/", createWorkspaceRoutes({
     homePath,
     zellijRuntime: workspaceZellijRuntime,
@@ -2930,7 +2937,11 @@ export async function createGateway(config: GatewayConfig) {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveServedFilePath(filePath);
     if (!fullPath) return c.text("Forbidden", 403);
-    if (!existsSync(fullPath)) return c.text("Not found", 404);
+    if (!existsSync(fullPath)) {
+      const fallback = getMissingFileFallback(filePath);
+      if (fallback) return c.body(null, 200, { "content-type": fallback.contentType });
+      return c.text("Not found", 404);
+    }
     if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
     return c.body(null, 200);
   });
@@ -2944,6 +2955,8 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     if (!existsSync(fullPath)) {
+      const fallback = getMissingFileFallback(filePath);
+      if (fallback) return c.body(fallback.body, 200, { "content-type": fallback.contentType });
       return c.text("Not found", 404);
     }
 
@@ -3841,6 +3854,31 @@ export async function createGateway(config: GatewayConfig) {
     }
     pushAdapter.removeToken(body.token);
     return c.json({ ok: true });
+  });
+
+  app.post("/api/client-errors", clientErrorBodyLimit, async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[client-error-log] Failed to parse client error report:", err);
+      }
+      return c.json({ error: "Invalid client error report" }, 400);
+    }
+
+    const parsed = ClientErrorReportSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid client error report" }, 400);
+    }
+
+    try {
+      await writeClientErrorReport(homePath, parsed.data);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      console.warn("[client-error-log] Failed to persist client error report:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Unable to record client error" }, 500);
+    }
   });
 
   // T978-T979: Settings API routes

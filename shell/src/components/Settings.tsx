@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useAuth } from "@clerk/nextjs";
 import {
   PaletteIcon,
   UserIcon,
@@ -24,7 +23,7 @@ import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
 import { BillingSection } from "./settings/sections/BillingSection";
-import { hasMatrixBillingAccess } from "@/lib/billing";
+import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 
 
 const sections = [
@@ -102,13 +101,11 @@ export function Settings({
 }: SettingsProps) {
   const [activeSection, setActiveSection] = useState<SectionId>(defaultSection);
   const wasOpenRef = useRef(open);
-  const { isLoaded, has } = useAuth();
+  const matrixBilling = useMatrixBillingAccess();
   const billingActive =
     billingActiveOverride !== undefined
       ? billingActiveOverride
-      : isLoaded
-        ? hasMatrixBillingAccess(has)
-        : null;
+      : matrixBilling.active;
 
   // Delayed unmount so the exit animation has time to play. `visible`
   // flips one frame after mount so the enter transition has a distinct
