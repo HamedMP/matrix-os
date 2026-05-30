@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getBillingCustomerByClerkUserId,
   getBillingEntitlement,
+  getBillingEntitlementState,
   getBillingOverride,
   getBillingWebhookEvent,
   insertBillingCustomerIfAbsent,
@@ -180,6 +181,51 @@ describe('platform billing db', () => {
 
     await expect(getBillingOverride(db, 'user_123')).resolves.toBeUndefined();
     await expect(revokeBillingOverride(db, 'missing_override', '2026-06-01T00:00:00.000Z')).resolves.toBe(false);
+  });
+
+  it('loads entitlement and active override in one state lookup', async () => {
+    await upsertBillingEntitlement(db, {
+      clerkUserId: 'user_123',
+      source: 'stripe',
+      planSlug: 'matrix_builder',
+      status: 'active',
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx32',
+      allowedServerTypes: ['cpx22', 'cpx32'],
+      stripeSubscriptionId: 'sub_123',
+      stripePriceId: 'price_builder_monthly',
+      gracePeriodEndsAt: null,
+      effectiveFrom: '2026-06-01T00:00:00.000Z',
+      effectiveUntil: null,
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    });
+    await upsertBillingOverride(db, {
+      id: 'override_123',
+      clerkUserId: 'user_123',
+      planSlug: 'internal',
+      status: 'active',
+      maxRuntimeSlots: 5,
+      includedRuntimeSlots: 5,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx52',
+      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      reason: 'engineer test',
+      createdBy: 'ops-user',
+      expiresAt: '2026-07-01T00:00:00.000Z',
+      revokedAt: null,
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    await expect(getBillingEntitlementState(
+      db,
+      'user_123',
+      '2026-06-01T00:00:00.000Z',
+    )).resolves.toMatchObject({
+      entitlement: { planSlug: 'matrix_builder' },
+      override: { id: 'override_123', planSlug: 'internal' },
+    });
   });
 
   it('records Stripe webhook event ids idempotently', async () => {

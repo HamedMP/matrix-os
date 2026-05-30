@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
+import {
+  type PlatformDB,
+  deleteContainer,
+  getContainer,
+  insertContainer,
+  insertUserMachine,
+  upsertBillingEntitlement,
+} from "../../packages/platform/src/db.js";
 import {
   buildPlatformWebSocketUpgradeHeaders,
   buildPostAuthRedirectPath,
@@ -83,6 +90,7 @@ describe("platform proxy routing", () => {
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
+    delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
     delete process.env.HETZNER_SERVER_TYPE;
   });
 
@@ -393,6 +401,43 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(402);
     expect(res.headers.get("cache-control")).toBe("no-store, private");
     expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks provisioning boot pages when Stripe billing is enabled without an active entitlement", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "machine-alice-provisioning-stripe-expired",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "provisioning",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(402);
     expect(await res.json()).toEqual({ error: "Paid beta access required" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -1645,6 +1690,97 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_alice",
     });
+  });
+
+  it("blocks runtime proxying when Stripe billing is enabled without an active entitlement", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff127",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123471,
+      publicIPv4: "203.0.113.24",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows runtime proxying from Stripe entitlements even if the old beta env gate is expired", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff128",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123472,
+      publicIPv4: "203.0.113.25",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_alice",
+      source: "stripe",
+      planSlug: "matrix_builder",
+      status: "active",
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: "cpx32",
+      allowedServerTypes: ["cpx22", "cpx32"],
+      stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+      effectiveFrom: "2026-05-30T00:00:00.000Z",
+      effectiveUntil: null,
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: {
+        MATRIX_STRIPE_BILLING_ENABLED: "true",
+        MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired",
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("blocks legacy container proxying when paid-beta entitlement denies access", async () => {

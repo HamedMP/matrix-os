@@ -18,8 +18,8 @@ import {
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
+  parseBillingEntitlementRecord,
   type BillingEntitlementStatus,
-  type BillingEntitlement,
   type MatrixBillingPlanSlug,
   type MatrixBillingInterval,
   type StripeSubscriptionProjection,
@@ -143,7 +143,7 @@ export function createBillingRoutes(options: {
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
     try {
       const entitlement = await getBillingEntitlement(options.db, clerkUserId);
-      const access = getRuntimeAccessDecision(toDomainEntitlement(entitlement), now());
+      const access = getRuntimeAccessDecision(parseBillingEntitlementRecord(entitlement), now());
       return c.json({ entitlement: entitlement ?? null, access }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
@@ -335,38 +335,4 @@ export function getPublicBillingPlans() {
     annualUsd: plan.annualUsd,
     includedRuntimeSlots: plan.includedRuntimeSlots,
   }));
-}
-
-function toDomainEntitlement(record: Awaited<ReturnType<typeof getBillingEntitlement>>): BillingEntitlement | null {
-  if (!record) return null;
-  if (!isEntitlementSource(record.source) || !isPlanSlug(record.planSlug) || !isEntitlementStatus(record.status)) {
-    return null;
-  }
-  return {
-    ...record,
-    source: record.source,
-    planSlug: record.planSlug,
-    status: record.status,
-  };
-}
-
-function isEntitlementSource(value: string): value is BillingEntitlement['source'] {
-  return value === 'stripe' || value === 'override';
-}
-
-function isPlanSlug(value: string): value is BillingEntitlement['planSlug'] {
-  return value === 'matrix_starter' || value === 'matrix_builder' || value === 'matrix_max' || value === 'internal';
-}
-
-function isEntitlementStatus(value: string): value is BillingEntitlementStatus {
-  return (
-    value === 'active' ||
-    value === 'trialing' ||
-    value === 'past_due' ||
-    value === 'canceled' ||
-    value === 'incomplete' ||
-    value === 'unpaid' ||
-    value === 'ended' ||
-    value === 'none'
-  );
 }
