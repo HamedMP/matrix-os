@@ -33,7 +33,7 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
 
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
   const platformUrl = env.PLATFORM_PUBLIC_URL ?? `http://localhost:${env.PLATFORM_PORT ?? 9000}`;
-  const imageVersion = env.CUSTOMER_VPS_IMAGE_VERSION ?? 'beta';
+  const imageVersion = env.CUSTOMER_VPS_IMAGE_VERSION ?? 'stable';
   const bundleBaseUrl = (env.MATRIX_HOST_BUNDLE_BASE_URL ?? platformUrl).replace(/\/$/, '');
   return {
     hetznerApiToken: env.HETZNER_API_TOKEN ?? '',
