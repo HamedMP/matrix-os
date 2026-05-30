@@ -2,6 +2,7 @@
 
 import posthog from "posthog-js";
 import {
+  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
@@ -38,7 +39,14 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  if (initialized) return;
+  initializeWwwPostHog(getPostHogVisitorCountry(), currentConfig);
+}
+
+export function initializeWwwPostHog(
+  visitorCountry?: string | null,
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig || initialized) return;
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
   posthog.init(currentConfig.token, {
     ...(apiHost ? { api_host: apiHost } : {}),
@@ -46,8 +54,14 @@ function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
     defaults: "2026-01-30",
     capture_exceptions: true,
     debug: process.env.NODE_ENV === "development",
+    ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);
   initialized = true;
+}
+
+function getPostHogVisitorCountry(): string | null {
+  if (typeof document === "undefined") return null;
+  return document.documentElement.dataset.posthogVisitorCountry ?? null;
 }
 
 function sanitizeProperties(properties: ClientProperties): Record<string, string | number | boolean> {

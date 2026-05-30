@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
   isSignedIn: true,
-  hasPlan: false,
+  activePlan: null as string | null,
 }));
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
-    has: ({ plan }: { plan: string }) => plan === "early_adopter" && clerkState.hasPlan,
+    has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
   }),
 }));
 
@@ -54,7 +54,7 @@ describe("BillingGate", () => {
     vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -71,11 +71,13 @@ describe("BillingGate", () => {
     vi.resetModules();
   });
 
-  it("renders Matrix OS when the signed-in user has a paid plan", async () => {
+  it.each(["matrix_starter", "matrix_builder", "matrix_max", "early_adopter"])(
+    "renders Matrix OS when the signed-in user has the %s plan",
+    async (plan) => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = true;
+    clerkState.activePlan = plan;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -88,13 +90,14 @@ describe("BillingGate", () => {
 
     expect(screen.getByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
-  });
+    },
+  );
 
   it("keeps the shell visible behind locked billing settings when the user has not subscribed", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -128,7 +131,7 @@ describe("BillingGate", () => {
     window.sessionStorage.setItem("matrix.billing.checkoutAttemptAt", String(Date.now()));
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -149,7 +152,7 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/?checkout=success");
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = true;
+    clerkState.activePlan = "matrix_starter";
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -169,7 +172,7 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/?checkout=success");
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -188,7 +191,7 @@ describe("BillingGate", () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
@@ -211,7 +214,7 @@ describe("BillingGate", () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = false;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
     vi.resetModules();
 
     const { BillingGate } = await import("../../shell/src/components/BillingGate.js");

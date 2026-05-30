@@ -59,8 +59,8 @@ describe("PostHog error tracking", () => {
       "https://eu.i.posthog.com",
     );
 
-    const shellClient = await readFile("shell/instrumentation-client.ts", "utf8");
-    const wwwClient = await readFile("www/instrumentation-client.ts", "utf8");
+    const shellClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
+    const wwwClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
     expect(shellClient).toContain("resolvePostHogClientApiHost");
     expect(shellClient).toContain("allowRelativeApiHost: false");
     expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
@@ -86,18 +86,19 @@ describe("PostHog error tracking", () => {
     expect(getPostHogVisitorCountry(new Headers({ "x-vercel-ip-country": "123" }))).toBeNull();
   });
 
-  it("requires explicit PostHog cookie consent for European visitors", () => {
+  it("requires explicit PostHog cookie consent for European and unknown visitors", () => {
     expect(requiresPostHogCookieConsent("SE")).toBe(true);
     expect(requiresPostHogCookieConsent("de")).toBe(true);
     expect(requiresPostHogCookieConsent("NO")).toBe(true);
     expect(requiresPostHogCookieConsent("GB")).toBe(true);
     expect(requiresPostHogCookieConsent("CH")).toBe(true);
     expect(requiresPostHogCookieConsent("US")).toBe(false);
-    expect(requiresPostHogCookieConsent(null)).toBe(false);
+    expect(requiresPostHogCookieConsent(null)).toBe(true);
   });
 
   it("uses PostHog cookieless mode until explicit cookie consent is granted", () => {
     expect(buildPostHogCookieConsentInitOptions("SE")).toEqual({ cookieless_mode: "on_reject" });
+    expect(buildPostHogCookieConsentInitOptions(null)).toEqual({ cookieless_mode: "on_reject" });
     expect(buildPostHogCookieConsentInitOptions("US")).toEqual({});
   });
 
@@ -450,9 +451,7 @@ describe("PostHog error tracking", () => {
 
   it("uses explicit public env references in Next client PostHog entrypoints", async () => {
     const clientEntrypoints = [
-      "shell/instrumentation-client.ts",
       "shell/src/lib/posthog-client.ts",
-      "www/instrumentation-client.ts",
       "www/src/lib/posthog-client.ts",
     ];
 
@@ -465,12 +464,22 @@ describe("PostHog error tracking", () => {
     }
 
     const shellClient = await readFile("shell/instrumentation-client.ts", "utf8");
-    expect(shellClient).toContain("Shell has no local PostHog /ingest proxy");
+    expect(shellClient).toContain("initializeShellPostHog");
+
+    const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
+    expect(shellPostHogClient).toContain("Shell has no local PostHog /ingest proxy");
+    expect(shellPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellPostHogClient).not.toContain("__loaded");
 
     const wwwPostHogClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
     expect(wwwPostHogClient).toContain("ensurePostHogInitialized(config)");
     expect(wwwPostHogClient).toContain("posthog.init(currentConfig.token");
+    expect(wwwPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(wwwPostHogClient).not.toContain("__loaded");
     expect(wwwPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest"');
+
+    const wwwClient = await readFile("www/instrumentation-client.ts", "utf8");
+    expect(wwwClient).toContain("initializeWwwPostHog");
   });
 
   it("configures browser PostHog logs without console autocapture", async () => {

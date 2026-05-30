@@ -33,6 +33,27 @@ const shouldRenderClerkPricing =
 
 export type BillingPanelMode = "settings" | "provisioning";
 
+const CHECKOUT_OVERLAY_Z_INDEX = 10_000;
+const checkoutOverlayAppearance = {
+  elements: {
+    drawerBackdrop: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
+    },
+    drawerRoot: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
+    },
+    drawerContent: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
+    },
+    modalBackdrop: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX,
+    },
+    modalContent: {
+      zIndex: CHECKOUT_OVERLAY_Z_INDEX + 1,
+    },
+  },
+};
+
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
 
 type BillingTelemetryProperties = {
@@ -201,6 +222,7 @@ function CheckoutPanel({
   telemetryProperties: BillingTelemetryProperties;
 }) {
   const checkoutTelemetryKey = `${redirectUrl ? "redirect" : "pending"}:${shouldRenderClerkPricing ? "clerk" : "fallback"}`;
+  const redirectUrlRef = useRef(redirectUrl);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
   useEffect(() => {
@@ -208,10 +230,15 @@ function CheckoutPanel({
   }, [telemetryProperties]);
 
   useEffect(() => {
+    redirectUrlRef.current = redirectUrl;
+  }, [redirectUrl]);
+
+  useEffect(() => {
+    const currentRedirectUrl = redirectUrlRef.current;
     captureBillingTelemetry(
-      redirectUrl && shouldRenderClerkPricing
+      currentRedirectUrl && shouldRenderClerkPricing
         ? "checkout_pricing_table_available"
-        : redirectUrl
+        : currentRedirectUrl
           ? "checkout_local_preview_unavailable"
           : "checkout_redirect_pending",
       telemetryPropertiesRef.current,
@@ -237,6 +264,7 @@ function CheckoutPanel({
           <PricingTable
             for="user"
             newSubscriptionRedirectUrl={redirectUrl}
+            checkoutProps={{ appearance: checkoutOverlayAppearance }}
             fallback={<BillingTableFallback />}
           />
         </BillingTableBoundary>

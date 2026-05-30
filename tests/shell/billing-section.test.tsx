@@ -6,28 +6,47 @@ import { describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
-  hasPlan: false,
+  activePlan: null as string | null,
 }));
 
 vi.mock("@clerk/nextjs", () => ({
-  PricingTable: (props: { for?: string; newSubscriptionRedirectUrl?: string }) => (
+  PricingTable: (props: {
+    for?: string;
+    newSubscriptionRedirectUrl?: string;
+    checkoutProps?: {
+      appearance?: {
+        elements?: {
+          drawerBackdrop?: { zIndex?: number };
+          drawerRoot?: { zIndex?: number };
+          drawerContent?: { zIndex?: number };
+          modalBackdrop?: { zIndex?: number };
+          modalContent?: { zIndex?: number };
+        };
+      };
+    };
+  }) => (
     <div
       data-for={props.for}
       data-redirect={props.newSubscriptionRedirectUrl}
+      data-drawer-backdrop-z={props.checkoutProps?.appearance?.elements?.drawerBackdrop?.zIndex}
+      data-drawer-root-z={props.checkoutProps?.appearance?.elements?.drawerRoot?.zIndex}
+      data-drawer-content-z={props.checkoutProps?.appearance?.elements?.drawerContent?.zIndex}
+      data-modal-backdrop-z={props.checkoutProps?.appearance?.elements?.modalBackdrop?.zIndex}
+      data-modal-content-z={props.checkoutProps?.appearance?.elements?.modalContent?.zIndex}
       data-testid="pricing-table"
     />
   ),
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: true,
-    has: ({ plan }: { plan: string }) => plan === "early_adopter" && clerkState.hasPlan,
+    has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
   }),
 }));
 
 describe("BillingSection", () => {
   it("waits for Clerk before rendering a subscription state", async () => {
     clerkState.isLoaded = false;
-    clerkState.hasPlan = true;
+    clerkState.activePlan = "matrix_starter";
 
     const { BillingSection } = await import(
       "../../shell/src/components/settings/sections/BillingSection.js"
@@ -42,7 +61,7 @@ describe("BillingSection", () => {
 
   it("surfaces the subscription state and Clerk pricing table", async () => {
     clerkState.isLoaded = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
 
     const { BillingSection } = await import(
       "../../shell/src/components/settings/sections/BillingSection.js"
@@ -59,11 +78,26 @@ describe("BillingSection", () => {
     expect(screen.getByTestId("pricing-table").getAttribute("data-redirect")).toBe(
       "http://localhost:3000/?checkout=success",
     );
+    expect(screen.getByTestId("pricing-table").getAttribute("data-drawer-backdrop-z")).toBe(
+      "10000",
+    );
+    expect(screen.getByTestId("pricing-table").getAttribute("data-drawer-root-z")).toBe(
+      "10001",
+    );
+    expect(screen.getByTestId("pricing-table").getAttribute("data-drawer-content-z")).toBe(
+      "10001",
+    );
+    expect(screen.getByTestId("pricing-table").getAttribute("data-modal-backdrop-z")).toBe(
+      "10000",
+    );
+    expect(screen.getByTestId("pricing-table").getAttribute("data-modal-content-z")).toBe(
+      "10001",
+    );
   });
 
   it("uses provisioning copy when billing is shown before the hosted computer exists", async () => {
     clerkState.isLoaded = true;
-    clerkState.hasPlan = false;
+    clerkState.activePlan = null;
 
     const { BillingSection } = await import(
       "../../shell/src/components/settings/sections/BillingSection.js"
@@ -90,9 +124,11 @@ describe("BillingSection", () => {
     expect(await screen.findByTestId("pricing-table")).toBeTruthy();
   });
 
-  it("marks billing as active when Clerk grants a paid plan", async () => {
+  it.each(["matrix_starter", "matrix_builder", "matrix_max", "early_adopter"])(
+    "marks billing as active when Clerk grants the %s plan",
+    async (plan) => {
     clerkState.isLoaded = true;
-    clerkState.hasPlan = true;
+    clerkState.activePlan = plan;
 
     const { BillingSection } = await import(
       "../../shell/src/components/settings/sections/BillingSection.js"
@@ -105,5 +141,6 @@ describe("BillingSection", () => {
       screen.getByText("Billing is active for this Clerk account."),
     ).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
-  });
+    },
+  );
 });

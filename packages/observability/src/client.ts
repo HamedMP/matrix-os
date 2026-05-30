@@ -92,7 +92,7 @@ export function getPostHogVisitorCountry(headers: HeadersLike): string | null {
 
 export function requiresPostHogCookieConsent(countryCode: string | null | undefined): boolean {
   const country = normalizeCountryCode(countryCode);
-  return country ? POSTHOG_COOKIE_CONSENT_COUNTRIES.has(country) : false;
+  return country ? POSTHOG_COOKIE_CONSENT_COUNTRIES.has(country) : true;
 }
 
 export function buildPostHogCookieConsentInitOptions(
