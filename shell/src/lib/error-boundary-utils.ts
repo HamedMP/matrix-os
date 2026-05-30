@@ -16,7 +16,8 @@ export function describeUnknownError(error: unknown): string {
   if (error instanceof globalThis.Error) return `${error.name}: ${error.message}`;
   try {
     return String(error);
-  } catch {
+  } catch (stringifyError) {
+    if (stringifyError instanceof globalThis.Error) return stringifyError.name;
     return typeof error;
   }
 }
