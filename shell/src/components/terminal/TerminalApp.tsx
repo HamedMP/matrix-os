@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useCallback, useState, type CSSProperties } from "react";
+import { createContext, useContext, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties } from "react";
 import {
   BotIcon,
   FilesIcon,
@@ -292,6 +292,7 @@ interface TerminalAppProps {
   mobile?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
@@ -322,15 +323,20 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<Tab[]>(tabs);
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of `tabs`, read synchronously inside stable callbacks/effects that must not re-subscribe when tabs change; writing in render keeps the mirror current
   tabsRef.current = tabs;
   const activeTabIdRef = useRef(activeTabId);
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of `activeTabId`, read synchronously inside stable callbacks/effects that must not re-subscribe when the active tab changes
   activeTabIdRef.current = activeTabId;
   const initialMobileRef = useRef(mobile);
   const sidebarOpenRef = useRef(sidebarOpen);
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of `sidebarOpen`, read synchronously inside the layout-persistence callback that must not re-subscribe when the sidebar toggles
   sidebarOpenRef.current = sidebarOpen;
   const mountedRef = useRef(false);
-  const pendingPaneSessionsRef = useRef<Map<string, string>>(new Map());
-  const closingPaneIdsRef = useRef<Set<string>>(new Set());
+  const pendingPaneSessionsRef = useRef<Map<string, string> | null>(null);
+  if (pendingPaneSessionsRef.current === null) pendingPaneSessionsRef.current = new Map();
+  const closingPaneIdsRef = useRef<Set<string> | null>(null);
+  if (closingPaneIdsRef.current === null) closingPaneIdsRef.current = new Set();
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
     terminalAppDebug(event, {
@@ -390,7 +396,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const getPendingSessionIds = useCallback((paneIds: string[]) => {
     const seen = new Set<string>();
     for (const paneId of paneIds) {
-      const sessionId = pendingPaneSessionsRef.current.get(paneId);
+      const sessionId = pendingPaneSessionsRef.current!.get(paneId);
       if (sessionId) {
         seen.add(sessionId);
       }
@@ -400,11 +406,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const markPanesClosing = useCallback((paneIds: string[]) => {
     for (const paneId of paneIds) {
-      closingPaneIdsRef.current.add(paneId);
+      closingPaneIdsRef.current!.add(paneId);
     }
     setTimeout(() => {
       for (const paneId of paneIds) {
-        closingPaneIdsRef.current.delete(paneId);
+        closingPaneIdsRef.current!.delete(paneId);
       }
     }, 0);
   }, []);
@@ -498,6 +504,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return null;
   }, [addSessionTab, destroyTerminalSessions]);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time mount bootstrap that loads the saved terminal layout from the gateway; the fetch is AbortSignal-guarded and every state write is gated behind a `cancelled` flag cleared in cleanup, so this is an intentional mount-driven load, not render data
   useEffect(() => {
     let cancelled = false;
 
@@ -563,25 +570,33 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- intentional run-once mount bootstrap: re-running on any prop/callback change would re-initialize tabs and clobber the user's live terminal layout. The props (initialCommand/initialLabel/initialClaudeMode/initialSessionId) are mount-time inputs and addTab/addSessionTab are stable.
   }, []);
+
+  const drainLaunches = useEffectEvent((event?: Event) => {
+    const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
+    if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
+    for (const launch of drainTerminalLaunchQueue(launchTargetId)) {
+      addTab(DEFAULT_CWD, launch.label, launch.claudeMode, launch.command);
+    }
+  });
 
   useEffect(() => {
     if (!initialized) {
       return;
     }
 
-    const drainLaunches = (event?: Event) => {
-      const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
-      if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
-      for (const launch of drainTerminalLaunchQueue(launchTargetId)) {
-        addTab(DEFAULT_CWD, launch.label, launch.claudeMode, launch.command);
-      }
-    };
+    const handleLaunch = (event: Event) => drainLaunches(event);
 
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- drains the external terminal-launch queue (module-level state populated by other shells) once it is ready; the resulting tabs are not derivable in render, so this is a legitimate external-source drain, not adjusted-from-props state
     drainLaunches();
-    window.addEventListener(TERMINAL_LAUNCH_EVENT, drainLaunches);
-    return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, drainLaunches);
-  }, [addTab, initialized, launchTargetId]);
+    window.addEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
+    return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
+  }, [initialized, launchTargetId]);
+
+  const flushLayout = useEffectEvent(() => {
+    void persistLayoutNow();
+  });
 
   useEffect(() => {
     if (!initialized) {
@@ -594,7 +609,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
-      void persistLayoutNow();
+      flushLayout();
     }, 500);
 
     return () => {
@@ -603,7 +618,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
     };
-  }, [initialized, activeTabId, persistLayoutNow, sidebarOpen, tabs]);
+  }, [initialized, activeTabId, sidebarOpen, tabs]);
 
   useEffect(() => {
     const flushOnPageHide = () => {
@@ -616,14 +631,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
 
-      void persistLayoutNow();
+      flushLayout();
     };
 
     window.addEventListener("pagehide", flushOnPageHide);
     return () => {
       window.removeEventListener("pagehide", flushOnPageHide);
     };
-  }, [initialized, persistLayoutNow]);
+  }, [initialized]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -672,7 +687,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const closingSessionIds = new Set<string>();
     const closingSessionId = activeTabRecord ? getPaneSessionId(activeTabRecord.paneTree, paneId) : null;
     if (closingSessionId) closingSessionIds.add(closingSessionId);
-    const pendingSessionId = pendingPaneSessionsRef.current.get(paneId);
+    const pendingSessionId = pendingPaneSessionsRef.current!.get(paneId);
     if (pendingSessionId) closingSessionIds.add(pendingSessionId);
     destroyTerminalSessions(Array.from(closingSessionIds));
     markPanesClosing([paneId]);
@@ -709,7 +724,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const handleSessionAttached = useCallback((paneId: string, sessionId: string) => {
     log("session-attached", { paneId, sessionId });
-    pendingPaneSessionsRef.current.set(paneId, sessionId);
+    pendingPaneSessionsRef.current!.set(paneId, sessionId);
     setTabs((prev) => {
       const nextTabs = prev.map((tab) => {
         const nextTree = setPaneSessionId(tab.paneTree, paneId, sessionId);
@@ -721,7 +736,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   }, [log]);
 
   const shouldCachePane = useCallback((paneId: string) => {
-    const keep = !closingPaneIdsRef.current.has(paneId) && tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
+    const keep = !closingPaneIdsRef.current!.has(paneId) && tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
     log("should-cache-pane", {
       paneId,
       keep,
@@ -734,7 +749,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   }, [log]);
 
   const shouldDestroyPane = useCallback((paneId: string) => {
-    return closingPaneIdsRef.current.has(paneId);
+    return closingPaneIdsRef.current!.has(paneId);
   }, []);
 
   useEffect(() => {
@@ -744,9 +759,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         livePaneIds.add(paneId);
       }
     }
-    for (const paneId of Array.from(pendingPaneSessionsRef.current.keys())) {
+    for (const paneId of Array.from(pendingPaneSessionsRef.current!.keys())) {
       if (!livePaneIds.has(paneId)) {
-        pendingPaneSessionsRef.current.delete(paneId);
+        pendingPaneSessionsRef.current!.delete(paneId);
       }
     }
 
@@ -1179,6 +1194,7 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
   const [tab, setTab] = useState<SidebarTab>("projects");
@@ -1190,7 +1206,8 @@ function LocalTerminalSidebar() {
   const [shellsError, setShellsError] = useState<string | null>(null);
   const creatingShellRef = useRef(false);
   const [creatingShell, setCreatingShell] = useState(false);
-  const deletingShellsRef = useRef<Set<string>>(new Set());
+  const deletingShellsRef = useRef<Set<string> | null>(null);
+  if (deletingShellsRef.current === null) deletingShellsRef.current = new Set();
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -1230,6 +1247,7 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async network load of the projects list when the Projects tab becomes active; the data is fetched from the gateway (AbortSignal-guarded) and cannot be derived in render
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
@@ -1259,9 +1277,11 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async network load of the shell-session list when the Shells tab becomes active; the data is fetched from the gateway (AbortSignal-guarded) and cannot be derived in render
     if (tab === "shells") void fetchShells();
   }, [fetchShells, tab]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- teardown must abort the LIVE in-flight poll controller: shellPollAbortRef.current is reassigned by each refresh(), so snapshotting it at effect setup would capture null and never cancel the request that is actually outstanding at unmount/tab-switch
   useEffect(() => {
     if (tab !== "shells") return;
     const refresh = () => {
@@ -1312,6 +1332,7 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async network load of the workspace-session list when the Agents tab becomes active; the data is fetched from the gateway (AbortSignal-guarded) and cannot be derived in render
     if (tab === "sessions") void fetchSessions();
   }, [fetchSessions, tab]);
 
@@ -1414,9 +1435,9 @@ function LocalTerminalSidebar() {
   };
 
   const deleteManagedShell = async (name: string) => {
-    if (deletingShellsRef.current.has(name)) return;
-    deletingShellsRef.current.add(name);
-    setDeletingShellNames(Array.from(deletingShellsRef.current));
+    if (deletingShellsRef.current!.has(name)) return;
+    deletingShellsRef.current!.add(name);
+    setDeletingShellNames(Array.from(deletingShellsRef.current!));
     setShellsError(null);
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
@@ -1432,8 +1453,8 @@ function LocalTerminalSidebar() {
       console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
       setShellsError("Could not remove shell");
     } finally {
-      deletingShellsRef.current.delete(name);
-      setDeletingShellNames(Array.from(deletingShellsRef.current));
+      deletingShellsRef.current!.delete(name);
+      setDeletingShellNames(Array.from(deletingShellsRef.current!));
     }
   };
 

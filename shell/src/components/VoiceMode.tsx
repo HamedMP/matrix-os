@@ -12,10 +12,12 @@ interface VoiceModeProps {
 }
 
 export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
-  const [agentState, setAgentState] = useState<AgentState>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
-  const [currentText, setCurrentText] = useState("");
-  const hasErrorRef = useRef(false);
+  // The last recorder error, if any. Sticky: it stays on the subtitle line
+  // through the idle phase and is only cleared when the user starts a new
+  // recording. Kept as state (read in render) rather than synced via an
+  // effect so the orb/subtitle derive purely from the recorder phase.
+  const [errorText, setErrorText] = useState<string | null>(null);
   const animFrameRef = useRef<number>(0);
 
   const {
@@ -28,44 +30,44 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
   } = useVoice({
     onTranscription: (text) => {
       setTranscript((prev) => [...prev, `You: ${text}`]);
-      setCurrentText("");
-      setAgentState("thinking");
       onSubmit(text);
     },
     onError: (err) => {
-      setCurrentText(`Error: ${err}`);
-      hasErrorRef.current = true;
-      setAgentState(null);
+      setErrorText(`Error: ${err}`);
     },
   });
 
-  useEffect(() => {
-    if (isRecording) {
-      hasErrorRef.current = false;
-      setAgentState("listening");
-      setCurrentText("Listening...");
-    } else if (isTranscribing) {
-      setAgentState("thinking");
-      setCurrentText("Thinking...");
-    } else if (isPlaying) {
-      setAgentState("talking");
-      setCurrentText("Speaking...");
-    } else {
-      setAgentState(null);
-      if (!hasErrorRef.current) {
-        setCurrentText("Tap mic to speak");
-      }
-    }
-  }, [isRecording, isTranscribing, isPlaying]);
+  // The orb state and subtitle are a pure function of the recorder phase
+  // (plus the sticky error), so they are derived during render instead of
+  // mirrored into state via an effect. Recording > transcribing > playing >
+  // error > idle, matching the prior effect's priority order.
+  const agentState: AgentState = isRecording
+    ? "listening"
+    : isTranscribing
+      ? "thinking"
+      : isPlaying
+        ? "talking"
+        : null;
+  const currentText = isRecording
+    ? "Listening..."
+    : isTranscribing
+      ? "Thinking..."
+      : isPlaying
+        ? "Speaking..."
+        : (errorText ?? "Tap mic to speak");
 
   const handleMicToggle = useCallback(() => {
     if (isRecording) {
       stopRecording();
     } else {
+      // Clear any prior error the moment the user starts a new recording —
+      // the phase derivation will then show "Listening...".
+      setErrorText(null);
       startRecording();
     }
   }, [isRecording, startRecording, stopRecording]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must cancel whatever frame is pending at teardown, so it must read .current at cleanup time; snapshotting at mount would always capture the initial 0 and never cancel.
   useEffect(() => {
     return () => {
       if (animFrameRef.current) {
