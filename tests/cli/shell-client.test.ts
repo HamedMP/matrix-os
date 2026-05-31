@@ -117,6 +117,23 @@ describe("shell REST client", () => {
     });
   });
 
+  it("keeps gateway forbidden responses generic", async () => {
+    const fetchImpl = vi.fn(async () => new Response(
+      JSON.stringify({ error: "Forbidden" }),
+      { status: 403 },
+    ));
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "valid-but-forbidden-token",
+      fetch: fetchImpl,
+    });
+
+    await expect(client.listSessions()).rejects.toMatchObject({
+      code: "request_failed",
+      message: "Request failed",
+    });
+  });
+
   it("builds terminal websocket URLs without leaking bearer auth by default", () => {
     const client = createShellClient({
       gatewayUrl: "https://gateway.example",

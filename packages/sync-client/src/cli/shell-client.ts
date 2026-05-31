@@ -261,7 +261,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         typeof (payload as { error?: { code?: unknown } }).error?.code === "string"
           ? (payload as { error: { code: string } }).error.code
           : undefined;
-      const code = payloadCode ?? (res.status === 401 || res.status === 403 ? "auth_expired" : "request_failed");
+      const code = payloadCode ?? (res.status === 401 ? "auth_expired" : "request_failed");
       throw Object.assign(new Error("Request failed"), { code });
     }
 

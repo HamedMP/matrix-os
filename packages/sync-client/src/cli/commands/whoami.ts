@@ -23,23 +23,24 @@ export const whoamiCommand = defineCommand({
     try {
       const profile = await resolveCliProfile(args);
       const authStatus = await resolveCliAuthStatus(profile);
-      const data = authStatus.status === "authenticated" && authStatus.auth
-        ? {
-            profile: profile.name,
-            authenticated: true,
-            userId: authStatus.auth.userId,
-            handle: authStatus.auth.handle,
-          }
-        : {
-            profile: profile.name,
-            authenticated: false,
-            ...(authStatus.status === "expired" ? { auth: "expired" as const } : {}),
-          };
+      const data = {
+        profile: profile.name,
+        authenticated: authStatus.status === "authenticated",
+        ...(authStatus.status === "authenticated" && authStatus.auth
+          ? {
+              userId: authStatus.auth.userId,
+              handle: authStatus.auth.handle,
+            }
+          : {}),
+        ...(authStatus.status === "expired" ? { auth: "expired" as const } : {}),
+      };
 
       if (json) {
         console.log(formatCliSuccess(data));
-      } else if (data.authenticated) {
+      } else if (data.authenticated && "handle" in data) {
         console.log(`@${data.handle} (${data.profile})`);
+      } else if (data.authenticated) {
+        console.log(`Authenticated with explicit token (${data.profile}).`);
       } else if ("auth" in data && data.auth === "expired") {
         console.log(`Login expired (${data.profile}). Run \`matrix login --profile ${data.profile}\` to refresh.`);
       } else {
