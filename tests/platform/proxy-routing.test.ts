@@ -6,6 +6,7 @@ import {
   getContainer,
   insertContainer,
   insertUserMachine,
+  updateContainerStatus,
   upsertBillingEntitlement,
 } from "../../packages/platform/src/db.js";
 import {
@@ -21,6 +22,7 @@ import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
+import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
 import type Dockerode from "dockerode";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
@@ -75,6 +77,7 @@ describe("platform proxy routing", () => {
   let db: PlatformDB;
 
   beforeEach(async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
     ({ db } = await createTestPlatformDb());
     await insertContainer(db, {
       handle: "alice",
@@ -92,6 +95,7 @@ describe("platform proxy routing", () => {
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
     delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
     delete process.env.HETZNER_SERVER_TYPE;
+    delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
   });
 
   it("escapes JSON embedded in auth page inline scripts", () => {
@@ -481,7 +485,10 @@ describe("platform proxy routing", () => {
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
       }),
       platformSecret: "platform-secret-123",
-      env: { MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired" } as NodeJS.ProcessEnv,
+      env: {
+        MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
+        MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired",
+      } as NodeJS.ProcessEnv,
     });
 
     const res = await app.request("/", {
@@ -853,6 +860,40 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.12:443/");
     expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
+  });
+
+  it("ignores stale legacy containers on app.matrix-os.com when VPS-native routing is configured", async () => {
+    await updateContainerStatus(db, "alice", "stopped", "stale-container-id");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const orchestrator = stubOrchestrator();
+    const app = createApp({
+      db,
+      orchestrator,
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: {} as CustomerVpsService,
+      env: {
+        MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Preparing Matrix OS");
+    expect(html).not.toContain("Failed to wake container");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(orchestrator.start).not.toHaveBeenCalled();
   });
 
   it("routes Clerk sessions to the selected staging VPS slot", async () => {
@@ -2082,7 +2123,10 @@ describe("platform proxy routing", () => {
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
       }),
       platformSecret: "platform-secret-123",
-      env: { MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired" } as NodeJS.ProcessEnv,
+      env: {
+        MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
+        MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired",
+      } as NodeJS.ProcessEnv,
     });
 
     const res = await app.request("/", {
