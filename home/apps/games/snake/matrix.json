@@ -3,7 +3,7 @@
   "description": "Classic snake game with increasing speed",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "snake",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -12,6 +12,19 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "snake",
+  "storage": {
+    "tables": {
+      "scores": {
+        "columns": {
+          "score": "integer",
+          "best": "integer"
+        },
+        "indexes": [
+          "best"
+        ]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",

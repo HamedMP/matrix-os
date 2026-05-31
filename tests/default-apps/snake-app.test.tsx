@@ -1,0 +1,112 @@
+// @vitest-environment jsdom
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "../../home/apps/games/snake/src/App";
+
+type DbRow = Record<string, unknown>;
+
+function installMatrixDb(rows: DbRow[] = []) {
+  const db = {
+    find: vi.fn(async () => rows),
+    findOne: vi.fn(async () => null),
+    insert: vi.fn(async () => ({ id: "score-new" })),
+    update: vi.fn(async () => ({ ok: true })),
+    delete: vi.fn(async () => ({ ok: true })),
+    count: vi.fn(async () => rows.length),
+    onChange: vi.fn(() => () => undefined),
+  };
+  Object.defineProperty(window, "MatrixOS", {
+    configurable: true,
+    value: { db },
+  });
+  return db;
+}
+
+describe("Snake app", () => {
+  beforeEach(() => {
+    // jsdom has no canvas 2d context; stub it so the renderer does not throw.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (HTMLCanvasElement.prototype as any).getContext = vi.fn(() => ({
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      beginPath: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      roundRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      closePath: vi.fn(),
+      setTransform: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      set fillStyle(_v: string) {},
+      set strokeStyle(_v: string) {},
+      set lineWidth(_v: number) {},
+      set lineJoin(_v: string) {},
+      set lineCap(_v: string) {},
+      set globalAlpha(_v: number) {},
+      set shadowBlur(_v: number) {},
+      set shadowColor(_v: string) {},
+    }));
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(window, "MatrixOS");
+    localStorage.clear();
+  });
+
+  it("renders the start screen with controls hint and a high score", async () => {
+    installMatrixDb([{ id: "s1", score: 12, best: 12, created_at: "2026-05-31T10:00:00Z" }]);
+    render(<App />);
+    // High score from the DB is reflected.
+    expect((await screen.findByTestId("high-score")).textContent).toContain("12");
+    // Start state / onboarding hint is present.
+    expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("ready");
+  });
+
+  it("starts on a direction key and advances state on ticks", async () => {
+    installMatrixDb([]);
+    vi.useFakeTimers();
+    render(<App />);
+
+    const initialScore = screen.getByTestId("score").textContent;
+    expect(initialScore).toBe("0");
+
+    // Pressing an arrow key starts the game heading right.
+    act(() => {
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+    });
+    expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("running");
+
+    // Advancing one tick keeps the game running (the snake moves one cell to the
+    // right, well clear of any wall) — confirms the loop is wired to the engine.
+    act(() => {
+      vi.advanceTimersByTime(220);
+    });
+    expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("running");
+  });
+
+  it("pauses and resumes with Space", async () => {
+    installMatrixDb([]);
+    vi.useFakeTimers();
+    render(<App />);
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "ArrowUp" });
+    });
+    expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("running");
+
+    act(() => {
+      fireEvent.keyDown(window, { key: " " });
+    });
+    expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("paused");
+  });
+});
