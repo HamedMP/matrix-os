@@ -60,9 +60,12 @@ export function FileIcon({
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.key === "Enter") {
           e.preventDefault();
           onDoubleClick?.();
+        } else if (e.key === " ") {
+          e.preventDefault();
+          onClick?.(e as unknown as React.MouseEvent);
         }
       }}
     >
