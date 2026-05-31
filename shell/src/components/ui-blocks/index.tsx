@@ -32,7 +32,8 @@ export function RichContent({ children, onAction }: RichContentProps) {
           case "ui:cards":
             return (
               <CardGrid
-                key={`cards:${seg.data.map((c) => c.title).join("|")}`}
+                // react-doctor-disable-next-line react-doctor/no-array-index-key, react-doctor/no-array-index-as-key -- rich-content card groups are ordered segments within one immutable parsed message; duplicate card groups have no stable id, so segment position is the collision-free identity.
+                key={`cards:${i}`}
                 cards={seg.data}
                 onSelect={(card: UICardData) =>
                   onAction?.(card.title)
@@ -42,7 +43,8 @@ export function RichContent({ children, onAction }: RichContentProps) {
           case "ui:options":
             return (
               <OptionList
-                key={`options:${seg.data.map((o) => o.value ?? o.label).join("|")}`}
+                // react-doctor-disable-next-line react-doctor/no-array-index-key, react-doctor/no-array-index-as-key -- rich-content option groups are ordered segments within one immutable parsed message; duplicate option groups have no stable id, so segment position is the collision-free identity.
+                key={`options:${i}`}
                 options={seg.data}
                 onSelect={(opt: UIOptionData) =>
                   onAction?.(opt.value ?? opt.label)
@@ -50,7 +52,13 @@ export function RichContent({ children, onAction }: RichContentProps) {
               />
             );
           case "ui:status":
-            return <StatusBanner key={`status:${seg.data.level}:${seg.data.message}`} status={seg.data} />;
+            return (
+              <StatusBanner
+                // react-doctor-disable-next-line react-doctor/no-array-index-key, react-doctor/no-array-index-as-key -- rich-content status banners are ordered segments within one immutable parsed message; duplicate banners have no stable id, so segment position is the collision-free identity.
+                key={`status:${i}`}
+                status={seg.data}
+              />
+            );
         }
       })}
     </>
