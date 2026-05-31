@@ -21,7 +21,11 @@ function tryParseJson(str: string): string {
     const parsed = JSON.parse(str);
     if (typeof parsed === "string") return parsed;
     return JSON.stringify(parsed, null, 2);
-  } catch {
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) {
+      return str;
+    }
+    console.warn("Failed to format task payload JSON", error);
     return str;
   }
 }
