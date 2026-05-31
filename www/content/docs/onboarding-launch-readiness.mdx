@@ -44,6 +44,12 @@ The report must remain blocked unless every release-critical gate passes. It cov
 
 Payment enforcement is now backed by Clerk Billing for the early adopter launch plan. The shell requires an active `early_adopter` subscription before mounting the Matrix desktop, and the settings surface exposes Clerk's billing table so users can start or manage access.
 
+## Launch Email Templates
+
+Launch-critical product emails route through Loops. The template set covers account welcome, auth-product prompts when Loops owns them, paid beta activation, billing success handoff, payment failure, subscription changes, subscription cancellation, CLI activation, cloud-coding activation, and internal launch alerts.
+
+The detailed planning artifact is `specs/082-paid-beta-readiness/launch-email-templates.md`. It defines the Loops event/template names, required contact properties, Clerk and Stripe event mappings, app-triggered Matrix events, idempotency expectations, non-blocking failure behavior, and read-only Loops CLI validation commands. Clerk remains responsible for auth mechanics, and Stripe or Clerk Billing remains responsible for receipts and payment collection.
+
 ## Entitlement Safety
 
 When paid entitlement is missing, expired, disabled, or changed, Matrix must block new paid-only access without deleting or corrupting owner data. Existing owner data remains preserved and exportable. Operators must reconcile access state before restoring paid runtime behavior.
