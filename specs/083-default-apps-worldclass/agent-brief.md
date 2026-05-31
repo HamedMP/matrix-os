@@ -189,13 +189,25 @@ pnpm vitest run tests/default-apps/<slug>-app.test.tsx tests/default-apps/<slug>
 
 ## 6. Build + verify (your app only)
 
+**Two build models exist — match what your app already uses; do NOT change the build block.**
+
+- **Root-toolchain apps (most apps + ALL games):** they have NO `package.json`. Their manifest uses
+  `"install": "true"` and `"command": "vite build --base ./ --outDir dist"`. They build from the repo
+  root `node_modules` (react, react-dom, lucide-react, vite, @vitejs/plugin-react are all there — vite
+  resolves upward). **Do NOT create a `package.json`, do NOT run `pnpm install`.**
+- **App-local apps (notes, pomodoro):** they have their own `package.json` + lockfile and use
+  `"command": "pnpm build"`. Keep that.
+
+**Build + verify YOUR app only** by targeting the per-app build script at your directory (safe, no
+concurrency with other agents, respects your manifest's own build config):
+
 ```
-cd home/apps/<slug>
-pnpm install --ignore-workspace --prefer-offline
-pnpm build            # must produce dist/index.html
+node scripts/build-default-apps.mjs home/apps/<dir>        # e.g. home/apps/calculator
+node scripts/build-default-apps.mjs home/apps/games/<game> # e.g. home/apps/games/2048
 ```
-Then typecheck: `pnpm exec tsc --noEmit` inside your app dir (or rely on the build).
-Do NOT run the repo-wide build script.
+
+This must produce `dist/index.html`. Do NOT run the script against the whole `home/apps` tree.
+Keep the existing `matrix.json` `build` block as-is; you may edit name/description/category/icon/storage.
 
 ## 7. Definition of done (report all of these)
 
