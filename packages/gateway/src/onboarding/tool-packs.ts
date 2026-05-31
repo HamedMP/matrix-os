@@ -171,11 +171,14 @@ export function createToolPackService(options: {
     installJobs: ToolPackInstallJobSummary[],
     packId: ToolPackId,
   ): ToolPackInstallJobSummary | null {
-    for (let index = installJobs.length - 1; index >= 0; index -= 1) {
-      const job = installJobs[index];
-      if (job.packId === packId) return job;
-    }
-    return null;
+    const packJobs = installJobs.filter((job) => job.packId === packId);
+    const installingJob = packJobs.find((job) => job.status === "installing");
+    if (installingJob) return installingJob;
+    return packJobs.toSorted((left, right) => {
+      const leftTime = Date.parse(left.completedAt ?? left.startedAt);
+      const rightTime = Date.parse(right.completedAt ?? right.startedAt);
+      return rightTime - leftTime;
+    })[0] ?? null;
   }
 
   function responseFor(record: ToolPackRecord): ToolPacksResponse {
@@ -262,17 +265,26 @@ export function createToolPackService(options: {
 
   async function installToolPacks(ownerId: string, packIds: ToolPackId[]): Promise<ToolPacksResponse> {
     const requestedPackIds = uniquePackIds(packIds);
-    const createdJobs: ToolPackInstallJobSummary[] = requestedPackIds.map((packId) => ({
-      id: `tool-pack-${packId}-${Date.now()}-${jobCounter += 1}`,
-      packId,
-      status: "installing",
-      startedAt: now().toISOString(),
-      completedAt: null,
-      message: null,
-    }));
+    let createdJobs: ToolPackInstallJobSummary[] = [];
     const record = await options.repository.update(ownerId, (current) => {
       const base = current ?? createEmptyRecord(ownerId);
       const selectedPackIds = uniquePackIds([...base.selectedPackIds, ...requestedPackIds]);
+      const activePackIds = new Set(
+        base.installJobs
+          .map(normalizeJob)
+          .filter((job) => job.status === "installing")
+          .map((job) => job.packId),
+      );
+      createdJobs = requestedPackIds
+        .filter((packId) => !activePackIds.has(packId))
+        .map((packId) => ({
+          id: `tool-pack-${packId}-${Date.now()}-${jobCounter += 1}`,
+          packId,
+          status: "installing",
+          startedAt: now().toISOString(),
+          completedAt: null,
+          message: null,
+        }));
       return {
         ...base,
         selectedPackIds,

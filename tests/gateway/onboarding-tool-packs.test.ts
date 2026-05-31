@@ -141,6 +141,98 @@ describe("onboarding tool packs", () => {
     });
   });
 
+  it("does not let a duplicate install collision shadow the active or completed job", async () => {
+    const repository = new InMemoryToolPackRepository();
+    let currentTime = new Date("2026-05-31T00:00:02.000Z");
+    const service = createToolPackService({
+      repository,
+      now: () => currentTime,
+    });
+    const baseRecord: ToolPackRecord = {
+      ownerId: testPrincipal.userId,
+      selectedPackIds: ["hermes", "coding-agents"],
+      updatedAt: "2026-05-31T00:00:01.000Z",
+      installJobs: [
+        {
+          id: "first-install",
+          packId: "coding-agents",
+          status: "installing",
+          startedAt: "2026-05-31T00:00:00.000Z",
+          completedAt: null,
+          message: null,
+        },
+        {
+          id: "lock-collision",
+          packId: "coding-agents",
+          status: "failed",
+          startedAt: "2026-05-31T00:00:01.000Z",
+          completedAt: "2026-05-31T00:00:01.500Z",
+          message: "Install failed",
+        },
+      ],
+    };
+    await repository.save(baseRecord);
+
+    const duringInstall = await service.listToolPacks(testPrincipal.userId);
+
+    expect(duringInstall.packs.find((pack) => pack.id === "coding-agents")).toMatchObject({
+      installJobId: "first-install",
+      status: "installing",
+    });
+
+    await repository.save({
+      ...baseRecord,
+      installJobs: baseRecord.installJobs.map((job) => job.id === "first-install"
+        ? {
+            ...job,
+            status: "installed",
+            completedAt: "2026-05-31T00:00:03.000Z",
+            message: "Installed",
+          }
+        : job),
+    });
+    currentTime = new Date("2026-05-31T00:00:04.000Z");
+    const afterInstall = await service.listToolPacks(testPrincipal.userId);
+
+    expect(afterInstall.packs.find((pack) => pack.id === "coding-agents")).toMatchObject({
+      installJobId: "first-install",
+      installed: true,
+      status: "installed",
+    });
+  });
+
+  it("deduplicates install requests for packs that are already installing", async () => {
+    const started: string[] = [];
+    let releaseInstall: (() => void) | null = null;
+    const installer: ToolPackInstaller = {
+      install: async (_ownerId, packId) => {
+        started.push(packId);
+        await new Promise<void>((resolve) => {
+          releaseInstall = resolve;
+        });
+      },
+    };
+    const service = createToolPackService({
+      repository: new InMemoryToolPackRepository(),
+      installer,
+      now: () => new Date("2026-05-31T00:00:00.000Z"),
+    });
+
+    const first = await service.installToolPacks(testPrincipal.userId, ["coding-agents"]);
+    const second = await service.installToolPacks(testPrincipal.userId, ["coding-agents"]);
+
+    expect(first.installJobs).toHaveLength(1);
+    expect(second.installJobs).toHaveLength(1);
+    expect(second.installJobs[0]).toMatchObject({
+      packId: "coding-agents",
+      status: "installing",
+    });
+    expect(started).toEqual(["coding-agents"]);
+
+    releaseInstall?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
   it("expires installing jobs if the async settlement write fails", async () => {
     let currentTime = new Date("2026-05-31T00:00:00.000Z");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
