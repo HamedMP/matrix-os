@@ -6,7 +6,7 @@
 # Version format: v{YYYY.MM.DD}-{run_number} (date-based, monotonically increasing)
 #
 # Flow:
-#   1. test — typecheck + unit tests
+#   1. ci-gate — wait for same-SHA CI and verify all CI jobs succeeded
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
 #   4. (optional) auto-deploy if severity is "security"
@@ -51,6 +51,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}
@@ -76,35 +77,85 @@ jobs:
           set -euo pipefail
           scripts/ci/dev-bundle-gate.sh
 
-  test:
-    name: Test
+  ci-gate:
+    name: Same-SHA CI gate
     needs: dev-bundle-gate
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v6
+      - name: Wait for CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+          CI_WORKFLOW_FILE: ci.yml
+        run: |
+          set -euo pipefail
 
-      - uses: pnpm/action-setup@v6
+          deadline=$((SECONDS + 30 * 60))
+          while true; do
+            if ! runs="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$CI_WORKFLOW_FILE" \
+              --commit "$TARGET_SHA" \
+              --limit 20 \
+              --json databaseId,status,conclusion,url,headSha,workflowName)"; then
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "Timed out waiting for CI to pass on $TARGET_SHA after repeated GitHub API failures" >&2
+                exit 1
+              fi
+              echo "Could not read CI workflow status for $TARGET_SHA; retrying..."
+              sleep 20
+              continue
+            fi
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
+            success_id="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion == "success")) | .[0].databaseId // ""')"
+            success_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion == "success")) | .[0].url // ""')"
+            if [ -n "$success_id" ]; then
+              if ! run_jobs="$(gh run view "$success_id" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json jobs)"; then
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "Timed out verifying CI jobs for $TARGET_SHA after repeated GitHub API failures" >&2
+                  exit 1
+                fi
+                echo "Could not read CI jobs for $TARGET_SHA; retrying..."
+                sleep 20
+                continue
+              fi
 
-      - uses: oven-sh/setup-bun@v2
+              failed_job="$(printf '%s' "$run_jobs" | jq -r '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
+              if [ -n "$failed_job" ]; then
+                echo "CI workflow run passed but a job was not successful for $TARGET_SHA: $failed_job" >&2
+                printf '%s\n' "$run_jobs" >&2
+                exit 1
+              fi
 
-      - run: pnpm install --frozen-lockfile
+              echo "CI passed for $TARGET_SHA: $success_url"
+              exit 0
+            fi
 
-      - name: Type check
-        run: bun run typecheck
+            pending_count="$(printf '%s' "$runs" | jq 'map(select(.status != "completed")) | length')"
+            failed_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion != "success")) | .[0].url // ""')"
+            if [ "$pending_count" -eq 0 ] && [ -n "$failed_url" ]; then
+              echo "All same-SHA CI runs are completed but none succeeded for $TARGET_SHA: $failed_url" >&2
+              printf '%s\n' "$runs" >&2
+              exit 1
+            fi
 
-      - name: Unit tests
-        run: bun run test
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for CI to pass on $TARGET_SHA" >&2
+              printf '%s\n' "$runs" >&2
+              exit 1
+            fi
+
+            echo "Waiting for CI to pass on $TARGET_SHA..."
+            sleep 20
+          done
 
   build:
     name: Build host bundle
-    needs: [dev-bundle-gate, test]
+    needs: [dev-bundle-gate, ci-gate]
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30

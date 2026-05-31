@@ -184,6 +184,30 @@ describe('customer VPS host bundle', () => {
     expect(workflow).not.toContain('continue-on-error: true');
   });
 
+  it('host bundle release workflow waits for same-sha CI instead of duplicating the full suite', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('actions: read');
+    expect(workflow).toContain('name: Same-SHA CI gate');
+    expect(workflow).toContain('TARGET_SHA: ${{ github.sha }}');
+    expect(workflow).toContain('CI_WORKFLOW_FILE: ci.yml');
+    expect(workflow).toContain('--workflow "$CI_WORKFLOW_FILE"');
+    expect(workflow).toContain('--commit "$TARGET_SHA"');
+    expect(workflow).toContain('Could not read CI workflow status for $TARGET_SHA; retrying...');
+    expect(workflow).toContain('gh run view "$success_id"');
+    expect(workflow).toContain('Could not read CI jobs for $TARGET_SHA; retrying...');
+    expect(workflow).toContain('Timed out verifying CI jobs for $TARGET_SHA after repeated GitHub API failures');
+    expect(workflow).toContain('CI workflow run passed but a job was not successful for $TARGET_SHA');
+    expect(workflow).toContain('CI passed for $TARGET_SHA');
+    expect(workflow).toContain('All same-SHA CI runs are completed but none succeeded for $TARGET_SHA');
+    expect(workflow).toContain('Timed out waiting for CI to pass on $TARGET_SHA');
+    expect(workflow).toContain('after repeated GitHub API failures');
+    expect(workflow).toContain('needs: [dev-bundle-gate, ci-gate]');
+    expect(workflow).not.toContain('run: bun run typecheck');
+    expect(workflow).not.toContain('run: bun run test');
+  });
+
   it('host bundle release workflow keeps tag pushes triggerable', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
