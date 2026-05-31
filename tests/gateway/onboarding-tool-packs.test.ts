@@ -199,6 +199,30 @@ describe("onboarding tool packs", () => {
       installed: true,
       status: "installed",
     });
+
+    await repository.save({
+      ...baseRecord,
+      installJobs: [
+        {
+          ...baseRecord.installJobs[0]!,
+          status: "installed",
+          completedAt: "2026-05-31T00:00:03.000Z",
+          message: "Installed",
+        },
+        {
+          ...baseRecord.installJobs[1]!,
+          completedAt: "2026-05-31T00:00:04.000Z",
+        },
+      ],
+    });
+    currentTime = new Date("2026-05-31T00:00:05.000Z");
+    const afterFailedRetry = await service.listToolPacks(testPrincipal.userId);
+
+    expect(afterFailedRetry.packs.find((pack) => pack.id === "coding-agents")).toMatchObject({
+      installJobId: "lock-collision",
+      installed: true,
+      status: "failed",
+    });
   });
 
   it("deduplicates install requests for packs that are already installing", async () => {

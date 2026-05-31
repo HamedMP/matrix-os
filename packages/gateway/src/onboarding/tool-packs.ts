@@ -186,7 +186,7 @@ export function createToolPackService(options: {
     const installJobs = record.installJobs.map(normalizeJob);
     const packs = TOOL_PACKS.map<ToolPackSummary>((pack) => {
       const latestJob = latestJobForPack(installJobs, pack.id);
-      const installed = latestJob?.status === "installed";
+      const installed = installJobs.some((job) => job.packId === pack.id && job.status === "installed");
       const selectedPack = selected.has(pack.id);
       return {
         ...pack,
