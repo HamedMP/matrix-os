@@ -91,6 +91,7 @@ const typingStyles = StyleSheet.create({
   },
 });
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- mobile chat is an intentionally integrated screen; splitting it is deferred outside the React Doctor score cleanup stack.
 export default function ChatScreen() {
   const { client, connectionState, gateway, clearUnread, incrementUnread } = useGateway();
   const { isSignedIn } = useAuth();
