@@ -1,9 +1,9 @@
 import { defineCommand } from "citty";
-import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { formatCliSuccess } from "../output.js";
 import { isDaemonRunning } from "../daemon-client.js";
 import { resolveCliProfile } from "../profiles.js";
 import { probeGatewayHealth } from "../gateway-health.js";
+import { resolveCliAuthStatus } from "../auth-state.js";
 
 interface DoctorCheck {
   name: string;
@@ -38,11 +38,18 @@ export const doctorCommand = defineCommand({
 
     let token: string | undefined;
     if (profile) {
-      const auth = profile.token ? null : await loadProfileAuth(profile.name);
-      token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
-      checks.push(token
+      const authStatus = await resolveCliAuthStatus(profile);
+      token = authStatus.status === "authenticated" ? authStatus.token : undefined;
+      checks.push(authStatus.status === "authenticated"
         ? { name: "auth", ok: true }
-        : { name: "auth", ok: false, code: "not_authenticated", hint: "Run `matrix login`." });
+        : authStatus.status === "expired"
+          ? {
+              name: "auth",
+              ok: false,
+              code: "auth_expired",
+              hint: `Run \`matrix login --profile ${profile.name}\` to refresh.`,
+            }
+          : { name: "auth", ok: false, code: "not_authenticated", hint: "Run `matrix login`." });
     } else {
       checks.push({ name: "auth", ok: false, code: "profile_not_found", hint: "Run `matrix login`." });
     }

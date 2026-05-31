@@ -1,23 +1,16 @@
 import { defineCommand } from "citty";
 import { randomUUID } from "node:crypto";
-import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { createShellClient, type ShellClient } from "../shell-client.js";
+import { requireCliAuthToken } from "../auth-state.js";
 
 const RUN_USAGE = "Usage: matrix run -it [--session <name>] [-C <dir>] -- <command>";
 const RUN_VALUE_OPTIONS = new Set(["--gateway", "--profile", "--token", "--session", "-C", "--cwd"]);
 
 async function clientFromArgs(args: Record<string, unknown>) {
   const profile = await resolveCliProfile(args);
-  const auth = profile.token ? null : await loadProfileAuth(profile.name);
-  const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
-  if (!token) {
-    throw Object.assign(
-      new Error(`Not logged in for profile "${profile.name}". Run \`matrix login\` first.`),
-      { code: "not_authenticated" },
-    );
-  }
+  const token = await requireCliAuthToken(profile);
   return createShellClient({ gatewayUrl: profile.gatewayUrl, token });
 }
 
@@ -104,7 +97,7 @@ function writeError(err: unknown, json: boolean): void {
       ? (err as { code: string }).code
       : "request_failed";
   const safeMessage =
-    code === "not_authenticated" || code === "invalid_request" || code === "not_implemented"
+    code === "not_authenticated" || code === "auth_expired" || code === "invalid_request" || code === "not_implemented"
       ? err instanceof Error ? err.message : undefined
       : undefined;
   console.error(json ? formatCliError(code, safeMessage) : safeMessage ?? `Error: Request failed (${code})`);

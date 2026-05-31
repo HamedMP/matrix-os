@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
-import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
+import { requireCliAuthToken } from "../auth-state.js";
 
 interface InstanceRequestOptions {
   method?: "GET" | "POST";
@@ -12,7 +12,11 @@ function writeError(err: unknown, json: boolean): void {
     err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : "instance_request_failed";
-  console.error(json ? formatCliError(code) : `Error: Request failed (${code})`);
+  const safeMessage =
+    (code === "not_authenticated" || code === "auth_expired") && err instanceof Error
+      ? err.message
+      : undefined;
+  console.error(json ? formatCliError(code, safeMessage) : safeMessage ?? `Error: Request failed (${code})`);
 }
 
 async function requestInstance(
@@ -21,11 +25,7 @@ async function requestInstance(
   options: InstanceRequestOptions = {},
 ): Promise<Record<string, unknown>> {
   const profile = await resolveCliProfile(args);
-  const auth = profile.token ? null : await loadProfileAuth(profile.name);
-  const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
-  if (!token) {
-    throw Object.assign(new Error("not_authenticated"), { code: "not_authenticated" });
-  }
+  const token = await requireCliAuthToken(profile);
 
   const res = await fetch(`${profile.platformUrl}${path}`, {
     ...(options.method ? { method: options.method } : {}),

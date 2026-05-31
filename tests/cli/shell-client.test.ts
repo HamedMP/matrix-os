@@ -100,6 +100,23 @@ describe("shell REST client", () => {
     });
   });
 
+  it("maps gateway auth rejection to an auth refresh error", async () => {
+    const fetchImpl = vi.fn(async () => new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401 },
+    ));
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "stale-token",
+      fetch: fetchImpl,
+    });
+
+    await expect(client.listSessions()).rejects.toMatchObject({
+      code: "auth_expired",
+      message: "Request failed",
+    });
+  });
+
   it("builds terminal websocket URLs without leaking bearer auth by default", () => {
     const client = createShellClient({
       gatewayUrl: "https://gateway.example",

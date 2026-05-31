@@ -156,11 +156,11 @@ describe("shell CLI command", () => {
     ]);
   });
 
-  it("treats expired profile auth as not authenticated", async () => {
+  it("prompts for login when profile auth is expired", async () => {
     await saveProfileAuth("local", {
       accessToken: "expired-token",
       refreshToken: "refresh-token",
-      expiresAt: Date.now() - 1,
+      expiresAt: Date.parse("2026-05-29T23:24:06.000Z"),
       userId: "user-1",
       handle: "local",
     });
@@ -179,8 +179,8 @@ describe("shell CLI command", () => {
     expect(JSON.parse(errors[0]!)).toEqual({
       v: 1,
       error: {
-        code: "not_authenticated",
-        message: 'Not logged in for profile "local". Run `matrix login` first.',
+        code: "auth_expired",
+        message: 'Auth for profile "local" expired on 2026-05-29T23:24:06.000Z. Run `matrix login --profile local` to refresh.',
       },
     });
   });

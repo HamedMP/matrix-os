@@ -4,6 +4,7 @@ const HINTS: Record<string, string> = {
   invalid_layout: "Layout is invalid. Inspect it with `matrix shell layout show <name>` before applying it.",
   timeout: "The request timed out. Check `matrix doctor` and retry.",
   attach_failed: "Terminal attach failed. reattach with `matrix shell connect <name>`.",
+  auth_expired: "Auth expired. Run `matrix login` to refresh this profile.",
   unsupported_version: "Daemon protocol is incompatible. Please update the Matrix CLI and restart the daemon.",
   unknown_command: "Daemon command is not supported. Please update the Matrix CLI and daemon together.",
 };

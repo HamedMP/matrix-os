@@ -66,4 +66,35 @@ describe("doctor CLI command", () => {
     });
     await rm(root, { recursive: true, force: true });
   });
+
+  it("prompts to refresh expired profile auth", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-doctor-cli-"));
+    process.env.HOME = root;
+    await saveProfileAuth("cloud", {
+      accessToken: "expired-token",
+      expiresAt: Date.parse("2026-05-29T23:24:06.000Z"),
+      userId: "user_cloud",
+      handle: "cloud",
+    });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: "ok" })));
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await doctorCommand.run!({ args: { json: true } } as never);
+
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "auth")).toEqual({
+      name: "auth",
+      ok: false,
+      code: "auth_expired",
+      hint: "Run `matrix login --profile cloud` to refresh.",
+    });
+    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/system/info", {
+      signal: expect.any(AbortSignal),
+    });
+    await rm(root, { recursive: true, force: true });
+  });
 });

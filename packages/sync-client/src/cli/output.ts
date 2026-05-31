@@ -4,6 +4,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   zellij_failed: "Request failed",
   unknown_command: "Request failed",
   unsupported_version: "Request failed",
+  auth_expired: "Matrix CLI auth expired. Run `matrix login` to refresh your session.",
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {
