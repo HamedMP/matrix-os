@@ -19,8 +19,8 @@ export function IconView({ renamingPath, onStartRename, onCancelRename, onOpenFi
   const navigate = useFileBrowser((s) => s.navigate);
   const rename = useFileBrowser((s) => s.rename);
 
-  function handleClick(entry: FileEntry, e: React.MouseEvent) {
-    select(entry.name, e.metaKey || e.ctrlKey);
+  function handleClick(entry: FileEntry, modifiers: { metaKey: boolean; ctrlKey: boolean }) {
+    select(entry.name, modifiers.metaKey || modifiers.ctrlKey);
   }
 
   function handleDoubleClick(entry: FileEntry) {

@@ -16,7 +16,7 @@ interface FileIconProps {
   name: string;
   type: "file" | "directory";
   selected?: boolean;
-  onClick?: (e: React.MouseEvent) => void;
+  onClick?: (modifiers: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   renaming?: React.ReactNode;
@@ -56,7 +56,7 @@ export function FileIcon({
       role="gridcell"
       tabIndex={0}
       aria-selected={selected}
-      onClick={onClick}
+      onClick={(e) => onClick?.({ metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey })}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
@@ -65,7 +65,7 @@ export function FileIcon({
           onDoubleClick?.();
         } else if (e.key === " ") {
           e.preventDefault();
-          onClick?.(e as unknown as React.MouseEvent);
+          onClick?.({ metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
         }
       }}
     >
