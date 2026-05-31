@@ -1052,6 +1052,8 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
         {ctx.tabs.map((tab, i) => {
           const active = tab.id === ctx.activeTabId;
           const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+            if (e.target !== e.currentTarget) return;
+
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               ctx.setActiveTab(tab.id);

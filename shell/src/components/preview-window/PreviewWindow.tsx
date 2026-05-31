@@ -34,6 +34,8 @@ export function PreviewWindow() {
         {tabs.map((tab, i) => {
           const active = tab.id === activeTabId;
           const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+            if (e.target !== e.currentTarget) return;
+
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               setActiveTab(tab.id);
