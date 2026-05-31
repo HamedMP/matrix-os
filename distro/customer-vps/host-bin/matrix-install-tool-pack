@@ -65,7 +65,7 @@ with_pack_lock() {
   exec 9>"$lock_path"
   if ! flock -n 9; then
     log "${pack} install is already running"
-    exit 0
+    return 75
   fi
   "$@"
 }
@@ -146,7 +146,13 @@ case "$pack" in
     pid_hermes="$!"
     with_pack_lock linux-tools install_linux_tools &
     pid_linux_tools="$!"
-    wait "$pid_coding_agents" "$pid_code_server" "$pid_hermes" "$pid_linux_tools"
+    failed=0
+    for pid in "$pid_coding_agents" "$pid_code_server" "$pid_hermes" "$pid_linux_tools"; do
+      if ! wait "$pid"; then
+        failed=1
+      fi
+    done
+    exit "$failed"
     ;;
   *)
     usage

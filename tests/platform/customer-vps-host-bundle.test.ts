@@ -84,6 +84,11 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
     expect(installer).toContain('coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('return 75');
+    expect(installer).not.toContain('exit 0');
+    expect(installer).toContain('failed=0');
+    expect(installer).toContain('if ! wait "$pid"; then');
+    expect(installer).toContain('exit "$failed"');
   });
 
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {
