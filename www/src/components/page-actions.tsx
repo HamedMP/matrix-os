@@ -6,7 +6,27 @@ import { useCopyButton } from 'fumadocs-ui/utils/use-copy-button';
 import { buttonVariants } from './ui/button-variants';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 
+const CACHE_MAX_ENTRIES = 100;
 const cache = new Map<string, string>();
+
+function getCachedMarkdown(markdownUrl: string): string | undefined {
+  const cached = cache.get(markdownUrl);
+  if (cached === undefined) return undefined;
+
+  // Refresh recency: insertion-order Map keeps the least-recently used key first.
+  cache.delete(markdownUrl);
+  cache.set(markdownUrl, cached);
+  return cached;
+}
+
+function setCachedMarkdown(markdownUrl: string, content: string) {
+  cache.set(markdownUrl, content);
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 export function LLMCopyButton({
   /**
@@ -18,7 +38,7 @@ export function LLMCopyButton({
 }) {
   const [isLoading, setLoading] = useState(false);
   const [checked, onClick] = useCopyButton(async () => {
-    const cached = cache.get(markdownUrl);
+    const cached = getCachedMarkdown(markdownUrl);
     if (cached) return navigator.clipboard.writeText(cached);
 
     setLoading(true);
@@ -29,7 +49,7 @@ export function LLMCopyButton({
         new ClipboardItem({
           'text/plain': fetch(markdownUrl).then(async (res) => {
             const content = await res.text();
-            cache.set(markdownUrl, content);
+            setCachedMarkdown(markdownUrl, content);
 
             return content;
           }),
