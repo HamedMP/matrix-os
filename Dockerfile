@@ -134,13 +134,16 @@ RUN apk add --no-cache \
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
-# AI coding CLIs. Claude Code and Codex intentionally use latest at image build
-# time so fresh Matrix runtimes start with current agent CLIs.
+# AI coding CLIs. Defaults track latest so fresh Matrix runtimes start current;
+# build args allow reproducible rebuilds when pinning a release is required.
+ARG OPENCODE_AI_VERSION=latest
+ARG PI_CODING_AGENT_VERSION=latest
 RUN npm install -g \
     @anthropic-ai/claude-code@latest \
     @openai/codex@latest \
-    opencode-ai@1.14.25 \
-    @mariozechner/pi-coding-agent@0.70.2
+    "opencode-ai@${OPENCODE_AI_VERSION}"
+RUN npm install -g --ignore-scripts \
+    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
 
 RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
     -o /tmp/hermes-agent-install.sh && \

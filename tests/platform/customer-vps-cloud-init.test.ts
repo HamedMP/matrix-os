@@ -188,22 +188,28 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
   });
 
-  it('exposes bundled coding agent CLIs on customer hosts', () => {
+  it('exposes selectable coding agent CLIs on customer hosts', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
     const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
     const toolPackInstaller = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
 
-    expect(toolPackInstaller).toContain('@anthropic-ai/claude-code@latest');
-    expect(toolPackInstaller).toContain('@openai/codex@latest');
-    expect(toolPackInstaller).toContain('opencode-ai@1.14.25');
-    expect(toolPackInstaller).toContain('@mariozechner/pi-coding-agent@0.70.2');
+    expect(buildScript).toContain('matrix-install-tool-pack');
     expect(buildScript).toContain('https://astral.sh/uv/install.sh');
     expect(buildScript).toContain('UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin"');
     expect(buildScript).toContain('scripts/install-hermes-matrix-skills.sh');
     expect(buildScript).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(buildScript).toContain('cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"');
+    expect(toolPackInstaller).toContain('install_coding_agents()');
+    expect(toolPackInstaller).toContain('install_code_server()');
+    expect(toolPackInstaller).toContain('@anthropic-ai/claude-code@latest');
+    expect(toolPackInstaller).toContain('@openai/codex@latest');
+    expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
+    expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
+    expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
+    expect(toolPackInstaller).toContain('"$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX"');
+    expect(toolPackInstaller).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
     expect(toolPackInstaller).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(toolPackInstaller).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(toolPackInstaller).toContain('runtime/code-server');

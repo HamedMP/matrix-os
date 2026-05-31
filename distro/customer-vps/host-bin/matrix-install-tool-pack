@@ -7,6 +7,8 @@ MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-$MATRIX_RUNTIME_DIR/node}"
 CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
+OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"
+PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"
 CODE_SERVER_DIST="code-server-${CODE_SERVER_VERSION}-linux-amd64"
 CODE_SERVER_ARCHIVE="${CODE_SERVER_DIST}.tar.gz"
 CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"
@@ -81,8 +83,11 @@ install_coding_agents() {
   run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
     @anthropic-ai/claude-code@latest \
     @openai/codex@latest \
-    opencode-ai@1.14.25 \
-    @mariozechner/pi-coding-agent@0.70.2
+    "opencode-ai@${OPENCODE_AI_VERSION}"
+  # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
+  # bin -> dist/cli.js and does not use postinstall for binary acquisition.
+  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX" \
+    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
   runtime_chmod
   sync_agent_skills
   log "coding agent CLIs installed"
