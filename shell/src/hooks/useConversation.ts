@@ -70,10 +70,9 @@ export function useConversation() {
 
   useFileWatcherPattern(
     CONV_PATTERN,
-    // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
-    useCallback(() => {
+    () => {
       refresh();
-    }, [refresh]),
+    },
   );
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep

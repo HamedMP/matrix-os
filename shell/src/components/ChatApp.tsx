@@ -14,7 +14,7 @@ import {
 import { Reasoning } from "@/components/ai-elements/reasoning";
 import { extractThinking } from "@/components/ai-elements/reasoning-utils";
 import { SuggestionChips } from "@/components/ai-elements/suggestions";
-import { DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions-utils";
+import { getMessageSuggestions } from "@/components/ai-elements/suggestions-utils";
 import { Plan } from "@/components/ai-elements/plan";
 import { parsePlan } from "@/components/ai-elements/plan-utils";
 import { Task } from "@/components/ai-elements/task";
@@ -178,17 +178,7 @@ export function ChatApp({
 
   const timeGroups = groupConversationsByTime(filteredConversations);
 
-  const suggestions = (() => {
-    if (messages.length === 0) return DEFAULT_SUGGESTIONS;
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((m) => m.role === "assistant" && !m.tool);
-    if (lastAssistant) {
-      const parsed = parseSuggestions(lastAssistant.content);
-      if (parsed.length > 0) return parsed;
-    }
-    return messages.length < 3 ? DEFAULT_SUGGESTIONS : [];
-  })();
+  const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
 
