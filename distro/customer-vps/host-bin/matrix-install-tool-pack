@@ -124,6 +124,14 @@ install_hermes() {
 
 install_linux_tools() {
   log "installing Linux developer tools"
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files matrix-linux-tools.service >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      systemctl start matrix-linux-tools.service
+    else
+      sudo systemctl start matrix-linux-tools.service
+    fi
+    return
+  fi
   if [ "$(id -u)" = "0" ]; then
     sudo -H -u "$MATRIX_RUNTIME_USER" /opt/matrix/bin/matrix-install-linux-tools
   else

@@ -56,6 +56,7 @@ const DEFAULT_SELECTED_PACK_IDS = TOOL_PACKS
 const MAX_TOOL_PACK_RECORDS = 512;
 const MAX_INSTALL_JOBS_PER_OWNER = 64;
 const DEFAULT_INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_INSTALL_OUTPUT_BYTES = 16_384;
 
 export interface ToolPackRecord {
@@ -117,13 +118,15 @@ export class InMemoryToolPackRepository implements ToolPackRepository {
 export function createHostToolPackInstaller(options: {
   scriptPath?: string;
   timeoutMs?: number;
+  linuxToolsTimeoutMs?: number;
 } = {}): ToolPackInstaller {
   const scriptPath = options.scriptPath ?? "/opt/matrix/bin/matrix-install-tool-pack";
   const timeoutMs = options.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
+  const linuxToolsTimeoutMs = options.linuxToolsTimeoutMs ?? DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS;
 
   return {
     install: async (ownerId, packId) => {
-      await runHostInstaller(scriptPath, ownerId, packId, timeoutMs);
+      await runHostInstaller(scriptPath, ownerId, packId, packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs);
     },
   };
 }

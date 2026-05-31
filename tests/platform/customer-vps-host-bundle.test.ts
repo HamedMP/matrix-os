@@ -86,6 +86,8 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('coding-agents|code-server|hermes|linux-tools|all');
     expect(installer).toContain('return 75');
     expect(installer).not.toContain('exit 0');
+    expect(installer).toContain('systemctl start matrix-linux-tools.service');
+    expect(installer).toContain('sudo systemctl start matrix-linux-tools.service');
     expect(installer).toContain('failed=0');
     expect(installer).toContain('if ! wait "$pid"; then');
     expect(installer).toContain('exit "$failed"');

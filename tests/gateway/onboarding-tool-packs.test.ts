@@ -1,3 +1,6 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   SelectToolPacksRequestSchema,
@@ -6,6 +9,7 @@ import {
 import { createToolPackRoutes } from "../../packages/gateway/src/onboarding/tool-pack-routes.js";
 import {
   InMemoryToolPackRepository,
+  createHostToolPackInstaller,
   createToolPackService,
   type ToolPackInstaller,
   type ToolPackRecord,
@@ -255,6 +259,36 @@ describe("onboarding tool packs", () => {
 
     releaseInstall?.();
     await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("uses the existing Linux tools service timeout budget for host installs", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "matrix-tool-pack-installer-"));
+    const scriptPath = join(tempDir, "installer");
+    await writeFile(scriptPath, [
+      "#!/usr/bin/env bash",
+      "if [ \"$1\" = \"linux-tools\" ]; then",
+      "  sleep 0.1",
+      "else",
+      "  sleep 1",
+      "fi",
+      "",
+    ].join("\n"));
+    await chmod(scriptPath, 0o755);
+
+    try {
+      const installer = createHostToolPackInstaller({
+        scriptPath,
+        timeoutMs: 50,
+        linuxToolsTimeoutMs: 500,
+      });
+
+      await installer.install(testPrincipal.userId, "linux-tools");
+      await expect(installer.install(testPrincipal.userId, "code-server")).rejects.toThrow(
+        "tool pack install timed out for code-server",
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("expires installing jobs if the async settlement write fails", async () => {
