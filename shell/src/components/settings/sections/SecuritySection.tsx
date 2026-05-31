@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ export function SecuritySection() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const runAudit = useCallback(async () => {
+  const runAudit = async () => {
     setLoading(true);
     setError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `loading` on every path; the code is correct and the finalizer must run whether the audit resolves, rejects, or throws.
@@ -65,7 +65,7 @@ export function SecuritySection() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
   const counts = report ? {
     critical: report.findings.filter((f) => f.severity === "critical").length,

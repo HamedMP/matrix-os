@@ -5,8 +5,6 @@ import {
   useRef,
   useEffect,
   useLayoutEffect,
-  useCallback,
-  useMemo,
   memo,
 } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -81,10 +79,10 @@ export function ChatPopover({
   // and before any paint. This is what guarantees the popup opens pinned
   // to the most recent message -- useEffect alone missed it because the
   // scrollHeight was read before the list had fully laid out.
-  const attachScrollRef = useCallback((el: HTMLDivElement | null) => {
+  const attachScrollRef = (el: HTMLDivElement | null) => {
     scrollRef.current = el;
     if (el) el.scrollTop = el.scrollHeight;
-  }, []);
+  };
 
   const lastContent = chat?.messages[chat.messages.length - 1]?.content;
   useLayoutEffect(() => {
@@ -124,26 +122,20 @@ export function ChatPopover({
   // Wrap setOpen so every close path latches userClosedDuringBusyRef
   // when the user dismisses while the agent is still busy. Used by both
   // the Radix Dialog (Esc, click outside) and the header X button.
-  const handleOpenChange = useCallback(
-    (next: boolean) => {
-      if (!next && busy) userClosedDuringBusyRef.current = true;
-      setOpen(next);
-    },
-    [busy, setOpen],
-  );
+  const handleOpenChange = (next: boolean) => {
+    if (!next && busy) userClosedDuringBusyRef.current = true;
+    setOpen(next);
+  };
 
-  const handleSwitchConversation = useCallback(
-    (id: string) => {
-      chat?.switchConversation(id);
-      setSidebarOpen(false);
-    },
-    [chat],
-  );
+  const handleSwitchConversation = (id: string) => {
+    chat?.switchConversation(id);
+    setSidebarOpen(false);
+  };
 
-  const handleNewChat = useCallback(async () => {
+  const handleNewChat = async () => {
     await chat?.newChat();
     setSidebarOpen(false);
-  }, [chat]);
+  };
 
   // No chat context yet -- render nothing. The dock button still exists
   // and will be a no-op until ChatProvider mounts.
@@ -289,13 +281,14 @@ function SessionsSidebar({
 }) {
   const [query, setQuery] = useState("");
 
-  const filtered = useMemo(() => {
-    if (!query.trim()) return conversations;
-    const q = query.toLowerCase();
-    return conversations.filter((c) => c.preview?.toLowerCase().includes(q));
-  }, [conversations, query]);
+  const trimmedQuery = query.trim();
+  const filtered = !trimmedQuery
+    ? conversations
+    : conversations.filter((c) =>
+        c.preview?.toLowerCase().includes(query.toLowerCase()),
+      );
 
-  const timeGroups = useMemo(() => groupConversationsByTime(filtered), [filtered]);
+  const timeGroups = groupConversationsByTime(filtered);
 
   return (
     <aside
@@ -393,10 +386,10 @@ function SessionsSidebar({
   );
 }
 
-// Memoized so streaming text deltas (which only update messages) don't
-// re-render the header every tick. Props change only on busy / queue
-// transitions or sidebar toggle.
-const ChatHeader = memo(function ChatHeader({
+// React Compiler memoizes this component's output and the parent's JSX,
+// so streaming text deltas (which only update messages) don't re-render
+// the header — its tracked inputs (busy / queue / sidebar) are unchanged.
+function ChatHeader({
   busy,
   connected,
   queuedCount,
@@ -470,12 +463,13 @@ const ChatHeader = memo(function ChatHeader({
       </div>
     </div>
   );
-});
+}
 
 // Per-message memoization. A re-render only fires when this message's
 // content/tool/role or the global busy flag actually change. Without
 // this, every text delta re-rendered every prior message — which meant
 // re-running Streamdown's markdown parse on the entire chat history.
+// react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- load-bearing memo bailout for list items: rows are rendered inside a .map(), and the custom comparator relies on reduceChat preserving the referential identity of settled message objects (prev.msg !== next.msg) plus busy-gating the in-flight tool spinner. This skips re-running Streamdown's O(content_length) markdown parse for the entire chat history on every streaming delta; the compiler's per-array memoization does not provide this per-element bailout.
 const MessageItem = memo(function MessageItem({
   msg,
   busy,
@@ -556,9 +550,8 @@ function ChatMessages({
   onAction: (text: string) => void;
   attachScrollRef: (el: HTMLDivElement | null) => void;
 }) {
-  const visibleMessages = useMemo(
-    () => messages.filter((m) => m.role !== "system" || m.content.trim()),
-    [messages],
+  const visibleMessages = messages.filter(
+    (m) => m.role !== "system" || m.content.trim(),
   );
 
   if (visibleMessages.length === 0 && !busy) {
@@ -593,11 +586,11 @@ function ChatMessages({
   );
 }
 
-// Memoized so streaming text deltas don't re-render the input bar (and
-// its aurora gradient + style recompute) on every tick. Props are stable
-// across deltas: onSubmit/onAbort are useCallbacks in useChatState and
-// busy only flips on transitions.
-const ChatInputBar = memo(function ChatInputBar({
+// React Compiler memoizes this component and the parent's JSX, so
+// streaming text deltas don't re-render the input bar (and its aurora
+// gradient + style recompute): its tracked props (onSubmit/onAbort/busy)
+// are stable across deltas and busy only flips on transitions.
+function ChatInputBar({
   onSubmit,
   onAbort,
   busy,
@@ -611,24 +604,21 @@ const ChatInputBar = memo(function ChatInputBar({
   const [queuedFlash, setQueuedFlash] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const text = value.trim();
-      if (!text) return;
-      onSubmit(text);
-      setValue("");
-      inputRef.current?.focus();
-      // If we submitted while the agent was busy, the message went into
-      // the queue rather than being sent immediately. Pulse the input
-      // border so the user sees their input was acknowledged (not lost).
-      if (busy) {
-        setQueuedFlash(true);
-        setTimeout(() => setQueuedFlash(false), 450);
-      }
-    },
-    [value, onSubmit, busy],
-  );
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = value.trim();
+    if (!text) return;
+    onSubmit(text);
+    setValue("");
+    inputRef.current?.focus();
+    // If we submitted while the agent was busy, the message went into
+    // the queue rather than being sent immediately. Pulse the input
+    // border so the user sees their input was acknowledged (not lost).
+    if (busy) {
+      setQueuedFlash(true);
+      setTimeout(() => setQueuedFlash(false), 450);
+    }
+  };
 
   // The aurora's intensity tracks the conversation's energy. Restrained
   // opacity values keep it a hint of light, never a distraction.
@@ -720,4 +710,4 @@ const ChatInputBar = memo(function ChatInputBar({
       </form>
     </div>
   );
-});
+}

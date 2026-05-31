@@ -338,6 +338,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const closingPaneIdsRef = useRef<Set<string> | null>(null);
   if (closingPaneIdsRef.current === null) closingPaneIdsRef.current = new Set();
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `log` is consumed in the dependency array of the tabs-changed useEffect below; removing the memo would re-create it every render and re-run that effect.
   const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
     terminalAppDebug(event, {
       activeTabId: activeTabIdRef.current,
@@ -347,7 +348,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     });
   }, [focusedPaneId]);
 
-  const persistLayoutNow = useCallback(() => {
+  const persistLayoutNow = () => {
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
@@ -363,9 +364,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }).catch((err: unknown) => {
       console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
     });
-  }, []);
+  };
 
-  const destroyTerminalSessions = useCallback((sessionIds: string[]) => {
+  const destroyTerminalSessions = (sessionIds: string[]) => {
     const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
     for (const sessionId of uniqueIds) {
       const isCanonical = isCanonicalShellSessionId(sessionId);
@@ -391,9 +392,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         );
       });
     }
-  }, []);
+  };
 
-  const getPendingSessionIds = useCallback((paneIds: string[]) => {
+  const getPendingSessionIds = (paneIds: string[]) => {
     const seen = new Set<string>();
     for (const paneId of paneIds) {
       const sessionId = pendingPaneSessionsRef.current!.get(paneId);
@@ -402,9 +403,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
     }
     return Array.from(seen);
-  }, []);
+  };
 
-  const markPanesClosing = useCallback((paneIds: string[]) => {
+  const markPanesClosing = (paneIds: string[]) => {
     for (const paneId of paneIds) {
       closingPaneIdsRef.current!.add(paneId);
     }
@@ -413,7 +414,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         closingPaneIdsRef.current!.delete(paneId);
       }
     }, 0);
-  }, []);
+  };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -422,32 +423,29 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, []);
 
-  const addTab = useCallback(
-    (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
-      const id = genId();
-      const paneId = genId();
-      const basename = cwd.split("/").filter(Boolean).pop() ?? "~";
-      const tab: Tab = {
-        id,
-        label: label ?? basename,
-        paneTree: {
-          type: "pane",
-          id: paneId,
-          cwd,
-          claudeMode: claude,
-          startupCommand,
-          sessionId,
-        },
-      };
-      setTabs((prev) => [...prev, tab]);
-      setActiveTabId(id);
-      setFocusedPaneId(paneId);
-      return id;
-    },
-    [],
-  );
+  const addTab = (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
+    const id = genId();
+    const paneId = genId();
+    const basename = cwd.split("/").filter(Boolean).pop() ?? "~";
+    const tab: Tab = {
+      id,
+      label: label ?? basename,
+      paneTree: {
+        type: "pane",
+        id: paneId,
+        cwd,
+        claudeMode: claude,
+        startupCommand,
+        sessionId,
+      },
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(id);
+    setFocusedPaneId(paneId);
+    return id;
+  };
 
-  const addSessionTab = useCallback((label: string, sessionId: string, cwd = DEFAULT_CWD) => {
+  const addSessionTab = (label: string, sessionId: string, cwd = DEFAULT_CWD) => {
     const id = genId();
     const paneId = genId();
     const tab: Tab = {
@@ -464,9 +462,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     setActiveTabId(id);
     setFocusedPaneId(paneId);
     return id;
-  }, []);
+  };
 
-  const createShellSessionTab = useCallback(async (label: string, cwd = DEFAULT_CWD) => {
+  const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const name = `zellij-${genId()}`;
       try {
@@ -503,7 +501,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }
     console.warn("Failed to create shell session: name collision");
     return null;
-  }, [addSessionTab, destroyTerminalSessions]);
+  };
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time mount bootstrap that loads the saved terminal layout from the gateway; the fetch is AbortSignal-guarded and every state write is gated behind a `cancelled` flag cleared in cleanup, so this is an intentional mount-driven load, not render data
   useEffect(() => {
@@ -651,7 +649,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return () => observer.disconnect();
   }, [sidebarOpen]);
 
-  const closeTab = useCallback((tabId: string) => {
+  const closeTab = (tabId: string) => {
     const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
     if (closingTab) {
       const paneIds = getAllPaneIds(closingTab.paneTree);
@@ -674,16 +672,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       });
       return next;
     });
-  }, [destroyTerminalSessions, getPendingSessionIds, log, markPanesClosing]);
+  };
 
-  const splitPane = useCallback((paneId: string, dir: "horizontal" | "vertical") => {
+  const splitPane = (paneId: string, dir: "horizontal" | "vertical") => {
     setTabs(prev => prev.map(t => {
       if (t.id !== activeTabId || countPanes(t.paneTree) >= 4) return t;
       return { ...t, paneTree: splitPaneInTree(t.paneTree, paneId, dir) };
     }));
-  }, [activeTabId]);
+  };
 
-  const closePane = useCallback((paneId: string) => {
+  const closePane = (paneId: string) => {
     const activeTabRecord = tabsRef.current.find((tab) => tab.id === activeTabId);
     const closingSessionIds = new Set<string>();
     const closingSessionId = activeTabRecord ? getPaneSessionId(activeTabRecord.paneTree, paneId) : null;
@@ -706,24 +704,24 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       setFocusedPaneId(getFirstPaneId(newTree));
       return prev.map(t => t.id === activeTabId ? { ...t, paneTree: newTree } : t);
     });
-  }, [activeTabId, destroyTerminalSessions, log, markPanesClosing]);
+  };
 
-  const renameTab = useCallback((tabId: string, label: string) => {
+  const renameTab = (tabId: string, label: string) => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label } : t));
-  }, []);
+  };
 
-  const reorderTabs = useCallback((from: number, to: number) => {
+  const reorderTabs = (from: number, to: number) => {
     setTabs(prev => {
       const arr = [...prev];
       const [moved] = arr.splice(from, 1);
       arr.splice(to, 0, moved);
       return arr;
     });
-  }, []);
+  };
 
-  const getCwd = useCallback(() => sidebarSelectedPath ?? DEFAULT_CWD, [sidebarSelectedPath]);
+  const getCwd = () => sidebarSelectedPath ?? DEFAULT_CWD;
 
-  const handleSessionAttached = useCallback((paneId: string, sessionId: string) => {
+  const handleSessionAttached = (paneId: string, sessionId: string) => {
     log("session-attached", { paneId, sessionId });
     pendingPaneSessionsRef.current!.set(paneId, sessionId);
     setTabs((prev) => {
@@ -734,9 +732,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       tabsRef.current = nextTabs;
       return nextTabs;
     });
-  }, [log]);
+  };
 
-  const shouldCachePane = useCallback((paneId: string) => {
+  const shouldCachePane = (paneId: string) => {
     const keep = !closingPaneIdsRef.current!.has(paneId) && tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
     log("should-cache-pane", {
       paneId,
@@ -747,11 +745,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       })),
     });
     return keep;
-  }, [log]);
+  };
 
-  const shouldDestroyPane = useCallback((paneId: string) => {
+  const shouldDestroyPane = (paneId: string) => {
     return closingPaneIdsRef.current!.has(paneId);
-  }, []);
+  };
 
   useEffect(() => {
     const livePaneIds = new Set<string>();
@@ -774,7 +772,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     });
   }, [log, tabs]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
       case "T": e.preventDefault(); addTab(getCwd()); break;
@@ -785,7 +783,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       case "C": e.preventDefault(); addTab(getCwd(), "Claude Code", true); break;
       case "Z": e.preventDefault(); void createShellSessionTab("Zellij", getCwd()); break;
     }
-  }, [addTab, closePane, createShellSessionTab, splitPane, focusedPaneId, getCwd]);
+  };
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
@@ -1252,11 +1250,12 @@ function LocalTerminalSidebar() {
   const [filter, setFilter] = useState("");
   const shellPollAbortRef = useRef<AbortController | null>(null);
 
-  const selectSidebarTab = useCallback((nextTab: SidebarTab) => {
+  const selectSidebarTab = (nextTab: SidebarTab) => {
     setTab(nextTab);
     setFilter("");
-  }, []);
+  };
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchProjects` is in the dependency array of the projects-tab useEffect below.
   const fetchProjects = useCallback(async () => {
     setProjectsLoading(true);
     setProjectsError(null);
@@ -1287,6 +1286,7 @@ function LocalTerminalSidebar() {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load and shells-poll useEffects below.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
     if (!options.silent) setShellsLoading(true);
     if (!options.silent) setShellsError(null);
@@ -1343,6 +1343,7 @@ function LocalTerminalSidebar() {
     };
   }, [fetchShells, tab]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchSessions` is in the dependency array of the sessions-tab useEffect below.
   const fetchSessions = useCallback(async () => {
     setSessionsLoading(true);
     setSessionsError(null);
@@ -1374,6 +1375,7 @@ function LocalTerminalSidebar() {
     if (tab === "sessions") void fetchSessions();
   }, [fetchSessions, tab]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchDir` is in the dependency array of the files-tab useEffect below.
   const fetchDir = useCallback(async (path: string) => {
     try {
       const res = await fetch(`${getGatewayUrl()}/api/files/tree?path=${encodeURIComponent(path)}`, {
@@ -1392,12 +1394,12 @@ function LocalTerminalSidebar() {
     fetchDir(rootPath).then((entries: TreeNode[]) => setTree(entries.map(e => ({ ...e, path: `${rootPath}/${e.name}` }))));
   }, [rootPath, fetchDir, tab]);
 
-  const toggleExpand = useCallback(async (node: TreeNode) => {
+  const toggleExpand = async (node: TreeNode) => {
     if (node.type !== "directory") return;
     if (node.expanded) { setTree(prev => updateNode(prev, node.path, { expanded: false })); return; }
     const children = await fetchDir(node.path);
     setTree(prev => updateNode(prev, node.path, { expanded: true, children: children.map((c: TreeNode) => ({ ...c, path: `${node.path}/${c.name}` })) }));
-  }, [fetchDir]);
+  };
 
   if (!ctx.sidebarOpen) {
     return (

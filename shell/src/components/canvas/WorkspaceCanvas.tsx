@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { Tldraw } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { selectVisibleWorkspaceCanvasNodes, useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
@@ -17,8 +17,8 @@ export function WorkspaceCanvas() {
   const filters = useWorkspaceCanvasStore((s) => s.filters);
   const setSelectedNode = useWorkspaceCanvasStore((s) => s.setSelectedNode);
   const tldrawLayerEnabled = document?.displayOptions.tldrawLayer === true;
-  const visibleNodes = useMemo(() => selectVisibleWorkspaceCanvasNodes(document, query, filters), [document, filters, query]);
-  const nodeById = useMemo(() => new Map(document?.nodes.map((node) => [node.id, node]) ?? []), [document?.nodes]);
+  const visibleNodes = selectVisibleWorkspaceCanvasNodes(document, query, filters);
+  const nodeById = new Map(document?.nodes.map((node) => [node.id, node]) ?? []);
 
   useEffect(() => {
     void loadSummaries();

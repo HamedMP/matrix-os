@@ -31,60 +31,31 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   const addToGroup = useCanvasGroups((s) => s.addToGroup);
   const labels = useCanvasLabels((s) => s.labels);
 
-  const autoArrange = useCallback(
-    (wins: typeof windows) => {
-      if (wins.length === 0) return;
-      const cols = 3;
-      const gap = 20;
-      const wm = useWindowManager.getState();
-      for (let i = 0; i < wins.length; i++) {
-        const col = i % cols;
-        const row = Math.floor(i / cols);
-        const x = gap + col * (640 + gap);
-        const y = gap + row * (480 + gap);
-        wm.moveWindow(wins[i].id, x, y);
-      }
-      const arranged = useWindowManager.getState().windows;
-      const cRect = useCanvasTransform.getState().containerRect;
-      fitAll(
-        arranged.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-        cRect?.width ?? window.innerWidth,
-        cRect?.height ?? window.innerHeight,
-      );
-    },
-    [fitAll],
-  );
-
-  const onSelect = useCallback(
-    (windowIds: string[]) => {
-      if (windowIds.length < 2) return;
-      const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
-      const label = `Group ${groups.length + 1}`;
-      const groupId = createGroup(label, color);
-      for (const winId of windowIds) {
-        addToGroup(groupId, winId);
-      }
-    },
-    [groups.length, createGroup, addToGroup],
-  );
+  const onSelect = (windowIds: string[]) => {
+    if (windowIds.length < 2) return;
+    const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
+    const label = `Group ${groups.length + 1}`;
+    const groupId = createGroup(label, color);
+    for (const winId of windowIds) {
+      addToGroup(groupId, winId);
+    }
+  };
 
   const createLabel = useCanvasLabels((s) => s.createLabel);
   const screenToCanvas = useCanvasTransform((s) => s.screenToCanvas);
 
-  const onCanvasDoubleClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target !== e.currentTarget) return;
-      const canvas = screenToCanvas(e.clientX, e.clientY);
-      createLabel("Label", canvas.x, canvas.y);
-    },
-    [screenToCanvas, createLabel],
-  );
+  const onCanvasDoubleClick = (e: React.MouseEvent) => {
+    if (e.target !== e.currentTarget) return;
+    const canvas = screenToCanvas(e.clientX, e.clientY);
+    createLabel("Label", canvas.x, canvas.y);
+  };
 
   // Minimized windows stay mounted (display:none in CanvasWindow) so their
   // iframe / terminal state survives a minimize -> restore round-trip. We
   // still derive a visible-windows list for empty-state and fit-all logic.
   const visibleWindows = windows.filter((w) => !w.minimized);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: this handler is a dependency of the keydown-listener effect below and re-binds the global window keydown listener on identity change. Inlining would detach/reattach the listener every render.
   const handleFitAll = useCallback(() => {
     const wins = useWindowManager.getState().windows.filter((w) => !w.minimized);
     const cRect = useCanvasTransform.getState().containerRect;

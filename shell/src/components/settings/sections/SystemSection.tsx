@@ -121,6 +121,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-bootstrap useEffect dependency array below; removing useCallback would re-run that effect on every render and refetch system info/health in a loop.
   const refreshReleaseData = useCallback(async (channel: ReleaseChannel) => {
     const requestId = releaseRequestIdRef.current + 1;
     releaseRequestIdRef.current = requestId;
@@ -194,7 +195,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
   const systemUpdatesLocked = !billingActive;
 
-  const waitForInstalledUpdate = useCallback(async (
+  const waitForInstalledUpdate = async (
     target: { channel?: ReleaseChannel; version?: string },
   ) => {
     const deadline = Date.now() + UPDATE_INSTALL_TIMEOUT_MS;
@@ -235,9 +236,9 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       }
     }
     return false;
-  }, [currentVersion, installedChannel]);
+  };
 
-  const startUpdate = useCallback(async (target: { channel?: ReleaseChannel; version?: string }) => {
+  const startUpdate = async (target: { channel?: ReleaseChannel; version?: string }) => {
     if (!billingActive) {
       setUpgradeError("System upgrades are locked until billing is active.");
       return;
@@ -288,17 +289,17 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       setUpgrading(false);
       setInstallingTarget(null);
     }
-  }, [billingActive, waitForInstalledUpdate]);
+  };
 
-  const handleChannelChange = useCallback((value: string) => {
+  const handleChannelChange = (value: string) => {
     const channel = coerceReleaseChannel(value);
     setSelectedChannel(channel);
     void refreshReleaseData(channel);
-  }, [refreshReleaseData]);
+  };
 
-  const handleUpgrade = useCallback(async () => {
+  const handleUpgrade = async () => {
     await startUpdate({ channel: selectedChannel });
-  }, [selectedChannel, startUpdate]);
+  };
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">

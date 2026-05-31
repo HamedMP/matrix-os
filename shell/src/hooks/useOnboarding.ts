@@ -229,6 +229,7 @@ export function useOnboarding(): OnboardingHook {
   // Play PCM16 audio (24kHz, mono, s16le) from base64
   // Immediately decodes and schedules each chunk on the Web Audio timeline —
   // no queue, no awaiting. The browser's audio thread handles gapless playback.
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const playAudio = useCallback((base64: string) => {
     // Lazy-init playback context at system default rate (typically 48kHz)
     if (!playCtxRef.current) {
@@ -291,6 +292,7 @@ export function useOnboarding(): OnboardingHook {
   }, []);
 
   // Word-by-word reveal: pull one word at a time from the queue
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const startWordReveal = useCallback(() => {
     if (revealIntervalRef.current) return; // already running
     revealIntervalRef.current = setInterval(() => {
@@ -310,6 +312,7 @@ export function useOnboarding(): OnboardingHook {
     }, WORD_REVEAL_MS);
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const enqueueWords = useCallback((text: string) => {
     const words = text.trim().split(/\s+/).filter(Boolean);
     if (words.length === 0) return;
@@ -317,6 +320,7 @@ export function useOnboarding(): OnboardingHook {
     startWordReveal();
   }, [startWordReveal]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const clearWordReveal = useCallback(() => {
     wordQueueRef.current = [];
     if (revealIntervalRef.current) {
@@ -326,6 +330,7 @@ export function useOnboarding(): OnboardingHook {
     setCurrentSubtitle("");
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const refreshReadiness = useCallback(() => {
     const requestSeq = readinessRefreshSeqRef.current + 1;
     readinessRefreshSeqRef.current = requestSeq;
@@ -353,6 +358,7 @@ export function useOnboarding(): OnboardingHook {
   }, [readiness]);
 
   // Send JSON message to gateway
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const send = useCallback((msg: Record<string, unknown>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
@@ -360,6 +366,7 @@ export function useOnboarding(): OnboardingHook {
   }, []);
 
   // Start mic capture via AudioWorklet
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const startMic = useCallback(async () => {
     let stream: MediaStream | null = null;
     let ctx: AudioContext | null = null;
@@ -423,6 +430,7 @@ export function useOnboarding(): OnboardingHook {
   }, [send]);
 
   // Handle incoming WebSocket messages
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const handleMessage = useCallback((evt: MessageEvent) => {
     let msg: Record<string, unknown>;
     try {
@@ -541,6 +549,7 @@ export function useOnboarding(): OnboardingHook {
     }
   }, [playAudio, refreshReadiness, enqueueWords, clearWordReveal]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const connect = useCallback(async (): Promise<WebSocket | null> => {
     // react-doctor-disable-next-line react-doctor/async-defer-await -- dependent await, cannot defer: the resolved wsUrl is the sole input to the `new WebSocket(wsUrl)` below, and the mountedRef bail-out must run after auth resolves so we never open a socket for an unmounted hook; there is no independent work to start before the URL is known.
     const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");
@@ -574,6 +583,7 @@ export function useOnboarding(): OnboardingHook {
   }, [refreshReadiness]);
 
   // Public API
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const start = useCallback((useVoice: boolean) => {
     setIsVoiceMode(useVoice);
 
@@ -612,19 +622,23 @@ export function useOnboarding(): OnboardingHook {
       });
   }, [connect, send, startMic]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const sendText = useCallback((text: string) => {
     send({ type: "text_input", text });
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const sendApiKey = useCallback((key: string) => {
     setApiKeyResult(null);
     send({ type: "set_api_key", apiKey: key });
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const confirmApps = useCallback((apps: string[]) => {
     send({ type: "confirm_apps", apps });
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const selectGoal = useCallback((goalId: OnboardingGoalId) => {
     const requestSeq = goalSelectionSeqRef.current + 1;
     goalSelectionSeqRef.current = requestSeq;
@@ -660,10 +674,12 @@ export function useOnboarding(): OnboardingHook {
       });
   }, [refreshReadiness, selectedGoalIds]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const chooseClaudeCode = useCallback(() => {
     send({ type: "choose_activation", path: "claude_code" });
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const finishInterview = useCallback(() => {
     send({ type: "confirm_apps", apps: [] });
   }, [send]);

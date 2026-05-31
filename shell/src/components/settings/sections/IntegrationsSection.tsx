@@ -107,6 +107,7 @@ export function IntegrationsSection() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by two useEffect dependency arrays (the mount-load effect and the WebSocket-listener effect); removing useCallback would re-run both effects on every render and reopen the websocket in a loop.
   const loadData = useCallback(async () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `loading` on every path; the code is correct and the finalizer must run whether the loads resolve, reject, or throw.
     try {
@@ -161,7 +162,7 @@ export function IntegrationsSection() {
   // sync -- user intent is "pull whatever Pipedream has, I just authorized
   // something." Reuses the same /sync endpoint.
   const [refreshing, setRefreshing] = useState(false);
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     setRefreshing(true);
     setError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `refreshing` on every path; the code is correct and the finalizer must run whether the sync resolves, rejects, or throws.
@@ -191,7 +192,7 @@ export function IntegrationsSection() {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount load of available + connected integrations from the gateway (external async read); state lands in the awaited fetch results inside loadData, which is the documented allowed pattern.
@@ -239,7 +240,7 @@ export function IntegrationsSection() {
     };
   }, [loadData]);
 
-  const handleConnect = useCallback(async (serviceId: string, label?: string) => {
+  const handleConnect = async (serviceId: string, label?: string) => {
     setConnecting(serviceId);
     setError(null);
     try {
@@ -326,7 +327,7 @@ export function IntegrationsSection() {
       setError("Failed to initiate connection");
       setConnecting(null);
     }
-  }, [connected]);
+  };
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown must clear whichever poll interval/timeout is live at cleanup time; pollRef/pollTimeoutRef are reassigned by handleConnect, so snapshotting them at mount would always capture the initial null and never clear an active poll.
   useEffect(() => {
@@ -342,7 +343,7 @@ export function IntegrationsSection() {
     };
   }, []);
 
-  const handleDisconnect = useCallback(async (id: string) => {
+  const handleDisconnect = async (id: string) => {
     setDisconnecting(id);
     setConfirmDisconnect(null);
     setError(null);
@@ -368,12 +369,12 @@ export function IntegrationsSection() {
     } finally {
       setDisconnecting(null);
     }
-  }, []);
+  };
 
   // UI2 fix: rename a connected account. Optimistically updates the local
   // list on success so the UI reflects the new label without waiting for a
   // refetch. On failure, reverts and surfaces the error.
-  const handleRename = useCallback(async (id: string) => {
+  const handleRename = async (id: string) => {
     const trimmed = renameDraft.trim();
     if (!trimmed) {
       setRenamingId(null);
@@ -413,9 +414,9 @@ export function IntegrationsSection() {
     } finally {
       setSavingRename(null);
     }
-  }, [renameDraft]);
+  };
 
-  const handleCheckStatus = useCallback(async (id: string) => {
+  const handleCheckStatus = async (id: string) => {
     setCheckingStatus(id);
     setError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `checkingStatus` on every path; the code is correct and the finalizer must run whether the status check resolves, rejects, or throws.
@@ -442,7 +443,7 @@ export function IntegrationsSection() {
     } finally {
       setCheckingStatus(null);
     }
-  }, []);
+  };
 
   const connectedServiceIds = new Set(connected.map((c) => c.service));
 

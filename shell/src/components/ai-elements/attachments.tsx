@@ -2,7 +2,7 @@
 
 // Inspired by AI Elements attachments pattern, integrated with Matrix OS bridge
 import type { HTMLAttributes } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -148,7 +148,7 @@ export interface UseAttachmentsReturn {
 export function useAttachments(): UseAttachmentsReturn {
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
 
-  const addFiles = useCallback((files: FileList | File[]) => {
+  const addFiles = (files: FileList | File[]) => {
     const fileArray = Array.from(files);
     const newAttachments: AttachmentFile[] = [];
 
@@ -161,9 +161,9 @@ export function useAttachments(): UseAttachmentsReturn {
     }
 
     setAttachments((prev) => [...prev, ...newAttachments]);
-  }, []);
+  };
 
-  const removeFile = useCallback((id: string) => {
+  const removeFile = (id: string) => {
     setAttachments((prev) => {
       const att = prev.find((a) => a.id === id);
       if (att?.preview) {
@@ -171,18 +171,18 @@ export function useAttachments(): UseAttachmentsReturn {
       }
       return prev.filter((a) => a.id !== id);
     });
-  }, []);
+  };
 
-  const clearAll = useCallback(() => {
+  const clearAll = () => {
     setAttachments((prev) => {
       for (const att of prev) {
         if (att.preview) URL.revokeObjectURL(att.preview);
       }
       return [];
     });
-  }, []);
+  };
 
-  const getBase64Files = useCallback(async () => {
+  const getBase64Files = async () => {
     return Promise.all(
       attachments.map(async (att) => ({
         name: att.file.name,
@@ -190,7 +190,7 @@ export function useAttachments(): UseAttachmentsReturn {
         data: await fileToBase64(att.file),
       })),
     );
-  }, [attachments]);
+  };
 
   return { attachments, addFiles, removeFile, clearAll, getBase64Files };
 }
@@ -208,19 +208,16 @@ export function AttachmentButton({
 }: AttachmentButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleAttachClick = useCallback(() => {
+  const handleAttachClick = () => {
     inputRef.current?.click();
-  }, []);
+  };
 
-  const handleFileInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files.length > 0) {
-        onFilesSelected(e.target.files);
-        e.target.value = "";
-      }
-    },
-    [onFilesSelected],
-  );
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      onFilesSelected(e.target.files);
+      e.target.value = "";
+    }
+  };
 
   return (
     <>

@@ -69,6 +69,7 @@ export function useTaskBoard() {
       });
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const handleMessage = useCallback((msg: ServerMessage) => {
     if (msg.type === "task:created") {
       setTasks((prev) => [
@@ -105,10 +106,12 @@ export function useTaskBoard() {
     return subscribe(handleMessage);
   }, [subscribe, handleMessage]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const selectTask = useCallback((id: string | null) => {
     setSelectedTaskId(id);
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const addTask = useCallback(async (input: string) => {
     await fetch(`${GATEWAY_URL}/api/tasks`, {
       method: "POST",

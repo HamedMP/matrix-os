@@ -25,6 +25,7 @@ export function useFileWatcherPattern(
   handler: FileChangeHandler,
 ) {
   useFileWatcher(
+    // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
     useCallback(
       (path, event) => {
         if (pattern.test(path)) {

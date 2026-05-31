@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState, useRef, useMemo } from "react";
+import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
@@ -195,7 +195,7 @@ function LauncherGrid({
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
 
-  const { mainApps, generatedApps } = useMemo(() => {
+  const { mainApps, generatedApps } = (() => {
     const main: AppEntry[] = [];
     const gen: AppEntry[] = [];
     for (const app of apps) {
@@ -206,7 +206,7 @@ function LauncherGrid({
       mainApps: applyOrder(main, dockOrder?.systemApps, appLaunchTimes),
       generatedApps: applyOrder(gen, dockOrder?.userApps, appLaunchTimes),
     };
-  }, [apps, dockOrder, appLaunchTimes]);
+  })();
 
   // Launcher is an overview — dock (Desktop.tsx) is the reorder surface, which
   // uses a single-row flex layout where framer-motion Reorder's axis math works.

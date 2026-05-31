@@ -71,6 +71,7 @@ export function CronSection() {
     scheduleValue: "",
   });
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-load useEffect dependency array below; removing useCallback would re-run the effect on every render and refetch the cron jobs in a loop.
   const loadJobs = useCallback(async () => {
     try {
       const r = await fetch(`${GATEWAY}/api/cron`, {

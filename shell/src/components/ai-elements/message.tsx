@@ -24,7 +24,6 @@ import {
   createContext,
   memo,
   use,
-  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -153,37 +152,31 @@ export const MessageBranch = ({
   const [currentBranch, setCurrentBranch] = useState(defaultBranch);
   const [branches, setBranches] = useState<ReactElement[]>([]);
 
-  const handleBranchChange = useCallback(
-    (newBranch: number) => {
-      setCurrentBranch(newBranch);
-      onBranchChange?.(newBranch);
-    },
-    [onBranchChange]
-  );
+  const handleBranchChange = (newBranch: number) => {
+    setCurrentBranch(newBranch);
+    onBranchChange?.(newBranch);
+  };
 
-  const goToPrevious = useCallback(() => {
+  const goToPrevious = () => {
     const newBranch =
       currentBranch > 0 ? currentBranch - 1 : branches.length - 1;
     handleBranchChange(newBranch);
-  }, [currentBranch, branches.length, handleBranchChange]);
+  };
 
-  const goToNext = useCallback(() => {
+  const goToNext = () => {
     const newBranch =
       currentBranch < branches.length - 1 ? currentBranch + 1 : 0;
     handleBranchChange(newBranch);
-  }, [currentBranch, branches.length, handleBranchChange]);
+  };
 
-  const contextValue = useMemo<MessageBranchContextType>(
-    () => ({
-      branches,
-      currentBranch,
-      goToNext,
-      goToPrevious,
-      setBranches,
-      totalBranches: branches.length,
-    }),
-    [branches, currentBranch, goToNext, goToPrevious]
-  );
+  const contextValue: MessageBranchContextType = {
+    branches,
+    currentBranch,
+    goToNext,
+    goToPrevious,
+    setBranches,
+    totalBranches: branches.length,
+  };
 
   return (
     <MessageBranchContext.Provider value={contextValue}>
@@ -202,6 +195,7 @@ export const MessageBranchContent = ({
   ...props
 }: MessageBranchContentProps) => {
   const { currentBranch, setBranches, branches } = useMessageBranch();
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the branch-sync useEffect dependency array below ([childrenArray, branches, setBranches]); keep an explicit useMemo so the effect only re-runs (and calls setBranches) when `children` actually changes, not on every render.
   const childrenArray = useMemo(
     // react-doctor-disable-next-line react-doctor/no-event-handler -- pure data normalization of the `children` prop into an array for rendering, not a DOM event handler; there is no side effect to move to a parent.
     () => (Array.isArray(children) ? children : [children]),
@@ -325,6 +319,7 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
+// react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- load-bearing markdown-render memo: Streamdown re-parses and re-renders the entire markdown tree on every render, and this component is rendered per chat message. The custom comparator skips re-render unless the markdown source (`children`) changes, deliberately ignoring `className`/other prop identity churn so streaming deltas to sibling messages do not re-parse settled messages. The compiler's auto-memoization keys on all props and would not provide this children-only bailout.
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown

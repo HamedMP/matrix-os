@@ -80,6 +80,7 @@ export function AppearanceSection() {
     if (bg.type === "wallpaper") setSelectedWallpaper(bg.name);
   }
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-load useEffect dependency array below; removing useCallback would re-run the effect on every render and refetch the wallpaper list in a loop.
   const fetchWallpapers = useCallback(async () => {
     try {
       const res = await fetch(`${getGatewayUrl()}/api/settings/wallpapers`, { signal: AbortSignal.timeout(10_000) });
@@ -114,12 +115,9 @@ export function AppearanceSection() {
     await saveDesktopConfig({ ...config, dock: next });
   }
 
-  const saveBg = useCallback(
-    async (background: DesktopConfig["background"]) => {
-      await saveDesktopConfig({ ...config, background });
-    },
-    [config],
-  );
+  const saveBg = async (background: DesktopConfig["background"]) => {
+    await saveDesktopConfig({ ...config, background });
+  };
 
   async function applyPreset(id: string) {
     const preset = PRESETS.find((p) => p.id === id);

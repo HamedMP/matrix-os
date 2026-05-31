@@ -60,6 +60,7 @@ export function CanvasMinimap() {
     canvas.height = LG_H * dpr;
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: `draw` is passed to useCanvasTransform/useWindowManager/useCanvasGroups `.subscribe(draw)` and is the dependency of the subscription effect below. A fresh identity each render would re-subscribe every render (and leak/replace the store listeners).
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -150,70 +151,61 @@ export function CanvasMinimap() {
     };
   }, [draw]);
 
-  const navigateToPoint = useCallback(
-    (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
+  const navigateToPoint = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-      const rect = canvas.getBoundingClientRect();
-      const mx = clientX - rect.left;
-      const my = clientY - rect.top;
+    const rect = canvas.getBoundingClientRect();
+    const mx = clientX - rect.left;
+    const my = clientY - rect.top;
 
-      const { zoom, screenToCanvas, containerRect } = useCanvasTransform.getState();
-      const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
-      const cLeft = containerRect?.left ?? 0;
-      const cTop = containerRect?.top ?? 0;
-      const cW = containerRect?.width ?? window.innerWidth;
-      const cH = containerRect?.height ?? window.innerHeight;
-      const topLeft = screenToCanvas(cLeft, cTop);
-      const bottomRight = screenToCanvas(cLeft + cW, cTop + cH);
-      const viewportRect = {
-        x: topLeft.x,
-        y: topLeft.y,
-        w: bottomRight.x - topLeft.x,
-        h: bottomRight.y - topLeft.y,
-      };
+    const { zoom, screenToCanvas, containerRect } = useCanvasTransform.getState();
+    const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
+    const cLeft = containerRect?.left ?? 0;
+    const cTop = containerRect?.top ?? 0;
+    const cW = containerRect?.width ?? window.innerWidth;
+    const cH = containerRect?.height ?? window.innerHeight;
+    const topLeft = screenToCanvas(cLeft, cTop);
+    const bottomRight = screenToCanvas(cLeft + cW, cTop + cH);
+    const viewportRect = {
+      x: topLeft.x,
+      y: topLeft.y,
+      w: bottomRight.x - topLeft.x,
+      h: bottomRight.y - topLeft.y,
+    };
 
-      const world = computeWorldBounds(windows, viewportRect);
-      if (world.width === 0 || world.height === 0) return;
+    const world = computeWorldBounds(windows, viewportRect);
+    if (world.width === 0 || world.height === 0) return;
 
-      const scale = Math.min(
-        (LG_W - 8) / world.width,
-        (LG_H - 8) / world.height,
-      );
-      const offsetX = (LG_W - world.width * scale) / 2;
-      const offsetY = (LG_H - world.height * scale) / 2;
+    const scale = Math.min(
+      (LG_W - 8) / world.width,
+      (LG_H - 8) / world.height,
+    );
+    const offsetX = (LG_W - world.width * scale) / 2;
+    const offsetY = (LG_H - world.height * scale) / 2;
 
-      // Convert minimap coords to canvas coords
-      const canvasX = (mx - offsetX) / scale + world.minX;
-      const canvasY = (my - offsetY) / scale + world.minY;
+    // Convert minimap coords to canvas coords
+    const canvasX = (mx - offsetX) / scale + world.minX;
+    const canvasY = (my - offsetY) / scale + world.minY;
 
-      // Center viewport on this point
-      const panX = cW / (2 * zoom) - canvasX;
-      const panY = cH / (2 * zoom) - canvasY;
-      useCanvasTransform.getState().setPan(panX, panY);
-    },
-    [],
-  );
+    // Center viewport on this point
+    const panX = cW / (2 * zoom) - canvasX;
+    const panY = cH / (2 * zoom) - canvasY;
+    useCanvasTransform.getState().setPan(panX, panY);
+  };
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      isDragging.current = true;
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-      navigateToPoint(e.clientX, e.clientY);
-    },
-    [navigateToPoint],
-  );
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDragging.current = true;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    navigateToPoint(e.clientX, e.clientY);
+  };
 
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!isDragging.current) return;
-      navigateToPoint(e.clientX, e.clientY);
-    },
-    [navigateToPoint],
-  );
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!isDragging.current) return;
+    navigateToPoint(e.clientX, e.clientY);
+  };
 
   return (
     <div

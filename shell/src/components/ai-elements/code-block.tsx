@@ -20,9 +20,7 @@ import { cn } from "@/lib/utils";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import {
   createContext,
-  memo,
   use,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -257,61 +255,47 @@ const LINE_NUMBER_CLASSES = cn(
   "before:select-none"
 );
 
-const CodeBlockBody = memo(
-  ({
-    tokenized,
-    showLineNumbers,
-    className,
-  }: {
-    tokenized: TokenizedCode;
-    showLineNumbers: boolean;
-    className?: string;
-  }) => {
-    const preStyle = useMemo(
-      () => ({
-        backgroundColor: tokenized.bg,
-        color: tokenized.fg,
-      }),
-      [tokenized.bg, tokenized.fg]
-    );
+const CodeBlockBody = ({
+  tokenized,
+  showLineNumbers,
+  className,
+}: {
+  tokenized: TokenizedCode;
+  showLineNumbers: boolean;
+  className?: string;
+}) => {
+  const preStyle = {
+    backgroundColor: tokenized.bg,
+    color: tokenized.fg,
+  };
 
-    const keyedLines = useMemo(
-      () => addKeysToTokens(tokenized.tokens),
-      [tokenized.tokens]
-    );
+  const keyedLines = addKeysToTokens(tokenized.tokens);
 
-    return (
-      <pre
+  return (
+    <pre
+      className={cn(
+        "dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)] m-0 p-4 text-sm",
+        className
+      )}
+      style={preStyle}
+    >
+      <code
         className={cn(
-          "dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)] m-0 p-4 text-sm",
-          className
+          "font-mono text-sm",
+          showLineNumbers && "[counter-increment:line_0] [counter-reset:line]"
         )}
-        style={preStyle}
       >
-        <code
-          className={cn(
-            "font-mono text-sm",
-            showLineNumbers && "[counter-increment:line_0] [counter-reset:line]"
-          )}
-        >
-          {keyedLines.map((keyedLine) => (
-            <LineSpan
-              key={keyedLine.key}
-              keyedLine={keyedLine}
-              showLineNumbers={showLineNumbers}
-            />
-          ))}
-        </code>
-      </pre>
-    );
-  },
-  (prevProps, nextProps) =>
-    prevProps.tokenized === nextProps.tokenized &&
-    prevProps.showLineNumbers === nextProps.showLineNumbers &&
-    prevProps.className === nextProps.className
-);
-
-CodeBlockBody.displayName = "CodeBlockBody";
+        {keyedLines.map((keyedLine) => (
+          <LineSpan
+            key={keyedLine.key}
+            keyedLine={keyedLine}
+            showLineNumbers={showLineNumbers}
+          />
+        ))}
+      </code>
+    </pre>
+  );
+};
 
 export const CodeBlockContainer = ({
   className,
@@ -393,6 +377,7 @@ export const CodeBlockContent = ({
   showLineNumbers?: boolean;
 }) => {
   // Memoized raw tokens for immediate display
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the syntax-highlight useEffect dependency array below ([code, language, rawTokens]); keep an explicit useMemo so the async highlighting subscription is not torn down and re-subscribed on every render, only when `code` actually changes.
   const rawTokens = useMemo(() => createRawTokens(code), [code]);
 
   // Try to get cached result synchronously, otherwise use raw tokens
@@ -434,7 +419,7 @@ export const CodeBlock = ({
   children,
   ...props
 }: CodeBlockProps) => {
-  const contextValue = useMemo(() => ({ code }), [code]);
+  const contextValue = { code };
 
   return (
     <CodeBlockContext.Provider value={contextValue}>
@@ -469,7 +454,7 @@ export const CodeBlockCopyButton = ({
   const timeoutRef = useRef<number>(0);
   const { code } = use(CodeBlockContext);
 
-  const copyToClipboard = useCallback(async () => {
+  const copyToClipboard = async () => {
     if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {
       onError?.(new Error("Clipboard API not available"));
       return;
@@ -488,7 +473,7 @@ export const CodeBlockCopyButton = ({
     } catch (error) {
       onError?.(error as Error);
     }
-  }, [code, onCopy, onError, timeout, isCopied]);
+  };
 
   useEffect(
     () => () => {

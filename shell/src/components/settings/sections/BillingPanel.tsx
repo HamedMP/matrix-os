@@ -737,6 +737,7 @@ export function BillingPanel({
   const selectedRegion =
     MATRIX_BILLING_REGIONS.find((region) => region.featureSlug === selectedRegionSlug) ??
     MATRIX_BILLING_REGIONS[0]!;
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array below (the ref-sync effect keyed on telemetryProperties); removing useMemo would re-run that effect on every render.
   const telemetryProperties = useMemo<BillingTelemetryProperties>(
     () => ({
       mode,

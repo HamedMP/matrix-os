@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { EyeIcon, PencilIcon, SaveIcon } from "lucide-react";
 
@@ -28,15 +28,15 @@ export function MarkdownEditor({ content, onSave, placeholder, saving }: Markdow
     setDirty(false);
   }
 
-  const handleMarkdownChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleMarkdownChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value);
     setDirty(e.target.value !== content);
-  }, [content]);
+  };
 
-  const handleSave = useCallback(async () => {
+  const handleSave = async () => {
     await onSave(value);
     setDirty(false);
-  }, [value, onSave]);
+  };
 
   return (
     <div className="flex flex-col border border-border rounded-lg overflow-hidden">

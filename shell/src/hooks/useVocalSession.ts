@@ -95,6 +95,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
   const revealIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const WORD_REVEAL_MS = 300;
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const startWordReveal = useCallback(() => {
     if (revealIntervalRef.current) return;
     revealIntervalRef.current = setInterval(() => {
@@ -112,6 +113,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     }, WORD_REVEAL_MS);
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const enqueueWords = useCallback((text: string) => {
     const words = text.trim().split(/\s+/).filter(Boolean);
     if (words.length === 0) return;
@@ -119,6 +121,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     startWordReveal();
   }, [startWordReveal]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const clearWordReveal = useCallback(() => {
     wordQueueRef.current = [];
     if (revealIntervalRef.current) {
@@ -128,6 +131,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     setSubtitle("");
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const playAudio = useCallback((base64: string) => {
     if (!playCtxRef.current) {
       playCtxRef.current = new AudioContext();
@@ -178,12 +182,14 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const send = useCallback((msg: Record<string, unknown>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
     }
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const startMic = useCallback(async () => {
     let stream: MediaStream | null = null;
     let ctx: AudioContext | null = null;
@@ -243,6 +249,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     }
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const stopMic = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -254,6 +261,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     micCtxRef.current = null;
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const handleMessage = useCallback((evt: MessageEvent) => {
     let msg: VocalWireMessage;
     try {
@@ -371,6 +379,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     };
   }, [enabled, handleMessage, send, startMic, stopMic]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const notifyDelegationComplete = useCallback(
     (info: { kind: "create_app"; description: string; success: boolean; newAppName?: string; errorMessage?: string }) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) return;
@@ -388,6 +397,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     [],
   );
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const notifyExecuteResult = useCallback(
     (result: { kind: "open_app"; name: string; success: boolean; resolvedName?: string }) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) return;
@@ -404,6 +414,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     [],
   );
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const pushDelegationStatus = useCallback(
     (snapshot: {
       description: string;

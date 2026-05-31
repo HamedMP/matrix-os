@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -72,14 +72,11 @@ export function ApprovalDialog() {
     };
   }, [request]);
 
-  const respond = useCallback(
-    (approved: boolean) => {
-      if (!request) return;
-      send({ type: "approval_response", id: request.id, approved } as any);
-      setRequest(null);
-    },
-    [request, send],
-  );
+  const respond = (approved: boolean) => {
+    if (!request) return;
+    send({ type: "approval_response", id: request.id, approved } as any);
+    setRequest(null);
+  };
 
   return (
     <Dialog open={!!request} onOpenChange={(open) => { if (!open) respond(false); }}>

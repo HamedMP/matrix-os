@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { saveDesktopConfig, useDesktopConfig, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
@@ -64,12 +64,9 @@ export function BackgroundEditor() {
     }
   }
 
-  const save = useCallback(
-    async (background: DesktopConfig["background"]) => {
-      await saveDesktopConfig({ ...config, background });
-    },
-    [config],
-  );
+  const save = async (background: DesktopConfig["background"]) => {
+    await saveDesktopConfig({ ...config, background });
+  };
 
   async function selectType(type: BgType) {
     setBgType(type);

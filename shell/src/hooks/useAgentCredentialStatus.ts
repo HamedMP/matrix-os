@@ -26,6 +26,7 @@ export function useAgentCredentialStatus() {
   const [status, setStatus] = useState<AgentCredentialStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const refresh = useCallback(() => {
     void fetch("/api/agents/credentials/status", {
       headers: { Accept: "application/json" },
@@ -46,6 +47,7 @@ export function useAgentCredentialStatus() {
       });
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const verify = useCallback((agent: Exclude<AgentId, "hermes">) => {
     void fetch(`/api/agents/credentials/${agent}/verify`, {
       method: "POST",

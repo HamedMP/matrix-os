@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -356,10 +356,10 @@ export function TerminalPane({
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   allowRemoteResizeRef.current = allowRemoteResize;
 
-  const handleFocus = useCallback(() => {
+  const handleFocus = () => {
     onFocus?.(paneId);
     (termRef.current as { focus?: () => void } | null)?.focus?.();
-  }, [paneId, onFocus]);
+  };
 
   useEffect(() => {
     isClosingRef.current = !!isClosing;

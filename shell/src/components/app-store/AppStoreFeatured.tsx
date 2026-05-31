@@ -24,13 +24,14 @@ export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeatu
   // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- must stay state, not a ref: `hovering` is a dependency of the autoplay effect below, so toggling it has to re-run that effect to pause/resume the 5s carousel timer. A ref would not re-trigger the effect and would break pause-on-hover. The rule only inspects JSX and misses the effect-dependency read.
   const [hovering, setHovering] = useState(false);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the autoplay useEffect dependency array below; removing useCallback would re-create the carousel interval on every render.
   const next = useCallback(() => {
     setCurrent((i) => (i + 1) % entries.length);
   }, [entries.length]);
 
-  const prev = useCallback(() => {
+  const prev = () => {
     setCurrent((i) => (i - 1 + entries.length) % entries.length);
-  }, [entries.length]);
+  };
 
   useEffect(() => {
     if (entries.length <= 1 || hovering) return;

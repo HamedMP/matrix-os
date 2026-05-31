@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/chat";
 import { RichContent } from "@/components/ui-blocks";
 import {
@@ -63,58 +63,49 @@ export function ResponseOverlay({
     }
   }, [messages.length, lastMessageContent]);
 
-  const getDefaultPos = useCallback(
-    () => ({
-      x: (window.innerWidth - size.width) / 2,
-      y: window.innerHeight - 180 - size.height,
-    }),
-    [size.width, size.height],
-  );
+  const getDefaultPos = () => ({
+    x: (window.innerWidth - size.width) / 2,
+    y: window.innerHeight - 180 - size.height,
+  });
 
-  const onDragStart = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      const current = pos ?? getDefaultPos();
-      dragRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: current.x,
-        origY: current.y,
-      };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [pos, getDefaultPos],
-  );
+  const onDragStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const current = pos ?? getDefaultPos();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: current.x,
+      origY: current.y,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
 
-  const onDragMove = useCallback((e: React.PointerEvent) => {
+  const onDragMove = (e: React.PointerEvent) => {
     if (!dragRef.current) return;
     setPos({
       x: dragRef.current.origX + (e.clientX - dragRef.current.startX),
       y: dragRef.current.origY + (e.clientY - dragRef.current.startY),
     });
-  }, []);
+  };
 
-  const onDragEnd = useCallback(() => {
+  const onDragEnd = () => {
     dragRef.current = null;
-  }, []);
+  };
 
-  const onResizeStart = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!pos) setPos(getDefaultPos());
-      resizeRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origW: size.width,
-        origH: size.height,
-      };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [pos, size, getDefaultPos],
-  );
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!pos) setPos(getDefaultPos());
+    resizeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origW: size.width,
+      origH: size.height,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
 
-  const onResizeMove = useCallback((e: React.PointerEvent) => {
+  const onResizeMove = (e: React.PointerEvent) => {
     if (!resizeRef.current) return;
     setSize({
       width: Math.max(
@@ -126,11 +117,11 @@ export function ResponseOverlay({
         resizeRef.current.origH + (e.clientY - resizeRef.current.startY),
       ),
     });
-  }, []);
+  };
 
-  const onResizeEnd = useCallback(() => {
+  const onResizeEnd = () => {
     resizeRef.current = null;
-  }, []);
+  };
 
   if (!show) return null;
 
@@ -236,16 +227,13 @@ export function ResponseOverlay({
 
 function QuickInput({ onSubmit, busy }: { onSubmit: (text: string) => void; busy: boolean }) {
   const [value, setValue] = useState("");
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const text = value.trim();
-      if (!text) return;
-      onSubmit(text);
-      setValue("");
-    },
-    [value, onSubmit],
-  );
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = value.trim();
+    if (!text) return;
+    onSubmit(text);
+    setValue("");
+  };
 
   return (
     <form onSubmit={handleSubmit} className="flex items-center gap-1.5 border-t border-border/50 px-2 py-1.5">

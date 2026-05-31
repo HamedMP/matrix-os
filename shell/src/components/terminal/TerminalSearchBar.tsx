@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import { useState, useRef, useEffect, type CSSProperties } from "react";
 import type { Theme } from "@/hooks/useTheme";
 
 const CONTAINER_BASE_STYLE: CSSProperties = {
@@ -72,26 +72,26 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
     return () => disposable.dispose();
   }, [searchAddon]);
 
-  const findNext = useCallback(() => {
+  const findNext = () => {
     if (!query) return;
     searchAddon.findNext(query, { caseSensitive });
-  }, [searchAddon, query, caseSensitive]);
+  };
 
-  const findPrevious = useCallback(() => {
+  const findPrevious = () => {
     if (!query) return;
     searchAddon.findPrevious(query, { caseSensitive });
-  }, [searchAddon, query, caseSensitive]);
+  };
 
-  const close = useCallback(() => {
+  const close = () => {
     searchAddon.clearDecorations();
     setQuery("");
     setResultIndex(-1);
     setResultCount(0);
     setHasSearched(false);
     onClose();
-  }, [searchAddon, onClose]);
+  };
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       close();
       return;
@@ -104,7 +104,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
       }
       e.preventDefault();
     }
-  }, [close, findNext, findPrevious]);
+  };
 
   // This effect synchronizes the controlled query/caseSensitive inputs with the
   // external xterm search addon (an imperative system). The setState resets are

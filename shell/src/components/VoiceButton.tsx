@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
 
@@ -21,13 +20,13 @@ export function VoiceButton({
   onStart,
   onStop,
 }: VoiceButtonProps) {
-  const handleToggleRecording = useCallback(() => {
+  const handleToggleRecording = () => {
     if (isRecording) {
       onStop();
     } else {
       onStart();
     }
-  }, [isRecording, onStart, onStop]);
+  };
 
   const title = !isSupported
     ? "Voice input not supported in this browser"

@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback } from "react";
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasLabels } from "@/stores/canvas-labels";
@@ -28,7 +27,7 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
   const showTitles = useCanvasSettings((s) => s.showTitles);
   const toggleShowTitles = useCanvasSettings((s) => s.toggleShowTitles);
 
-  const onFitAll = useCallback(() => {
+  const onFitAll = () => {
     const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
     const cRect = useCanvasTransform.getState().containerRect;
     fitAll(
@@ -36,25 +35,22 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
       cRect?.width ?? window.innerWidth,
       cRect?.height ?? window.innerHeight,
     );
-  }, [fitAll]);
+  };
 
   const createLabel = useCanvasLabels((s) => s.createLabel);
   const screenToCanvas = useCanvasTransform((s) => s.screenToCanvas);
 
-  const onAddLabel = useCallback(() => {
+  const onAddLabel = () => {
     const cRect = useCanvasTransform.getState().containerRect;
     const cx = (cRect?.left ?? 0) + (cRect?.width ?? window.innerWidth) / 2;
     const cy = (cRect?.top ?? 0) + (cRect?.height ?? window.innerHeight) / 2;
     const center = screenToCanvas(cx, cy);
     createLabel("Label", center.x, center.y);
-  }, [screenToCanvas, createLabel]);
+  };
 
-  const onSliderChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setZoom(parseFloat(e.target.value));
-    },
-    [setZoom],
-  );
+  const onSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setZoom(parseFloat(e.target.value));
+  };
 
   return (
     <>

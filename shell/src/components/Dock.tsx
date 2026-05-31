@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { Button } from "@/components/ui/button";
 
@@ -12,22 +12,20 @@ interface DockItem {
 export function Dock() {
   const [apps, setApps] = useState<DockItem[]>([]);
 
-  useFileWatcher(
-    useCallback((path: string, event: string) => {
-      if (!path.startsWith("apps/")) return;
+  useFileWatcher((path: string, event: string) => {
+    if (!path.startsWith("apps/")) return;
 
-      const name = path.replace("apps/", "").replace(".html", "");
+    const name = path.replace("apps/", "").replace(".html", "");
 
-      if (event === "add") {
-        setApps((prev) => {
-          if (prev.some((a) => a.path === path)) return prev;
-          return [...prev, { name, path }];
-        });
-      } else if (event === "unlink") {
-        setApps((prev) => prev.filter((a) => a.path !== path));
-      }
-    }, []),
-  );
+    if (event === "add") {
+      setApps((prev) => {
+        if (prev.some((a) => a.path === path)) return prev;
+        return [...prev, { name, path }];
+      });
+    } else if (event === "unlink") {
+      setApps((prev) => prev.filter((a) => a.path !== path));
+    }
+  });
 
   if (apps.length === 0) return null;
 

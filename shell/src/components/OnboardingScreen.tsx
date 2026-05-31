@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
@@ -111,7 +111,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
     });
   }
 
-  const handleStart = useCallback((useVoice: boolean) => {
+  const handleStart = (useVoice: boolean) => {
     // Phase 1: dim into light (text glows and screen fades to white/black)
     setPhase("dimming");
     setTimeout(() => {
@@ -125,9 +125,9 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
         setPhase("revealing");
       }, 400);
     }, 1200);
-  }, [ob.start]);
+  };
 
-  const handleTalkToMe = useCallback(async () => {
+  const handleTalkToMe = async () => {
     if (mic.state === "granted") {
       handleStart(true);
       return;
@@ -140,17 +140,17 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
     const granted = await mic.requestAccess();
     if (granted) handleStart(true);
     else setShowMicDialog(true);
-  }, [handleStart, mic.state, mic.requestAccess]);
+  };
 
-  const handleMicAllow = useCallback(async () => {
+  const handleMicAllow = async () => {
     const granted = await mic.requestAccess();
     setShowMicDialog(false);
     if (granted) {
       handleStart(true);
     }
-  }, [handleStart, mic.requestAccess]);
+  };
 
-  const handleContinue = useCallback(() => {
+  const handleContinue = () => {
     setContinueExiting(true);
     if (continueTimerRef.current !== null) {
       window.clearTimeout(continueTimerRef.current);
@@ -165,7 +165,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
         });
       });
     }, 520);
-  }, []);
+  };
 
   // ── Voice conversation screen (editorial style) ─────────────
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";

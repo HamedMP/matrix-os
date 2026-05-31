@@ -19,7 +19,7 @@
  */
 
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatContext } from "@/stores/chat-context";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -197,6 +197,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
   const openApp = useCallback((app: MobileApp) => {
     setOpenStack((prev) => {
       // Bring existing instance to the front rather than open a duplicate
@@ -233,7 +234,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     openApp(app);
   }, [apps, launchAppPath, openApp]);
 
-  const closeApp = useCallback((openId: string) => {
+  const closeApp = (openId: string) => {
     setOpenStack((prev) => {
       const next = prev.filter((o) => o.id !== openId);
       if (next.length === 0) {
@@ -241,21 +242,19 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
       }
       return next;
     });
-  }, []);
+  };
 
-  const closeAll = useCallback(() => {
+  const closeAll = () => {
     setOpenStack([]);
     setView("launcher");
-  }, []);
+  };
 
-  const showSwitcher = useCallback(() => {
+  const showSwitcher = () => {
     if (openStack.length === 0) return;
     setView("switcher");
-  }, [openStack.length]);
+  };
 
-  const pinnedDock = useMemo(() => {
-    return apps.filter((a) => ["terminal", "files", "chat"].includes(a.id)).slice(0, 4);
-  }, [apps]);
+  const pinnedDock = apps.filter((a) => ["terminal", "files", "chat"].includes(a.id)).slice(0, 4);
 
   // Touch: swipe from the bottom edge up by >40px when an app is foregrounded
   // opens the app switcher (matches iOS swipe-up). Done with pointer events

@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -14,7 +13,7 @@ import {
 import { Reasoning } from "@/components/ai-elements/reasoning";
 import { extractThinking } from "@/components/ai-elements/reasoning-utils";
 import { SuggestionChips } from "@/components/ai-elements/suggestions";
-import { DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions-utils";
+import { getMessageSuggestions } from "@/components/ai-elements/suggestions-utils";
 import { Plan } from "@/components/ai-elements/plan";
 import { parsePlan } from "@/components/ai-elements/plan-utils";
 import { Task } from "@/components/ai-elements/task";
@@ -112,7 +111,7 @@ export function ChatPanel({
 
       <Conversation>
         <ConversationContent className="gap-4 px-4 py-3">
-          {useMemo(() => groupMessages(messages), [messages]).map((group) => {
+          {groupMessages(messages).map((group) => {
             if (group.type === "tool_group") {
               return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
             }
@@ -216,20 +215,7 @@ function ChatSuggestions({
   messages: ChatMessage[];
   onSelect: (text: string) => void;
 }) {
-  const suggestions = useMemo(() => {
-    if (messages.length === 0) return DEFAULT_SUGGESTIONS;
-
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((m) => m.role === "assistant" && !m.tool);
-
-    if (lastAssistant) {
-      const parsed = parseSuggestions(lastAssistant.content);
-      if (parsed.length > 0) return parsed;
-    }
-
-    return messages.length < 3 ? DEFAULT_SUGGESTIONS : [];
-  }, [messages]);
+  const suggestions = getMessageSuggestions(messages);
 
   if (suggestions.length === 0) return null;
 
