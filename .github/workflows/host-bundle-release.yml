@@ -88,17 +88,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ github.sha }}
+          CI_WORKFLOW_FILE: ci.yml
         run: |
           set -euo pipefail
 
           deadline=$((SECONDS + 30 * 60))
           while true; do
-            runs="$(gh run list \
+            if ! runs="$(gh run list \
               --repo "$GITHUB_REPOSITORY" \
-              --workflow CI \
+              --workflow "$CI_WORKFLOW_FILE" \
               --commit "$TARGET_SHA" \
               --limit 20 \
-              --json databaseId,status,conclusion,url,headSha,workflowName)"
+              --json databaseId,status,conclusion,url,headSha,workflowName)"; then
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "Timed out waiting for CI to pass on $TARGET_SHA after repeated GitHub API failures" >&2
+                exit 1
+              fi
+              echo "Could not read CI workflow status for $TARGET_SHA; retrying..."
+              sleep 20
+              continue
+            fi
 
             success_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion == "success")) | .[0].url // ""')"
             if [ -n "$success_url" ]; then
@@ -109,7 +118,8 @@ jobs:
             pending_count="$(printf '%s' "$runs" | jq 'map(select(.status != "completed")) | length')"
             failed_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion != "success")) | .[0].url // ""')"
             if [ "$pending_count" -eq 0 ] && [ -n "$failed_url" ]; then
-              echo "CI completed without a successful run for $TARGET_SHA: $failed_url" >&2
+              echo "All same-SHA CI runs are completed but none succeeded for $TARGET_SHA: $failed_url" >&2
+              printf '%s\n' "$runs" >&2
               exit 1
             fi
 

@@ -191,10 +191,14 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('actions: read');
     expect(workflow).toContain('name: Same-SHA CI gate');
     expect(workflow).toContain('TARGET_SHA: ${{ github.sha }}');
-    expect(workflow).toContain('--workflow CI');
+    expect(workflow).toContain('CI_WORKFLOW_FILE: ci.yml');
+    expect(workflow).toContain('--workflow "$CI_WORKFLOW_FILE"');
     expect(workflow).toContain('--commit "$TARGET_SHA"');
+    expect(workflow).toContain('Could not read CI workflow status for $TARGET_SHA; retrying...');
     expect(workflow).toContain('CI passed for $TARGET_SHA');
+    expect(workflow).toContain('All same-SHA CI runs are completed but none succeeded for $TARGET_SHA');
     expect(workflow).toContain('Timed out waiting for CI to pass on $TARGET_SHA');
+    expect(workflow).toContain('after repeated GitHub API failures');
     expect(workflow).toContain('needs: [dev-bundle-gate, ci-gate]');
     expect(workflow).not.toContain('run: bun run typecheck');
     expect(workflow).not.toContain('run: bun run test');
