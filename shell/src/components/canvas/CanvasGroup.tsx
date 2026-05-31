@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { type CSSProperties, useCallback, useRef } from "react";
 import { useCanvasGroups, type CanvasGroup } from "@/stores/canvas-groups";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
@@ -8,6 +8,11 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 interface CanvasGroupProps {
   group: CanvasGroup;
 }
+
+const GROUP_RECT_BASE_STYLE: CSSProperties = {
+  zIndex: 0,
+  pointerEvents: "auto",
+};
 
 export function CanvasGroupRect({ group }: CanvasGroupProps) {
   const bounds = useCanvasGroups((s) => s.getGroupBounds)(group.id);
@@ -67,14 +72,13 @@ export function CanvasGroupRect({ group }: CanvasGroupProps) {
     <div
       className="absolute rounded-xl border-2 border-dashed"
       style={{
+        ...GROUP_RECT_BASE_STYLE,
         left: bounds.x,
         top: bounds.y,
         width: bounds.width,
         height: bounds.height,
         borderColor: group.color,
         backgroundColor: `${group.color}08`,
-        zIndex: 0,
-        pointerEvents: "auto",
       }}
     >
       <div

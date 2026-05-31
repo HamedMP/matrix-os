@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useCallback, useState, type CSSProperties } from "react";
 import {
   BotIcon,
   FilesIcon,
@@ -21,11 +21,92 @@ import { useTerminalSettings } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalPreferencesPanel } from "./preferences-panel";
 import { TerminalKeyBar } from "./TerminalKeyBar";
-import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./TerminalPane";
+import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
+
+const TOOLBAR_BTN_BASE_STYLE: CSSProperties = {
+  height: 28,
+  minWidth: 28,
+  fontSize: 12,
+  borderRadius: 6,
+};
+
+const PREFERENCES_DROPDOWN_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 32,
+  right: 0,
+  zIndex: 50,
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+  padding: 0,
+  minWidth: 260,
+};
+
+const TAB_ITEM_BASE_STYLE: CSSProperties = {
+  borderRadius: 6,
+  fontSize: 12,
+  height: 34,
+};
+
+const TAB_CLOSE_BUTTON_STYLE: CSSProperties = {
+  width: 16,
+  height: 16,
+  borderRadius: 3,
+  border: "none",
+  background: "transparent",
+  color: "var(--muted-foreground)",
+  opacity: 0.5,
+  marginLeft: 2,
+};
+
+const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  borderRadius: 6,
+  border: "1px solid transparent",
+  background: "var(--primary)",
+  color: "var(--primary-foreground)",
+  fontSize: 12,
+  fontWeight: 600,
+  whiteSpace: "nowrap",
+};
+
+const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
+  width: 34,
+  height: 34,
+  borderRadius: 8,
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
+  color: "var(--foreground)",
+  fontSize: 12,
+  fontWeight: 650,
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  textAlign: "left",
+  cursor: "copy",
+};
+
+const PROJECT_BRANCH_BADGE_STYLE: CSSProperties = {
+  padding: "1px 5px",
+  borderRadius: 3,
+  background: "var(--background)",
+  border: "1px solid var(--border)",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  maxWidth: 100,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
 
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;
@@ -858,12 +939,9 @@ function ToolbarBtn({ onClick, title, children, variant = "default" }: ToolbarBt
       type="button"
       className="cursor-pointer transition-colors flex items-center justify-center gap-1.5"
       style={{
-        height: 28,
-        minWidth: 28,
+        ...TOOLBAR_BTN_BASE_STYLE,
         padding: variant === "default" ? "0 6px" : "0 10px",
-        fontSize: 12,
         fontWeight: variant === "default" ? 400 : 500,
-        borderRadius: 6,
         background: colors.bg,
         color: colors.color,
         border: `1px solid ${colors.border}`,
@@ -917,20 +995,7 @@ function ThemePickerButton() {
         <IconPalette />
       </ToolbarBtn>
       {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: 32,
-            right: 0,
-            zIndex: 50,
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-            padding: 0,
-            minWidth: 260,
-          }}
-        >
+        <div style={PREFERENCES_DROPDOWN_STYLE}>
           <TerminalPreferencesPanel sessionName={sessionName} />
         </div>
       )}
@@ -972,13 +1037,11 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               key={tab.id}
               className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               style={{
+                ...TAB_ITEM_BASE_STYLE,
                 background: active ? "var(--background)" : "transparent",
                 color: active ? "var(--foreground)" : "var(--muted-foreground)",
                 border: `1px solid ${active ? "var(--border)" : "transparent"}`,
-                borderRadius: 6,
                 padding: ctx.mobile ? "0 8px" : "0 10px",
-                fontSize: 12,
-                height: ctx.mobile ? 34 : 34,
                 fontWeight: active ? 500 : 400,
                 minWidth: ctx.mobile ? 112 : 136,
                 maxWidth: ctx.mobile ? 168 : 220,
@@ -1008,16 +1071,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
                 type="button"
                 className="cursor-pointer flex items-center justify-center transition-colors"
                 onClick={(e) => { e.stopPropagation(); ctx.closeTab(tab.id); }}
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 3,
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--muted-foreground)",
-                  opacity: 0.5,
-                  marginLeft: 2,
-                }}
+                style={TAB_CLOSE_BUTTON_STYLE}
                 onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.background = "var(--accent)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; e.currentTarget.style.background = "transparent"; }}
                 aria-label="Close tab"
@@ -1521,7 +1575,7 @@ function LocalTerminalSidebar() {
                 className="truncate"
                 style={{
                   color: "var(--muted-foreground)",
-                  fontSize: 10,
+                  fontSize: 12,
                   fontFamily: "var(--font-mono, ui-monospace, monospace)",
                   marginTop: 3,
                 }}
@@ -1536,15 +1590,7 @@ function LocalTerminalSidebar() {
                 disabled={creatingShell}
                 className="flex items-center gap-1.5 cursor-pointer"
                 style={{
-                  height: 28,
-                  padding: "0 10px",
-                  borderRadius: 6,
-                  border: "1px solid transparent",
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  whiteSpace: "nowrap",
+                  ...SHELL_NEW_BUTTON_BASE_STYLE,
                   cursor: creatingShell ? "not-allowed" : "pointer",
                   opacity: creatingShell ? 0.75 : 1,
                 }}
@@ -1748,14 +1794,10 @@ function SidebarRailButton({
       onClick={onClick}
       className="flex items-center justify-center cursor-pointer transition-colors"
       style={{
-        width: 34,
-        height: 34,
-        borderRadius: 8,
+        ...SIDEBAR_RAIL_BUTTON_BASE_STYLE,
         border: `1px solid ${active ? "var(--border)" : "transparent"}`,
         background: active ? "var(--card)" : "transparent",
         color: active ? "var(--foreground)" : "var(--muted-foreground)",
-        fontSize: 12,
-        fontWeight: 700,
         boxShadow: active ? "0 1px 0 rgba(0,0,0,0.08)" : "none",
       }}
       title={label}
@@ -1818,27 +1860,17 @@ function ShellCard({
           type="button"
           aria-label={`Copy attach command for ${shell.name}`}
           className="min-w-0 flex-1 truncate"
-          style={{
-            color: "var(--foreground)",
-            fontSize: 12,
-            fontWeight: 650,
-            fontFamily: "var(--font-mono, ui-monospace, monospace)",
-            background: "transparent",
-            border: "none",
-            padding: 0,
-            textAlign: "left",
-            cursor: "copy",
-          }}
+          style={SHELL_CARD_NAME_BUTTON_STYLE}
           title={copied ? "Copied" : `Copy: matrix shell connect ${shell.name}`}
           onClick={() => void copyAttachCommand()}
         >
           {shell.name}
         </button>
-        <span style={{ color: "var(--muted-foreground)", fontSize: 10, whiteSpace: "nowrap" }}>
+        <span style={{ color: "var(--muted-foreground)", fontSize: 12, whiteSpace: "nowrap" }}>
           {shell.attachedClients ?? 0} attached
         </span>
       </div>
-      <div className="truncate" style={{ color: "var(--muted-foreground)", fontSize: 10, paddingLeft: 15 }}>
+      <div className="truncate" style={{ color: "var(--muted-foreground)", fontSize: 12, paddingLeft: 15 }}>
         {shell.status ?? "active"} · {tabs.length} zellij tab{tabs.length === 1 ? "" : "s"}
       </div>
       {focusedTab ? (
@@ -1846,7 +1878,7 @@ function ShellCard({
           className="truncate"
           style={{
             color: "var(--muted-foreground)",
-            fontSize: 10,
+            fontSize: 12,
             paddingLeft: 15,
             marginTop: 2,
             fontFamily: "var(--font-mono, ui-monospace, monospace)",
@@ -2012,19 +2044,7 @@ function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelec
       </div>
       <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
         {project.isGit && project.branch && (
-          <span
-            style={{
-              padding: "1px 5px",
-              borderRadius: 3,
-              background: "var(--background)",
-              border: "1px solid var(--border)",
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              maxWidth: 100,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
+          <span style={PROJECT_BRANCH_BADGE_STYLE}>
             {project.branch}
           </span>
         )}

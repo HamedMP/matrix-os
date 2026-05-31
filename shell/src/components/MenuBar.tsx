@@ -267,6 +267,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
         {/* Left: app icon + app menu + global menus */}
         <div className="flex items-center gap-0.5">
           <div className="flex items-center px-2 py-0.5 rounded">
+            {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- active app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image */}
             <img
               key={activeAppIconUrl}
               src={activeAppIconUrl}

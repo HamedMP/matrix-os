@@ -1,7 +1,36 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react";
 import type { Theme } from "@/hooks/useTheme";
+
+const CONTAINER_BASE_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 8,
+  right: 8,
+  zIndex: 10,
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "4px 8px",
+  borderRadius: 6,
+  fontSize: 12,
+  fontFamily: "system-ui, sans-serif",
+};
+
+const CASE_BUTTON_BASE_STYLE: CSSProperties = {
+  borderRadius: 3,
+  cursor: "pointer",
+  padding: "1px 4px",
+  fontSize: 12,
+};
+
+const ICON_BUTTON_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  padding: "1px 4px",
+  fontSize: 13,
+};
 
 interface SearchAddon {
   findNext: (query: string, options?: { caseSensitive?: boolean }) => boolean;
@@ -97,20 +126,10 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
   return (
     <div
       style={{
-        position: "absolute",
-        top: 8,
-        right: 8,
-        zIndex: 10,
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "4px 8px",
-        borderRadius: 6,
+        ...CONTAINER_BASE_STYLE,
         background: surface,
         border: `1px solid ${border}`,
         color: fg,
-        fontSize: 12,
-        fontFamily: "system-ui, sans-serif",
       }}
       onKeyDown={handleKeyDown}
     >
@@ -123,14 +142,13 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         style={{
           background: "transparent",
           border: "none",
-          outline: "none",
           color: fg,
           width: 160,
           fontSize: 12,
         }}
       />
       {query && hasSearched && (
-        <span style={{ opacity: 0.7, whiteSpace: "nowrap", fontSize: 11 }}>
+        <span style={{ opacity: 0.7, whiteSpace: "nowrap", fontSize: 12 }}>
           {resultCount > 0 ? `${resultIndex + 1} of ${resultCount}` : "No results"}
         </span>
       )}
@@ -139,13 +157,10 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         onClick={() => setCaseSensitive((v) => !v)}
         title="Case Sensitive"
         style={{
+          ...CASE_BUTTON_BASE_STYLE,
           background: caseSensitive ? primary + "33" : "transparent",
           border: `1px solid ${caseSensitive ? primary : "transparent"}`,
-          borderRadius: 3,
           color: fg,
-          cursor: "pointer",
-          padding: "1px 4px",
-          fontSize: 11,
           fontWeight: caseSensitive ? 600 : 400,
         }}
       >
@@ -155,14 +170,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         type="button"
         onClick={findPrevious}
         title="Previous Match (Shift+Enter)"
-        style={{
-          background: "transparent",
-          border: "none",
-          color: fg,
-          cursor: "pointer",
-          padding: "1px 4px",
-          fontSize: 13,
-        }}
+        style={{ ...ICON_BUTTON_STYLE, color: fg }}
       >
         &uarr;
       </button>
@@ -170,14 +178,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         type="button"
         onClick={findNext}
         title="Next Match (Enter)"
-        style={{
-          background: "transparent",
-          border: "none",
-          color: fg,
-          cursor: "pointer",
-          padding: "1px 4px",
-          fontSize: 13,
-        }}
+        style={{ ...ICON_BUTTON_STYLE, color: fg }}
       >
         &darr;
       </button>
@@ -185,14 +186,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
         type="button"
         onClick={close}
         title="Close (Escape)"
-        style={{
-          background: "transparent",
-          border: "none",
-          color: fg,
-          cursor: "pointer",
-          padding: "1px 4px",
-          fontSize: 13,
-        }}
+        style={{ ...ICON_BUTTON_STYLE, color: fg }}
       >
         &times;
       </button>

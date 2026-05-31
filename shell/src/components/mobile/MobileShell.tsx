@@ -18,6 +18,7 @@
  *   apps they've installed.
  */
 
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChatContext } from "@/stores/chat-context";
 import { useTheme } from "@/hooks/useTheme";
@@ -56,6 +57,79 @@ const BUILT_IN_APPS: MobileApp[] = [
 function iconUrl(slug: string): string {
   return `/icons/${slug}.png`;
 }
+
+const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 6,
+  background: "transparent",
+  border: "none",
+  color: "inherit",
+  cursor: "pointer",
+  padding: 0,
+};
+
+const LAUNCHER_APP_LABEL_STYLE: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.2,
+  textAlign: "center",
+  maxWidth: 70,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const SWITCHER_CLOSE_BUTTON_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "1px solid rgba(244,237,224,0.18)",
+  color: "inherit",
+  borderRadius: 999,
+  width: 28,
+  height: 28,
+  cursor: "pointer",
+  opacity: 0.75,
+  fontSize: 12,
+};
+
+const SWITCHER_RESUME_BUTTON_STYLE: CSSProperties = {
+  alignSelf: "center",
+  marginTop: 4,
+  background: "var(--primary, #c2703a)",
+  color: "var(--primary-foreground, #fff)",
+  border: "none",
+  borderRadius: 999,
+  padding: "10px 18px",
+  fontSize: 13,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const DOCK_BUTTON_BASE_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 2,
+  background: "transparent",
+  border: "none",
+  color: "inherit",
+  padding: "4px 10px",
+  position: "relative",
+  cursor: "pointer",
+};
+
+const DOCK_BADGE_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 2,
+  right: 6,
+  background: "var(--primary, #c2703a)",
+  color: "white",
+  fontSize: 12,
+  fontWeight: 700,
+  borderRadius: 999,
+  padding: "1px 5px",
+  lineHeight: 1.2,
+};
 
 interface MobileShellProps {
   launchAppPath?: string | null;
@@ -471,32 +545,10 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
             key={app.id}
             type="button"
             onClick={() => onOpen(app)}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 6,
-              background: "transparent",
-              border: "none",
-              color: "inherit",
-              cursor: "pointer",
-              padding: 0,
-            }}
+            style={LAUNCHER_APP_BUTTON_STYLE}
           >
             <AppIcon slug={app.iconSlug} size={56} />
-            <span
-              style={{
-                fontSize: 11,
-                lineHeight: 1.2,
-                textAlign: "center",
-                maxWidth: 70,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {app.name}
-            </span>
+            <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>
           </button>
         ))}
       </div>
@@ -591,7 +643,7 @@ function AppSwitcher({
                 }}
               >
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{o.app.name}</div>
-                <div style={{ fontSize: 11, opacity: 0.6 }}>
+                <div style={{ fontSize: 12, opacity: 0.6 }}>
                   Opened {new Date(o.openedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </div>
               </button>
@@ -599,39 +651,14 @@ function AppSwitcher({
                 onClick={() => onClose(o.id)}
                 type="button"
                 aria-label={`Close ${o.app.name}`}
-                style={{
-                  background: "transparent",
-                  border: "1px solid rgba(244,237,224,0.18)",
-                  color: "inherit",
-                  borderRadius: 999,
-                  width: 28,
-                  height: 28,
-                  cursor: "pointer",
-                  opacity: 0.75,
-                  fontSize: 12,
-                }}
+                style={SWITCHER_CLOSE_BUTTON_STYLE}
               >
                 ×
               </button>
             </div>
           ))}
         {open.length > 0 && (
-          <button
-            onClick={onResume}
-            type="button"
-            style={{
-              alignSelf: "center",
-              marginTop: 4,
-              background: "var(--primary, #c2703a)",
-              color: "var(--primary-foreground, #fff)",
-              border: "none",
-              borderRadius: 999,
-              padding: "10px 18px",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={onResume} type="button" style={SWITCHER_RESUME_BUTTON_STYLE}>
             Resume foreground app
           </button>
         )}
@@ -657,39 +684,13 @@ function DockButton({
     <button
       onClick={onClick}
       type="button"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 2,
-        background: "transparent",
-        border: "none",
-        color: "inherit",
-        opacity: highlighted ? 1 : 0.65,
-        padding: "4px 10px",
-        position: "relative",
-        cursor: "pointer",
-      }}
+      style={{ ...DOCK_BUTTON_BASE_STYLE, opacity: highlighted ? 1 : 0.65 }}
       aria-label={label}
     >
       <AppIcon slug={iconSlug} size={32} />
-      <span style={{ fontSize: 10, opacity: 0.8 }}>{label}</span>
+      <span style={{ fontSize: 12, opacity: 0.8 }}>{label}</span>
       {badge !== undefined && (
-        <span
-          aria-hidden
-          style={{
-            position: "absolute",
-            top: 2,
-            right: 6,
-            background: "var(--primary, #c2703a)",
-            color: "white",
-            fontSize: 9,
-            fontWeight: 700,
-            borderRadius: 999,
-            padding: "1px 5px",
-            lineHeight: 1.2,
-          }}
-        >
+        <span aria-hidden style={DOCK_BADGE_STYLE}>
           {badge}
         </span>
       )}
@@ -710,6 +711,7 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
   }, [slug]);
 
   return (
+    // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- icon src is swapped at runtime via onError fallback chain (.png -> .svg -> /icon-192.png), which next/image does not support; <img> preserves the graceful-degradation behavior.
     <img
       src={src}
       alt=""

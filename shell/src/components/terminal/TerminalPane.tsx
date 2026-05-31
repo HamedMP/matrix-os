@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -18,6 +18,11 @@ import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
+import {
+  isCanonicalShellSessionId,
+  isLegacyPtySessionId,
+  terminalWebSocketPathForSession,
+} from "./terminal-session-id";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -68,6 +73,33 @@ function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: strin
   return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
 }
 
+const AUTH_BANNER_BASE_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 8,
+  left: 8,
+  right: 8,
+  zIndex: 20,
+  color: "#fff",
+  borderRadius: 8,
+  padding: "8px 12px",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  fontSize: 13,
+  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+};
+
+const AUTH_BANNER_ACTION_STYLE: CSSProperties = {
+  background: "rgba(255,255,255,0.2)",
+  border: "1px solid rgba(255,255,255,0.3)",
+  color: "#fff",
+  borderRadius: 6,
+  padding: "4px 12px",
+  cursor: "pointer",
+  fontSize: 13,
+  whiteSpace: "nowrap",
+};
+
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
   | { type: "output"; data: string; seq: number | null }
@@ -76,21 +108,6 @@ type TerminalServerMessage =
   | { type: "replay-end" }
   | { type: "exit"; code: number | null }
   | { type: "error"; message: string };
-
-const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
-
-export function isLegacyPtySessionId(sessionId: string): boolean {
-  return LEGACY_PTY_SESSION_ID_PATTERN.test(sessionId);
-}
-
-export function isCanonicalShellSessionId(sessionId: string): boolean {
-  return CANONICAL_SHELL_SESSION_NAME_PATTERN.test(sessionId);
-}
-
-export function terminalWebSocketPathForSession(sessionId: string | null): "/ws/terminal" | "/ws/terminal/session" {
-  return sessionId && isCanonicalShellSessionId(sessionId) ? "/ws/terminal/session" : "/ws/terminal";
-}
 
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -1191,30 +1208,18 @@ export function TerminalPane({
       {authUrl && (
         <div
           style={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            right: 8,
-            zIndex: 20,
+            ...AUTH_BANNER_BASE_STYLE,
             background: theme.colors.primary || "#c2703a",
-            color: "#fff",
-            borderRadius: 8,
-            padding: "8px 12px",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 13,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div>Claude Code login required</div>
-            <div style={{ fontSize: 11, opacity: 0.85 }}>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
               Detected from terminal output. Terminal apps can spoof this. Only continue if you initiated Claude Code login.
             </div>
             <div
               style={{
-                fontSize: 11,
+                fontSize: 12,
                 opacity: 0.9,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -1230,16 +1235,7 @@ export function TerminalPane({
             onClick={() => {
               window.open(authUrl, "_blank", "noopener,noreferrer");
             }}
-            style={{
-              background: "rgba(255,255,255,0.2)",
-              border: "1px solid rgba(255,255,255,0.3)",
-              color: "#fff",
-              borderRadius: 6,
-              padding: "4px 12px",
-              cursor: "pointer",
-              fontSize: 13,
-              whiteSpace: "nowrap",
-            }}
+            style={AUTH_BANNER_ACTION_STYLE}
           >
             Open login
           </button>
@@ -1258,16 +1254,7 @@ export function TerminalPane({
                 document.body.removeChild(ta);
               });
             }}
-            style={{
-              background: "rgba(255,255,255,0.2)",
-              border: "1px solid rgba(255,255,255,0.3)",
-              color: "#fff",
-              borderRadius: 6,
-              padding: "4px 12px",
-              cursor: "pointer",
-              fontSize: 13,
-              whiteSpace: "nowrap",
-            }}
+            style={AUTH_BANNER_ACTION_STYLE}
           >
             Copy URL
           </button>

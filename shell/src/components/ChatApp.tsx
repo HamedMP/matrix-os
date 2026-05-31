@@ -11,10 +11,14 @@ import {
   Message,
   MessageContent,
 } from "@/components/ai-elements/message";
-import { Reasoning, extractThinking } from "@/components/ai-elements/reasoning";
-import { SuggestionChips, DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions";
-import { Plan, parsePlan } from "@/components/ai-elements/plan";
-import { Task, parseTask } from "@/components/ai-elements/task";
+import { Reasoning } from "@/components/ai-elements/reasoning";
+import { extractThinking } from "@/components/ai-elements/reasoning-utils";
+import { SuggestionChips } from "@/components/ai-elements/suggestions";
+import { DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions-utils";
+import { Plan } from "@/components/ai-elements/plan";
+import { parsePlan } from "@/components/ai-elements/plan-utils";
+import { Task } from "@/components/ai-elements/task";
+import { parseTask } from "@/components/ai-elements/task-utils";
 import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
@@ -22,6 +26,11 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
+import {
+  DEFAULT_HERMES_MODEL,
+  DEFAULT_HERMES_CHANNELS,
+  createHermesConfiguredPrompt,
+} from "./chat-app-hermes";
 import {
   LoaderCircleIcon,
   PlusIcon,
@@ -48,8 +57,6 @@ interface ConversationMeta {
   updatedAt: number;
 }
 
-const DEFAULT_HERMES_MODEL = "Hermes default";
-const DEFAULT_HERMES_CHANNELS = ["shell"];
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
 
 function readHermesSetup() {
@@ -395,24 +402,6 @@ export function ChatApp({
       </main>
     </div>
   );
-}
-
-export function createHermesConfiguredPrompt(text: string, _model: string, _channels: string[]) {
-  const normalizedChannels = [..._channels].sort();
-  const isDefaultSetup =
-    _model === DEFAULT_HERMES_MODEL &&
-    normalizedChannels.length === DEFAULT_HERMES_CHANNELS.length &&
-    normalizedChannels.every((channel, index) => channel === DEFAULT_HERMES_CHANNELS[index]);
-  if (isDefaultSetup) return text;
-
-  const enabledChannels = normalizedChannels.length > 0 ? normalizedChannels.join(", ") : "none";
-  return [
-    "Use this Hermes setup for this response only:",
-    `Agent mode: ${_model}`,
-    `Enabled channels: ${enabledChannels}`,
-    "",
-    text,
-  ].join("\n");
 }
 
 function EmptyState({

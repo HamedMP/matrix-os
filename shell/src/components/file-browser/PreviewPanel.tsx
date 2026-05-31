@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
+const PREVIEW_PANEL_FETCH_TIMEOUT_MS = 10_000;
 
 interface FileStat {
   name: string;
@@ -51,31 +52,42 @@ export function PreviewPanel() {
       return;
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
+    let active = true;
 
     fetch(
       `${GATEWAY_URL}/api/files/stat?path=${encodeURIComponent(selectedFullPath)}`,
-      { signal },
+      { signal: AbortSignal.timeout(PREVIEW_PANEL_FETCH_TIMEOUT_MS) },
     )
       .then((r) => r.json())
-      .then((data: FileStat) => { if (!signal.aborted) setStat(data); })
-      .catch(() => { if (!signal.aborted) setStat(null); });
+      .then((data: FileStat) => { if (active) setStat(data); })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.warn("Failed to load preview file stats", error);
+        setStat(null);
+      });
 
     if (selectedName && isTextLike(selectedName)) {
-      fetch(`${GATEWAY_URL}/files/${selectedFullPath}`, { signal })
+      fetch(`${GATEWAY_URL}/files/${selectedFullPath}`, {
+        signal: AbortSignal.timeout(PREVIEW_PANEL_FETCH_TIMEOUT_MS),
+      })
         .then((r) => (r.ok ? r.text() : null))
         .then((text) => {
-          if (!signal.aborted && text) {
+          if (active && text) {
             setPreview(text.split("\n").slice(0, 20).join("\n"));
           }
         })
-        .catch(() => { if (!signal.aborted) setPreview(null); });
+        .catch((error: unknown) => {
+          if (!active) return;
+          console.warn("Failed to load preview file content", error);
+          setPreview(null);
+        });
     } else {
       setPreview(null);
     }
 
-    return () => controller.abort();
+    return () => {
+      active = false;
+    };
   }, [selectedFullPath, showPreviewPanel, selectedName]);
 
   if (!showPreviewPanel) return null;
@@ -105,6 +117,7 @@ export function PreviewPanel() {
     <div className="w-56 border-l border-border overflow-y-auto p-3 text-sm shrink-0">
       <div className="flex flex-col items-center gap-2 mb-4">
         {isImage(stat.name) && stat.type === "file" ? (
+          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs
           <img
             src={`${GATEWAY_URL}/files/${stat.path}`}
             alt={stat.name}

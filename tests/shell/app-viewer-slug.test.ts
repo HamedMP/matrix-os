@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractSlug, shouldRenderAppIframe } from "../../shell/src/components/AppViewer.js";
+import { extractSlug, shouldRenderAppIframe } from "../../shell/src/components/app-viewer-helpers.js";
 
 describe("AppViewer extractSlug (spec 063 regression)", () => {
   it("extracts slug from top-level app paths", () => {

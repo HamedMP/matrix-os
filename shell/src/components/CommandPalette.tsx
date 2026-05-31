@@ -72,6 +72,7 @@ export function CommandPalette({
                 }}
               >
                 {cmd.icon ? (
+                  // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
                   <img src={cmd.icon} alt="" className="size-7 rounded-lg object-cover shrink-0" />
                 ) : (
                   <span className="size-7 rounded-lg bg-muted flex items-center justify-center text-xs font-semibold shrink-0">

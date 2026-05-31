@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { XIcon } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
+const QUICK_LOOK_FETCH_TIMEOUT_MS = 10_000;
 
 export function QuickLook() {
   const quickLookPath = useFileBrowser((s) => s.quickLookPath);
@@ -33,19 +34,26 @@ export function QuickLook() {
       return;
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
+    let active = true;
 
-    fetch(`${GATEWAY_URL}/files/${fullPath}`, { signal })
+    fetch(`${GATEWAY_URL}/files/${fullPath}`, {
+      signal: AbortSignal.timeout(QUICK_LOOK_FETCH_TIMEOUT_MS),
+    })
       .then((r) => (r.ok ? r.text() : null))
       .then((text) => {
-        if (signal.aborted) return;
+        if (!active) return;
         if (text) setContent(text.split("\n").slice(0, 50).join("\n"));
         else setContent(null);
       })
-      .catch(() => { if (!signal.aborted) setContent(null); });
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.warn("Failed to load quick look preview", error);
+        setContent(null);
+      });
 
-    return () => controller.abort();
+    return () => {
+      active = false;
+    };
   }, [fullPath, quickLookPath]);
 
   if (!quickLookPath || !fullPath) return null;
@@ -53,6 +61,7 @@ export function QuickLook() {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
+      // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- custom overlay modal with backdrop; native <dialog> would change top-layer/focus semantics
       role="dialog"
       aria-modal="true"
     >
@@ -89,14 +98,17 @@ export function QuickLook() {
 
         <div className="flex-1 overflow-auto p-4 min-h-0">
           {isImage(quickLookPath) ? (
+            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs
             <img
               src={`${GATEWAY_URL}/files/${fullPath}`}
               alt={quickLookPath}
               className="max-w-full max-h-full mx-auto object-contain"
             />
           ) : isAudio(quickLookPath) ? (
+            // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user audio file preview; no caption track exists
             <audio controls className="w-full" src={`${GATEWAY_URL}/files/${fullPath}`} />
           ) : isVideo(quickLookPath) ? (
+            // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user video file preview; no caption track exists
             <video controls className="w-full max-h-96" src={`${GATEWAY_URL}/files/${fullPath}`} />
           ) : content !== null ? (
             <pre className="text-xs font-mono whitespace-pre-wrap break-all">

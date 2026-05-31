@@ -61,6 +61,7 @@ export function VoiceOrb({ state, size = 160 }: VoiceOrbProps) {
         {state === "idle" ? "ready" : state}
       </div>
 
+      {/* react-doctor-disable-next-line react-doctor/no-unknown-property -- valid styled-jsx attribute */}
       <style jsx>{`
         @keyframes orb-pulse {
           0%, 100% { opacity: 1; transform: scale(${style.scale}); }

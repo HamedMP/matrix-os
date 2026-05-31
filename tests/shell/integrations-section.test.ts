@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   hasNewConnectionForService,
   shouldLogIntegrationWarning,
-} from "../../shell/src/components/settings/sections/IntegrationsSection";
+} from "../../shell/src/components/settings/sections/integrations-helpers";
 
 describe("IntegrationsSection polling helper", () => {
   it("ignores newly added connections for a different service", () => {

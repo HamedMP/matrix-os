@@ -23,6 +23,7 @@ export function AppCard({ entry, installed, onSelect, onInstall }: AppCardProps)
 
   return (
     <div
+      // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this card contains a nested install <Button>, and nesting interactive elements is invalid HTML
       role="button"
       tabIndex={0}
       onClick={onSelect}

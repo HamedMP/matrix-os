@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties } from "react";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
@@ -71,6 +71,20 @@ const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 const MATRIX_SHIMMER =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
 
+const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
+  WebkitMaskImage: "url('/matrix-logo.svg')",
+  WebkitMaskRepeat: "no-repeat",
+  WebkitMaskSize: "contain",
+  WebkitMaskPosition: "center",
+  maskImage: "url('/matrix-logo.svg')",
+  maskRepeat: "no-repeat",
+  maskSize: "contain",
+  maskPosition: "center",
+  backgroundImage: MATRIX_SHIMMER,
+  backgroundSize: "300% 100%",
+  animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
+};
+
 function iconUrlForSlug(slug: string | undefined): string | undefined {
   if (!slug) return undefined;
   return `/icons/${encodeURIComponent(slug)}.png`;
@@ -87,19 +101,7 @@ function MatrixFirstRunLoading() {
         <div
           aria-label="Matrix OS logo"
           className="h-[132px] w-[124px] sm:h-[156px] sm:w-[148px]"
-          style={{
-            WebkitMaskImage: "url('/matrix-logo.svg')",
-            WebkitMaskRepeat: "no-repeat",
-            WebkitMaskSize: "contain",
-            WebkitMaskPosition: "center",
-            maskImage: "url('/matrix-logo.svg')",
-            maskRepeat: "no-repeat",
-            maskSize: "contain",
-            maskPosition: "center",
-            backgroundImage: MATRIX_SHIMMER,
-            backgroundSize: "300% 100%",
-            animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
-          }}
+          style={MATRIX_FIRST_RUN_LOGO_STYLE}
         />
         <div className="grid max-w-[520px] gap-3">
           <h1
@@ -294,6 +296,7 @@ function DockIcon({
       style={{ width: iconSize, height: iconSize }}
     >
       {showImage ? (
+        // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host with an onError fallback chain (.png -> .svg) that next/image cannot reproduce
         <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
       ) : (
         <span className="text-sm font-semibold text-foreground">

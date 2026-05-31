@@ -70,6 +70,25 @@ interface TerminalKeyBarProps {
   accent?: string;
 }
 
+const MORE_BUTTON_STYLE: CSSProperties = {
+  fontSize: 13,
+  padding: "8px 10px",
+  background: "transparent",
+  borderRadius: 6,
+  minWidth: 36,
+  flexShrink: 0,
+  marginLeft: "auto",
+};
+
+const KEY_BUTTON_BASE_STYLE: CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1,
+  padding: "8px 10px",
+  borderRadius: 6,
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  cursor: "pointer",
+};
+
 function readVisualViewportKeyboardInset(): number {
   if (typeof window === "undefined" || !window.visualViewport) return 0;
   const inset = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
@@ -161,15 +180,9 @@ export function TerminalKeyBar({
           aria-label={expanded ? "Show fewer keys" : "Show more keys"}
           onClick={() => setExpanded((v) => !v)}
           style={{
-            fontSize: 13,
-            padding: "8px 10px",
-            background: "transparent",
+            ...MORE_BUTTON_STYLE,
             color: mutedForeground,
             border: `1px dashed ${accent}`,
-            borderRadius: 6,
-            minWidth: 36,
-            flexShrink: 0,
-            marginLeft: "auto",
           }}
         >
           {expanded ? "Less" : "More"}
@@ -232,17 +245,12 @@ function TerminalKeyButton({
         onSend(keyDef.data);
       }}
       style={{
-        fontSize: 13,
-        lineHeight: 1,
-        padding: "8px 10px",
+        ...KEY_BUTTON_BASE_STYLE,
         background,
         color: foreground,
         border: `1px solid ${border}`,
-        borderRadius: 6,
         minWidth: wide ? 112 : 36,
         flex: wide ? "0 1 160px" : "0 0 auto",
-        fontFamily: "var(--font-mono, ui-monospace, monospace)",
-        cursor: "pointer",
       }}
     >
       {keyDef.label}

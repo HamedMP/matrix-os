@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
+import {
+  hasNewConnectionForService,
+  shouldLogIntegrationWarning,
+  type ConnectedService,
+} from "./integrations-helpers";
 
 const GATEWAY = getGatewayUrl();
 
@@ -13,29 +18,6 @@ interface ServiceDef {
   icon: string;
   logoUrl?: string;
   actions: Record<string, unknown>;
-}
-
-interface ConnectedService {
-  id: string;
-  service: string;
-  account_label: string;
-  account_email: string | null;
-  status: string;
-  connected_at: string;
-}
-
-export function hasNewConnectionForService(
-  previousIds: Set<string>,
-  serviceId: string,
-  connections: Array<Pick<ConnectedService, "id" | "service">>,
-): boolean {
-  return connections.some((connection) =>
-    connection.service === serviceId && !previousIds.has(connection.id),
-  );
-}
-
-export function shouldLogIntegrationWarning(err: unknown): boolean {
-  return !(err instanceof DOMException && err.name === "AbortError");
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -50,6 +32,7 @@ function ServiceLogo({ name, category, logoUrl }: { name: string; category: stri
 
   if (logoUrl && !imgError) {
     return (
+      // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- remote service logo from arbitrary unconfigured host; next/image would require host allowlisting
       <img
         src={logoUrl}
         alt={name}
@@ -526,6 +509,7 @@ export function IntegrationsSection() {
                             {renamingId === conn.id ? (
                               <input
                                 type="text"
+                                // react-doctor-disable-next-line react-doctor/no-autofocus -- inline rename field rendered only after user clicks rename; focus is essential to the edit affordance
                                 autoFocus
                                 value={renameDraft}
                                 onChange={(e) => setRenameDraft(e.target.value)}

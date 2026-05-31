@@ -14,30 +14,16 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
+import {
+  APP_IFRAME_SANDBOX,
+  extractSlug,
+  shouldRenderAppIframe,
+  injectBridgeIntoAppHtml,
+} from "./app-viewer-helpers";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
-const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
-  "2048",
-  "backgammon",
-  "chess",
-  "minesweeper",
-  "snake",
-  "solitaire",
-  "tetris",
-]);
-export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups";
-const APP_IFRAME_CSP = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-].join("; ");
 
 interface AppViewerProps {
   path: string;
@@ -52,48 +38,10 @@ function appNameFromPath(path: string): string {
   return path.replace("apps/", "").replace(/\/index\.html$/, "").replace(".html", "");
 }
 
-export function extractSlug(path: string): string | null {
-  const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
-  if (topLevel) return topLevel[1];
-
-  // Older saved layouts used filesystem paths for migrated bundled games. Only
-  // rewrite known migrated slugs; other nested paths still load as files.
-  const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
-  if (nestedIndex && LEGACY_NESTED_RUNTIME_APP_SLUGS.has(nestedIndex[1])) {
-    return nestedIndex[1];
-  }
-  return null;
-}
-
-export function shouldRenderAppIframe(path: string): boolean {
-  return !path.startsWith("__");
-}
-
 function readCurrentTheme(): ThemeVars {
   if (typeof document === "undefined") return {};
   const style = getComputedStyle(document.documentElement);
   return getThemeVariables(style);
-}
-
-export function injectBridgeIntoAppHtml(
-  html: string,
-  appName: string,
-  themeVars: ThemeVars,
-  baseHref: string,
-): string {
-  const bridgeScript = buildBridgeScript(appName, themeVars)
-    + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
-  const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
-  const injection = [
-    `<base href="${escapedBaseHref}">`,
-    `<meta http-equiv="Content-Security-Policy" content="${APP_IFRAME_CSP.replace(/"/g, "&quot;")}">`,
-    `<script>${bridgeScript}</script>`,
-  ].join("");
-
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
-  }
-  return `<!doctype html><html><head>${injection}</head><body>${html}</body></html>`;
 }
 
 async function handleBridgeFetch(payload: unknown, port: MessagePort): Promise<void> {

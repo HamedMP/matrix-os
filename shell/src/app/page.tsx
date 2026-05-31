@@ -5,9 +5,7 @@ import { ShellHome } from "@/components/ShellHome";
 function BillingGateFallback() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
-      <div className="text-sm" role="status">
-        Loading billing status
-      </div>
+      <output className="text-sm">Loading billing status</output>
     </main>
   );
 }

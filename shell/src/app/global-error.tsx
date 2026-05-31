@@ -1,8 +1,92 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { createErrorId, describeUnknownError } from "../lib/error-boundary-utils";
 import { capturePostHogException, reportClientError } from "../lib/posthog-client";
+
+const PAGE_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "#f6f4ec",
+  boxSizing: "border-box",
+  color: "#32352E",
+  display: "flex",
+  fontFamily: "Inter, system-ui, sans-serif",
+  height: "100vh",
+  justifyContent: "center",
+  padding: 24,
+  width: "100vw",
+};
+
+const CARD_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "rgba(255,255,255,0.82)",
+  border: "1px solid rgba(67,78,63,0.12)",
+  borderRadius: 28,
+  boxShadow: "0 24px 80px rgba(67,78,63,0.16)",
+  boxSizing: "border-box",
+  display: "flex",
+  flexDirection: "column",
+  maxWidth: 448,
+  padding: 32,
+  textAlign: "center",
+  width: "100%",
+};
+
+const LOGO_BOX_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "#fbf7ed",
+  border: "1px solid rgba(67,78,63,0.15)",
+  borderRadius: 18,
+  boxShadow: "0 18px 50px rgba(83,68,48,0.12)",
+  display: "flex",
+  height: 64,
+  justifyContent: "center",
+  width: 64,
+};
+
+const LOGO_MASK_STYLE: CSSProperties = {
+  background: "#32352E",
+  height: 36,
+  WebkitMaskImage: "url('/matrix-logo.svg')",
+  WebkitMaskPosition: "center",
+  WebkitMaskRepeat: "no-repeat",
+  WebkitMaskSize: "contain",
+  maskImage: "url('/matrix-logo.svg')",
+  maskPosition: "center",
+  maskRepeat: "no-repeat",
+  maskSize: "contain",
+  width: 36,
+};
+
+const COPY_BUTTON_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "#fbf7ed",
+  border: "1px solid rgba(67,78,63,0.12)",
+  borderRadius: 12,
+  color: "rgba(67,78,63,0.72)",
+  cursor: "pointer",
+  display: "inline-flex",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontSize: 12,
+  gap: 8,
+  marginTop: 20,
+  maxWidth: "100%",
+  padding: "8px 12px",
+};
+
+const RESET_BUTTON_STYLE: CSSProperties = {
+  background: "#434E3F",
+  border: "none",
+  borderRadius: 12,
+  color: "#FAFAF5",
+  cursor: "pointer",
+  fontSize: 14,
+  fontWeight: 700,
+  height: 44,
+  marginTop: 24,
+  padding: "0 20px",
+};
 
 export default function GlobalError({
   error,
@@ -39,67 +123,12 @@ export default function GlobalError({
   }
 
   return (
-    <html>
+    <html lang="en">
       <body>
-        <div
-          style={{
-            alignItems: "center",
-            background: "#f6f4ec",
-            boxSizing: "border-box",
-            color: "#32352E",
-            display: "flex",
-            fontFamily: "Inter, system-ui, sans-serif",
-            height: "100vh",
-            justifyContent: "center",
-            padding: 24,
-            width: "100vw",
-          }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              background: "rgba(255,255,255,0.82)",
-              border: "1px solid rgba(67,78,63,0.12)",
-              borderRadius: 28,
-              boxShadow: "0 24px 80px rgba(67,78,63,0.16)",
-              boxSizing: "border-box",
-              display: "flex",
-              flexDirection: "column",
-              maxWidth: 448,
-              padding: 32,
-              textAlign: "center",
-              width: "100%",
-            }}
-          >
-            <div
-              style={{
-                alignItems: "center",
-                background: "#fbf7ed",
-                border: "1px solid rgba(67,78,63,0.15)",
-                borderRadius: 18,
-                boxShadow: "0 18px 50px rgba(83,68,48,0.12)",
-                display: "flex",
-                height: 64,
-                justifyContent: "center",
-                width: 64,
-              }}
-            >
-              <div
-                aria-hidden="true"
-                style={{
-                  background: "#32352E",
-                  height: 36,
-                  WebkitMaskImage: "url('/matrix-logo.svg')",
-                  WebkitMaskPosition: "center",
-                  WebkitMaskRepeat: "no-repeat",
-                  WebkitMaskSize: "contain",
-                  maskImage: "url('/matrix-logo.svg')",
-                  maskPosition: "center",
-                  maskRepeat: "no-repeat",
-                  maskSize: "contain",
-                  width: 36,
-                }}
-              />
+        <div style={PAGE_STYLE}>
+          <div style={CARD_STYLE}>
+            <div style={LOGO_BOX_STYLE}>
+              <div aria-hidden="true" style={LOGO_MASK_STYLE} />
             </div>
             <p
               style={{
@@ -123,44 +152,19 @@ export default function GlobalError({
               type="button"
               onClick={copyErrorId}
               aria-label={`Copy error ID ${errorId}`}
-              style={{
-                alignItems: "center",
-                background: "#fbf7ed",
-                border: "1px solid rgba(67,78,63,0.12)",
-                borderRadius: 12,
-                color: "rgba(67,78,63,0.72)",
-                cursor: "pointer",
-                display: "inline-flex",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                fontSize: 12,
-                gap: 8,
-                marginTop: 20,
-                maxWidth: "100%",
-                padding: "8px 12px",
-              }}
+              style={COPY_BUTTON_STYLE}
             >
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 Error ID: {errorId}
               </span>
-              <span style={{ color: "#D06F25", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, fontWeight: 700 }}>
+              <span style={{ color: "#D06F25", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, fontWeight: 700 }}>
                 {copied ? "Copied" : "Copy"}
               </span>
             </button>
             <button
               type="button"
               onClick={reset}
-              style={{
-                background: "#434E3F",
-                border: "none",
-                borderRadius: 12,
-                color: "#FAFAF5",
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: 700,
-                height: 44,
-                marginTop: 24,
-                padding: "0 20px",
-              }}
+              style={RESET_BUTTON_STYLE}
             >
               Try again
             </button>

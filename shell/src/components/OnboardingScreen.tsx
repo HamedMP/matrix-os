@@ -200,20 +200,14 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
                 }}
               >
                 <div
+                  // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- not a plain <img>: the logo is rendered via a CSS mask of the SVG over an animated shimmer gradient background, which an <img> element cannot reproduce
                   role="img"
                   aria-label="Matrix OS logo"
                   className="h-[132px] w-[124px] sm:h-[156px] sm:w-[148px]"
                   style={{
-                    WebkitMaskImage: "url('/matrix-logo.svg')",
-                    WebkitMaskRepeat: "no-repeat",
-                    WebkitMaskSize: "contain",
-                    WebkitMaskPosition: "center",
-                    maskImage: "url('/matrix-logo.svg')",
-                    maskRepeat: "no-repeat",
-                    maskSize: "contain",
-                    maskPosition: "center",
-                    backgroundImage: SHIMMER_GRADIENT,
-                    backgroundSize: "300% 100%",
+                    WebkitMask: `url('/matrix-logo.svg') no-repeat center / contain`,
+                    mask: `url('/matrix-logo.svg') no-repeat center / contain`,
+                    background: `${SHIMMER_GRADIENT} 0 0 / 300% 100%`,
                     animation: phase === "idle" ? SHIMMER_ANIMATION : "none",
                     opacity: entranceStage === "hidden" || phase === "black" ? 0 : 1,
                     transform: entranceStage !== "settled"
@@ -394,6 +388,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
                   type="text"
                   placeholder="Type your response..."
                   className="flex-1 px-4 py-3 rounded-xl bg-muted/30 border border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/20 text-sm"
+                  // react-doctor-disable-next-line react-doctor/no-autofocus -- primary text-response field in the conversational onboarding flow; focus is essential so the user can immediately type their reply
                   autoFocus
                 />
                 <button

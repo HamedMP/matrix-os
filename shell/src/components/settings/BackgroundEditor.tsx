@@ -246,6 +246,7 @@ export function BackgroundEditor() {
                         : "border-border hover:border-primary/50"
                     }`}
                   >
+                    {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- user-uploaded wallpaper served from a runtime gateway host that cannot be statically configured for next/image */}
                     <img
                       src={`${getGatewayUrl()}/files/system/wallpapers/${name}`}
                       alt={name}

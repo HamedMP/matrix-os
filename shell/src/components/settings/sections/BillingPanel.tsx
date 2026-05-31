@@ -808,10 +808,10 @@ export function BillingPanel({
   if (active === null) {
     return (
       <div className="flex min-h-48 items-center justify-center rounded-xl border border-border/60 bg-card p-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+        <output className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
           Checking billing status
-        </div>
+        </output>
       </div>
     );
   }

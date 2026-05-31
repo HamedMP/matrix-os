@@ -44,6 +44,7 @@ export function AppSettingsDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
+            {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image */}
             <img
               key={iconUrl ?? FALLBACK_APP_ICON}
               src={iconUrl ?? FALLBACK_APP_ICON}

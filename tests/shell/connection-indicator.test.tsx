@@ -4,7 +4,8 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionHealth } from "../../shell/src/hooks/useConnectionHealth.js";
-import { ConnectionIndicator, resolveConnectionCopy } from "../../shell/src/components/ConnectionIndicator.js";
+import { ConnectionIndicator } from "../../shell/src/components/ConnectionIndicator.js";
+import { resolveConnectionCopy } from "../../shell/src/components/connection-indicator-copy.js";
 
 const mocks = vi.hoisted(() => ({
   manualReconnect: vi.fn(),
