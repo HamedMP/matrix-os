@@ -88,6 +88,9 @@ interface MatrixOS {
   app?: { name: string };
   readData?(key: string): Promise<unknown>;
   writeData?(key: string, value: unknown): Promise<void>;
+  // External APIs are CSP-blocked from the iframe; proxy GETs to an allowlisted
+  // host through the gateway. Allowlist lives in the gateway (/api/bridge/proxy).
+  proxyFetch?(url: string): Promise<unknown>;
 }
 declare global {
   interface Window { MatrixOS?: MatrixOS; }

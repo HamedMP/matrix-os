@@ -1,7 +1,13 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
+import {
+  appendFile as appendFileAsync,
+  mkdir as mkdirAsync,
+  readFile as readFileAsync,
+  stat as statAsync,
+  writeFile as writeFileAsync,
+} from "node:fs/promises";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { dirname, join, normalize, resolve, relative } from "node:path";
+import { dirname, extname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -25,6 +31,7 @@ import {
 } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
 import { getMissingFileFallback } from "./file-fallbacks.js";
+import { getMimeType } from "./file-utils.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
@@ -92,7 +99,7 @@ import { createDraftActionReadinessService } from "./onboarding/draft-action-rea
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
+import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
@@ -3135,6 +3142,49 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
+  // Read-only outbound proxy for sandboxed apps. Apps run in a null-origin iframe
+  // with CSP connect-src 'self', so they cannot call third-party APIs directly.
+  // This proxies GET requests to a small, fixed allowlist of public, keyless data
+  // APIs. Allowlist-only (no user-supplied host) keeps the SSRF surface closed.
+  const BRIDGE_PROXY_ALLOWED_HOSTS = new Set([
+    "api.open-meteo.com",
+    "geocoding-api.open-meteo.com",
+  ]);
+  app.get("/api/bridge/proxy", async (c) => {
+    const target = c.req.query("url");
+    if (!target || typeof target !== "string" || target.length > 2048) {
+      return c.json({ error: "url query param required" }, 400);
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(target);
+    } catch {
+      return c.json({ error: "invalid url" }, 400);
+    }
+    if (parsed.protocol !== "https:" || !BRIDGE_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
+      // Do not echo the host back; this is an allowlist boundary.
+      return c.json({ error: "url not allowed" }, 403);
+    }
+    try {
+      const upstream = await fetch(parsed.toString(), {
+        method: "GET",
+        redirect: "error",
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!upstream.ok) {
+        // Coarse status only; never leak upstream body/headers on failure.
+        return c.json({ error: "upstream request failed" }, 502);
+      }
+      const data = await upstream.json().catch(() => null);
+      if (data == null) return c.json({ error: "upstream returned no data" }, 502);
+      return c.json({ data });
+    } catch (e) {
+      console.error("[bridge/proxy] fetch error:", (e as Error).message);
+      return c.json({ error: "proxy request failed" }, 502);
+    }
+  });
+
   // Key-value bridge: GET for reads (query params), POST for read/write (JSON body)
   app.get("/api/bridge/data", async (c) => {
     const appName = c.req.query("app");
@@ -3543,6 +3593,27 @@ export async function createGateway(config: GatewayConfig) {
 
   app.on("HEAD", "/icons/:file", redirectIconRequest);
   app.get("/icons/:file", redirectIconRequest);
+
+  const serveBundledSystemIcon = async (c: Context) => {
+    const file = c.req.param("file");
+    if (!file) return c.text("Icon not found", 404);
+    const target = await resolveBundledSystemIconPath(file);
+    if (!target) return c.text("Icon not found", 404);
+    const stat = await statAsync(target);
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    const headers = {
+      "Content-Type": getMimeType(extname(file)),
+      "Cache-Control": "public, max-age=86400, immutable",
+      "CDN-Cache-Control": "public, max-age=86400",
+      "ETag": etag,
+    };
+    if (c.req.header("if-none-match") === etag) return c.body(null, 304, headers);
+    if (c.req.method === "HEAD") return c.body(null, 200, headers);
+    return c.body(await readFileAsync(target), 200, headers);
+  };
+
+  app.on("HEAD", "/system-icons/:file", serveBundledSystemIcon);
+  app.get("/system-icons/:file", serveBundledSystemIcon);
 
   app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
