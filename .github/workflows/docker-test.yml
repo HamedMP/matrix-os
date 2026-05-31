@@ -88,7 +88,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Skip Docker build for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
