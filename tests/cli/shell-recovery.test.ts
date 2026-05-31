@@ -8,5 +8,6 @@ describe("CLI recovery hints", () => {
     expect(recoveryHintForCode("invalid_layout")).toContain("matrix shell layout");
     expect(recoveryHintForCode("unsupported_version")).toContain("update");
     expect(recoveryHintForCode("attach_failed")).toContain("reattach");
+    expect(recoveryHintForCode("auth_expired")).toContain("matrix login");
   });
 });

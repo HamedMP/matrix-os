@@ -156,11 +156,11 @@ describe("shell CLI command", () => {
     ]);
   });
 
-  it("treats expired profile auth as not authenticated", async () => {
+  it("prompts for login when profile auth is expired", async () => {
     await saveProfileAuth("local", {
       accessToken: "expired-token",
       refreshToken: "refresh-token",
-      expiresAt: Date.now() - 1,
+      expiresAt: Date.parse("2026-05-29T23:24:06.000Z"),
       userId: "user-1",
       handle: "local",
     });
@@ -179,8 +179,38 @@ describe("shell CLI command", () => {
     expect(JSON.parse(errors[0]!)).toEqual({
       v: 1,
       error: {
-        code: "not_authenticated",
-        message: 'Not logged in for profile "local". Run `matrix login` first.',
+        code: "auth_expired",
+        message: 'Auth for profile "local" expired on 2026-05-29T23:24:06.000Z. Run `matrix login --profile local` to refresh.',
+      },
+    });
+  });
+
+  it("prompts for login when the gateway rejects profile auth", async () => {
+    await saveProfileAuth("local", {
+      accessToken: "stale-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user-1",
+      handle: "local",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401 },
+    )));
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
+      errors.push(String(line));
+    });
+
+    await shellCommand.subCommands!.ls.run!({
+      args: { dev: true, json: true },
+    } as never);
+
+    expect(JSON.parse(errors[0]!)).toEqual({
+      v: 1,
+      error: {
+        code: "auth_expired",
+        message: "Matrix CLI auth expired. Run `matrix login` to refresh your session.",
       },
     });
   });
