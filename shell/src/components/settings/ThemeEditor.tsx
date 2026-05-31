@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useId } from "react";
 import { THEME_PRESETS, getPreset } from "@/lib/theme-presets";
 import { saveTheme, type Theme } from "@/hooks/useTheme";
 import { useTheme } from "@/hooks/useTheme";
@@ -37,6 +37,8 @@ export function ThemeEditor() {
   const currentTheme = useTheme();
   const [theme, setTheme] = useState<Theme>(currentTheme);
   const [saving, setSaving] = useState(false);
+  const sansFontId = useId();
+  const monoFontId = useId();
 
   function updateColor(key: string, value: string) {
     setTheme((t) => ({ ...t, colors: { ...t.colors, [key]: value } }));
@@ -140,8 +142,9 @@ export function ThemeEditor() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label className="text-xs text-muted-foreground">Sans Font</label>
+            <label htmlFor={sansFontId} className="text-xs text-muted-foreground">Sans Font</label>
             <select
+              id={sansFontId}
               value={theme.fonts.sans}
               onChange={(e) => updateFont("sans", e.target.value)}
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
@@ -154,8 +157,9 @@ export function ThemeEditor() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-muted-foreground">Mono Font</label>
+            <label htmlFor={monoFontId} className="text-xs text-muted-foreground">Mono Font</label>
             <select
+              id={monoFontId}
               value={theme.fonts.mono}
               onChange={(e) => updateFont("mono", e.target.value)}
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"

@@ -254,6 +254,7 @@ function QuickInput({ onSubmit, busy }: { onSubmit: (text: string) => void; busy
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="Quick message..."
+        aria-label="Quick message"
         disabled={busy}
         className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50 text-foreground"
       />

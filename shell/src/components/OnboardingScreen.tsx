@@ -394,6 +394,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
                   name="msg"
                   type="text"
                   placeholder="Type your response..."
+                  aria-label="Your response"
                   className="flex-1 px-4 py-3 rounded-xl bg-muted/30 border border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/20 text-sm"
                   // react-doctor-disable-next-line react-doctor/no-autofocus -- primary text-response field in the conversational onboarding flow; focus is essential so the user can immediately type their reply
                   autoFocus

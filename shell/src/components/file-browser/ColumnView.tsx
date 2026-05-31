@@ -96,6 +96,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
               <div
                 key={entry.name}
                 role="treeitem"
+                tabIndex={0}
                 aria-selected={isSelected}
                 className={cn(
                   "flex items-center gap-2 px-3 py-1 text-sm cursor-default select-none",
@@ -103,6 +104,12 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
                   isSelected && "bg-accent",
                 )}
                 onClick={() => handleSelect(i + Math.max(0, columns.length - MAX_VISIBLE_COLUMNS), entry)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleSelect(i + Math.max(0, columns.length - MAX_VISIBLE_COLUMNS), entry);
+                  }
+                }}
               >
                 {entry.type === "directory" ? (
                   <FolderIcon className="size-4 text-blue-400 shrink-0" />

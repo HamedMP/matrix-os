@@ -172,7 +172,7 @@ function MenuDropdown({
               <div key={i} className="my-1 border-t border-border/40" />
             ) : (
               <button
-                key={i}
+                key={`item-${item.label}`}
                 type="button"
                 onClick={() => { item.action(); onClose(); }}
                 className="flex w-full items-center justify-between px-3 py-1 text-[13px] text-foreground/80 hover:bg-primary/10 hover:text-foreground"

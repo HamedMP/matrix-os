@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId } from "react";
 import { saveDesktopConfig, useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -20,6 +20,7 @@ export function DockEditor() {
   const [dock, setLocalDock] = useState<DockConfig>(config.dock);
   // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror: `prevConfigDock` IS read in render (the `config.dock !== prevConfigDock` guard below). It must be state, not a ref, so the corrective synchronous re-render re-seeds the optimistic copy when the store config changes.
   const [prevConfigDock, setPrevConfigDock] = useState(config.dock);
+  const autoHideId = useId();
 
   // Keep the local (optimistic) dock copy in sync with the store-backed config
   // using the render-time prev-prop pattern instead of an effect.
@@ -101,8 +102,9 @@ export function DockEditor() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
-            <label className="text-sm">Auto-hide</label>
+            <label htmlFor={autoHideId} className="text-sm">Auto-hide</label>
             <Switch
+              id={autoHideId}
               checked={dock.autoHide}
               onCheckedChange={(checked) =>
                 save({ ...dock, autoHide: checked })

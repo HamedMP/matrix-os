@@ -171,8 +171,11 @@ export function Settings({
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
     <div className="fixed inset-0 z-[45]">
-      <div
-        className="absolute inset-0 bg-black/30 backdrop-blur-xl"
+      <button
+        type="button"
+        aria-label="Close settings"
+        disabled={closeDisabled}
+        className="absolute inset-0 cursor-default bg-black/30 backdrop-blur-xl"
         style={{
           opacity: visible ? 1 : 0,
           transition: `opacity 300ms ${transitionEase}`,

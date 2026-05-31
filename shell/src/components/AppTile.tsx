@@ -52,9 +52,19 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           <span
             // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this pin toggle is nested inside the outer tile <button>, and nesting interactive elements is invalid HTML
             role="button"
+            tabIndex={0}
+            aria-label={pinned ? "Unpin from dock" : "Pin to dock"}
+            aria-pressed={pinned}
             onClick={(e) => {
               e.stopPropagation();
               onTogglePin();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                onTogglePin();
+              }
             }}
             className={`absolute -top-1.5 -right-1.5 z-10 size-5 flex items-center justify-center rounded-full border transition-all cursor-pointer ${
               pinned

@@ -49,6 +49,7 @@ export function WorkspaceCanvas() {
       </div>
       <div className="absolute inset-0">
         {visibleNodes.map((node) => (
+          // react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational absolute-positioning wrapper, not a control. The onMouseDown is a pointer-only convenience that selects the node; keyboard users select via the inner WorkspaceCanvasNode, which exposes role="button"/tabIndex with an Enter/Space onKeyDown. A button role on this layout container would mislabel it for assistive tech.
           <div
             key={node.id}
             className="pointer-events-auto absolute"

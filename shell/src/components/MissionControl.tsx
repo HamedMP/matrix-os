@@ -89,6 +89,7 @@ export function MissionControl({
 
   return (
     <div data-mission-control className="fixed inset-0 z-[45]">
+      {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss backdrop: a pure pointer convenience that closes the launcher only when the empty area itself is clicked. Keyboard dismiss is already provided by the global Escape handler above, and the launcher's real controls are focusable buttons. */}
       <div
         data-mission-backdrop
         className="absolute inset-0 bg-black/30 transition-all duration-300 ease-out"
@@ -101,6 +102,7 @@ export function MissionControl({
         }}
       />
 
+      {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes the launcher only when this empty wrapper itself (not its children) is clicked. Keyboard dismiss is handled by the global Escape handler above. */}
       <div
         className="relative flex flex-col h-full z-10 overflow-hidden md:pl-14 pt-16 transition-all duration-300 ease-out"
         style={{
@@ -241,6 +243,7 @@ function LauncherGrid({
   };
 
   return (
+    // react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes the launcher only when this empty scroll area itself (not the app tiles) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler.
     <div
       className="flex-1 overflow-y-auto px-6 pb-6"
       onClick={(e) => {
@@ -252,6 +255,7 @@ function LauncherGrid({
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
             Main
           </div>
+          {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes the launcher only when the empty grid gap (not an app tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}
           <div
             className="flex flex-wrap gap-1 justify-start"
             onClick={(e) => {
@@ -282,6 +286,7 @@ function LauncherGrid({
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
             My Apps
           </div>
+          {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes the launcher only when the empty grid gap (not an app tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}
           <div
             className="flex flex-wrap gap-1 justify-start"
             onClick={(e) => {

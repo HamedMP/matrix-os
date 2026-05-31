@@ -89,6 +89,7 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
   }, [open]);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- store close is driven by the external `open` prop (parent, Escape handler, and backdrop all route through onOpenChange), so reset state must run on the prop transition rather than a single local handler
     if (!open) {
       setSearch("");
       setCategory("All");
@@ -159,9 +160,19 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
   return (
     <div className="fixed inset-0 z-[45]">
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="Close app store"
         className="absolute inset-0 bg-background/80 backdrop-blur-lg"
         onClick={(e) => {
           if (e.target === e.currentTarget) onOpenChange(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenChange(false);
+          }
         }}
       />
 

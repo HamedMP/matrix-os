@@ -208,11 +208,11 @@ export function AttachmentButton({
 }: AttachmentButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleClick = useCallback(() => {
+  const handleAttachClick = useCallback(() => {
     inputRef.current?.click();
   }, []);
 
-  const handleChange = useCallback(
+  const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
         onFilesSelected(e.target.files);
@@ -229,7 +229,8 @@ export function AttachmentButton({
         type="file"
         multiple
         hidden
-        onChange={handleChange}
+        aria-label="Attach files"
+        onChange={handleFileInputChange}
       />
       <Button
         type="button"
@@ -237,7 +238,7 @@ export function AttachmentButton({
         variant="ghost"
         className={cn("size-10 md:size-8 text-muted-foreground", className)}
         disabled={disabled}
-        onClick={handleClick}
+        onClick={handleAttachClick}
         title="Attach files"
         {...props}
       >

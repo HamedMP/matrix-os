@@ -130,10 +130,12 @@ export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeatu
         {/* Dots */}
         {entries.length > 1 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-            {entries.map((_, i) => (
+            {entries.map((entry, i) => (
               <button
-                key={i}
+                key={entry.id}
                 type="button"
+                aria-label={`Go to ${entry.name}`}
+                aria-current={i === current}
                 onClick={() => setCurrent(i)}
                 className={`rounded-full transition-all ${
                   i === current

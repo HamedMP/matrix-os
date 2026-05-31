@@ -16,7 +16,7 @@ interface FileIconProps {
   name: string;
   type: "file" | "directory";
   selected?: boolean;
-  onClick?: (e: React.MouseEvent) => void;
+  onClick?: (modifiers: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   renaming?: React.ReactNode;
@@ -54,10 +54,20 @@ export function FileIcon({
       )}
       // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- gridcell in a non-table flex grid (IconView role="grid"); no native HTML element maps to the ARIA gridcell role
       role="gridcell"
+      tabIndex={0}
       aria-selected={selected}
-      onClick={onClick}
+      onClick={(e) => onClick?.({ metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey })}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onDoubleClick?.();
+        } else if (e.key === " ") {
+          e.preventDefault();
+          onClick?.({ metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
+        }
+      }}
     >
       <Icon
         className={cn(

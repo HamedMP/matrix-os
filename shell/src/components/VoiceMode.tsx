@@ -110,6 +110,7 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
             </p>
           ) : (
             transcript.slice(-6).map((line, i) => (
+              // react-doctor-disable-next-line react-doctor/no-array-index-key, react-doctor/no-array-index-as-key -- transcript lines are an append-only positional log of duplicate-prone strings with no stable id; index identity matches their fixed order
               <p key={i} className="text-sm">
                 {line}
               </p>

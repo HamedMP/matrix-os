@@ -103,6 +103,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   // When Aoede activates, dismiss the chat popover so the delegation
   // banner + progress card are the only build surfaces on screen.
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- `active` is an out-of-band prop edge driven by the vocal session activating, not a local user event; there is no parent click/change handler that owns this transition, so dismissing the chat must run from an effect keyed on `active`.
     if (active) onDismissChatRef.current?.();
   }, [active]);
 
@@ -201,7 +202,9 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
 
   // Drive delegation state from chat.busy transitions. Reads from a ref
   // so setState calls below don't re-fire this effect (react-hooks/set-state-in-effect).
+  // react-doctor-disable-next-line react-doctor/no-event-handler -- `chat.busy` is an out-of-band prop edge that drives the documented async delegation state machine below; it is not a side effect that can be moved into a parent event handler.
   const chatBusy = chat?.busy ?? false;
+  // react-doctor-disable-next-line react-doctor/no-event-handler -- mirrors `delegation` state into a ref so the async state-machine effect can read the latest value without re-subscribing; this is a ref sync, not a DOM event handler.
   const delegationRef = useRef(delegation);
   useEffect(() => {
     delegationRef.current = delegation;

@@ -21,7 +21,7 @@ export function VoiceButton({
   onStart,
   onStop,
 }: VoiceButtonProps) {
-  const handleClick = useCallback(() => {
+  const handleToggleRecording = useCallback(() => {
     if (isRecording) {
       onStop();
     } else {
@@ -48,7 +48,7 @@ export function VoiceButton({
           : "text-muted-foreground"
       }`}
       disabled={disabled || !isSupported || isProcessing}
-      onClick={handleClick}
+      onClick={handleToggleRecording}
       title={title}
     >
       {isProcessing ? (

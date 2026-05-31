@@ -365,6 +365,7 @@ export function TerminalPane({
   }, [isClosing]);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- syncs the initialSessionId prop into a mutable ref consumed by the imperative WebSocket/PTY layer; this is prop->ref mirroring, not a DOM event handler, and has no parent handler to hoist into
     if (initialSessionId) {
       sessionIdRef.current = initialSessionId;
     }
@@ -1175,6 +1176,7 @@ export function TerminalPane({
       const term = termRef.current as {
         element?: HTMLElement;
         options: {
+          // react-doctor-disable-next-line react-doctor/no-event-handler -- `theme` here is a property name in the xterm option type annotation, not a DOM event handler or prop callback; the effect imperatively pushes theme/font settings into the xterm instance and has no parent handler to hoist into
           theme: unknown;
           fontFamily: string;
           fontSize: number;
@@ -1213,6 +1215,7 @@ export function TerminalPane({
   }, [isFocused]);
 
   return (
+    // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
     <div
       ref={containerRef}
       className="h-full w-full min-h-0 min-w-0 relative overflow-hidden"

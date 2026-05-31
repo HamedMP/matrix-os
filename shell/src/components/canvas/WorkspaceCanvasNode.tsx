@@ -37,9 +37,20 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={isFocused}
       className="h-full overflow-hidden rounded-md border border-white/15 bg-zinc-950/90 text-zinc-100 shadow-xl"
       onClick={() => setSelectedNode(node.id)}
       onDoubleClick={() => setFocusedNode(isFocused ? null : node.id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setSelectedNode(node.id);
+          setFocusedNode(isFocused ? null : node.id);
+        }
+      }}
     >
       <div className="flex h-9 items-center gap-2 border-b border-white/10 px-3 text-xs">
         <Icon type={node.type} />

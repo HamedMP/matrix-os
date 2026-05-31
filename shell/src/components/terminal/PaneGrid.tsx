@@ -163,6 +163,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           suppressNativeKeyboard={suppressNativeKeyboard}
         />
       </div>
+      {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational pointer-only resize affordance: the 4px gutter starts a mouse/pointer drag to repan the split. It carries no control semantics, has no keyboard equivalent (panes auto-fit on resize), and adding an interactive role would require a non-trivial keyboard-resize behavior change out of scope for this pass. */}
       <div
         className="shrink-0 hover:opacity-100 opacity-50 transition-opacity"
         style={{ [isHorizontal ? "width" : "height"]: "4px", cursor: isHorizontal ? "col-resize" : "row-resize", background: "var(--border)" }}

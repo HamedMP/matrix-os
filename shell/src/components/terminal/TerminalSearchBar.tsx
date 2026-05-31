@@ -140,17 +140,19 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
 
   return (
     <div
+      role="search"
+      onKeyDown={handleKeyDown}
       style={{
         ...CONTAINER_BASE_STYLE,
         background: surface,
         border: `1px solid ${border}`,
         color: fg,
       }}
-      onKeyDown={handleKeyDown}
     >
       <input
         ref={inputRef}
         type="text"
+        aria-label="Search terminal"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search..."
