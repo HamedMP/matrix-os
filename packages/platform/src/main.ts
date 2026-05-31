@@ -510,6 +510,26 @@ function isAppDomainGatewayPath(path: string): boolean {
   );
 }
 
+function isRuntimeDataPath(path: string): boolean {
+  return (
+    isAppDomainGatewayPath(path) ||
+    path === '/apps' ||
+    path.startsWith('/apps/')
+  );
+}
+
+function shouldProxyShellForBillingGate(input: {
+  isAppDomain: boolean;
+  method: string;
+  upstreamPath: string;
+}): boolean {
+  return (
+    input.isAppDomain &&
+    (input.method === 'GET' || input.method === 'HEAD') &&
+    !isRuntimeDataPath(input.upstreamPath)
+  );
+}
+
 interface ExplicitVmRoute {
   handle: string;
   upstreamPath: string;
@@ -2564,7 +2584,14 @@ export function createApp(deps: {
         return c.text('Matrix OS computer unavailable', 404);
       }
       const entitlement = await getRuntimeEntitlementDecisionForUser(db, machine.clerkUserId, appEnv);
-      if (!entitlement.runtimeProxyAllowed) {
+      if (
+        !entitlement.runtimeProxyAllowed &&
+        !shouldProxyShellForBillingGate({
+          isAppDomain,
+          method: c.req.method,
+          upstreamPath: explicitVmRoute.upstreamPath,
+        })
+      ) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
@@ -2703,7 +2730,14 @@ export function createApp(deps: {
       : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url);
-      if (!entitlement.runtimeProxyAllowed) {
+      if (
+        !entitlement.runtimeProxyAllowed &&
+        !shouldProxyShellForBillingGate({
+          isAppDomain,
+          method: c.req.method,
+          upstreamPath: path,
+        })
+      ) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
@@ -2818,7 +2852,14 @@ export function createApp(deps: {
       return c.html(getNoContainerPage());
     }
 
-    if (!entitlement.runtimeProxyAllowed) {
+    if (
+      !entitlement.runtimeProxyAllowed &&
+      !shouldProxyShellForBillingGate({
+        isAppDomain,
+        method: c.req.method,
+        upstreamPath: path,
+      })
+    ) {
       applyNoStoreHeaders(c);
       return c.json({ error: 'Paid beta access required' }, 402);
     }

@@ -21,39 +21,35 @@ export function createStripeBillingClient(options: {
   return {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
 
-    async createCustomer(input) {
-      const customer = await stripe.customers.create({
-        metadata: {
-          clerk_user_id: input.clerkUserId,
-        },
-      }, {
-        idempotencyKey: input.idempotencyKey,
-      });
-      return { id: customer.id };
-    },
-
     async createCheckoutSession(input: StripeCheckoutSessionInput) {
       const session = await stripe.checkout.sessions.create({
         mode: input.mode,
-        customer: input.customerId,
+        ...(input.customerId ? { customer: input.customerId } : {}),
+        client_reference_id: input.clerkUserId,
         line_items: [{ price: input.priceId, quantity: 1 }],
         success_url: input.successUrl,
         cancel_url: input.cancelUrl,
         allow_promotion_codes: input.allowPromotionCodes,
         automatic_tax: { enabled: input.automaticTax },
         metadata: {
+          clerk_user_id: input.clerkUserId,
           matrix_region_slug: input.regionSlug,
         },
         subscription_data: {
           metadata: {
+            clerk_user_id: input.clerkUserId,
             matrix_region_slug: input.regionSlug,
           },
         },
         tax_id_collection: { enabled: true },
-        customer_update: {
-          address: 'auto',
-          name: 'auto',
-        },
+        ...(input.customerId
+          ? {
+            customer_update: {
+              address: 'auto' as const,
+              name: 'auto' as const,
+            },
+          }
+          : {}),
       });
       if (!session.url) {
         throw new Error('Stripe checkout session missing redirect URL');
@@ -81,7 +77,6 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
   };
   return {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
-    createCustomer: unavailable,
     createCheckoutSession: unavailable,
     createPortalSession: unavailable,
     constructWebhookEvent() {
