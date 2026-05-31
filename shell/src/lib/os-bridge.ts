@@ -96,8 +96,10 @@ export function handleBridgeMessage(
 
 function buildThemeStyleBlock(themeVars: ThemeVars): string {
   const entries = Object.entries(themeVars)
-    .filter(([, v]) => v)
-    .map(([k, v]) => `    ${k}: ${v};`)
+    .reduce<string[]>((acc, [k, v]) => {
+      if (v) acc.push(`    ${k}: ${v};`);
+      return acc;
+    }, [])
     .join("\n");
   if (!entries) return "";
   return `:root {\n${entries}\n  }`;

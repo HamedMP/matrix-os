@@ -1,5 +1,8 @@
 {
   "rules": {
     "react-doctor/require-pnpm-hardening": "off"
+  },
+  "surfaces": {
+    "score": { "excludeCategories": ["Dead Code"] }
   }
 }

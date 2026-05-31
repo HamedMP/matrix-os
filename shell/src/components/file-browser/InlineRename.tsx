@@ -30,6 +30,7 @@ export function InlineRename({ name, onCommit, onCancel }: InlineRenameProps) {
     e.stopPropagation();
     if (e.key === "Enter") {
       e.preventDefault();
+      // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout: `commit` is a hoisted function declared after this handler and read before its declaration in source order; the call is correct (JS function hoisting) and behavior-preserving, the compiler just cannot yet lower the forward reference.
       commit();
     } else if (e.key === "Escape") {
       e.preventDefault();

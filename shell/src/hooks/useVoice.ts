@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { getGatewayWs } from "../lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "../lib/websocket-auth";
+import { useIsClient } from "@/hooks/useIsClient";
 
 interface UseVoiceOptions {
   wsUrl?: string;
@@ -24,22 +25,24 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isSupported, setIsSupported] = useState(false);
 
-  useEffect(() => {
-    // react-doctor-disable-next-line react-doctor/no-initialize-state -- cannot lazy-init this useState: the value reads navigator.mediaDevices and window.MediaRecorder, which are undefined during SSR; deferring the feature-detection to a mount effect keeps server and client render output identical and avoids a hydration mismatch
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- one-shot client-only feature detection: MediaRecorder/getUserMedia support cannot be derived in render because the browser globals are unavailable until after hydration, so it is set once on mount
-    setIsSupported(
-      typeof navigator.mediaDevices?.getUserMedia === "function" && typeof window.MediaRecorder === "function"
-    );
-  }, []);
+  // Client-only feature detection without a mount-effect flicker: useIsClient()
+  // returns false during SSR/hydration (matching the server render of isSupported=false)
+  // and true on the client, where the browser globals exist. Deriving isSupported in
+  // render keeps the SSR/hydration output stable and flips to the real value in a single,
+  // flicker-free transition.
+  const isClient = useIsClient();
+  const isSupported =
+    isClient &&
+    typeof navigator.mediaDevices?.getUserMedia === "function" &&
+    typeof window.MediaRecorder === "function";
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization, react-hooks-js/preserve-manual-memoization -- returned hook API / stable identity for effect dep; React Compiler bails out on this callback (async + early returns), so the manual useCallback is required and intentional
   const getWsUrl = useCallback(async () => {
     if (opts?.wsUrl) return opts.wsUrl;
     return buildAuthenticatedWebSocketUrl("/ws/voice")
@@ -72,7 +75,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
               const binary = atob(msg.audio);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-              // react-doctor-disable-next-line react-doctor/immutability -- fresh-local mutation: `bytes` is allocated one line above to decode base64 PCM into a new buffer; it is never shared or part of React state, so the per-index writes are the standard atob->Uint8Array decode and there is nothing to update immutably.
+              // react-doctor-disable-next-line react-hooks-js/immutability -- fresh-local mutation: `bytes` is allocated three lines above to decode base64 PCM into a new buffer; it is never shared or part of React state, so the per-index writes are the standard atob->Uint8Array decode and there is nothing to update immutably.
               playAudio(bytes.buffer);
             } catch (_err: unknown) { /* decode error */ }
           }
@@ -162,7 +165,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
     }
   }, []);
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization, react-hooks-js/preserve-manual-memoization -- returned hook API / stable identity for effect dep; React Compiler bails out on this callback (imperative AudioContext setup), so the manual useCallback is required and intentional
   const playAudio = useCallback((audioData: ArrayBuffer) => {
     if (!audioContextRef.current) {
       audioContextRef.current = new AudioContext();
@@ -183,6 +186,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
     });
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only-live-ref: this teardown intentionally reads the live ref values (.current) at the moment of unmount to close whatever ws/recorder/AudioContext is active then; capturing them at effect-setup time would tear down stale or null handles and leak the live ones.
   useEffect(() => {
     return () => {
       if (wsRef.current) {

@@ -328,7 +328,10 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
           return { sourcePath, ok: res.ok };
         }),
       );
-      const failed = results.filter((r) => !r.ok).map((r) => r.sourcePath);
+      const failed = results.reduce<string[]>((acc, r) => {
+        if (!r.ok) acc.push(r.sourcePath);
+        return acc;
+      }, []);
 
       if (clipboard.operation === "cut") {
         if (failed.length === 0) {

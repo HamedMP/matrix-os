@@ -69,6 +69,7 @@ export function FileIcon({
         }
       }}
     >
+      {/* react-doctor-disable-next-line react-hooks-js/static-components -- `Icon` is a dynamic component chosen by getFileIcon(name, type), not a component defined in render; it closes over the per-instance name/type props (extension-based lucide icon selection), so it cannot be hoisted to module scope. */}
       <Icon
         className={cn(
           "size-10 shrink-0",

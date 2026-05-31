@@ -56,7 +56,7 @@ export function useChatState(): ChatState {
     if (conversations.length === 0) return;
     let aborted = false;
 
-    const sorted = [...conversations].sort(
+    const sorted = conversations.toSorted(
       (a, b) => b.updatedAt - a.updatedAt,
     );
     const latest = sorted[0];
