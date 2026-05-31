@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   getBillingEntitlement,
+  getBillingCustomerByClerkUserId,
   insertBillingWebhookEvent,
+  upsertBillingOverride,
   upsertBillingCustomer,
   upsertBillingEntitlement,
   type PlatformDB,
@@ -34,7 +36,6 @@ describe('platform billing routes', () => {
     ({ db } = await createTestPlatformDb());
     stripe = {
       apiTimeoutMs: 10_000,
-      createCustomer: vi.fn().mockResolvedValue({ id: 'cus_123' }),
       createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session' }),
       createPortalSession: vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' }),
       constructWebhookEvent: vi.fn(),
@@ -68,12 +69,9 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: 'https://checkout.stripe.test/session' });
-    expect(stripe.createCustomer).toHaveBeenCalledWith({
-      clerkUserId: 'user_123',
-      idempotencyKey: 'billing-customer:user_123',
-    });
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
-      customerId: 'cus_123',
+      clerkUserId: 'user_123',
+      customerId: undefined,
       priceId: 'price_builder_annual',
       mode: 'subscription',
       automaticTax: true,
@@ -87,54 +85,32 @@ describe('platform billing routes', () => {
     );
   });
 
-  it('uses a stable Stripe idempotency key for concurrent customer creation', async () => {
-    let customerSequence = 0;
-    const idempotentCustomers: Record<string, string | undefined> = {};
-    vi.mocked(stripe.createCustomer).mockImplementation(async ({ idempotencyKey }) => {
-      const existing = idempotentCustomers[idempotencyKey];
-      const id = existing ?? `cus_${++customerSequence}`;
-      idempotentCustomers[idempotencyKey] = id;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return { id };
+  it('reuses an existing Stripe customer link when one is already known', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_existing',
+      createdAt: '2026-05-30T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
     });
     const app = createApp();
 
-    const [first, second] = await Promise.all([
-      app.request('/billing/checkout', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly' }),
-      }),
-      app.request('/billing/checkout', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly' }),
-      }),
-    ]);
-
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(200);
-    expect(stripe.createCustomer).toHaveBeenCalledWith({
-      clerkUserId: 'user_123',
-      idempotencyKey: 'billing-customer:user_123',
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly' }),
     });
-    expect(stripe.createCheckoutSession).toHaveBeenCalledTimes(2);
-    expect(stripe.createCheckoutSession).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      customerId: 'cus_1',
-    }));
-    expect(stripe.createCheckoutSession).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      customerId: 'cus_1',
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      clerkUserId: 'user_123',
+      customerId: 'cus_existing',
     }));
   });
 
-  it('coalesces concurrent customer creation for the same Clerk user', async () => {
-    vi.mocked(stripe.createCustomer).mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return { id: 'cus_singleflight' };
-    });
-    const checkoutCustomers: string[] = [];
+  it('lets Stripe create customers during checkout when no customer link exists yet', async () => {
+    const checkoutCustomerIds: Array<string | undefined> = [];
     vi.mocked(stripe.createCheckoutSession).mockImplementation(async ({ customerId }) => {
-      checkoutCustomers.push(customerId);
+      checkoutCustomerIds.push(customerId);
       return { url: 'https://checkout.stripe.test/session' };
     });
     const app = createApp();
@@ -154,9 +130,8 @@ describe('platform billing routes', () => {
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    expect(stripe.createCustomer).toHaveBeenCalledTimes(1);
-    expect(new Set(checkoutCustomers).size).toBe(1);
-    expect(checkoutCustomers[0]).toBe('cus_singleflight');
+    expect(stripe.createCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(checkoutCustomerIds).toEqual([undefined, undefined]);
   });
 
   it('terminates unknown billing paths inside the billing namespace', async () => {
@@ -166,7 +141,6 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'Not found' });
-    expect(stripe.createCustomer).not.toHaveBeenCalled();
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
@@ -208,7 +182,6 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'Unauthorized' });
-    expect(stripe.createCustomer).not.toHaveBeenCalled();
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
     expect(stripe.createPortalSession).not.toHaveBeenCalled();
   });
@@ -225,7 +198,7 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'Billing unavailable' });
-    expect(stripe.createCustomer).not.toHaveBeenCalled();
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
   it('creates customer portal sessions for the signed-in Stripe customer', async () => {
@@ -244,6 +217,43 @@ describe('platform billing routes', () => {
     expect(stripe.createPortalSession).toHaveBeenCalledWith({
       customerId: 'cus_123',
       returnUrl: 'https://app.matrix-os.com/?billing=portal',
+    });
+  });
+
+  it('reports active access from internal billing overrides', async () => {
+    await upsertBillingOverride(db, {
+      id: 'override_internal',
+      clerkUserId: 'user_123',
+      planSlug: 'internal',
+      status: 'active',
+      maxRuntimeSlots: 3,
+      includedRuntimeSlots: 3,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx52',
+      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      reason: 'internal engineer access',
+      createdBy: 'test',
+      expiresAt: null,
+      revokedAt: null,
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/status', { method: 'GET' });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: {
+        source: 'override',
+        planSlug: 'internal',
+        status: 'active',
+        maxRuntimeSlots: 3,
+        defaultServerType: 'cpx52',
+      },
+      access: {
+        runtimeProxyAllowed: true,
+        reason: 'active',
+      },
     });
   });
 
@@ -311,6 +321,61 @@ describe('platform billing routes', () => {
       maxRuntimeSlots: 4,
       defaultServerType: 'cpx52',
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+    });
+  });
+
+  it('links Stripe-created checkout customers from subscription metadata', async () => {
+    const event = subscriptionEvent('evt_metadata_link');
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(event);
+    const app = createApp(null);
+
+    const res = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true, processed: true });
+    await expect(getBillingEntitlement(db, 'user_123')).resolves.toMatchObject({
+      planSlug: 'matrix_max',
+      stripeSubscriptionId: 'sub_123',
+    });
+    await expect(getBillingCustomerByClerkUserId(db, 'user_123')).resolves.toMatchObject({
+      stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+  });
+
+  it('updates stale customer links when a signed subscription webhook names a newer Stripe customer', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_old',
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:00.000Z',
+    });
+    const event = subscriptionEvent('evt_customer_conflict');
+    (event.data.object as { customer: string }).customer = 'cus_new';
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(event);
+    const app = createApp(null);
+
+    const res = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true, processed: true });
+    await expect(getBillingEntitlement(db, 'user_123')).resolves.toMatchObject({
+      planSlug: 'matrix_max',
+      stripeSubscriptionId: 'sub_123',
+    });
+    await expect(getBillingCustomerByClerkUserId(db, 'user_123')).resolves.toMatchObject({
+      stripeCustomerId: 'cus_new',
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
     });
   });
 
@@ -396,6 +461,10 @@ function subscriptionEvent(id: string): StripeWebhookEvent {
         customer: 'cus_123',
         status: 'active',
         current_period_end: 1_782_432_000,
+        metadata: {
+          clerk_user_id: 'user_123',
+          matrix_region_slug: 'region_fsn1',
+        },
         items: {
           data: [
             { price: { id: 'price_max_monthly' }, quantity: 1 },

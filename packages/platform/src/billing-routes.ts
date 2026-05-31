@@ -5,20 +5,22 @@ import {
   getBillingCustomerByClerkUserId,
   getBillingCustomerByStripeCustomerId,
   getBillingEntitlement,
-  insertBillingCustomerIfAbsent,
+  getBillingEntitlementState,
   insertBillingWebhookEvent,
   runBillingWebhookTransaction,
+  upsertBillingCustomer,
   upsertBillingEntitlement,
-  type BillingCustomerRecord,
   type PlatformDB,
 } from './db.js';
 import {
   DEFAULT_BILLING_PLAN_DEFINITIONS,
+  computeEffectiveEntitlement,
   deriveStripeEntitlement,
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
   parseBillingEntitlementRecord,
+  parseBillingOverrideRecord,
   type BillingEntitlementStatus,
   type MatrixBillingPlanSlug,
   type MatrixBillingInterval,
@@ -28,8 +30,7 @@ import {
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
-const CUSTOMER_CREATION_INFLIGHT_LIMIT = 1024;
-const customerCreationInflight = new Map<string, Promise<BillingCustomerRecord>>();
+const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
@@ -38,7 +39,8 @@ const CheckoutRequestSchema = z.object({
 });
 
 export interface StripeCheckoutSessionInput {
-  customerId: string;
+  clerkUserId: string;
+  customerId?: string;
   priceId: string;
   mode: 'subscription';
   automaticTax: boolean;
@@ -51,11 +53,10 @@ export interface StripeCheckoutSessionInput {
 export interface StripeBillingClient {
   apiTimeoutMs: number;
   /**
-   * Implementations must pass idempotencyKey through to Stripe and use a bounded
-   * network timeout. Callers rely on that to avoid duplicate customer creation
-   * without holding database locks across external API calls.
+   * Implementations must use a bounded network timeout. Checkout creates the
+   * Stripe Customer when needed; the signed subscription webhook links it back
+   * to the Clerk user from server-written metadata.
    */
-  createCustomer(input: { clerkUserId: string; idempotencyKey: string }): Promise<{ id: string }>;
   createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string }>;
   createPortalSession(input: { customerId: string; returnUrl: string }): Promise<{ url: string }>;
   constructWebhookEvent(rawBody: string, signature: string, webhookSecret: string): StripeWebhookEvent;
@@ -111,9 +112,10 @@ export function createBillingRoutes(options: {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
       }
-      const customer = await getOrCreateCustomer(options.db, options.stripe, clerkUserId, now());
+      const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       const session = await options.stripe.createCheckoutSession({
-        customerId: customer.stripeCustomerId,
+        clerkUserId,
+        customerId: customer?.stripeCustomerId,
         priceId,
         mode: 'subscription',
         automaticTax: true,
@@ -154,9 +156,15 @@ export function createBillingRoutes(options: {
     const clerkUserId = await resolveRouteClerkUserId(c, 'status');
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
     try {
-      const entitlement = await getBillingEntitlement(options.db, clerkUserId);
-      const access = getRuntimeAccessDecision(parseBillingEntitlementRecord(entitlement), now());
-      return c.json({ entitlement: entitlement ?? null, access }, 200);
+      const currentTime = now();
+      const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
+      const entitlement = computeEffectiveEntitlement({
+        stripeEntitlement: parseBillingEntitlementRecord(state.entitlement),
+        override: parseBillingOverrideRecord(state.override),
+        now: currentTime,
+      });
+      const access = getRuntimeAccessDecision(entitlement, currentTime);
+      return c.json({ entitlement, access }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'Billing unavailable' }, 503);
@@ -178,12 +186,13 @@ export function createBillingRoutes(options: {
     }
 
     try {
+      const webhookProcessedAt = now();
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
         const inserted = await insertBillingWebhookEvent(trx, {
           stripeEventId: event.id,
           eventType: event.type,
           createdAtFromStripe: epochSecondsToIso(event.created),
-          processedAt: now().toISOString(),
+          processedAt: webhookProcessedAt.toISOString(),
           status: 'processed',
           errorCode: null,
         });
@@ -195,13 +204,13 @@ export function createBillingRoutes(options: {
           return { received: true, ignored: true };
         }
 
-        const projection = await projectSubscription(trx, event.data.object);
+        const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
         if (!projection) return { received: true, ignored: true };
 
         const entitlement = deriveStripeEntitlement(projection, {
           priceCatalog: loadStripePriceCatalog(env),
           runtimeCatalog: loadRuntimeCatalog(env),
-          now: now(),
+          now: webhookProcessedAt,
         });
         await persistEntitlement(trx, entitlement);
         return { received: true, processed: true };
@@ -218,56 +227,6 @@ export function createBillingRoutes(options: {
   });
 
   return app;
-}
-
-async function getOrCreateCustomer(
-  db: PlatformDB,
-  stripe: StripeBillingClient,
-  clerkUserId: string,
-  currentTime: Date,
-) {
-  const existing = await getBillingCustomerByClerkUserId(db, clerkUserId);
-  if (existing) return existing;
-
-  const pending = customerCreationInflight.get(clerkUserId);
-  if (pending) return pending;
-  if (customerCreationInflight.size >= CUSTOMER_CREATION_INFLIGHT_LIMIT) {
-    throw new Error('customer_creation_inflight_limit');
-  }
-  const created = createAndPersistCustomer(db, stripe, clerkUserId, currentTime);
-  customerCreationInflight.set(clerkUserId, created);
-  try {
-    return await created;
-  } finally {
-    customerCreationInflight.delete(clerkUserId);
-  }
-}
-
-async function createAndPersistCustomer(
-  db: PlatformDB,
-  stripe: StripeBillingClient,
-  clerkUserId: string,
-  currentTime: Date,
-): Promise<BillingCustomerRecord> {
-  const customer = await stripe.createCustomer({
-    clerkUserId,
-    idempotencyKey: billingCustomerIdempotencyKey(clerkUserId),
-  });
-
-  const nowIso = currentTime.toISOString();
-  await insertBillingCustomerIfAbsent(db, {
-    clerkUserId,
-    stripeCustomerId: customer.id,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  });
-  const persisted = await getBillingCustomerByClerkUserId(db, clerkUserId);
-  if (!persisted) throw new Error('billing customer was not persisted');
-  return persisted;
-}
-
-function billingCustomerIdempotencyKey(clerkUserId: string): string {
-  return `billing-customer:${clerkUserId}`;
 }
 
 function resolvePriceId(
@@ -298,18 +257,35 @@ function isSubscriptionEvent(type: string): boolean {
   );
 }
 
-async function projectSubscription(db: PlatformDB, value: unknown): Promise<StripeSubscriptionProjection | null> {
+async function projectSubscription(
+  db: PlatformDB,
+  value: unknown,
+  currentTime: Date,
+): Promise<StripeSubscriptionProjection | null> {
   if (!value || typeof value !== 'object') return null;
   const sub = value as {
     id?: unknown;
     customer?: unknown;
     status?: unknown;
     current_period_end?: unknown;
+    metadata?: unknown;
     items?: { data?: unknown };
   };
   if (typeof sub.id !== 'string' || typeof sub.customer !== 'string') return null;
-  const customer = await getBillingCustomerByStripeCustomerId(db, sub.customer);
-  if (!customer) return null;
+  let customer = await getBillingCustomerByStripeCustomerId(db, sub.customer);
+  if (!customer) {
+    const clerkUserId = readClerkUserIdFromStripeMetadata(sub.metadata);
+    if (!clerkUserId) return null;
+    const nowIso = currentTime.toISOString();
+    await upsertBillingCustomer(db, {
+      clerkUserId,
+      stripeCustomerId: sub.customer,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    customer = await getBillingCustomerByStripeCustomerId(db, sub.customer);
+    if (!customer) return null;
+  }
   const status = normalizeSubscriptionStatus(sub.status);
   const data = Array.isArray(sub.items?.data) ? sub.items.data : [];
   return {
@@ -330,6 +306,14 @@ async function projectSubscription(db: PlatformDB, value: unknown): Promise<Stri
       }];
     }),
   };
+}
+
+function readClerkUserIdFromStripeMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const clerkUserId = (metadata as { clerk_user_id?: unknown }).clerk_user_id;
+  return typeof clerkUserId === 'string' && CLERK_USER_ID_PATTERN.test(clerkUserId)
+    ? clerkUserId
+    : null;
 }
 
 function normalizeSubscriptionStatus(value: unknown): BillingEntitlementStatus {

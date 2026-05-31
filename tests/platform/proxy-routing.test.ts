@@ -459,7 +459,7 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("blocks provisioning boot pages when paid-beta entitlement denies runtime access", async () => {
+  it("shows the provisioning page instead of raw billing JSON when paid-beta entitlement denies shell access", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
       machineId: "machine-alice-provisioning-expired",
@@ -491,14 +491,17 @@ describe("platform proxy routing", () => {
       },
     });
 
-    expect(res.status).toBe(402);
+    expect(res.status).toBe(503);
     expect(res.headers.get("cache-control")).toBe("no-store, private");
     expect(res.headers.get("set-cookie")).toBeNull();
-    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    const html = await res.text();
+    expect(html).toContain("Booting Matrix OS");
+    expect(html).toContain("Instance status:");
+    expect(html).toContain("<strong>provisioning</strong>");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("blocks provisioning boot pages when Stripe billing is enabled without an active entitlement", async () => {
+  it("shows the provisioning page instead of raw billing JSON when Stripe billing is inactive", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
       machineId: "machine-alice-provisioning-stripe-expired",
@@ -524,6 +527,46 @@ describe("platform proxy routing", () => {
     });
 
     const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    expect(html).toContain("Booting Matrix OS");
+    expect(html).toContain("Instance status:");
+    expect(html).toContain("<strong>provisioning</strong>");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps provisioning runtime API paths blocked when Stripe billing is inactive", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "machine-alice-provisioning-stripe-api-expired",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "provisioning",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/api/theme", {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
@@ -1785,7 +1828,7 @@ describe("platform proxy routing", () => {
     });
   });
 
-  it("blocks runtime proxying when Stripe billing is enabled without an active entitlement", async () => {
+  it("still serves the shell for the billing gate when Stripe billing is enabled without an active entitlement", async () => {
     await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff127",
       clerkUserId: "user_alice",
@@ -1796,8 +1839,8 @@ describe("platform proxy routing", () => {
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("shell html", { status: 200 }),
     );
     const app = createApp({
       db,
@@ -1810,6 +1853,157 @@ describe("platform proxy routing", () => {
     });
 
     const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("shell html");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.24:443/");
+    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+  });
+
+  it("keeps runtime API paths blocked while the unpaid billing shell is visible", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff12a",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123474,
+      publicIPv4: "203.0.113.26",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/api/theme", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: "Paid beta access required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("serves shell static assets routed by cookie for unpaid users", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff12b",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123475,
+      publicIPv4: "203.0.113.27",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("icon", {
+        status: 200,
+        headers: { "content-type": "image/x-icon" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/favicon.ico", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "matrix_shell_route=alice",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("icon");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.27:443/favicon.ico");
+    expect(res.headers.get("content-type")).toBe("image/x-icon");
+  });
+
+  it("serves the billing shell for explicit VM routes when Stripe access is inactive", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff12c",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123476,
+      publicIPv4: "203.0.113.28",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("explicit shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/vm/alice", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("explicit shell");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.28:443/");
+    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+  });
+
+  it("blocks explicit VM runtime API routes when Stripe access is inactive", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff12d",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123477,
+      publicIPv4: "203.0.113.29",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request("/vm/alice/api/theme", {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
