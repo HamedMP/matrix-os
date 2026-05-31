@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="17" x2="110" y1="14" y2="114" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D7F0FF"/>
+      <stop offset="1" stop-color="#6B9BE8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#31568F" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <rect x="31" y="31" width="21" height="21" rx="6" fill="#FF7468"/>
+    <rect x="52" y="31" width="21" height="21" rx="6" fill="#FF7468"/>
+    <rect x="52" y="52" width="21" height="21" rx="6" fill="#FF7468"/>
+    <rect x="73" y="52" width="21" height="21" rx="6" fill="#FFB84D"/>
+    <rect x="31" y="77" width="21" height="21" rx="6" fill="#65D18E"/>
+    <rect x="52" y="77" width="21" height="21" rx="6" fill="#65D18E"/>
+    <rect x="73" y="77" width="21" height="21" rx="6" fill="#8F7BE8"/>
+    <rect x="73" y="31" width="21" height="21" rx="6" fill="#66C7F0"/>
+  </g>
+</svg>
