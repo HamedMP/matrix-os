@@ -202,6 +202,9 @@ services:
       # tokens issued here validate against the gateway. Min 32 chars.
       - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET:-dev-platform-jwt-secret-please-change-32}
       - PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL:-http://localhost:9000}
+      # Legacy local Docker runtime is opt-in. VPS-native production ignores
+      # this flag whenever CUSTOMER_VPS_ENABLED wires a customerVpsService.
+      - MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=${MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED:-true}
       # Single-tenant dev: every issued JWT points at the local gateway.
       - GATEWAY_URL_TEMPLATE=${GATEWAY_URL_TEMPLATE:-http://localhost:4000}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
