@@ -8,6 +8,7 @@ import {
 import { createApp } from '../../packages/platform/src/main.js';
 import { buildCustomerVpsProxyUrl } from '../../packages/platform/src/profile-routing.js';
 import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
+import type { CustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import type Dockerode from 'dockerode';
 
 function stubOrchestrator(): Orchestrator {
@@ -46,6 +47,7 @@ describe('platform/profile-routing-vps', () => {
 
   beforeEach(async () => {
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = 'true';
     ({ db } = await createTestPlatformDb());
     await insertContainer(db, {
       handle: 'alice',
@@ -59,6 +61,7 @@ describe('platform/profile-routing-vps', () => {
   afterEach(async () => {
     await destroyTestPlatformDb(db);
     vi.restoreAllMocks();
+    delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
   });
 
   it('builds a customer VPS HTTPS proxy URL from a running machine', () => {
@@ -253,5 +256,28 @@ describe('platform/profile-routing-vps', () => {
 
     expect(res.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://matrixos-alice:3000/api/ping');
+  });
+
+  it('does not fall back to legacy containers when VPS-native routing is configured', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('wrong target'));
+    const docker = stubDocker();
+    const orchestrator = stubOrchestrator();
+    const app = createApp({
+      db,
+      docker,
+      orchestrator,
+      platformSecret: 'platform-secret',
+      customerVpsService: {} as CustomerVpsService,
+    });
+
+    const res = await app.request('/proxy/alice/api/ping', {
+      headers: { authorization: 'Bearer platform-secret' },
+    });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Matrix computer unavailable' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(docker.getContainer).not.toHaveBeenCalled();
+    expect(orchestrator.start).not.toHaveBeenCalled();
   });
 });
