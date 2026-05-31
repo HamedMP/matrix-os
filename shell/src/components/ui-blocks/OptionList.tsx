@@ -10,9 +10,9 @@ interface OptionListProps {
 export function OptionList({ options, onSelect }: OptionListProps) {
   return (
     <div className="flex flex-wrap gap-1.5 my-2">
-      {options.map((option) => (
+      {options.map((option, i) => (
         <button
-          key={`opt:${option.value ?? ""}:${option.label}`}
+          key={`opt:${i}:${option.label}`}
           type="button"
           onClick={() => onSelect?.(option)}
           className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium hover:bg-accent hover:border-accent-foreground/20 transition-colors"
