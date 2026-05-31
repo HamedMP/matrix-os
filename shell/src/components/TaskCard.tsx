@@ -29,6 +29,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className="rounded border border-border bg-card/50 p-2 text-xs text-left w-full hover:bg-accent/50 transition-colors"
     >

@@ -37,6 +37,7 @@ export function AmbientClock({ onSwitchMode }: { onSwitchMode: () => void }) {
           {formatDate(now)}
         </p>
         <button
+          type="button"
           onClick={onSwitchMode}
           className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors mt-4"
         >

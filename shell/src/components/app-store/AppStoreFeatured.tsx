@@ -109,12 +109,14 @@ export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeatu
         {entries.length > 1 && (
           <>
             <button
+              type="button"
               onClick={prev}
               className="absolute left-3 top-1/2 -translate-y-1/2 size-9 flex items-center justify-center rounded-full bg-black/30 backdrop-blur-sm text-white/90 hover:bg-black/50 transition-all opacity-0 group-hover:opacity-100"
             >
               <ChevronLeftIcon className="size-5" />
             </button>
             <button
+              type="button"
               onClick={next}
               className="absolute right-3 top-1/2 -translate-y-1/2 size-9 flex items-center justify-center rounded-full bg-black/30 backdrop-blur-sm text-white/90 hover:bg-black/50 transition-all opacity-0 group-hover:opacity-100"
             >
@@ -129,6 +131,7 @@ export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeatu
             {entries.map((_, i) => (
               <button
                 key={i}
+                type="button"
                 onClick={() => setCurrent(i)}
                 className={`rounded-full transition-all ${
                   i === current

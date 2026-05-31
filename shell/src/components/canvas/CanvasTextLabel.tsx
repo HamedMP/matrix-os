@@ -151,6 +151,7 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
           <div className="opacity-0 group-hover/label:opacity-100 transition-opacity flex items-center gap-0.5">
             <div className="relative">
               <button
+                type="button"
                 className="p-0.5 rounded hover:bg-muted transition-colors"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -170,6 +171,7 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
                   {LABEL_COLORS.map((color) => (
                     <button
                       key={color}
+                      type="button"
                       className="size-5 rounded-full border transition-transform hover:scale-110"
                       style={{
                         backgroundColor: color,
@@ -184,6 +186,7 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
               )}
             </div>
             <button
+              type="button"
               className="p-0.5 rounded hover:bg-muted transition-colors"
               onClick={(e) => {
                 e.stopPropagation();

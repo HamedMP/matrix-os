@@ -13,6 +13,7 @@ export function CardGrid({ cards, onSelect }: CardGridProps) {
       {cards.map((card, i) => (
         <button
           key={i}
+          type="button"
           onClick={() => onSelect?.(card)}
           className="flex flex-col items-start gap-1 rounded-lg border border-border bg-card p-3 text-left hover:bg-accent hover:border-accent-foreground/20 transition-colors"
         >

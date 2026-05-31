@@ -155,6 +155,7 @@ function MenuDropdown({
   return (
     <div className="relative" ref={ref}>
       <button
+        type="button"
         onClick={onToggle}
         className={`px-2 py-0.5 rounded text-foreground/60 ${open ? "bg-foreground/10 text-foreground/90" : "hover:bg-foreground/10"}`}
       >
@@ -168,6 +169,7 @@ function MenuDropdown({
             ) : (
               <button
                 key={i}
+                type="button"
                 onClick={() => { item.action(); onClose(); }}
                 className="flex w-full items-center justify-between px-3 py-1 text-[13px] text-foreground/80 hover:bg-primary/10 hover:text-foreground"
               >
@@ -292,13 +294,14 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
         {/* Right: Search + clock + user */}
         <div className="flex items-center gap-1 justify-end">
           <button
+            type="button"
             className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
             onClick={onOpenCommandPalette}
             title="Search (Cmd+K)"
           >
             <SearchIcon className="size-3.5 text-foreground/70" />
           </button>
-          <button className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
+          <button type="button" className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
             <MenuBarClock />
           </button>
           <div className="pl-0.5">

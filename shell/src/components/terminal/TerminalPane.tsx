@@ -1226,6 +1226,7 @@ export function TerminalPane({
             </div>
           </div>
           <button
+            type="button"
             onClick={() => {
               window.open(authUrl, "_blank", "noopener,noreferrer");
             }}
@@ -1243,6 +1244,7 @@ export function TerminalPane({
             Open login
           </button>
           <button
+            type="button"
             onClick={() => {
               navigator.clipboard.writeText(authUrl).catch((_err: unknown) => {
                 // Fallback for insecure contexts / iframe restrictions
@@ -1270,6 +1272,7 @@ export function TerminalPane({
             Copy URL
           </button>
           <button
+            type="button"
             onClick={() => setAuthUrl(null)}
             style={{
               background: "none",

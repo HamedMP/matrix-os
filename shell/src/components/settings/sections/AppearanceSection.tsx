@@ -194,6 +194,7 @@ export function AppearanceSection() {
             return (
               <button
                 key={preset.id}
+                type="button"
                 onClick={() => isAvailable && applyPreset(preset.id)}
                 disabled={!isAvailable}
                 className={`relative flex flex-col rounded-xl border-2 p-3 transition-all ${
@@ -240,6 +241,7 @@ export function AppearanceSection() {
           ).map((opt) => (
             <button
               key={opt.id}
+              type="button"
               onClick={() => selectBgMode(opt.id)}
               className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
                 bgMode === opt.id
@@ -329,6 +331,7 @@ export function AppearanceSection() {
                 {wallpapers.map((name) => (
                   <div key={name} className="relative group">
                     <button
+                      type="button"
                       onClick={() => handleWallpaperSelect(name)}
                       className={`w-full aspect-video rounded-lg border-2 overflow-hidden transition-all ${
                         selectedWallpaper === name
@@ -343,6 +346,7 @@ export function AppearanceSection() {
                       />
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDeleteWallpaper(name)}
                       className="absolute top-1 right-1 size-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                     >
@@ -376,6 +380,7 @@ export function AppearanceSection() {
           {(["left", "right", "bottom"] as const).map((pos) => (
             <button
               key={pos}
+              type="button"
               onClick={() => saveDock({ ...dock, position: pos })}
               className={`flex-1 rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
                 dock.position === pos

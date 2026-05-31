@@ -76,6 +76,7 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
 
       <div className="flex items-center gap-1 text-sm flex-1 min-w-0">
         <button
+          type="button"
           className="text-muted-foreground hover:text-foreground px-1 shrink-0"
           onClick={() => navigate("")}
         >
@@ -85,6 +86,7 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
           <span key={pathSegments.slice(0, i + 1).join("/")} className="flex items-center gap-1 min-w-0">
             <span className="text-muted-foreground">/</span>
             <button
+              type="button"
               className="hover:text-foreground truncate"
               onClick={() => navigate(pathSegments.slice(0, i + 1).join("/"))}
             >

@@ -13,6 +13,7 @@ export function OptionList({ options, onSelect }: OptionListProps) {
       {options.map((option, i) => (
         <button
           key={i}
+          type="button"
           onClick={() => onSelect?.(option)}
           className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium hover:bg-accent hover:border-accent-foreground/20 transition-colors"
         >

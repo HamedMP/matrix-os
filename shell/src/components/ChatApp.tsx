@@ -237,6 +237,7 @@ export function ChatApp({
                 {group.items.map((conv) => (
                   <button
                     key={conv.id}
+                    type="button"
                     onClick={() => onSwitchConversation(conv.id)}
                     className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
                       conv.id === sessionId
@@ -447,6 +448,7 @@ function EmptyState({
             {suggestions.map((s, i) => (
               <button
                 key={s}
+                type="button"
                 onClick={() => onSubmit(s)}
                 className="rounded-full border border-border/60 bg-card/50 px-3.5 py-1.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border"
               >

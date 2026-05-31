@@ -28,6 +28,7 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <h3 className="text-sm font-semibold">App Info</h3>
         <button
+          type="button"
           onClick={onClose}
           className="size-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
         >

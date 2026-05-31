@@ -109,6 +109,7 @@ export function MissionControl({
         <div className="flex items-center justify-between px-6 py-4">
           <h2 className="text-lg font-semibold text-white">Launcher</h2>
           <button
+            type="button"
             onClick={onClose}
             className="size-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
           >

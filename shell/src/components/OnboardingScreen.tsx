@@ -413,6 +413,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
 
           {/* Skip intro — bottom */}
           <button
+            type="button"
             onClick={() => {
               ob.chooseClaudeCode();
               onComplete();

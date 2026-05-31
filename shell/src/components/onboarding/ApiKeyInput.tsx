@@ -46,6 +46,7 @@ export function ApiKeyInput({ onSubmit, result, onSkip }: ApiKeyInputProps) {
         )}
 
         <button
+          type="button"
           onClick={() => onSubmit(key)}
           disabled={!key.startsWith("sk-ant-") || isValid}
           className="w-full py-3 rounded-xl bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
@@ -57,6 +58,7 @@ export function ApiKeyInput({ onSubmit, result, onSkip }: ApiKeyInputProps) {
       </div>
 
       <button
+        type="button"
         onClick={onSkip}
         className="text-xs text-muted-foreground hover:text-foreground transition-colors"
       >

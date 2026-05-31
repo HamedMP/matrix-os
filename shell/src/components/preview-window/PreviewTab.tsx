@@ -7,6 +7,7 @@ import { FileIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const GATEWAY_URL = getGatewayUrl();
+const FILE_FETCH_TIMEOUT_MS = 10_000;
 
 const CodeEditor = lazy(() =>
   import("./CodeEditor").then((m) => ({ default: m.CodeEditor })),
@@ -38,33 +39,44 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
       return;
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
+    let active = true;
 
     setLoading(true);
-    fetch(`${GATEWAY_URL}/files/${tab.path}`, { signal })
+    fetch(`${GATEWAY_URL}/files/${tab.path}`, {
+      signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
+    })
       .then((r) => (r.ok ? r.text() : ""))
       .then((text) => {
-        if (!signal.aborted) {
+        if (active) {
           setContent(text);
           setLoading(false);
         }
       })
-      .catch(() => { if (!signal.aborted) setLoading(false); });
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        console.warn("Failed to load preview tab content", error);
+        setLoading(false);
+      });
 
-    return () => controller.abort();
+    return () => {
+      active = false;
+    };
   }, [tab.path, tab.type]);
 
   async function handleSave() {
     try {
       const res = await fetch(`${GATEWAY_URL}/files/${tab.path}`, {
         method: "PUT",
+        signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
         body: content,
       });
       if (res.ok) {
         markSaved(tab.id);
       }
-    } catch {
+    } catch (error: unknown) {
+      console.warn("Failed to save preview tab content", error);
       // save failed — unsaved indicator stays visible
     }
   }
@@ -90,6 +102,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
               {(["source", "preview"] as const).map((m) => (
                 <button
                   key={m}
+                  type="button"
                   className={`px-2 py-0.5 ${tab.mode === m ? "bg-accent" : ""}`}
                   onClick={() => setMode(tab.id, m)}
                 >

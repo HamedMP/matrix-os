@@ -473,6 +473,7 @@ export function IntegrationsSection() {
           </p>
         </div>
         <button
+          type="button"
           onClick={handleRefresh}
           disabled={refreshing}
           title="Pull latest state from Pipedream. Useful if you just finished OAuth in another tab and don't see the connection yet."
@@ -565,6 +566,7 @@ export function IntegrationsSection() {
                           {renamingId === conn.id ? (
                             <>
                               <button
+                                type="button"
                                 onClick={() => handleRename(conn.id)}
                                 disabled={savingRename === conn.id || !renameDraft.trim()}
                                 className="rounded-md bg-primary text-primary-foreground px-2.5 py-1.5 text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
@@ -572,6 +574,7 @@ export function IntegrationsSection() {
                                 {savingRename === conn.id ? "Saving..." : "Save"}
                               </button>
                               <button
+                                type="button"
                                 onClick={() => {
                                   setRenamingId(null);
                                   setRenameDraft("");
@@ -584,6 +587,7 @@ export function IntegrationsSection() {
                             </>
                           ) : (
                             <button
+                              type="button"
                               onClick={() => {
                                 setRenamingId(conn.id);
                                 setRenameDraft(conn.account_label);
@@ -594,6 +598,7 @@ export function IntegrationsSection() {
                             </button>
                           )}
                           <button
+                            type="button"
                             onClick={() => handleCheckStatus(conn.id)}
                             disabled={checkingStatus === conn.id}
                             className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
@@ -603,6 +608,7 @@ export function IntegrationsSection() {
                           {confirmDisconnect === conn.id ? (
                             <div className="flex items-center gap-1">
                               <button
+                                type="button"
                                 onClick={() => handleDisconnect(conn.id)}
                                 disabled={disconnecting === conn.id}
                                 className="rounded-md bg-red-500/15 border border-red-500/40 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
@@ -610,6 +616,7 @@ export function IntegrationsSection() {
                                 {disconnecting === conn.id ? "Removing..." : "Confirm"}
                               </button>
                               <button
+                                type="button"
                                 onClick={() => setConfirmDisconnect(null)}
                                 className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                               >
@@ -618,6 +625,7 @@ export function IntegrationsSection() {
                             </div>
                           ) : (
                             <button
+                              type="button"
                               onClick={() => setConfirmDisconnect(conn.id)}
                               className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors"
                             >
@@ -674,6 +682,7 @@ export function IntegrationsSection() {
                   className="w-full rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
                 />
                 <button
+                  type="button"
                   onClick={() => {
                     handleConnect(service.id, connectLabels[service.id]);
                     setConnectLabels((prev) => ({ ...prev, [service.id]: "" }));

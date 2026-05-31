@@ -52,6 +52,7 @@ export function AppStoreHeader({
           />
           {search && (
             <button
+              type="button"
               onClick={() => onSearchChange("")}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 size-4 flex items-center justify-center rounded-full bg-muted-foreground/20 hover:bg-muted-foreground/40 transition-colors"
             >
@@ -61,6 +62,7 @@ export function AppStoreHeader({
         </div>
 
         <button
+          type="button"
           onClick={onClose}
           className="size-8 flex items-center justify-center rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
         >
@@ -81,6 +83,7 @@ export function AppStoreHeader({
           />
           {search && (
             <button
+              type="button"
               onClick={() => onSearchChange("")}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 size-4 flex items-center justify-center rounded-full bg-muted-foreground/20 hover:bg-muted-foreground/40 transition-colors"
             >
@@ -100,6 +103,7 @@ export function AppStoreHeader({
           return (
             <button
               key={cat}
+              type="button"
               ref={active ? activeRef : undefined}
               onClick={() => onCategoryChange(cat)}
               className={`shrink-0 px-3.5 pb-2.5 pt-1 text-[13px] font-medium transition-colors relative ${

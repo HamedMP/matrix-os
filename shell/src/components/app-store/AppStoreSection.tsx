@@ -34,12 +34,14 @@ export function AppStoreSection({
         <h3 className="text-sm font-semibold">{title}</h3>
         <div className="flex gap-1">
           <button
+            type="button"
             onClick={() => scroll(-1)}
             className="size-6 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
           >
             <ChevronLeftIcon className="size-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => scroll(1)}
             className="size-6 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
           >

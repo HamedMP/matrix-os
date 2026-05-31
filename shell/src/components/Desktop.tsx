@@ -220,6 +220,7 @@ function TrafficLights({
   return (
     <div className="group/traffic flex items-center gap-1.5 mr-2">
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           onClose();
@@ -232,6 +233,7 @@ function TrafficLights({
         </span>
       </button>
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           onMinimize();
@@ -244,6 +246,7 @@ function TrafficLights({
         </span>
       </button>
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           onFullscreen?.();
@@ -285,6 +288,7 @@ function DockIcon({
 
   const btn = (
     <button
+      type="button"
       onClick={onClick}
       className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60 overflow-hidden"
       style={{ width: iconSize, height: iconSize }}
@@ -415,6 +419,7 @@ function ModeSwitcher({
       <Tooltip open={open ? false : undefined}>
         <TooltipTrigger asChild>
           <button
+            type="button"
             onClick={() => setOpen((prev) => !prev)}
             className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
               open ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/60"
@@ -438,6 +443,7 @@ function ModeSwitcher({
         >
           {modes.map((m) => (
             <button
+              type="button"
               key={m.id}
               onClick={() => {
                 setMode(m.id);
@@ -481,6 +487,7 @@ function AoedeDockButton({
 
   const button = (
     <button
+      type="button"
       data-testid={variant === "desktop" ? "dock-vocal" : "dock-vocal-mobile"}
       data-active={active ? "true" : "false"}
       onClick={toggle}
@@ -509,6 +516,7 @@ function FullscreenExitPill({ onExit }: { onExit: () => void }) {
   return (
     <div className="group/fsexit fixed top-0 left-0 z-[101] w-14 h-3 hover:h-10 transition-all duration-300">
       <button
+        type="button"
         onClick={onExit}
         className="ml-2.5 mt-0.5 group-hover/fsexit:mt-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-foreground/[0.03] group-hover/fsexit:bg-foreground/5 backdrop-blur-md border border-foreground/[0.04] group-hover/fsexit:border-foreground/[0.08] text-foreground/20 group-hover/fsexit:text-foreground/50 hover:!text-foreground/70 hover:!bg-foreground/10 transition-all duration-300 cursor-pointer"
         aria-label="Exit fullscreen"
@@ -1648,6 +1656,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
+                      type="button"
                       data-testid="dock-tasks"
                       onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
@@ -1667,6 +1676,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
+                      type="button"
                       data-testid="dock-chat"
                       onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
                       className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
@@ -1692,6 +1702,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
+                      type="button"
                       data-testid="dock-settings"
                       onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
@@ -1742,6 +1753,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         {modeConfig.showDock && !onboardingActive && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
+              type="button"
               data-testid="dock-chat-mobile"
               onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
               className={`relative flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
@@ -1760,6 +1772,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               )}
             </button>
             <button
+              type="button"
               onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 taskBoardOpen
@@ -1771,6 +1784,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             </button>
             <ModeSwitcher iconSize={36} tooltipSide="top" />
             <button
+              type="button"
               onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
@@ -1792,6 +1806,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               );
               return (
                 <button
+                  type="button"
                   key={app.path}
                   onClick={() => openWindow(app.name, app.path)}
                   className={`flex shrink-0 h-9 items-center gap-1.5 px-3 rounded-lg border transition-all active:scale-95 ${
@@ -1833,6 +1848,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   {modeConfig.label} mode
                 </p>
                 <button
+                  type="button"
                   onClick={cycleMode}
                   className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
                 >
