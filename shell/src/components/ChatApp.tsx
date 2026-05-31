@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -155,31 +155,30 @@ export function ChatApp({
   const [model, setModel] = useState(() => getInitialHermesSetup().model);
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy useState initializer reading the same one-time cached Hermes setup (see model above); ref read is first-render-only.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const grouped = useMemo(() => groupMessages(messages), [messages]);
+  const grouped = groupMessages(messages);
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the writeHermesSetup useEffect dependency array below; keep an explicit useMemo so the persisted-setup effect only re-runs when the channel set actually changes, not on every render.
   const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);
   useEffect(() => {
     writeHermesSetup(model, selectedChannels);
   }, [model, selectedChannels]);
-  const submitWithHermesSetup = useCallback(
-    (text: string, files?: Array<{ name: string; type: string; data: string }>) => {
-      const promptText = createHermesConfiguredPrompt(text, model, selectedChannels);
-      onSubmit(text, files, promptText === text ? { displayText: text } : { displayText: text, promptText });
-    },
-    [model, onSubmit, selectedChannels],
-  );
+  const submitWithHermesSetup = (
+    text: string,
+    files?: Array<{ name: string; type: string; data: string }>,
+  ) => {
+    const promptText = createHermesConfiguredPrompt(text, model, selectedChannels);
+    onSubmit(text, files, promptText === text ? { displayText: text } : { displayText: text, promptText });
+  };
 
-  const filteredConversations = useMemo(() => {
-    if (!searchQuery.trim()) return conversations;
-    const q = searchQuery.toLowerCase();
-    return conversations.filter((c) => c.preview?.toLowerCase().includes(q));
-  }, [conversations, searchQuery]);
+  const trimmedSearch = searchQuery.trim();
+  const filteredConversations = !trimmedSearch
+    ? conversations
+    : conversations.filter((c) =>
+        c.preview?.toLowerCase().includes(searchQuery.toLowerCase()),
+      );
 
-  const timeGroups = useMemo(
-    () => groupConversationsByTime(filteredConversations),
-    [filteredConversations],
-  );
+  const timeGroups = groupConversationsByTime(filteredConversations);
 
-  const suggestions = useMemo(() => {
+  const suggestions = (() => {
     if (messages.length === 0) return DEFAULT_SUGGESTIONS;
     const lastAssistant = [...messages]
       .reverse()
@@ -189,7 +188,7 @@ export function ChatApp({
       if (parsed.length > 0) return parsed;
     }
     return messages.length < 3 ? DEFAULT_SUGGESTIONS : [];
-  }, [messages]);
+  })();
 
   const isEmpty = messages.length === 0 && !busy;
 
@@ -591,28 +590,25 @@ function ChatInput({
     if (autoFocus) textareaRef.current?.focus();
   }, [autoFocus]);
 
-  const handleSubmit = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      const text = input.trim();
-      if (!text && attachments.length === 0) return;
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const text = input.trim();
+    if (!text && attachments.length === 0) return;
 
-      if (attachments.length > 0) {
-        const files = await getBase64Files();
-        onSubmit(text || `Attached ${files.length} file(s)`, files);
-        clearAll();
-      } else {
-        onSubmit(text);
-      }
-      setInput("");
-    },
-    [input, attachments, onSubmit, getBase64Files, clearAll],
-  );
+    if (attachments.length > 0) {
+      const files = await getBase64Files();
+      onSubmit(text || `Attached ${files.length} file(s)`, files);
+      clearAll();
+    } else {
+      onSubmit(text);
+    }
+    setInput("");
+  };
 
-  const handleMicClick = useCallback(() => {
+  const handleMicClick = () => {
     if (isRecording) stopRecording();
     else startRecording();
-  }, [isRecording, startRecording, stopRecording]);
+  };
 
   return (
     <div className="flex flex-col gap-2">

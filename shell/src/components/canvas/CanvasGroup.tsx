@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useCallback, useRef } from "react";
+import { type CSSProperties, useRef } from "react";
 import { useCanvasGroups, type CanvasGroup } from "@/stores/canvas-groups";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
@@ -24,39 +24,33 @@ export function CanvasGroupRect({ group }: CanvasGroupProps) {
   const dragRef = useRef<{ startX: number; startY: number; memberPositions: Map<string, { x: number; y: number }> } | null>(null);
   const zoom = useCanvasTransform((s) => s.zoom);
 
-  const onHeaderDragStart = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const windowsById = new Map(windows.map((w) => [w.id, w]));
-      const memberPositions = new Map<string, { x: number; y: number }>();
-      for (const winId of group.windowIds) {
-        const win = windowsById.get(winId);
-        if (win) memberPositions.set(winId, { x: win.x, y: win.y });
-      }
-      dragRef.current = { startX: e.clientX, startY: e.clientY, memberPositions };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [group.windowIds, windows],
-  );
+  const onHeaderDragStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const windowsById = new Map(windows.map((w) => [w.id, w]));
+    const memberPositions = new Map<string, { x: number; y: number }>();
+    for (const winId of group.windowIds) {
+      const win = windowsById.get(winId);
+      if (win) memberPositions.set(winId, { x: win.x, y: win.y });
+    }
+    dragRef.current = { startX: e.clientX, startY: e.clientY, memberPositions };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
 
-  const onHeaderDragMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!dragRef.current) return;
-      const dx = (e.clientX - dragRef.current.startX) / zoom;
-      const dy = (e.clientY - dragRef.current.startY) / zoom;
-      for (const [winId, orig] of dragRef.current.memberPositions) {
-        moveWindow(winId, orig.x + dx, orig.y + dy);
-      }
-    },
-    [zoom, moveWindow],
-  );
+  const onHeaderDragMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    const dx = (e.clientX - dragRef.current.startX) / zoom;
+    const dy = (e.clientY - dragRef.current.startY) / zoom;
+    for (const [winId, orig] of dragRef.current.memberPositions) {
+      moveWindow(winId, orig.x + dx, orig.y + dy);
+    }
+  };
 
-  const onHeaderDragEnd = useCallback(() => {
+  const onHeaderDragEnd = () => {
     dragRef.current = null;
-  }, []);
+  };
 
-  const onDoubleClick = useCallback(() => {
+  const onDoubleClick = () => {
     const memberWindows = windows.filter((w) => group.windowIds.includes(w.id));
     if (memberWindows.length === 0) return;
     const cRect = useCanvasTransform.getState().containerRect;
@@ -65,7 +59,7 @@ export function CanvasGroupRect({ group }: CanvasGroupProps) {
       cRect?.width ?? window.innerWidth,
       cRect?.height ?? window.innerHeight,
     );
-  }, [windows, group.windowIds, fitAll]);
+  };
 
   if (!bounds) return null;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useCommandStore } from "@/stores/commands";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { TerminalApp } from "./terminal/TerminalApp";
@@ -51,39 +51,36 @@ export function BottomPanel() {
     setTab(pref.tab);
   }, []);
 
-  const selectTab = useCallback(
-    (t: Tab) => {
-      if (t === tab && open) {
-        setOpen(false);
-        savePreference(false, t);
-      } else {
-        setTab(t);
-        setOpen(true);
-        savePreference(true, t);
-      }
-    },
-    [tab, open],
-  );
+  const selectTab = (t: Tab) => {
+    if (t === tab && open) {
+      setOpen(false);
+      savePreference(false, t);
+    } else {
+      setTab(t);
+      setOpen(true);
+      savePreference(true, t);
+    }
+  };
 
-  const toggle = useCallback(() => {
+  const toggle = () => {
     setOpen((prev) => {
       const next = !prev;
       savePreference(next, tab);
       return next;
     });
-  }, [tab]);
+  };
 
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
 
-  const openTerminalWindow = useCallback(() => {
+  const openTerminalWindow = () => {
     const uniquePath = `__terminal__:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     wmOpenWindow("Terminal", uniquePath, 0);
-  }, [wmOpenWindow]);
+  };
 
-  const launchClaudeCodeWindow = useCallback(() => {
+  const launchClaudeCodeWindow = () => {
     const uniquePath = `__terminal__:claude-${Date.now()}`;
     wmOpenWindow("Claude Code", uniquePath, 0);
-  }, [wmOpenWindow]);
+  };
 
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);

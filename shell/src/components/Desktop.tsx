@@ -643,7 +643,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   }, []);
 
   const onboardingActive = firstRunStatus === "ready" && showOnboarding;
-  const completeOnboarding = useCallback(() => {
+  const completeOnboarding = () => {
     setShowOnboarding(false);
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
@@ -656,8 +656,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     }).catch((err: unknown) => {
       console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
     });
-  }, [dock, dockOrder, pinnedApps]);
+  };
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435); a fresh function each render would re-register every command-palette entry on every render
   const animateMinimize = useCallback((id: string) => {
     if (minimizeTimers.current!.has(id)) return;
     setMinimizingIds((prev) => new Set(prev).add(id));
@@ -694,6 +695,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const checkedRef = useRef<Set<string> | null>(null);
   if (checkedRef.current === null) checkedRef.current = new Set<string>();
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds checkAndGenerateIcon's deps, which feeds addApp's deps, which feeds loadModules' deps -- loadModules is a useEffect dependency, so a fresh identity here would re-fire the module-load effect every render
   const regenerateIcon = useCallback((slug: string) => {
     generatingRef.current!.add(slug);
     fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
@@ -721,6 +723,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       .finally(() => generatingRef.current!.delete(slug));
   }, [wmSetApps]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds addApp's deps, which feeds loadModules' deps -- loadModules is a useEffect dependency, so a fresh identity here would re-fire the module-load effect every render
   const checkAndGenerateIcon = useCallback((slug: string) => {
     if (checkedRef.current!.has(slug) || generatingRef.current!.has(slug)) return;
     checkedRef.current!.add(slug);
@@ -747,7 +750,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
   }, [wmSetApps, regenerateIcon]);
 
-  const renameAppOnServer = useCallback((slug: string, newName: string) => {
+  const renameAppOnServer = (slug: string, newName: string) => {
     fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -799,12 +802,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         });
       })
       .catch((err) => console.warn(`Rename request failed for "${slug}":`, err));
-  }, [wmSetApps, wmSetWindows]);
+  };
 
-  const removeFromCanvas = useCallback((appPath: string) => {
+  const removeFromCanvas = (appPath: string) => {
     wmSetWindows((prev) => prev.filter((w) => w.path !== appPath && !w.path.startsWith(appPath + ":")));
-  }, [wmSetWindows]);
+  };
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds loadModules' deps, and loadModules is a useEffect dependency (L~1070); a fresh function each render would re-fire the module-load effect every render
   const addApp = useCallback((name: string, path: string, iconSlug?: string) => {
     const iconUrl = iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
@@ -815,6 +819,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   }, [wmSetApps, checkAndGenerateIcon]);
 
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
   const openWindow = useCallback((name: string, path: string) => {
     // Terminal windows get unique paths to allow multiple instances
     const actualPath = path === "__terminal__"
@@ -840,6 +845,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     }
   }, [wmOpenWindow, dockXOffset]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds focusOrOpen's deps, and focusOrOpen is a useEffect dependency (L~930); a fresh function each render would re-fire the launch-path effect every render
   const focusCanvasWindow = useCallback((winId: string) => {
     if (useDesktopMode.getState().mode !== "canvas") return;
     requestAnimationFrame(() => {
@@ -854,6 +860,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     });
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the launch-path useEffect dependency array (L~930); a fresh function each render would re-fire that effect every render
   const focusOrOpen = useCallback((name: string, path: string) => {
     const existing = useWindowManager.getState().windows.find(
       (w) => w.path === path || w.path.startsWith(path + ":"),
@@ -867,7 +874,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
-  const openSetupTerminal = useCallback((launchPath: string) => {
+  const openSetupTerminal = (launchPath: string) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -902,24 +909,21 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       }
       enqueueTerminalLaunch(launchPath, win?.id);
     });
-  }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
+  };
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses
   // (or opens) the best match. Returns the result so the caller can
   // report success/failure back to Gemini for accurate narration.
-  const openAppByName = useCallback(
-    (query: string): { success: boolean; resolvedName?: string } => {
-      const currentApps = useWindowManager.getState().apps;
-      const match = findAppByName(currentApps, query);
-      if (match) {
-        focusOrOpen(match.name, match.path);
-        return { success: true, resolvedName: match.name };
-      }
-      return { success: false };
-    },
-    [focusOrOpen],
-  );
+  const openAppByName = (query: string): { success: boolean; resolvedName?: string } => {
+    const currentApps = useWindowManager.getState().apps;
+    const match = findAppByName(currentApps, query);
+    if (match) {
+      focusOrOpen(match.name, match.path);
+      return { success: true, resolvedName: match.name };
+    }
+    return { success: false };
+  };
 
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
@@ -929,6 +933,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     focusOrOpen(match.name, match.path);
   }, [apps, focusOrOpen, launchAppPath]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async () => {
     try {
       const [layoutRes, modulesRes, appsRes] = await Promise.all([
@@ -1069,84 +1074,73 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     loadModules();
   }, [loadModules]);
 
-  useFileWatcher(
-    useCallback(
-      (path: string, event: string) => {
-        if (path === "system/modules.json" && event !== "unlink") {
-          loadModules();
-          return;
-        }
+  useFileWatcher((path: string, event: string) => {
+    if (path === "system/modules.json" && event !== "unlink") {
+      loadModules();
+      return;
+    }
 
-        if (path.startsWith("apps/")) {
-          // Only react to actual app entry points, not every file under apps/
-          const isRootHtml = path.match(/^apps\/[^/]+\.html$/);
-          const isAppIndex = path.match(/^apps\/[^/]+\/(index\.html|dist\/index\.html)$/);
-          if (!isRootHtml && !isAppIndex) return;
+    if (path.startsWith("apps/")) {
+      // Only react to actual app entry points, not every file under apps/
+      const isRootHtml = path.match(/^apps\/[^/]+\.html$/);
+      const isAppIndex = path.match(/^apps\/[^/]+\/(index\.html|dist\/index\.html)$/);
+      if (!isRootHtml && !isAppIndex) return;
 
-          const name = path.replace("apps/", "").replace(/\/(dist\/)?index\.html$/, "").replace(".html", "");
-          if (event === "unlink") {
-            wmSetApps((prev) => prev.filter((a) => a.path !== path));
-            wmSetWindows((prev) => prev.filter((w) => w.path !== path));
-          } else {
-            addApp(name, path, nameToSlug(name));
-          }
-        }
-      },
-      [loadModules, addApp, wmSetApps, wmSetWindows],
-    ),
-  );
+      const name = path.replace("apps/", "").replace(/\/(dist\/)?index\.html$/, "").replace(".html", "");
+      if (event === "unlink") {
+        wmSetApps((prev) => prev.filter((a) => a.path !== path));
+        wmSetWindows((prev) => prev.filter((w) => w.path !== path));
+      } else {
+        addApp(name, path, nameToSlug(name));
+      }
+    }
+  });
 
-  const onDragStart = useCallback(
-    (id: string, e: React.PointerEvent) => {
-      e.preventDefault();
-      const win = wmGetWindow(id);
-      if (!win) return;
-      dragRef.current = {
-        id,
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: win.x,
-        origY: win.y,
-      };
-      setInteracting(true);
-      wmFocusWindow(id);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [wmGetWindow, wmFocusWindow],
-  );
+  const onDragStart = (id: string, e: React.PointerEvent) => {
+    e.preventDefault();
+    const win = wmGetWindow(id);
+    if (!win) return;
+    dragRef.current = {
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: win.x,
+      origY: win.y,
+    };
+    setInteracting(true);
+    wmFocusWindow(id);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
 
-  const onDragMove = useCallback((e: React.PointerEvent) => {
+  const onDragMove = (e: React.PointerEvent) => {
     if (!dragRef.current) return;
     const { id, startX, startY, origX, origY } = dragRef.current;
     wmMoveWindow(id, origX + (e.clientX - startX), origY + (e.clientY - startY));
-  }, [wmMoveWindow]);
+  };
 
-  const onDragEnd = useCallback(() => {
+  const onDragEnd = () => {
     dragRef.current = null;
     setInteracting(false);
-  }, []);
+  };
 
-  const onResizeStart = useCallback(
-    (id: string, e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const win = wmGetWindow(id);
-      if (!win) return;
-      resizeRef.current = {
-        id,
-        startX: e.clientX,
-        startY: e.clientY,
-        origW: win.width,
-        origH: win.height,
-      };
-      setInteracting(true);
-      wmFocusWindow(id);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [wmGetWindow, wmFocusWindow],
-  );
+  const onResizeStart = (id: string, e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const win = wmGetWindow(id);
+    if (!win) return;
+    resizeRef.current = {
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      origW: win.width,
+      origH: win.height,
+    };
+    setInteracting(true);
+    wmFocusWindow(id);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
 
-  const onResizeMove = useCallback((e: React.PointerEvent) => {
+  const onResizeMove = (e: React.PointerEvent) => {
     if (!resizeRef.current) return;
     const { id, startX, startY, origW, origH } = resizeRef.current;
     wmResizeWindow(
@@ -1154,12 +1148,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       Math.max(MIN_WIDTH, origW + (e.clientX - startX)),
       Math.max(MIN_HEIGHT, origH + (e.clientY - startY)),
     );
-  }, [wmResizeWindow]);
+  };
 
-  const onResizeEnd = useCallback(() => {
+  const onResizeEnd = () => {
     resizeRef.current = null;
     setInteracting(false);
-  }, []);
+  };
 
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
 
@@ -1174,7 +1168,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const modeConfig = getModeConfig(hydrated ? desktopMode : "canvas");
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
 
-  const openManualSetup = useCallback(() => {
+  const openManualSetup = () => {
     setShowOnboarding(false);
     setManualSetupVisible(true);
     setDesktopMode("canvas");
@@ -1192,7 +1186,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     }).catch((err: unknown) => {
       console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
     });
-  }, [dock, dockOrder, pinnedApps, setDesktopMode]);
+  };
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
@@ -1237,12 +1231,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   }, [vocalActive]);
 
   const modes = visibleModes();
-  const cycleMode = useCallback(() => {
+  const cycleMode = () => {
     const idx = modes.findIndex((m) => m.id === desktopMode);
     // If current mode is hidden or not found, jump to the first visible mode.
     const nextIdx = idx < 0 ? 0 : (idx + 1) % modes.length;
     setDesktopMode(modes[nextIdx].id);
-  }, [modes, desktopMode, setDesktopMode]);
+  };
 
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
   const openWindowRef = useRef(openWindow);

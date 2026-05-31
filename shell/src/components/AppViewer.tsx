@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useSocket } from "@/hooks/useSocket";
 import {
@@ -80,16 +80,11 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appNameFromPath(path);
 
-  useFileWatcher(
-    useCallback(
-      (changedPath: string, event: string) => {
-        if (changedPath === path && event === "change") {
-          setRefreshKey((k) => k + 1);
-        }
-      },
-      [path],
-    ),
-  );
+  useFileWatcher((changedPath: string, event: string) => {
+    if (changedPath === path && event === "change") {
+      setRefreshKey((k) => k + 1);
+    }
+  });
 
   // Legacy file paths can only receive the bridge when same-origin DOM access is
   // available. Runtime apps use srcdoc injection below so the sandbox can omit

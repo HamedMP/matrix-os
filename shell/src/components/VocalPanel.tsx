@@ -112,14 +112,14 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
 
   const [rememberedFlash, setRememberedFlash] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleFactSaved = useCallback((fact: string) => {
+  const handleFactSaved = (fact: string) => {
     setRememberedFlash(fact);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => {
       setRememberedFlash(null);
       flashTimerRef.current = null;
     }, 2200);
-  }, []);
+  };
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must clear whichever timer is pending at teardown, so it must read .current at cleanup time; snapshotting at mount would always capture the initial null and never clear.
   useEffect(() => {
     return () => {
@@ -129,14 +129,14 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
 
   const [buildProgress, setBuildProgress] = useState<BuildProgressSnapshot | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleShowBuildProgress = useCallback((snapshot: BuildProgressSnapshot) => {
+  const handleShowBuildProgress = (snapshot: BuildProgressSnapshot) => {
     setBuildProgress(snapshot);
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
     progressTimerRef.current = setTimeout(() => {
       setBuildProgress(null);
       progressTimerRef.current = null;
     }, 5000);
-  }, []);
+  };
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must clear whichever timer is pending at teardown, so it must read .current at cleanup time; snapshotting at mount would always capture the initial null and never clear.
   useEffect(() => {
     return () => {
@@ -153,7 +153,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
     ((r: { kind: "open_app"; name: string; success: boolean; resolvedName?: string }) => void) | null
   >(null);
 
-  const handleExecute = useCallback((intent: VocalIntent) => {
+  const handleExecute = (intent: VocalIntent) => {
     if (intent.kind === "create_app") {
       const startIdx = chatRef.current?.messages.length ?? 0;
       const appsSnapshot = new Set(useWindowManager.getState().apps.map((a) => a.name));
@@ -181,7 +181,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
         resolvedName: result?.resolvedName,
       });
     }
-  }, []);
+  };
 
   const {
     voiceState,
@@ -218,6 +218,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   // wrong build. Track them in a ref and clear them on every new entry
   // so a new delegation always supersedes the previous one's tail.
   const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by two useEffect dependency arrays (the unmount-cleanup effect below and the delegation state-machine effect); removing useCallback would re-run those effects on every render and could drop in-flight timers.
   const clearPendingTimers = useCallback(() => {
     for (const t of pendingTimersRef.current) clearTimeout(t);
     pendingTimersRef.current = [];

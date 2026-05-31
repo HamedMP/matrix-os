@@ -200,6 +200,7 @@ export function useSocket() {
   const [connected, setConnected] = useState(false);
   const handlerRef = useRef<MessageHandler | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const subscribe = useCallback((handler: MessageHandler) => {
     handlers.add(handler);
     handlerRef.current = handler;
@@ -209,6 +210,7 @@ export function useSocket() {
     };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const send = useCallback((msg: ClientMessage) => {
     sendMessage(msg);
   }, []);

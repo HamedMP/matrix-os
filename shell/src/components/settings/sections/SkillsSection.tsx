@@ -64,6 +64,7 @@ export function SkillsSection() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", triggers: "", body: "" });
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-load useEffect dependency array below; removing useCallback would re-run the effect on every render and refetch all skills in a loop.
   const loadSkills = useCallback(async () => {
     try {
       const res = await fetchWithTimeout(`${GATEWAY}/api/settings/skills`);

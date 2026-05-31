@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Orb, type AgentState } from "@/components/ui/orb";
 import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
@@ -56,7 +56,7 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
         ? "Speaking..."
         : (errorText ?? "Tap mic to speak");
 
-  const handleMicToggle = useCallback(() => {
+  const handleMicToggle = () => {
     if (isRecording) {
       stopRecording();
     } else {
@@ -65,7 +65,7 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
       setErrorText(null);
       startRecording();
     }
-  }, [isRecording, startRecording, stopRecording]);
+  };
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must cancel whatever frame is pending at teardown, so it must read .current at cleanup time; snapshotting at mount would always capture the initial 0 and never cancel.
   useEffect(() => {

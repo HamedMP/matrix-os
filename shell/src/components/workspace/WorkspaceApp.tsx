@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -129,10 +129,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [startingAgent, setStartingAgent] = useState(false);
   const [error, setError] = useState("");
 
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.slug === selectedSlug) ?? projects[0],
-    [projects, selectedSlug],
-  );
+  const selectedProject = projects.find((project) => project.slug === selectedSlug) ?? projects[0];
   const activeSlug = selectedProject?.slug ?? selectedSlug;
   const activeSlugRef = useRef(activeSlug);
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value mirror of `activeSlug`, written in render and read synchronously inside async response guards (loadProjectDetail/createWorktree/startAgent) so stale responses from a previous project are dropped without re-creating those callbacks on every slug change. Moving the write into an effect would lag the mirror by one commit and could mis-attribute a response that resolves during the switch.
@@ -168,6 +165,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     });
   }
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array (the initial-load effect) and by createProject's callback dependency; removing useCallback would re-run the effect on unrelated re-renders.
   const loadProjects = useCallback(async () => {
     try {
       const data = await fetchJson<{ projects: ProjectSummary[] }>("/api/workspace/projects");
@@ -181,6 +179,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     }
   }, [selectedSlug]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array (the per-project detail-load effect); removing useCallback would re-run the effect on every render and refetch all project detail.
   const loadProjectDetail = useCallback(async (projectSlug: string) => {
     if (!projectSlug) return;
     try {
@@ -218,23 +217,23 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     return () => window.clearTimeout(timer);
   }, [activeSlug, loadProjectDetail]);
 
-  const attachSession = useCallback(async (sessionId: string) => {
+  const attachSession = async (sessionId: string) => {
     const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/observe`, {
       method: "POST",
       body: JSON.stringify({}),
     });
     setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
-  }, []);
+  };
 
-  const takeoverSession = useCallback(async (sessionId: string) => {
+  const takeoverSession = async (sessionId: string) => {
     const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/takeover`, {
       method: "POST",
       body: JSON.stringify({}),
     });
     setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
-  }, []);
+  };
 
-  const duplicateSession = useCallback(async (session: WorkspaceSession) => {
+  const duplicateSession = async (session: WorkspaceSession) => {
     await fetchJson<{ session?: WorkspaceSession }>("/api/sessions", {
       method: "POST",
       body: JSON.stringify({
@@ -247,17 +246,17 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       }),
     });
     await loadProjectDetail(activeSlug);
-  }, [activeSlug, loadProjectDetail]);
+  };
 
-  const killSession = useCallback(async (sessionId: string) => {
+  const killSession = async (sessionId: string) => {
     await fetchJson<{ session?: WorkspaceSession }>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
       body: JSON.stringify({}),
     });
     await loadProjectDetail(activeSlug);
-  }, [activeSlug, loadProjectDetail]);
+  };
 
-  const createProject = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+  const createProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const url = newProjectUrl.trim();
     const slug = newProjectSlug.trim();
@@ -287,9 +286,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     } finally {
       setCreatingProject(false);
     }
-  }, [loadProjects, newProjectSlug, newProjectUrl]);
+  };
 
-  const createWorktree = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+  const createWorktree = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!activeSlug) {
       setError("Select a project first");
@@ -342,9 +341,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     } finally {
       setCreatingWorktree(false);
     }
-  }, [activeSlug, loadProjectDetail, newWorktreeBranch, worktrees]);
+  };
 
-  const startAgent = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+  const startAgent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!activeSlug) {
       setError("Select a project first");
@@ -391,7 +390,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     } finally {
       setStartingAgent(false);
     }
-  }, [activeSlug, agentPrompt, loadProjectDetail, selectedAgent, selectedWorktreeId, worktrees]);
+  };
 
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);

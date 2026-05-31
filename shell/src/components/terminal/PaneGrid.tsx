@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { TerminalPane } from "./TerminalPane";
 import type { PaneNode } from "@/stores/terminal-store";
 import type { Theme } from "@/hooks/useTheme";
@@ -111,35 +111,32 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
 
   const isHorizontal = direction === "horizontal";
 
-  const handleDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const container = containerRef.current;
-      if (!container) return;
+  const handleDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
 
-      const rect = container.getBoundingClientRect();
+    const rect = container.getBoundingClientRect();
 
-      function onMouseMove(ev: MouseEvent) {
-        const pos = isHorizontal
-          ? (ev.clientX - rect.left) / rect.width
-          : (ev.clientY - rect.top) / rect.height;
-        setCurrentRatio(Math.max(0.15, Math.min(0.85, pos)));
-      }
+    function onMouseMove(ev: MouseEvent) {
+      const pos = isHorizontal
+        ? (ev.clientX - rect.left) / rect.width
+        : (ev.clientY - rect.top) / rect.height;
+      setCurrentRatio(Math.max(0.15, Math.min(0.85, pos)));
+    }
 
-      function onMouseUp() {
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      }
+    function onMouseUp() {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
 
-      document.body.style.cursor = isHorizontal ? "col-resize" : "row-resize";
-      document.body.style.userSelect = "none";
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-    },
-    [isHorizontal],
-  );
+    document.body.style.cursor = isHorizontal ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
 
   const firstSize = `${currentRatio * 100}%`;
   const secondSize = `${(1 - currentRatio) * 100}%`;

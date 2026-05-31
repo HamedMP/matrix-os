@@ -16,6 +16,7 @@ export function ModuleGraph() {
   const networkRef = useRef<unknown>(null);
   const [modules, setModules] = useState<ModuleEntry[]>([]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the mount useEffect dependency array ([fetchModules]) below; a fresh function each render would re-run the gateway fetch every render
   const fetchModules = useCallback(async () => {
     try {
       const res = await fetch(`${GATEWAY_URL}/files/system/modules.json`, {
@@ -35,12 +36,9 @@ export function ModuleGraph() {
     fetchModules();
   }, [fetchModules]);
 
-  useFileWatcherPattern(
-    /^system\/modules\.json$/,
-    useCallback(() => {
-      fetchModules();
-    }, [fetchModules]),
-  );
+  useFileWatcherPattern(/^system\/modules\.json$/, () => {
+    fetchModules();
+  });
 
   useEffect(() => {
     if (!containerRef.current) return;

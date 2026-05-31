@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -112,7 +111,7 @@ export function ChatPanel({
 
       <Conversation>
         <ConversationContent className="gap-4 px-4 py-3">
-          {useMemo(() => groupMessages(messages), [messages]).map((group) => {
+          {groupMessages(messages).map((group) => {
             if (group.type === "tool_group") {
               return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
             }
@@ -216,7 +215,7 @@ function ChatSuggestions({
   messages: ChatMessage[];
   onSelect: (text: string) => void;
 }) {
-  const suggestions = useMemo(() => {
+  const suggestions = (() => {
     if (messages.length === 0) return DEFAULT_SUGGESTIONS;
 
     const lastAssistant = [...messages]
@@ -229,7 +228,7 @@ function ChatSuggestions({
     }
 
     return messages.length < 3 ? DEFAULT_SUGGESTIONS : [];
-  }, [messages]);
+  })();
 
   if (suggestions.length === 0) return null;
 

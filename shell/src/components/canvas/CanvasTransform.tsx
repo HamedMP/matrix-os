@@ -57,6 +57,7 @@ export function CanvasTransform({
     };
   }, [setContainerRect]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the memoized `onWheel` below, which is itself a dependency of the addEventListener effect (line ~112). If this changed identity each render, `onWheel` would too, re-attaching the non-passive wheel listener every render.
   const isCanvasSurfaceEvent = useCallback((target: EventTarget | null) => {
     if (
       target === containerRef.current ||
@@ -69,6 +70,7 @@ export function CanvasTransform({
     return false;
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: this handler is a dependency of the addEventListener("wheel", ..., { passive: false }) effect below and is detached/reattached on identity change. Inlining would re-bind the native non-passive listener every render.
   const onWheel = useCallback(
     (e: WheelEvent) => {
       if (!panEnabled) return;
@@ -111,40 +113,34 @@ export function CanvasTransform({
     return () => el.removeEventListener("wheel", onWheel);
   }, [onWheel]);
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      const isMiddleOrSpace = e.button === 1 || (e.button === 0 && spaceDown.current);
-      const isCanvasBackground = isCanvasSurfaceEvent(e.target);
-      if (isCanvasBackground) {
-        onBackgroundPointerDown?.();
-      }
-      const isGrabOnBackground =
-        navMode === "grab" && e.button === 0 && isCanvasBackground;
+  const onPointerDown = (e: React.PointerEvent) => {
+    const isMiddleOrSpace = e.button === 1 || (e.button === 0 && spaceDown.current);
+    const isCanvasBackground = isCanvasSurfaceEvent(e.target);
+    if (isCanvasBackground) {
+      onBackgroundPointerDown?.();
+    }
+    const isGrabOnBackground =
+      navMode === "grab" && e.button === 0 && isCanvasBackground;
 
-      if (panEnabled && (isMiddleOrSpace || isGrabOnBackground)) {
-        e.preventDefault();
-        isPanning.current = true;
-        lastPointer.current = { x: e.clientX, y: e.clientY };
-        containerRef.current?.setPointerCapture(e.pointerId);
-      }
-    },
-    [navMode, onBackgroundPointerDown, panEnabled, isCanvasSurfaceEvent],
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!isPanning.current) return;
-      const dx = (e.clientX - lastPointer.current.x) / zoom;
-      const dy = (e.clientY - lastPointer.current.y) / zoom;
+    if (panEnabled && (isMiddleOrSpace || isGrabOnBackground)) {
+      e.preventDefault();
+      isPanning.current = true;
       lastPointer.current = { x: e.clientX, y: e.clientY };
-      panBy(dx, dy);
-    },
-    [zoom, panBy],
-  );
+      containerRef.current?.setPointerCapture(e.pointerId);
+    }
+  };
 
-  const onPointerUp = useCallback(() => {
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!isPanning.current) return;
+    const dx = (e.clientX - lastPointer.current.x) / zoom;
+    const dy = (e.clientY - lastPointer.current.y) / zoom;
+    lastPointer.current = { x: e.clientX, y: e.clientY };
+    panBy(dx, dy);
+  };
+
+  const onPointerUp = () => {
     isPanning.current = false;
-  }, []);
+  };
 
   // Listen for zoom events forwarded from iframes via postMessage.
   useEffect(() => {

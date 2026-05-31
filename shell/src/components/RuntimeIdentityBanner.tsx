@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon, XIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -86,7 +86,7 @@ export function RuntimeIdentityBanner() {
     return undefined;
   }, []);
 
-  const summary = useMemo(() => {
+  const summary = (() => {
     const handle = runtime?.runtime?.handle ?? identity?.handle ?? null;
     const slot = runtime?.runtime?.runtimeSlot ?? "primary";
     const machineId = runtime?.runtime?.machineId ?? null;
@@ -107,7 +107,7 @@ export function RuntimeIdentityBanner() {
       shouldShow,
       label: isStaging ? "STAGING VM" : `${channel?.toUpperCase() ?? "RUNTIME"} BUILD`,
     };
-  }, [identity?.handle, runtime]);
+  })();
 
   if (!summary.handle || !summary.shouldShow || dismissed) return null;
 

@@ -51,7 +51,10 @@ export function ShellHome() {
   const isMobile = useMobileViewport();
   const shellLoadedCaptured = useRef(false);
 
-  useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
+  useGlobalShortcuts(
+    // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by useGlobalShortcuts' useEffect dependency array ([onPalette]) which re-registers the keydown listener; a fresh function each render would re-add/remove the listener every render
+    useCallback(() => setPaletteOpen(true), []),
+  );
 
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);

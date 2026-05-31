@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useCallback, useMemo } from "react";
+import { useEffect, useEffectEvent } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useAppStore, type AppStoreEntry } from "@/stores/app-store";
 import { AppStoreHeader } from "./AppStoreHeader";
@@ -97,63 +97,45 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
     }
   }, [open, setSearch, setCategory, selectApp]);
 
-  const install = useCallback(
-    (entry: (typeof entries)[number]) => {
-      if (entry.source === "bundled") {
-        onOpenChange(false);
-      } else if (entry.source === "prompt" && entry.prompt) {
-        send({
-          type: "message",
-          text: `Build an app called "${entry.name}": ${entry.prompt}`,
-        });
-        markInstalled(entry.id);
-        onOpenChange(false);
-      }
-    },
-    [send, onOpenChange, markInstalled],
-  );
+  const install = (entry: (typeof entries)[number]) => {
+    if (entry.source === "bundled") {
+      onOpenChange(false);
+    } else if (entry.source === "prompt" && entry.prompt) {
+      send({
+        type: "message",
+        text: `Build an app called "${entry.name}": ${entry.prompt}`,
+      });
+      markInstalled(entry.id);
+      onOpenChange(false);
+    }
+  };
 
   const isSearching = search.length > 0;
   const isFiltered = selectedCategory !== "All";
   const showBrowse = !isSearching && !isFiltered;
 
-  const featuredEntries = useMemo(
-    () => entries.filter((e) => e.featured),
-    [entries],
-  );
+  const featuredEntries = entries.filter((e) => e.featured);
 
-  const bundledApps = useMemo(
-    () => entries.filter((e) => e.source === "bundled"),
-    [entries],
-  );
+  const bundledApps = entries.filter((e) => e.source === "bundled");
 
-  const promptApps = useMemo(
-    () => entries.filter((e) => e.source === "prompt"),
-    [entries],
-  );
+  const promptApps = entries.filter((e) => e.source === "prompt");
 
-  const newEntries = useMemo(
-    () => entries.filter((e) => e.new),
-    [entries],
-  );
+  const newEntries = entries.filter((e) => e.new);
 
-  const results = useMemo(() => {
-    let filtered = selectedCategory === "All"
-      ? entries
-      : entries.filter(
-          (e) => e.category.toLowerCase() === selectedCategory.toLowerCase(),
-        );
-    if (search) {
-      const q = search.toLowerCase();
-      filtered = filtered.filter(
-        (e) =>
-          e.name.toLowerCase().includes(q) ||
-          e.description.toLowerCase().includes(q) ||
-          (e.tags ?? []).some((t) => t.toLowerCase().includes(q)),
+  let results = selectedCategory === "All"
+    ? entries
+    : entries.filter(
+        (e) => e.category.toLowerCase() === selectedCategory.toLowerCase(),
       );
-    }
-    return filtered;
-  }, [entries, selectedCategory, search]);
+  if (search) {
+    const q = search.toLowerCase();
+    results = results.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q) ||
+        (e.tags ?? []).some((t) => t.toLowerCase().includes(q)),
+    );
+  }
 
   if (!open) return null;
 

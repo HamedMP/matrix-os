@@ -59,6 +59,7 @@ async function fetchConversation(
 export function useConversation() {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const refresh = useCallback(() => {
     fetchConversations().then(setConversations);
   }, []);
@@ -67,10 +68,15 @@ export function useConversation() {
     refresh();
   }, [refresh]);
 
-  useFileWatcherPattern(CONV_PATTERN, useCallback(() => {
-    refresh();
-  }, [refresh]));
+  useFileWatcherPattern(
+    CONV_PATTERN,
+    // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const load = useCallback(async (id: string) => {
     return fetchConversation(id);
   }, []);

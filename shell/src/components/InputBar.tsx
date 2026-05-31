@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
@@ -39,31 +39,28 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
     },
   });
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      const text = input.trim();
-      if (!text && attachments.length === 0) return;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text && attachments.length === 0) return;
 
-      if (attachments.length > 0) {
-        const files = await getBase64Files();
-        onSubmit(text || `Attached ${files.length} file(s)`, files);
-        clearAll();
-      } else {
-        onSubmit(text);
-      }
-      setInput("");
-    },
-    [input, attachments, onSubmit, getBase64Files, clearAll],
-  );
+    if (attachments.length > 0) {
+      const files = await getBase64Files();
+      onSubmit(text || `Attached ${files.length} file(s)`, files);
+      clearAll();
+    } else {
+      onSubmit(text);
+    }
+    setInput("");
+  };
 
-  const handleMicClick = useCallback(() => {
+  const handleMicClick = () => {
     if (isRecording) {
       stopRecording();
     } else {
       startRecording();
     }
-  }, [isRecording, startRecording, stopRecording]);
+  };
 
   return (
     <div className="pointer-events-auto flex flex-col items-center gap-2">

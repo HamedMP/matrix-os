@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MarkdownEditor } from "../MarkdownEditor";
@@ -52,7 +52,7 @@ export function AgentSection() {
     };
   }, []);
 
-  const handleSaveSoul = useCallback(async (content: string) => {
+  const handleSaveSoul = async (content: string) => {
     setSaving(true);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
@@ -71,7 +71,7 @@ export function AgentSection() {
     } finally {
       setSaving(false);
     }
-  }, []);
+  };
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">

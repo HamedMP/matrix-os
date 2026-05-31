@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { parseContentSegments, type UICardData, type UIOptionData } from "@/lib/ui-blocks";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { CardGrid } from "./CardGrid";
@@ -13,10 +12,7 @@ interface RichContentProps {
 }
 
 export function RichContent({ children, onAction }: RichContentProps) {
-  const segments = useMemo(
-    () => parseContentSegments(children),
-    [children],
-  );
+  const segments = parseContentSegments(children);
 
   if (segments.length === 1 && segments[0].type === "markdown") {
     return <MessageResponse>{children}</MessageResponse>;

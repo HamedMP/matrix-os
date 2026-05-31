@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useConnectionHealth } from "@/hooks/useConnectionHealth";
 import { manualReconnect } from "@/hooks/useSocket";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -88,7 +88,7 @@ export function ConnectionIndicator() {
     };
   }, [state]);
 
-  const copy = useMemo(() => resolveConnectionCopy(state, status), [state, status]);
+  const copy = resolveConnectionCopy(state, status);
   const toneClass = copy.tone === "danger" ? "text-red-500" : "text-yellow-500";
   const dotClass = copy.tone === "danger" ? "bg-red-500" : "bg-yellow-500";
 

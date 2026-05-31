@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,18 +36,15 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
     setLocalQuery(searchQuery);
   }, [searchQuery]);
 
-  const handleSearchChange = useCallback(
-    (value: string) => {
-      setLocalQuery(value);
-      clearTimeout(debounceRef.current);
-      if (!value.trim()) {
-        clearSearch();
-        return;
-      }
-      debounceRef.current = setTimeout(() => search(value), 300);
-    },
-    [search, clearSearch],
-  );
+  const handleSearchChange = (value: string) => {
+    setLocalQuery(value);
+    clearTimeout(debounceRef.current);
+    if (!value.trim()) {
+      clearSearch();
+      return;
+    }
+    debounceRef.current = setTimeout(() => search(value), 300);
+  };
 
   const pathSegments = currentPath ? currentPath.split("/") : [];
 

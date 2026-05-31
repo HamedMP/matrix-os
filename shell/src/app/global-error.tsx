@@ -95,6 +95,7 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the telemetry useEffect dependency array below ([error, errorId]); removing useMemo would re-run the exception-reporting effect on every render.
   const errorId = useMemo(() => createErrorId(error), [error]);
   const [copied, setCopied] = useState(false);
 

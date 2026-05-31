@@ -39,6 +39,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const getWsUrl = useCallback(async () => {
     if (opts?.wsUrl) return opts.wsUrl;
     return buildAuthenticatedWebSocketUrl("/ws/voice")
@@ -51,6 +52,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
       });
   }, [opts?.wsUrl]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const connectWs = useCallback(async () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return wsRef.current;
 
@@ -97,6 +99,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
     // react-doctor-disable-next-line react-doctor/exhaustive-deps -- playAudio is intentionally omitted: it is a stable useCallback([]) declared below connectWs, so listing it here would be a use-before-declaration error while adding no reactivity (its identity never changes); getWsUrl and opts are the only deps that can invalidate this callback
   }, [getWsUrl, opts]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const startRecording = useCallback(async () => {
     if (!isSupported) return;
 
@@ -151,6 +154,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
     }
   }, [isSupported, connectWs, opts]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
@@ -158,6 +162,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
     }
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const playAudio = useCallback((audioData: ArrayBuffer) => {
     if (!audioContextRef.current) {
       audioContextRef.current = new AudioContext();

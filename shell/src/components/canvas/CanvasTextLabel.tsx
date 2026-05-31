@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasLabels, type CanvasLabel } from "@/stores/canvas-labels";
 import { Trash2, Palette } from "lucide-react";
@@ -41,70 +41,58 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
     origY: number;
   } | null>(null);
 
-  const onDragStart = useCallback(
-    (e: React.PointerEvent) => {
-      if (editing) return;
-      e.preventDefault();
-      e.stopPropagation();
-      dragRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: label.x,
-        origY: label.y,
-      };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [label.x, label.y, editing],
-  );
+  const onDragStart = (e: React.PointerEvent) => {
+    if (editing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: label.x,
+      origY: label.y,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
 
-  const onDragMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!dragRef.current) return;
-      const { startX, startY, origX, origY } = dragRef.current;
-      const dx = (e.clientX - startX) / zoom;
-      const dy = (e.clientY - startY) / zoom;
-      moveLabel(label.id, origX + dx, origY + dy);
-    },
-    [label.id, zoom, moveLabel],
-  );
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    const { startX, startY, origX, origY } = dragRef.current;
+    const dx = (e.clientX - startX) / zoom;
+    const dy = (e.clientY - startY) / zoom;
+    moveLabel(label.id, origX + dx, origY + dy);
+  };
 
-  const onDragEnd = useCallback(() => {
+  const onDragEnd = () => {
     dragRef.current = null;
-  }, []);
+  };
 
-  const onDoubleClick = useCallback((e: React.MouseEvent) => {
+  const onDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditing(true);
     setTimeout(() => inputRef.current?.select(), 0);
-  }, []);
+  };
 
-  const commitEdit = useCallback(() => {
+  const commitEdit = () => {
     const trimmed = editText.trim();
     if (trimmed) {
       updateLabel(label.id, { text: trimmed });
     }
     setEditing(false);
-  }, [editText, label.id, updateLabel]);
+  };
 
-  const onKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        commitEdit();
-      } else if (e.key === "Escape") {
-        setEditText(label.text);
-        setEditing(false);
-      }
-    },
-    [commitEdit, label.text],
-  );
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      commitEdit();
+    } else if (e.key === "Escape") {
+      setEditText(label.text);
+      setEditing(false);
+    }
+  };
 
-  const onSelectColor = useCallback(
-    (color: string) => {
-      updateLabel(label.id, { color });
-      setShowColorPicker(false);
-    },
-    [label.id, updateLabel],
-  );
+  const onSelectColor = (color: string) => {
+    updateLabel(label.id, { color });
+    setShowColorPicker(false);
+  };
 
   const inverseScale = 1 / zoom;
 

@@ -129,11 +129,13 @@ function Scene({
     )
   }, [manualOutput, outputVolumeRef, getOutputVolume])
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: `random` is a one-time-seeded PRNG that must NOT be redrawn across renders. It feeds the `offsets` useMemo below, which feeds the `uniforms` useMemo (the GPU shaderMaterial). Inlining would reseed and rebuild the GPU material every render.
   const random = useMemo(
     // react-doctor-disable-next-line react-hooks-js/purity -- intentional one-time seed: when no `seed` prop is given we draw a single random seed for the orb's PRNG. It is captured in this useMemo (keyed on `seed`), so it stays stable across re-renders; the impurity is deliberate and does not affect idempotence of the rendered output.
     () => splitmix32(seed ?? Math.floor(Math.random() * 2 ** 32)),
     [seed]
   )
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: `offsets` seeds the static `uOffsets` GPU uniform via the `uniforms` useMemo below. It must not be regenerated per render (that would rebuild the shaderMaterial); it is keyed on the stable `random` PRNG.
   const offsets = useMemo(
     () =>
       new Float32Array(Array.from({ length: 7 }, () => random() * Math.PI * 2)),
@@ -236,6 +238,7 @@ function Scene({
       canvas.removeEventListener("webglcontextlost", onContextLost, false)
   }, [gl])
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: this builds the GPU THREE.ShaderMaterial uniforms object. It must be created once (per perlinNoiseTexture/offsets) and NOT rebuilt on every render, or the shaderMaterial would be recreated each frame. Live color/volume changes are applied imperatively in the useFrame loop, not by recomputing this object. (preserve-manual-memoization)
   const uniforms = useMemo(() => {
     // react-doctor-disable-next-line react-hooks-js/immutability -- required THREE setup: the perlin texture loaded by useTexture must be configured for repeat wrapping before it is sampled by the shader; this mutates the loaded texture object in place, which is the standard r3f/three pattern.
     perlinNoiseTexture.wrapS = THREE.RepeatWrapping

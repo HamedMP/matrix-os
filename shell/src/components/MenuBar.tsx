@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useEffectEvent, useCallback, useRef } from "react";
+import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useIsClient } from "@/hooks/useIsClient";
@@ -206,13 +206,13 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   const activeAppIconUrl = focusedApp?.iconUrl ?? FALLBACK_APP_ICON;
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
-  const closeMenu = useCallback(() => setOpenMenu(null), []);
-  const toggleMenu = useCallback((name: string) => {
+  const closeMenu = () => setOpenMenu(null);
+  const toggleMenu = (name: string) => {
     setOpenMenu((prev) => (prev === name ? null : name));
-  }, []);
-  const openAppSettings = useCallback(() => {
+  };
+  const openAppSettings = () => {
     setAppSettingsOpen(true);
-  }, []);
+  };
   const appItems: MenuEntry[] = [
     { label: "Settings…", shortcut: "⌘,", action: openAppSettings },
   ];

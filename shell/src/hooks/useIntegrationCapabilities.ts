@@ -16,6 +16,7 @@ export function useIntegrationCapabilities() {
   const [capabilities, setCapabilities] = useState<IntegrationCapabilitySummary[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const refresh = useCallback(() => {
     void fetch("/api/integrations/capabilities", {
       headers: { Accept: "application/json" },
@@ -36,6 +37,7 @@ export function useIntegrationCapabilities() {
       });
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const approveForHermes = useCallback((capabilityId: string) => {
     void fetch(`/api/integrations/capabilities/${encodeURIComponent(capabilityId)}/approval`, {
       method: "POST",

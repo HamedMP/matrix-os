@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
@@ -53,7 +53,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const zoom = useCanvasTransform((s) => s.zoom);
   const panX = useCanvasTransform((s) => s.panX);
   const panY = useCanvasTransform((s) => s.panY);
-  const fitAll = useCanvasTransform((s) => s.fitAll);
   const closeWindow = useWindowManager((s) => s.closeWindow);
   const minimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const focusWindow = useWindowManager((s) => s.focusWindow);
@@ -70,19 +69,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const isMobile = useMobileViewport();
   const themeStyle = useThemeStyle();
   const isNeumorphic = themeStyle === "neumorphic";
-
-  const fitWindow = useCallback(() => {
-    const cRect = useCanvasTransform.getState().containerRect;
-    fitAll(
-      [{ x: win.x, y: win.y, width: win.width, height: win.height }],
-      cRect?.width ?? window.innerWidth,
-      cRect?.height ?? window.innerHeight,
-    );
-  }, [fitAll, win.x, win.y, win.width, win.height]);
-
-  const stopTitleBarPointer = useCallback((e: React.PointerEvent) => {
-    e.stopPropagation();
-  }, []);
 
   const [interacting, setInteracting] = useState(false);
   const isInteractive = zoom >= INTERACTION_THRESHOLD;
@@ -163,91 +149,79 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
 
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const onDragStart = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: win.x,
-        origY: win.y,
-      };
-      setInteracting(true);
-      focusWindow(win.id);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  const onDragStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: win.x,
+      origY: win.y,
+    };
+    setInteracting(true);
+    focusWindow(win.id);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
-      // Safety: auto-clear if pointer up never fires
-      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
-      safetyTimerRef.current = setTimeout(() => {
-        dragRef.current = null;
-        setInteracting(false);
-      }, 5000);
-    },
-    [win.x, win.y, win.id, focusWindow],
-  );
+    // Safety: auto-clear if pointer up never fires
+    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+    safetyTimerRef.current = setTimeout(() => {
+      dragRef.current = null;
+      setInteracting(false);
+    }, 5000);
+  };
 
-  const onDragMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!dragRef.current) return;
-      const { startX, startY, origX, origY } = dragRef.current;
-      const dx = (e.clientX - startX) / zoom;
-      const dy = (e.clientY - startY) / zoom;
-      moveWindow(win.id, origX + dx, origY + dy);
-    },
-    [win.id, zoom, moveWindow],
-  );
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    const { startX, startY, origX, origY } = dragRef.current;
+    const dx = (e.clientX - startX) / zoom;
+    const dy = (e.clientY - startY) / zoom;
+    moveWindow(win.id, origX + dx, origY + dy);
+  };
 
-  const onDragEnd = useCallback(() => {
+  const onDragEnd = () => {
     dragRef.current = null;
     setInteracting(false);
     if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
-  }, []);
+  };
 
-  const onResizeStart = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      resizeRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origW: win.width,
-        origH: win.height,
-      };
-      setInteracting(true);
-      focusWindow(win.id);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origW: win.width,
+      origH: win.height,
+    };
+    setInteracting(true);
+    focusWindow(win.id);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
-      // Safety: auto-clear if pointer up never fires
-      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
-      safetyTimerRef.current = setTimeout(() => {
-        resizeRef.current = null;
-        setInteracting(false);
-      }, 5000);
-    },
-    [win.width, win.height, win.id, focusWindow],
-  );
+    // Safety: auto-clear if pointer up never fires
+    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+    safetyTimerRef.current = setTimeout(() => {
+      resizeRef.current = null;
+      setInteracting(false);
+    }, 5000);
+  };
 
-  const onResizeMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!resizeRef.current) return;
-      const { startX, startY, origW, origH } = resizeRef.current;
-      const dw = (e.clientX - startX) / zoom;
-      const dh = (e.clientY - startY) / zoom;
-      resizeWindow(
-        win.id,
-        Math.max(MIN_WIDTH, origW + dw),
-        Math.max(MIN_HEIGHT, origH + dh),
-      );
-    },
-    [win.id, zoom, resizeWindow],
-  );
+  const onResizeMove = (e: React.PointerEvent) => {
+    if (!resizeRef.current) return;
+    const { startX, startY, origW, origH } = resizeRef.current;
+    const dw = (e.clientX - startX) / zoom;
+    const dh = (e.clientY - startY) / zoom;
+    resizeWindow(
+      win.id,
+      Math.max(MIN_WIDTH, origW + dw),
+      Math.max(MIN_HEIGHT, origH + dh),
+    );
+  };
 
-  const onResizeEnd = useCallback(() => {
+  const onResizeEnd = () => {
     resizeRef.current = null;
     setInteracting(false);
     if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
-  }, []);
+  };
 
   const titleBarHeight = 36;
   const titleBarGap = 8;

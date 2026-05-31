@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useId } from "react";
+import { useState, useId } from "react";
 import { saveDesktopConfig, useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -29,14 +29,11 @@ export function DockEditor() {
     setLocalDock(config.dock);
   }
 
-  const save = useCallback(
-    async (next: DockConfig) => {
-      setLocalDock(next);
-      setDock(next);
-      await saveDesktopConfig({ ...config, dock: next });
-    },
-    [config, setDock],
-  );
+  const save = async (next: DockConfig) => {
+    setLocalDock(next);
+    setDock(next);
+    await saveDesktopConfig({ ...config, dock: next });
+  };
 
   return (
     <div className="space-y-6">

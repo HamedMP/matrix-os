@@ -33,6 +33,7 @@ export function DotGrid() {
   const sizeRef = useRef({ w: 0, h: 0 });
   const drawPendingRef = useRef(false);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the main useEffect dependency array and by the `draw` callback dependency; removing useCallback would re-run the listener/RAF setup effect on every render.
   const syncSize = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -49,6 +50,7 @@ export function DotGrid() {
     sizeRef.current = { w, h };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the main useEffect dependency array and by the `animate`/useEffectEvent schedulers; removing useCallback would re-run the listener/RAF setup effect on every render.
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -134,6 +136,7 @@ export function DotGrid() {
     drawPendingRef.current = false;
   }, [syncSize]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the requestAnimationFrame self-scheduling loop and by the startAnimating/scheduleStaticDraw useEffectEvents that drive the addEventListener-triggered RAF; a fresh identity each render would break the in-flight frame cancellation tracked via rafRef.
   const animate = useCallback(
     (time: number) => {
       const dt = prevTimeRef.current ? time - prevTimeRef.current : 16;

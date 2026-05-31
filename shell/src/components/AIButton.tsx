@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { Button } from "@/components/ui/button";
 import { SparklesIcon, SendIcon } from "lucide-react";
@@ -22,7 +22,7 @@ export function AIButton({ appName, appPath, sessionId }: AIButtonProps) {
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  const submit = useCallback(() => {
+  const submit = () => {
     if (!input.trim()) return;
     send({
       type: "message",
@@ -31,7 +31,7 @@ export function AIButton({ appName, appPath, sessionId }: AIButtonProps) {
     });
     setInput("");
     setOpen(false);
-  }, [input, appName, sessionId, send]);
+  };
 
   if (!open) {
     return (

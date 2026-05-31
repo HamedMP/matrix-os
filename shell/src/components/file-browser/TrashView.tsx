@@ -22,6 +22,7 @@ export function TrashView() {
   const [loading, setLoading] = useState(true);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the on-mount useEffect dependency array below; removing useCallback would re-run the effect on every render and refetch the trash listing in a loop.
   const load = useCallback(async () => {
     setLoading(true);
     try {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { useWindowManager } from "@/hooks/useWindowManager";
@@ -49,18 +49,15 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
   const wmFocusWindow = useWindowManager((s) => s.focusWindow);
 
-  const openFile = useCallback(
-    (path: string) => {
-      openFileTab(path);
-      const previewWin = wmWindows.find((w) => w.path === "__preview-window__");
-      if (previewWin) {
-        wmFocusWindow(previewWin.id);
-      } else {
-        wmOpenWindow("Preview", "__preview-window__", 0);
-      }
-    },
-    [openFileTab, wmWindows, wmOpenWindow, wmFocusWindow],
-  );
+  const openFile = (path: string) => {
+    openFileTab(path);
+    const previewWin = wmWindows.find((w) => w.path === "__preview-window__");
+    if (previewWin) {
+      wmFocusWindow(previewWin.id);
+    } else {
+      wmOpenWindow("Preview", "__preview-window__", 0);
+    }
+  };
 
   // Load initial directory
   useEffect(() => {
@@ -69,22 +66,18 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   }, [navigate]);
 
   // File watcher integration
-  const onFileChange = useCallback(
-    (path: string, _event: "add" | "change" | "unlink") => {
-      const parentDir = path.includes("/")
-        ? path.slice(0, path.lastIndexOf("/"))
-        : "";
-      if (parentDir === currentPath || path.startsWith(currentPath + "/")) {
-        refresh();
-      }
-    },
-    [currentPath, refresh],
-  );
+  const onFileChange = (path: string, _event: "add" | "change" | "unlink") => {
+    const parentDir = path.includes("/")
+      ? path.slice(0, path.lastIndexOf("/"))
+      : "";
+    if (parentDir === currentPath || path.startsWith(currentPath + "/")) {
+      refresh();
+    }
+  };
 
   useFileWatcher(onFileChange);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       const shift = e.shiftKey;
 
@@ -258,14 +251,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
         }
         return;
       }
-    },
-    [
-      currentPath, selectedPaths, entries, quickLookPath, renamingPath,
-      navigate, goBack, goForward, select, selectAll, copy, cut, paste,
-      deleteFiles, duplicate, createFolder, togglePreviewPanel,
-      setQuickLookPath, openFile,
-    ],
-  );
+  };
 
   return (
     <div

@@ -152,6 +152,7 @@ export function useChatState(): ChatState {
     });
   }, [subscribe, send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const submitMessage = useCallback(
     (
       text: string,
@@ -186,6 +187,7 @@ export function useChatState(): ChatState {
     [busy, send, sessionId],
   );
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const abortCurrent = useCallback(() => {
     const requestId = currentRequestIdRef.current;
     if (!requestId) return;
@@ -196,6 +198,7 @@ export function useChatState(): ChatState {
     // show a "stopping..." pending state in the meantime if needed.
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const newChat = useCallback(async () => {
     setMessages([]);
     setQueue([]);
@@ -219,6 +222,7 @@ export function useChatState(): ChatState {
     }
   }, [send]);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const switchConversation = useCallback(
     (id: string) => {
       load(id)

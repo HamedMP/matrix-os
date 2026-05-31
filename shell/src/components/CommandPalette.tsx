@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useCallback } from "react";
+import { useRef } from "react";
 import { useCommandStore, type Command } from "@/stores/commands";
 import {
   CommandDialog,
@@ -31,13 +31,13 @@ export function CommandPalette({
   const commands = useCommandStore((s) => s.commands);
 
   const listRef = useRef<HTMLDivElement>(null);
-  const handleInputChange = useCallback(() => {
+  const handleInputChange = () => {
     requestAnimationFrame(() => {
       listRef.current?.scrollTo({ top: 0 });
     });
-  }, []);
+  };
 
-  const { apps, actions } = useMemo(() => {
+  const { apps, actions } = (() => {
     const apps: Command[] = [];
     const actions: Command[] = [];
     const grouped = { apps, actions };
@@ -48,7 +48,7 @@ export function CommandPalette({
     apps.sort((a, b) => a.label.localeCompare(b.label));
     actions.sort((a, b) => a.label.localeCompare(b.label));
     return grouped;
-  }, [commands]);
+  })();
 
   return (
     <CommandDialog

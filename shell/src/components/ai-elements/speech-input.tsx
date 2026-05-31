@@ -1,7 +1,7 @@
 "use client";
 
 // Inspired by AI Elements speech-input pattern, uses Web Speech API
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
@@ -79,15 +79,15 @@ export function useSpeechInput(opts?: UseSpeechInputOptions): UseSpeechInputRetu
   );
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
-  const stop = useCallback(() => {
+  const stop = () => {
     if (recognitionRef.current) {
       recognitionRef.current.abort();
       recognitionRef.current = null;
     }
     setState("idle");
-  }, []);
+  };
 
-  const start = useCallback(() => {
+  const start = () => {
     const SpeechRecognitionCtor = getSpeechRecognition();
     if (!SpeechRecognitionCtor) return;
 
@@ -135,15 +135,15 @@ export function useSpeechInput(opts?: UseSpeechInputOptions): UseSpeechInputRetu
     recognitionRef.current = recognition;
     recognition.start();
     setState("listening");
-  }, [opts]);
+  };
 
-  const toggle = useCallback(() => {
+  const toggle = () => {
     if (state === "listening") {
       stop();
     } else {
       start();
     }
-  }, [state, start, stop]);
+  };
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must abort whichever recognition instance is live at teardown, so it must read recognitionRef.current at cleanup time; snapshotting at mount would always capture the initial null and never abort an active session.
   useEffect(() => {
