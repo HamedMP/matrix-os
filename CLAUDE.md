@@ -1,4 +1,4 @@
-# CLAUDE.md: Matrix OS
+# AGENTS.md: Matrix OS
 
 Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social + AI + games). Claude Agent SDK is the kernel. Everything persists as files. Reachable via web desktop, Telegram, WhatsApp, Discord, Slack, Matrix protocol. Vision: `specs/web4-vision.md`. Website: matrix-os.com
 
@@ -53,36 +53,100 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 ### Atomicity
 
 - **2+ related DB writes MUST use a transaction**. No exceptions. Like + counter, delete + cascade, insert + update are all multi-step.
+- **Optimistic concurrency must be enforced in the write statement**. Pre-reading a revision inside a transaction is not enough under READ COMMITTED; include `WHERE revision = :baseRevision` on the `UPDATE` or take a row lock.
 - **Use `ON CONFLICT` for idempotent upserts** instead of check-then-insert (TOCTOU race).
+- **Unique-scope create flows must be idempotent server-side**. If a unique index defines the logical singleton, `INSERT ... ON CONFLICT ... DO NOTHING` and select the existing row; do not rely on a client pre-check.
 - **Use `{ flag: 'wx' }` for exclusive file creates** instead of `existsSync` + `writeFile`.
 
 ### External Calls
 
 - **Every `fetch()` to an external service MUST have `signal: AbortSignal.timeout(ms)`**. Default: 10s for APIs, 30s for file downloads. No external call may hang indefinitely.
+- **Server-side fetches of user-controlled URLs must block SSRF**. Parse the URL, resolve DNS, and reject loopback, link-local, private, multicast, documentation, and internal ranges before calling `fetch()`.
+- **Server-side fetches of user-controlled URLs must reject redirects** unless each redirected URL is revalidated. Use `redirect: "error"` for preview/health checks to avoid redirect-based SSRF.
+- **DNS preflight is not DNS pinning**. If user-controlled server-side fetch remains hostname-based after validation, document the residual DNS-rebinding risk or use a dispatcher/agent that pins the resolved address.
 - **Never expose provider names or raw error messages to clients**. Log the real error server-side, return a generic message. This includes Postgres errors, Twilio/ElevenLabs/OpenAI errors, and filesystem paths.
 
 ### Input Validation
 
 - **Use Hono `bodyLimit` middleware** on every mutating endpoint. Never check Content-Length after the body is already buffered.
+- **DELETE is a mutating endpoint**. It still needs `bodyLimit`, even when the route normally ignores request bodies.
 - **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Use `resolveWithinHome` for paths, `SAFE_SLUG` regex for identifiers.
+- **Validate URL path params and query params at the route boundary** with Zod schemas before calling services. This includes IDs embedded in paths (`nodeId`, `canvasId`), scope filters, cursors, limits, and search strings.
+- **Action endpoints need per-action payload schemas**. Use a Zod discriminated union keyed by `type`; do not accept a generic record and cast `action.payload as ...` in the service.
 - **No wildcard CORS** (`Access-Control-Allow-Origin: *`). Use explicit origin allowlist.
 
 ### Resource Management
 
 - **Every in-memory Map/Set MUST have a size cap and eviction policy**. No unbounded growth. Cap + LRU eviction or TTL-based cleanup.
+- **Realtime subscriber registries need stale-connection eviction**, not only `onClose` cleanup. Network partitions can skip close handlers; sweep by `lastTouched`/TTL before enforcing caps.
+- **Realtime subscriber registries need explicit shutdown drains**. On server shutdown, notify/clear subscribers before destroying dependencies used by authorization or broadcast paths.
 - **Every temp file MUST have a cleanup policy** (TTL, max count, or explicit deletion after use).
+- **Temp cleanup must be symlink-safe and recurring**. Use `lstat()` when sweeping attacker-named files, skip symlinks, schedule periodic cleanup, and clear timers on shutdown.
+- **Long-lived Postgres/Kysely resources must be destroyed on gateway shutdown**. If a repository wraps a pool or Kysely instance, add it to the close path.
+- **Only owners close shared DB pools/connections**. Transaction-scoped or dependency-injected repository wrappers must not call `pool.end()`/`destroy()` for resources they did not create.
 - **`appendFileSync`/`writeFileSync` are banned in request handlers**. Use async `fs/promises` to avoid blocking the event loop.
 
 ### Error Handling
 
 - **No bare `catch { return null }`**. Every catch must check error type -- DB connection failures and timeouts are not "not found."
 - **No `catch { }` (empty catch)**. At minimum, log the error.
+- **Async store workflows must catch create/open/load failures at the orchestration boundary**. If a multi-step UI action creates data then opens/reloads it, set an error on any failed step and refresh summaries/cache when safe.
+- **Misconfiguration is not not-found**. Missing server dependencies such as `homePath`, registries, provider config, or database handles should return a generic 5xx/503-style error, not a 404 that looks like user data is missing.
+- **Do not throw raw `Response` objects from service/route helpers**. Use typed errors and one mapper so auth, validation, and server misconfiguration cannot masquerade as missing resources.
+- **Client stores must allowlist/cap server error strings before showing them**. Even gateway-normalized errors can regress; UI state must fall back to a generic message for unknown, long, or provider/path/database-looking errors.
+- **Health checks and reachability probes must return coarse booleans only**. Do not echo upstream status codes or provider/network details to clients after SSRF filtering.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
+- **WebSocket broadcasts must isolate subscriber failures**. Wrap each per-subscriber send, log failures, and continue delivering to remaining subscribers.
+- **WebSocket broadcasts must evict dead senders**. A failed send should remove that subscriber after the broadcast loop so future broadcasts do not retry known-dead sockets.
+- **Async WebSocket subscription/auth setup must be awaited** before success messages are sent; failure paths should send a generic error best-effort and then close.
+- **WebSocket message bodies need schema validation after JSON parsing**. Size and syntax checks are not enough; validate each frame type with bounded Zod schemas before storing or broadcasting payloads.
+
+### Concurrency and UI State
+
+- **Read-modify-write database operations must stay inside one transaction** or one targeted SQL update. Do not read outside a transaction and write inside a later transaction.
+- **Single-entity JSONB patches should target the entity path when possible**. Avoid whole-document rewrites that conflict independent edits to different nodes/items; use `jsonb_set`/targeted SQL or document coarse locking and retry expectations.
+- **Soft-deleted records should stay out of normal/export reads** unless the recovery/audit path explicitly documents why deleted data remains readable.
+- **Delete paths should filter already-deleted records** (`deleted_at IS NULL`) so repeat deletes do not silently refresh tombstones and mask stale clients.
+- **REST mutations that affect realtime documents must notify subscribers** after the write succeeds, using generic events that include the new revision and timestamp.
+- **Browser WebSocket auth must support query-token paths explicitly**. Browsers cannot set `Authorization` headers on WebSocket upgrades; every authenticated browser WS route needs exact or pattern registration in the query-token allowlist.
+- **Debounced saves must guard against active-document changes**. Conflict reloads should only reopen the document if it is still the active document when the save settles.
+- **Debounced save conflicts must not silently discard optimistic local edits**. Keep the local document visible or provide explicit conflict resolution; do not replace user edits with the server version without a deliberate user action.
+- **Destructive UI actions must catch request failures before clearing local state**. Delete/archive flows should only clear the active document after the server confirms success.
+- **Export/download store actions need the same error handling as mutations**. Catch request failures, set safe error state, and return a null/error result instead of leaking unhandled rejections.
+- **Shared client store state should be serializable** unless there is a strong reason otherwise. Prefer arrays or records over `Set`/`Map` in Zustand state.
+- **Zustand selectors must not allocate fresh arrays/objects every render**. Select primitive/stable slices and derive filtered arrays with `useMemo` inside components.
+- **Do not duplicate derived store logic in components**. Put shared filters/search derivations in a pure exported helper or store method, then reuse it from both tests/store and UI components.
 
 ### Wiring Verification
 
 - **Every IPC tool must resolve its dependency at registration time**, not at call time. If a tool needs `callManager`, verify it's not `undefined` when the tool is registered.
 - **Never use `globalThis` for cross-package communication**. Use dependency injection or typed IPC messages.
+- **Read paths for persisted UI references must reconcile stale live-resource refs**. Terminal sessions, review loops, and similar runtime refs should be marked recoverable on main read paths instead of only during explicit recovery jobs.
+
+## Setup
+
+```bash
+git clone https://github.com/hamedmp/matrix-os.git && cd matrix-os
+flox activate        # provisions Node 24, pnpm 10, bun, git + runs pnpm install
+bun run dev          # local source dev only; production runs on per-user VPS host services
+```
+
+Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full guide: `docs/dev/onboarding.md`
+
+## Project Structure
+
+| Directory | What it is |
+|-----------|------------|
+| `packages/kernel/` | AI kernel -- Agent SDK, agents, hooks, SOUL, skills |
+| `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
+| `packages/platform/` | Multi-tenant orchestrator (Clerk auth, per-user VPS provisioning and routing) |
+| `packages/proxy/` | Shared API proxy, usage tracking |
+| `packages/ui/` | Shared UI components |
+| `shell/` | Next.js 16 desktop shell frontend |
+| `www/` | matrix-os.com website (Vercel) |
+| `home/` | File system template (copied to `~/matrixos/` on first boot) |
+| `specs/` | Architecture and feature specs |
+| `tests/` | Vitest test suites |
 
 ## Running
 
@@ -129,11 +193,8 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
 - **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
 - **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
+- **Feature test VMs**: for risky shell/onboarding/platform changes, prefer a disposable test VPS over the user's primary computer. Use the same Clerk login, switch via `https://app.matrix-os.com/runtime` or explicit `https://app.matrix-os.com/vm/<handle>`, deploy exact bundle versions, and ask the user whether to delete the test VM after validation to avoid extra Hetzner charges.
 - **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
-
-## Next.js Gotchas
-
-- **Never place both `icon.png` and `icon.svg` in `src/app/`**: Next.js treats `icon.(png|svg)` as metadata icon routing. Having both with the same basename triggers a Turbopack panic ("Dependency tracking is disabled so invalidation is not allowed" — upstream Next.js #85496). Keep the SVG in `src/app/` for favicon routing; put any PNG equivalent under `public/` instead.
 
 ## Shell Gotchas
 
@@ -143,12 +204,15 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Never mutate state in reducers**: `reduceChat` etc. must create new objects via spread, not mutate in-place. Shallow copies share refs; mutating causes streaming text duplication.
 - **Never use `meta.icon` as an iframe/app image URL**: shell icons resolve through `/icons/{slug}.png`, which falls back to shipped `.svg`/`.png` files in `home/system/icons/`; every manifest icon must have a matching shipped asset.
 - **Default apps are Vite apps**: first-party apps under `home/apps/**` should use `runtime: "vite"` with `build.output: "dist"`. Do not add plain static HTML default apps; run `node scripts/build-default-apps.mjs home/apps` before bundling.
+- **Default app manifest icons must be shipped icons**: every `home/apps/**/matrix.json` `icon` value must have a matching `.png` or `.svg` in `home/system/icons/`. Games use the shared `game-center` icon unless a concrete shipped icon exists. Keep `tests/gateway/apps.test.ts` passing so new users and VPS restores start with deterministic icons and do not fall into Gemini icon-generation loops.
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
 - **Reset `imgFailed` when `iconUrl` changes**: track prev URL with `useRef`, reset on differ
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
 - **Production is VPS-native only**: user-facing Matrix OS runs on one VPS per user with host systemd services. Do not use Docker image rebuilds, `docker compose`, or rolling container restarts as the production rollout path for customer runtime.
-- **Customer VPS shell/gateway changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes through platform deploy.
+- **Customer VPS shell/gateway changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes in place and restart `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
 - **Pipedream stays platform-owned**: never put `PIPEDREAM_*` secrets on customer VPSes. VPS gateways need `PLATFORM_INTERNAL_URL` plus their existing `UPGRADE_TOKEN`/`MATRIX_HANDLE` so `/api/integrations*` proxies to platform-owned routes.
+- **Never publish a shell bundle with the example Clerk key**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is baked at host-bundle build time. If production logs show `clerk.example.com`, the served shell bundle was built with the placeholder key and must be rebuilt and redeployed.
+- **Canvas panning must be target-gated**: wheel/pointer pan handlers should only accept events from the canvas surface/zoom overlay, not bubbled events from selected app windows. Add regression tests for scrolling inside an active app window.
 
 ## UX Guide
 
@@ -167,28 +231,44 @@ Every spec with endpoints/WebSockets/IPC/file I/O must include: security archite
 
 ## Code Review Pipeline
 
-Full guide: `docs/dev/review-pipeline.md`. Three-pass structure, not line-by-line.
+Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line-by-line review.
 
-### Pre-PR Checklist
-
-Before opening any PR, run:
+### Pre-PR Checklist (mandatory)
 
 ```bash
 bun run typecheck           # tsc --noEmit for all packages
-bun run check:patterns      # CLAUDE.md pattern scanner
+bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
 bun run test                # unit tests
+npx react-doctor@latest     # audit React code — REQUIRED when any React (.tsx/.jsx) file changed
 ```
+
+**React audit (mandatory for React changes)**: whenever you create or modify React
+files (`.tsx`/`.jsx` in `shell/`, `home/apps/**`, `packages/ui/`, `www/`), run
+`npx react-doctor@latest` and resolve its findings **before committing**. See
+https://github.com/millionco/react-doctor. CI also runs this on PRs that touch React files.
 
 ### Three Review Passes
 
-1. **Mechanical CLAUDE.md sweep**: bare catch, fetch without signal, missing bodyLimit, unbounded Map/Set, sync file I/O. Mostly automated by `scripts/review/check-patterns.sh`.
-2. **Trust-boundary sweep**: trace external input through route handlers, filesystem ops, DB queries, WS/IPC handlers. Apply per-file-type checklists.
-3. **Atomicity/failure-mode review**: source of truth, lock scope, partial failure, shutdown cleanup, deferred scope.
+1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
+
+2. **Trust-boundary sweep**: For each changed file, classify it (route handler, filesystem, database, WS/IPC) and apply the matching checklist from `docs/dev/review-pipeline.md`. Trace external input from entry to use.
+
+3. **Atomicity/failure-mode review**: For each subsystem touched, answer: What is the source of truth? What is inside the lock/transaction? What happens on partial failure? What happens on shutdown? What is explicitly deferred?
 
 ### PR Size Limits
 
 - **> 3000 additions or > 50 files**: split the PR
-- Split boundaries: gateway, platform, sync-client, shell, docs/deploy
+- Split along: gateway, platform, sync-client, shell, docs/deploy
+- For multi-slice features, prefer Graphite stacked PRs over one oversized PR.
+  Follow `docs/dev/stacked-prs.md`: initialize with `gt init`, create each
+  layer with `gt create --all --message "<conventional commit>"`, update
+  layers with `gt modify --all` or `gt modify --commit --all --message`,
+  restack with `gt restack`, sync with `gt sync`, publish with
+  `gt submit --stack` or `gt ss -np`, and open the stack with `gt pr`.
+  Prefer Graphite commands over raw git/gh equivalents for stack operations.
+  If `gt` is missing or unauthenticated, treat that as an environment blocker
+  for stack work instead of silently falling back. Do not flatten a stack unless
+  explicitly asked.
 
 ### PR Body: Mandatory Invariants
 
@@ -200,6 +280,10 @@ Every backend PR must include an "Invariants" section:
 - **Auth source of truth**: primary auth mechanism, fallback behavior
 - **Deferred scope**: what is explicitly NOT in scope -- say so, don't leave dead code
 
+### CI Timeouts
+
+- **Timeouts must cover observed runtime with margin**. If a CI job completes all tests successfully but is canceled by `timeout-minutes`, raise or split the job instead of treating it as a product test failure.
+
 ### Branch Freeze
 
 Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
@@ -208,6 +292,7 @@ Do not request review while still pushing commits. Either declare a review commi
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
+- **Do not spam Greptile re-review comments** -- Greptile is configured to review every new commit. If the score/footer is stale after a push, it means the review is still running; wait and poll instead of repeatedly mentioning it.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
@@ -215,12 +300,23 @@ Do not request review while still pushing commits. Either declare a review commi
 - No `path.join()` on unvalidated external input -- use `resolveWithinPrefix`
 - No raw error messages or Zod `.issues` in client responses
 - No PR larger than 3000 additions or 50 files without splitting
+- **Run `npx react-doctor@latest` before committing any React (`.tsx`/`.jsx`) change** and resolve its findings — CI enforces this on PRs touching React files (https://github.com/millionco/react-doctor)
+
+### Shell App Data Contract (default apps under `home/apps/**`)
+
+Apps run inside a **sandboxed `srcdoc` iframe with `origin: null`** and CSP `connect-src 'self'`.
+- **Never** call `fetch()` to `/api/bridge/*` or any URL directly from app code — blocked by CORS + CSP.
+- **Never** rely on `localStorage` in the shell — it throws `SecurityError` in the sandbox (guarded test-only fallback is fine).
+- Use the injected `window.MatrixOS` bridge for everything: `db.*` (Postgres), `readData`/`writeData` (KV), `service`/`integrations`, and `proxyFetch(url)` for allowlisted external GETs.
+- `AppViewer` loads runtime apps **only** via the bridged `srcDoc`; do not reintroduce a plain `src=/apps/{slug}/` load (it runs un-bridged and breaks data access).
 
 ## Reference Docs
 
 Read these on demand, not every session:
 
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
+- `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
+- `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
@@ -237,14 +333,25 @@ Read these on demand, not every session:
 - Sub-agents spawned for parallel exploration share the parent's worktree; they must commit before exiting.
 
 ## Active Technologies
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
+- User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, node-pty, zod/v4, citty, ws, Node child_process/fs/promises/path/crypto APIs, zellij 0.44.1 pinned in Docker images (068-zellij-cli)
+- Files under the owner-controlled Matrix home (`~/system/shell-sessions.json`, `~/system/layouts/*.kdl`) plus local CLI files under `~/.matrixos/profiles.json` and `~/.matrixos/profiles/<name>/` (068-zellij-cli)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, Zod 4 via `zod/v4`, existing `jose` JWT validation, Vitest (072-request-principal)
+- No new persistence; request principal is request-scoped. Existing consumers continue to use owner-controlled PostgreSQL/Kysely and sync R2/object storage through existing repositories. (072-request-principal)
+- TypeScript strict, ES modules, Node.js 24+ for gateway; React 19, React Native 0.83, Expo Router 55 for mobile shell + Hono gateway, Zod 4 via `zod/v4`, existing terminal stack (`node-pty`, `@xterm/xterm` on web), Expo Router, React Native WebView, Clerk Expo, AsyncStorage/SecureStore (075-mobile-shell)
+- Owner-controlled Matrix home files for shell/terminal session metadata (`~/system/terminal-sessions.json`, terminal layout files) plus existing owner Postgres where current workspace/app data already lives. No new embedded database or ORM. (075-mobile-shell)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono gateway routes, Zod 4 via `zod/v4`, Kysely/Postgres, Matrix homeserver appservice support, self-hosted Telegram and WhatsApp bridge runtimes, existing Matrix OS shell/app bridge, Hermes/Claude Agent SDK V1 `query()` path (077-matrix-messaging-bridge)
+- Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
+- Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
-- App runtime — Vite + React SPA (static/vite), Next.js node runtime (node), process manager, reverse proxy, HMAC-signed per-app cookies; gateway deps: semver, glob (063-react-app-runtime)
 
 ## Recent Changes
 
-- 063-react-app-runtime: React app runtime with three modes (static, vite, node), build orchestrator with source-hash caching, process manager with idle shutdown, pnpm install flow, distribution policy (owner-only/installable/featured), HMAC-signed per-app auth cookies, CLI publish command
+- 077-matrix-messaging-bridge: Planned owner-controlled Matrix messaging bridge for Telegram and WhatsApp first, with homeserver/appservice spike gates, per-room Hermes permissions, and separate owner-local bridge/homeserver/permission storage.
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 ## Agent skills
@@ -261,34 +368,6 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
-# SlayZone Environment
-
-You are running inside [SlayZone](https://slayzone.com), a desktop development environment built around a kanban board. Each task on the board is a full workspace with terminal panels, a file editor, a browser panel, and git integration. Your session is one of potentially many agents working in parallel on different tasks. A human or another agent may interact with you through the terminal.
-
-Your task has a title, description, status, and subtasks — use the `slay` CLI to read and update them. See the `slay` skill for the full command reference.
-
-`$SLAYZONE_TASK_ID` is set to the ID of the task you are running inside. Most `slay` commands default to it when no explicit ID is given.
-
-## gstack (REQUIRED — global install)
-
-**Before doing ANY work, verify gstack is installed:**
-
-```bash
-test -d ~/.claude/skills/gstack/bin && echo "GSTACK_OK" || echo "GSTACK_MISSING"
-```
-
-If GSTACK_MISSING: STOP. Do not proceed. Tell the user:
-
-> gstack is required for all AI-assisted work in this repo.
-> Install it:
-> ```bash
-> git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
-> cd ~/.claude/skills/gstack && ./setup --team
-> ```
-> Then restart your AI coding tool.
-
-Do not skip skills, ignore gstack errors, or work around missing gstack.
-
-Using gstack skills: After install, skills like /qa, /ship, /review, /investigate,
-and /browse are available. Use /browse for all web browsing.
-Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
+<!-- SPECKIT START -->
+Current Spec Kit plan: `specs/082-paid-beta-readiness/plan.md`.
+<!-- SPECKIT END -->
