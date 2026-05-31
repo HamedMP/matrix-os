@@ -105,6 +105,7 @@ const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
+const APP_SESSION_COOKIE = 'matrix_app_session';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
 const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
@@ -182,6 +183,11 @@ const HostBundleReleaseBodySchema = z.object({
 const HostBundleChannelBodySchema = z.object({
   version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
 });
+
+const AppSessionExchangeBodySchema = z.object({
+  redirectTo: z.string().min(1).max(2048).optional(),
+  runtime: RuntimeSlotSchema.optional(),
+}).strict();
 
 function sanitizeProxyResponseHeaders(headers: Headers): Headers {
   const sanitized = new Headers(headers);
@@ -500,6 +506,18 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
   }
 }
 
+function normalizePostAuthRedirectPath(value: string | undefined): string {
+  if (!value) return '/';
+  try {
+    const url = new URL(value, 'https://app.matrix-os.com');
+    if (url.origin !== 'https://app.matrix-os.com') return '/';
+    return buildPostAuthRedirectPath(url.toString());
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to normalize app-session redirect:', err instanceof Error ? err.message : String(err));
+    return '/';
+  }
+}
+
 function isAppDomainGatewayPath(path: string): boolean {
   return (
     path.startsWith('/api/') ||
@@ -626,6 +644,28 @@ function buildCodeSessionCookie(token: string): string {
     'Secure',
     'SameSite=Lax',
     `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
+  ].join('; ');
+}
+
+function buildAppSessionCookie(token: string): string {
+  return [
+    `${APP_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
+  ].join('; ');
+}
+
+function buildClearAppSessionCookie(): string {
+  return [
+    `${APP_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
   ].join('; ');
 }
 
@@ -945,14 +985,24 @@ async function resolveAppDomainIdentity(opts: {
   wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
   const codeSessionToken = readCookie(opts.cookieHeader, CODE_SESSION_COOKIE);
+  const appSessionToken = readCookie(opts.cookieHeader, APP_SESSION_COOKIE);
   const bearerToken =
     opts.authHeader?.startsWith('Bearer ')
       ? opts.authHeader.slice(7)
-      : opts.wsToken ?? codeSessionToken;
+      : opts.wsToken ?? appSessionToken ?? codeSessionToken;
 
   if (bearerToken && opts.platformJwtSecret) {
     try {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
+      if (bearerToken === appSessionToken && opts.clerkAuth) {
+        const clerkToken = opts.clerkAuth.extractToken(undefined, opts.cookieHeader);
+        if (clerkToken) {
+          const clerkResult = await opts.clerkAuth.verify(clerkToken);
+          if (clerkResult.authenticated && clerkResult.userId && clerkResult.userId !== claims.sub) {
+            return null;
+          }
+        }
+      }
       const record = await getContainer(opts.db, claims.handle);
       if (record?.clerkUserId === claims.sub) {
         return {
@@ -1403,6 +1453,7 @@ function getAuthPage(
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
     var signOutTarget = ${signOutTargetJson};
+    var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
     var appearance = {
       variables: {
         colorPrimary: '#D06F25',
@@ -1426,7 +1477,7 @@ function getAuthPage(
         footerActionLink: 'font-medium'
       }
     };
-    function showSignedInState() {
+    function renderSessionState(title, detail, primaryLabel, primaryHandler) {
       var el = document.getElementById('auth');
       el.innerHTML = '';
 
@@ -1434,12 +1485,12 @@ function getAuthPage(
       state.className = 'session-state';
 
       var heading = document.createElement('h2');
-      heading.textContent = 'You are already signed in';
+      heading.textContent = title;
       state.appendChild(heading);
 
-      var detail = document.createElement('p');
-      detail.textContent = 'Continue to Matrix OS, or sign out first if you are testing a new signup.';
-      state.appendChild(detail);
+      var detailText = document.createElement('p');
+      detailText.textContent = detail;
+      state.appendChild(detailText);
 
       var actions = document.createElement('div');
       actions.className = 'session-actions';
@@ -1447,10 +1498,8 @@ function getAuthPage(
       var continueButton = document.createElement('button');
       continueButton.type = 'button';
       continueButton.className = 'primary';
-      continueButton.textContent = 'Continue';
-      continueButton.addEventListener('click', function() {
-        window.location.assign(redirectTarget);
-      });
+      continueButton.textContent = primaryLabel;
+      continueButton.addEventListener('click', primaryHandler);
       actions.appendChild(continueButton);
 
       var signOutButton = document.createElement('button');
@@ -1459,7 +1508,16 @@ function getAuthPage(
       signOutButton.addEventListener('click', function() {
         signOutButton.disabled = true;
         signOutButton.textContent = 'Signing out...';
-        window.Clerk.signOut()
+        fetch('/api/auth/app-session', {
+          method: 'DELETE',
+          credentials: 'same-origin'
+        })
+          .catch(function(err) {
+            console.error('[matrix] App session clear failed', err instanceof Error ? err.message : String(err));
+          })
+          .then(function() {
+            return window.Clerk.signOut();
+          })
           .then(function() {
             window.location.replace(signOutTarget);
           })
@@ -1474,10 +1532,75 @@ function getAuthPage(
       state.appendChild(actions);
       el.appendChild(state);
     }
+    function showLoadingState(message) {
+      var el = document.getElementById('auth');
+      el.innerHTML = '';
+      var loading = document.createElement('span');
+      loading.className = 'loading';
+      loading.textContent = message;
+      el.appendChild(loading);
+    }
+    function showSignedInRecoveryState() {
+      renderSessionState(
+        'Session needs a refresh',
+        'Matrix could not connect your browser session to a Matrix computer. Try again, or sign out if you are testing a different account.',
+        'Try again',
+        continueWithClerkSession
+      );
+    }
+    function showNoRuntimeState() {
+      renderSessionState(
+        'No Matrix computer is attached',
+        'This Clerk account is signed in, but it does not have a Matrix computer yet. Sign out to use another account, or ask the operator to provision this account.',
+        'Check again',
+        continueWithClerkSession
+      );
+    }
+    function continueWithClerkSession() {
+      showLoadingState('Loading your Matrix computer...');
+      if (!window.Clerk.session) {
+        showSignedInRecoveryState();
+        return;
+      }
+      window.Clerk.session.getToken()
+        .then(function(token) {
+          if (!token) {
+            showSignedInRecoveryState();
+            return null;
+          }
+          return fetch('/api/auth/app-session', {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ redirectTo: redirectTarget, runtime: requestedRuntime || undefined }),
+            credentials: 'same-origin'
+          });
+        })
+        .then(function(res) {
+          if (!res) return null;
+          if (res.ok) return res.json();
+          if (res.status === 404) {
+            showNoRuntimeState();
+            return null;
+          }
+          showSignedInRecoveryState();
+          return null;
+        })
+        .then(function(payload) {
+          if (!payload) return;
+          window.location.replace(payload.redirectTo ?? redirectTarget);
+        })
+        .catch(function(err) {
+          console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.message : String(err));
+          showSignedInRecoveryState();
+        });
+    }
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
-          showSignedInState();
+          continueWithClerkSession();
           return;
         }
         var el = document.getElementById('auth');
@@ -2557,6 +2680,71 @@ export function createApp(deps: {
     );
   }
 
+  app.delete('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
+    applyNoStoreHeaders(c);
+    c.header('Set-Cookie', buildClearAppSessionCookie());
+    return c.json({ cleared: true });
+  });
+
+  app.post('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
+    if (!platformJwtSecret || !clerkAuth) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Session unavailable' }, 503);
+    }
+
+    let body: unknown = {};
+    if ((c.req.header('content-type') ?? '').toLowerCase().includes('application/json')) {
+      try {
+        body = await c.req.json();
+      } catch (err: unknown) {
+        console.warn('[auth/app-session] JSON parse failed:', err instanceof Error ? err.name : typeof err);
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Validation error' }, 400);
+      }
+    }
+    const parsed = AppSessionExchangeBodySchema.safeParse(body);
+    if (!parsed.success) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Validation error' }, 400);
+    }
+    const redirectTo = normalizePostAuthRedirectPath(parsed.data.redirectTo);
+
+    const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
+    if (!token) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const result = await clerkAuth.verify(token);
+    if (!result.authenticated || !result.userId) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const record = await getContainerByClerkId(db, result.userId);
+    const requestedRuntimeSlot =
+      parsed.data.runtime ?? readRuntimeSlotSelection(new URL(redirectTo, 'https://app.matrix-os.com').toString()).slot;
+    const machine = record ? undefined : await getActiveUserMachineByClerkId(db, result.userId, requestedRuntimeSlot);
+    const handle = record?.handle ?? machine?.handle;
+    if (!handle) {
+      applyNoStoreHeaders(c);
+      c.header('Set-Cookie', buildClearAppSessionCookie());
+      return c.json({ error: 'Matrix computer unavailable', code: 'no_runtime' }, 404);
+    }
+
+    const issued = await issueSyncJwt({
+      secret: platformJwtSecret,
+      clerkUserId: result.userId,
+      handle,
+      gatewayUrl: getGatewayUrlForHandle(handle),
+      runtimeSlot: machine?.runtimeSlot,
+      expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+    });
+    applyNoStoreHeaders(c);
+    c.header('Set-Cookie', buildAppSessionCookie(issued.token));
+    return c.json({ redirectTo });
+  });
+
   app.route('/billing', createBillingRoutes({
     db,
     stripe: appEnv.STRIPE_SECRET_KEY
@@ -2583,7 +2771,8 @@ export function createApp(deps: {
     if (isAppDomain && (
       reqPath === '/auth/device' ||
       reqPath.startsWith('/auth/device/') ||
-      reqPath.startsWith('/api/auth/device/')
+      reqPath.startsWith('/api/auth/device/') ||
+      reqPath === '/api/auth/app-session'
     )) {
       return next();
     }
