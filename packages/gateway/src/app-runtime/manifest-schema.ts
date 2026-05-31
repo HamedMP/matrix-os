@@ -46,6 +46,8 @@ const BaseManifestSchema = z.object({
   permissions: z.array(z.string()).default([]),
   storage: z.unknown().optional(),
   listingTrust: z.string().optional(),
+  /** When true, the app is not surfaced in the launcher/app list (and not registered). Use to park unfinished apps. */
+  hidden: z.boolean().optional(),
   /** Advisory flag: marks this manifest as a dev-mode project. No enforcement -- tooling may use it to skip caching or enable HMR. */
   dev: z.boolean().optional(),
 });

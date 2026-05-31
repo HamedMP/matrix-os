@@ -89,6 +89,11 @@ async function scanRuntimeApps(
     const apps = await listUniqueAppManifests(appsDir);
     for (const app of apps) {
       if (seen.has(app.slug)) continue;
+      // Hidden apps are parked: not listed in the launcher and not registered.
+      if (app.manifest.hidden) {
+        seen.add(app.slug);
+        continue;
+      }
       seen.add(app.slug);
       result.push({
         name: app.manifest.name,
