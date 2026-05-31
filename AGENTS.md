@@ -244,8 +244,12 @@ npx react-doctor@latest     # audit React code — REQUIRED when any React (.tsx
 
 **React audit (mandatory for React changes)**: whenever you create or modify React
 files (`.tsx`/`.jsx` in `shell/`, `home/apps/**`, `packages/ui/`, `www/`), run
-`npx react-doctor@latest` and resolve its findings **before committing**. See
-https://github.com/millionco/react-doctor. CI also runs this on PRs that touch React files.
+`npx react-doctor@latest <project-dir>` and resolve its findings **before committing**.
+react-doctor scans a **project directory that has a React `package.json`** (e.g.
+`npx react-doctor@latest shell`), NOT individual files. Root-toolchain default apps under
+`home/apps/**` have no `package.json`, so audit them by copying `src/` into a temp dir with a
+minimal React `package.json` and running react-doctor there. See
+https://github.com/millionco/react-doctor. CI runs this on the project dirs of changed React files.
 
 ### Three Review Passes
 

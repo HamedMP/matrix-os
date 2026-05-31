@@ -177,7 +177,7 @@ jobs:
         with:
           node-version: 24
 
-      - name: Audit React code (changed .tsx/.jsx)
+      - name: Audit React code (project dirs with changed .tsx/.jsx)
         if: needs.changes.outputs.should_run == 'true'
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -197,9 +197,26 @@ jobs:
             echo "No changed React files; skipping react-doctor."
             exit 0
           fi
-          echo "Auditing ${#react_files[@]} changed React file(s) with react-doctor:"
-          printf '  %s\n' "${react_files[@]}"
-          npx --yes react-doctor@latest "${react_files[@]}"
+          # react-doctor scans a project DIRECTORY (needs a React package.json), not files.
+          # Map changed React files to their owning project dir and audit each unique one.
+          declare -A dirs=()
+          for f in "${react_files[@]}"; do
+            case "$f" in
+              shell/*) dirs["shell"]=1 ;;
+              www/*) dirs["www"]=1 ;;
+              packages/ui/*) dirs["packages/ui"]=1 ;;
+              # home/apps/** are mostly root-toolchain (no package.json); audited pre-commit, skipped here.
+            esac
+          done
+          if [ "${#dirs[@]}" -eq 0 ]; then
+            echo "Changed React files are not in an audited project dir; skipping."
+            exit 0
+          fi
+          for d in "${!dirs[@]}"; do
+            echo "::group::react-doctor $d"
+            npx --yes react-doctor@latest "$d" || echo "react-doctor reported findings in $d"
+            echo "::endgroup::"
+          done
 
   sync-client:
     name: Sync Client Package
