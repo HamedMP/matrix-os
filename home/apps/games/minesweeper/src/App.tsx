@@ -85,6 +85,48 @@ export default function App(): React.ReactElement {
 
   const spec = useMemo(() => specFor(difficulty, custom), [difficulty, custom]);
 
+  // --- Responsive board sizing --------------------------------------------
+  // The board area flexes to fill the remaining window space; we measure it
+  // and derive a per-cell size so every difficulty (incl. Expert 30x16) fits
+  // without clipping or scroll. Cells stay within a comfortable min/max range.
+  const boardAreaRef = useRef<HTMLDivElement | null>(null);
+  const [cellSize, setCellSize] = useState(30);
+
+  useEffect(() => {
+    const el = boardAreaRef.current;
+    if (!el) return;
+
+    const MIN_CELL = 12;
+    const MAX_CELL = 34;
+    const GRID_PADDING = 12; // .ms-grid padding (6px) on each side
+    const CELL_MARGIN = 2; // .ms-cell margin (1px) on each side
+
+    const recompute = () => {
+      const node = boardAreaRef.current;
+      if (!node) return;
+      const availW = node.clientWidth;
+      const availH = node.clientHeight;
+      if (availW <= 0 || availH <= 0) return;
+      const perCellExtra = CELL_MARGIN;
+      const usableW = availW - GRID_PADDING;
+      const usableH = availH - GRID_PADDING;
+      const byW = Math.floor(usableW / board.cols) - perCellExtra;
+      const byH = Math.floor(usableH / board.rows) - perCellExtra;
+      const next = Math.max(MIN_CELL, Math.min(MAX_CELL, Math.min(byW, byH)));
+      setCellSize((prev) => (prev === next ? prev : next));
+    };
+
+    recompute();
+    const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    if (!RO) {
+      window.addEventListener("resize", recompute);
+      return () => window.removeEventListener("resize", recompute);
+    }
+    const ro = new RO(recompute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [board.rows, board.cols]);
+
   // --- Timer ---------------------------------------------------------------
   const stopTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -423,15 +465,18 @@ export default function App(): React.ReactElement {
           </div>
         </div>
 
-        <div
-          className="ms-grid"
-          style={{
-            gridTemplateColumns: `repeat(${board.cols}, var(--ms-cell))`,
-          }}
-          onContextMenu={(e) => e.preventDefault()}
-          role="grid"
-          aria-label="Minefield"
-        >
+        <div className="ms-board-area" ref={boardAreaRef}>
+          <div
+            className="ms-grid"
+            style={{
+              gridTemplateColumns: `repeat(${board.cols}, ${cellSize}px)`,
+              ["--ms-cell" as string]: `${cellSize}px`,
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+            role="grid"
+            tabIndex={-1}
+            aria-label="Minefield"
+          >
           {board.cells.map((row, r) =>
             row.map((cell, c) => {
               const idx = r * board.cols + c;
@@ -473,6 +518,7 @@ export default function App(): React.ReactElement {
               );
             }),
           )}
+          </div>
         </div>
 
         <footer className="ms-footer">
@@ -488,13 +534,13 @@ export default function App(): React.ReactElement {
               {flags}/{board.mines}
             </span>
           </div>
-          <div className="ms-status" role="status" aria-live="polite">
+          <output className="ms-status" aria-live="polite">
             {board.status === "won"
               ? "Cleared! 🎉"
               : board.status === "lost"
                 ? "Boom — try again"
                 : statusMsg}
-          </div>
+          </output>
         </footer>
       </div>
     </div>
