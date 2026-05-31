@@ -6,7 +6,7 @@
 # Version format: v{YYYY.MM.DD}-{run_number} (date-based, monotonically increasing)
 #
 # Flow:
-#   1. test — typecheck + unit tests
+#   1. ci-gate — wait for same-SHA CI and verify all CI jobs succeeded
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
 #   4. (optional) auto-deploy if severity is "security"
@@ -109,8 +109,28 @@ jobs:
               continue
             fi
 
+            success_id="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion == "success")) | .[0].databaseId // ""')"
             success_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion == "success")) | .[0].url // ""')"
-            if [ -n "$success_url" ]; then
+            if [ -n "$success_id" ]; then
+              if ! run_jobs="$(gh run view "$success_id" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json jobs)"; then
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "Timed out verifying CI jobs for $TARGET_SHA after repeated GitHub API failures" >&2
+                  exit 1
+                fi
+                echo "Could not read CI jobs for $TARGET_SHA; retrying..."
+                sleep 20
+                continue
+              fi
+
+              failed_job="$(printf '%s' "$run_jobs" | jq -r '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
+              if [ -n "$failed_job" ]; then
+                echo "CI workflow run passed but a job was not successful for $TARGET_SHA: $failed_job" >&2
+                printf '%s\n' "$run_jobs" >&2
+                exit 1
+              fi
+
               echo "CI passed for $TARGET_SHA: $success_url"
               exit 0
             fi

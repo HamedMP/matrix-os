@@ -195,6 +195,10 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('--workflow "$CI_WORKFLOW_FILE"');
     expect(workflow).toContain('--commit "$TARGET_SHA"');
     expect(workflow).toContain('Could not read CI workflow status for $TARGET_SHA; retrying...');
+    expect(workflow).toContain('gh run view "$success_id"');
+    expect(workflow).toContain('Could not read CI jobs for $TARGET_SHA; retrying...');
+    expect(workflow).toContain('Timed out verifying CI jobs for $TARGET_SHA after repeated GitHub API failures');
+    expect(workflow).toContain('CI workflow run passed but a job was not successful for $TARGET_SHA');
     expect(workflow).toContain('CI passed for $TARGET_SHA');
     expect(workflow).toContain('All same-SHA CI runs are completed but none succeeded for $TARGET_SHA');
     expect(workflow).toContain('Timed out waiting for CI to pass on $TARGET_SHA');
