@@ -1,45 +1,30 @@
-import Database from 'better-sqlite3';
+import { Kysely, PostgresDialect, sql, type Generated } from 'kysely';
+import pg from 'pg';
 
-const DB_PATH = process.env.PROXY_DB_PATH ?? '/data/proxy.db';
-
-let db: Database.Database;
-
-export function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    migrate(db);
-  }
-  return db;
+interface ApiUsageTable {
+  id: Generated<number>;
+  timestamp: Generated<Date>;
+  user_id: string;
+  model: string;
+  input_tokens: Generated<number>;
+  output_tokens: Generated<number>;
+  cache_read_tokens: Generated<number>;
+  cache_write_tokens: Generated<number>;
+  cost_usd: Generated<number>;
+  session_id: string | null;
+  status: Generated<number>;
 }
 
-function migrate(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS api_usage (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-      user_id TEXT NOT NULL,
-      model TEXT NOT NULL,
-      input_tokens INTEGER NOT NULL DEFAULT 0,
-      output_tokens INTEGER NOT NULL DEFAULT 0,
-      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-      cost_usd REAL NOT NULL DEFAULT 0,
-      session_id TEXT,
-      status INTEGER NOT NULL DEFAULT 200
-    );
+interface UserQuotasTable {
+  user_id: string;
+  daily_limit_usd: number | null;
+  monthly_limit_usd: number | null;
+  enabled: Generated<boolean>;
+}
 
-    CREATE INDEX IF NOT EXISTS idx_usage_user ON api_usage(user_id);
-    CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON api_usage(timestamp);
-
-    CREATE TABLE IF NOT EXISTS user_quotas (
-      user_id TEXT PRIMARY KEY,
-      daily_limit_usd REAL,
-      monthly_limit_usd REAL,
-      enabled INTEGER NOT NULL DEFAULT 1
-    );
-  `);
+interface ProxyDatabase {
+  api_usage: ApiUsageTable;
+  user_quotas: UserQuotasTable;
 }
 
 export interface UsageRecord {
@@ -54,19 +39,6 @@ export interface UsageRecord {
   status: number;
 }
 
-export function insertUsage(record: UsageRecord): void {
-  const stmt = getDb().prepare(`
-    INSERT INTO api_usage (user_id, model, input_tokens, output_tokens,
-      cache_read_tokens, cache_write_tokens, cost_usd, session_id, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(
-    record.userId, record.model, record.inputTokens, record.outputTokens,
-    record.cacheReadTokens, record.cacheWriteTokens, record.costUsd,
-    record.sessionId ?? null, record.status
-  );
-}
-
 export interface QuotaCheck {
   allowed: boolean;
   dailyUsed: number;
@@ -75,73 +47,236 @@ export interface QuotaCheck {
   monthlyLimit: number | null;
 }
 
-export function checkQuota(userId: string): QuotaCheck {
-  const db = getDb();
+export interface ProxyDB {
+  ready: Promise<void>;
+  insertUsage(record: UsageRecord): Promise<void>;
+  checkQuota(userId: string): Promise<QuotaCheck>;
+  setQuota(userId: string, dailyLimitUsd: number | null, monthlyLimitUsd: number | null): Promise<void>;
+  getUserUsage(userId: string): Promise<{ daily: number; monthly: number; total: number }>;
+  getUsageSummary(): Promise<Array<{ userId: string; daily: number; monthly: number; total: number }>>;
+  getMetricsSeed(): Promise<Array<{ user_id: string; model: string; cost: number; calls: number }>>;
+  destroy(): Promise<void>;
+}
 
-  const quota = db.prepare(
-    'SELECT daily_limit_usd, monthly_limit_usd, enabled FROM user_quotas WHERE user_id = ?'
-  ).get(userId) as { daily_limit_usd: number | null; monthly_limit_usd: number | null; enabled: number } | undefined;
+const DEFAULT_PROXY_DB_URL =
+  process.env.PROXY_DATABASE_URL ??
+  process.env.PLATFORM_DATABASE_URL ??
+  (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
 
-  if (!quota || !quota.enabled) {
-    return { allowed: true, dailyUsed: 0, dailyLimit: null, monthlyUsed: 0, monthlyLimit: null };
+export function createProxyDb(opts: string | { dialect: unknown } = DEFAULT_PROXY_DB_URL ?? ''): ProxyDB {
+  if (typeof opts === 'string' && !opts) {
+    throw new Error('Proxy Postgres URL is required: set PROXY_DATABASE_URL or PLATFORM_DATABASE_URL');
   }
 
-  const dailyUsed = (db.prepare(
-    "SELECT COALESCE(SUM(cost_usd), 0) as total FROM api_usage WHERE user_id = ? AND timestamp >= date('now')"
-  ).get(userId) as { total: number }).total;
+  let pool: pg.Pool | null = null;
+  const kysely: Kysely<ProxyDatabase> = typeof opts === 'string'
+    ? (() => {
+        pool = new pg.Pool({ connectionString: opts, max: 10 });
+        pool.on('error', (err) => {
+          console.error('[proxy-db] Idle pool client error:', err.message);
+        });
+        return new Kysely<ProxyDatabase>({ dialect: new PostgresDialect({ pool }) });
+      })()
+    : new Kysely<ProxyDatabase>({ dialect: opts.dialect as never });
 
-  const monthlyUsed = (db.prepare(
-    "SELECT COALESCE(SUM(cost_usd), 0) as total FROM api_usage WHERE user_id = ? AND timestamp >= date('now', 'start of month')"
-  ).get(userId) as { total: number }).total;
-
-  const allowed =
-    (quota.daily_limit_usd === null || dailyUsed < quota.daily_limit_usd) &&
-    (quota.monthly_limit_usd === null || monthlyUsed < quota.monthly_limit_usd);
+  const ready = migrate(kysely);
 
   return {
-    allowed,
-    dailyUsed,
-    dailyLimit: quota.daily_limit_usd,
-    monthlyUsed,
-    monthlyLimit: quota.monthly_limit_usd,
+    ready,
+    async insertUsage(record) {
+      await ready;
+      await kysely
+        .insertInto('api_usage')
+        .values({
+          user_id: record.userId,
+          model: record.model,
+          input_tokens: record.inputTokens,
+          output_tokens: record.outputTokens,
+          cache_read_tokens: record.cacheReadTokens,
+          cache_write_tokens: record.cacheWriteTokens,
+          cost_usd: record.costUsd,
+          session_id: record.sessionId ?? null,
+          status: record.status,
+        })
+        .execute();
+    },
+    async checkQuota(userId) {
+      await ready;
+      const quota = await kysely
+        .selectFrom('user_quotas')
+        .select(['daily_limit_usd', 'monthly_limit_usd', 'enabled'])
+        .where('user_id', '=', userId)
+        .executeTakeFirst();
+
+      if (!quota || !quota.enabled) {
+        return { allowed: true, dailyUsed: 0, dailyLimit: null, monthlyUsed: 0, monthlyLimit: null };
+      }
+
+      const dailyUsed = await sumCost(kysely, userId, 'day');
+      const monthlyUsed = await sumCost(kysely, userId, 'month');
+
+      const allowed =
+        (quota.daily_limit_usd === null || dailyUsed < quota.daily_limit_usd) &&
+        (quota.monthly_limit_usd === null || monthlyUsed < quota.monthly_limit_usd);
+
+      return {
+        allowed,
+        dailyUsed,
+        dailyLimit: quota.daily_limit_usd,
+        monthlyUsed,
+        monthlyLimit: quota.monthly_limit_usd,
+      };
+    },
+    async setQuota(userId, dailyLimitUsd, monthlyLimitUsd) {
+      await ready;
+      await kysely
+        .insertInto('user_quotas')
+        .values({
+          user_id: userId,
+          daily_limit_usd: dailyLimitUsd,
+          monthly_limit_usd: monthlyLimitUsd,
+          enabled: true,
+        })
+        .onConflict((oc) =>
+          oc.column('user_id').doUpdateSet({
+            daily_limit_usd: dailyLimitUsd,
+            monthly_limit_usd: monthlyLimitUsd,
+          }),
+        )
+        .execute();
+    },
+    async getUserUsage(userId) {
+      await ready;
+      const [daily, monthly, total] = await Promise.all([
+        sumCost(kysely, userId, 'day'),
+        sumCost(kysely, userId, 'month'),
+        sumCost(kysely, userId, 'all'),
+      ]);
+      return { daily, monthly, total };
+    },
+    async getUsageSummary() {
+      await ready;
+      // Single grouped query with FILTER aggregates: O(1) round-trips
+      // regardless of user count. Previous implementation was 1 + 3N.
+      const result = await sql<{
+        user_id: string;
+        daily: string | number;
+        monthly: string | number;
+        total: string | number;
+      }>`
+        SELECT
+          user_id,
+          COALESCE(SUM(cost_usd) FILTER (WHERE timestamp >= current_date), 0) AS daily,
+          COALESCE(SUM(cost_usd) FILTER (WHERE timestamp >= date_trunc('month', current_date)), 0) AS monthly,
+          COALESCE(SUM(cost_usd), 0) AS total
+        FROM api_usage
+        GROUP BY user_id
+      `.execute(kysely);
+      return result.rows.map((r) => ({
+        userId: r.user_id,
+        daily: Number(r.daily),
+        monthly: Number(r.monthly),
+        total: Number(r.total),
+      }));
+    },
+    async getMetricsSeed() {
+      await ready;
+      const rows = await kysely
+        .selectFrom('api_usage')
+        .select((eb) => [
+          'user_id',
+          'model',
+          eb.fn.sum<number>('cost_usd').as('cost'),
+          eb.fn.countAll<number>().as('calls'),
+        ])
+        .groupBy(['user_id', 'model'])
+        .execute();
+      return rows.map((r) => ({
+        user_id: r.user_id,
+        model: r.model,
+        cost: Number(r.cost),
+        calls: Number(r.calls),
+      }));
+    },
+    async destroy() {
+      // Kysely's PostgresDialect ends the pg.Pool on destroy(); calling
+      // pool.end() again would throw "Called end on pool more than once".
+      await kysely.destroy();
+    },
   };
 }
 
-export function setQuota(userId: string, dailyLimitUsd: number | null, monthlyLimitUsd: number | null): void {
-  getDb().prepare(`
-    INSERT INTO user_quotas (user_id, daily_limit_usd, monthly_limit_usd)
-    VALUES (?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET daily_limit_usd = ?, monthly_limit_usd = ?
-  `).run(userId, dailyLimitUsd, monthlyLimitUsd, dailyLimitUsd, monthlyLimitUsd);
+async function sumCost(
+  kysely: Kysely<ProxyDatabase>,
+  userId: string,
+  window: 'day' | 'month' | 'all',
+): Promise<number> {
+  // Day/month boundaries follow the Postgres session timezone (UTC in our
+  // Docker/server defaults). Quotas reset at midnight in that zone, not the
+  // user's local TZ.
+  let query = kysely
+    .selectFrom('api_usage')
+    .select((eb) => eb.fn.sum<number>('cost_usd').as('total'))
+    .where('user_id', '=', userId);
+
+  if (window === 'day') {
+    query = query.where('timestamp', '>=', sql<Date>`current_date`);
+  } else if (window === 'month') {
+    query = query.where('timestamp', '>=', sql<Date>`date_trunc('month', current_date)`);
+  }
+
+  const row = await query.executeTakeFirst();
+  return Number(row?.total ?? 0);
 }
 
-export function getUserUsage(userId: string): { daily: number; monthly: number; total: number } {
-  const db = getDb();
+async function migrate(db: Kysely<ProxyDatabase>): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS api_usage (
+      id BIGSERIAL PRIMARY KEY,
+      timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+      user_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens BIGINT NOT NULL DEFAULT 0,
+      output_tokens BIGINT NOT NULL DEFAULT 0,
+      cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+      cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+      cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+      session_id TEXT,
+      status INTEGER NOT NULL DEFAULT 200
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_usage_user ON api_usage(user_id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON api_usage(timestamp)`.execute(db);
 
-  const daily = (db.prepare(
-    "SELECT COALESCE(SUM(cost_usd), 0) as total FROM api_usage WHERE user_id = ? AND timestamp >= date('now')"
-  ).get(userId) as { total: number }).total;
-
-  const monthly = (db.prepare(
-    "SELECT COALESCE(SUM(cost_usd), 0) as total FROM api_usage WHERE user_id = ? AND timestamp >= date('now', 'start of month')"
-  ).get(userId) as { total: number }).total;
-
-  const total = (db.prepare(
-    'SELECT COALESCE(SUM(cost_usd), 0) as total FROM api_usage WHERE user_id = ?'
-  ).get(userId) as { total: number }).total;
-
-  return { daily, monthly, total };
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_quotas (
+      user_id TEXT PRIMARY KEY,
+      daily_limit_usd DOUBLE PRECISION,
+      monthly_limit_usd DOUBLE PRECISION,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE
+    )
+  `.execute(db);
 }
 
-export function getUsageSummary(): Array<{ userId: string; daily: number; monthly: number; total: number }> {
-  const db = getDb();
-  const users = db.prepare('SELECT DISTINCT user_id FROM api_usage').all() as Array<{ user_id: string }>;
-  return users.map(u => ({ userId: u.user_id, ...getUserUsage(u.user_id) }));
+let singleton: ProxyDB | undefined;
+
+export function getProxyDb(): ProxyDB {
+  if (!singleton) singleton = createProxyDb();
+  return singleton;
 }
 
-export function getMetricsSeed(): Array<{ user_id: string; model: string; cost: number; calls: number }> {
-  const db = getDb();
-  return db.prepare(
-    'SELECT user_id, model, SUM(cost_usd) as cost, COUNT(*) as calls FROM api_usage GROUP BY user_id, model'
-  ).all() as Array<{ user_id: string; model: string; cost: number; calls: number }>;
+export async function resetProxyDb(): Promise<void> {
+  if (singleton) {
+    await singleton.destroy();
+    singleton = undefined;
+  }
 }
+
+// Convenience re-exports for callers that don't manage the singleton themselves.
+export const insertUsage = (record: UsageRecord) => getProxyDb().insertUsage(record);
+export const checkQuota = (userId: string) => getProxyDb().checkQuota(userId);
+export const setQuota = (userId: string, daily: number | null, monthly: number | null) =>
+  getProxyDb().setQuota(userId, daily, monthly);
+export const getUserUsage = (userId: string) => getProxyDb().getUserUsage(userId);
+export const getUsageSummary = () => getProxyDb().getUsageSummary();
+export const getMetricsSeed = () => getProxyDb().getMetricsSeed();
