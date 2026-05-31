@@ -3,6 +3,7 @@
 import { useState, useEffect, useEffectEvent, useCallback, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import { useIsClient } from "@/hooks/useIsClient";
 import { CreditCardIcon, SearchIcon, ServerIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
@@ -32,26 +33,28 @@ function formatMenuBarClock(date: Date): string {
 }
 
 function MenuBarClock() {
-  const [now, setNow] = useState<Date | null>(null);
+  // SSR-safe wall clock: useIsClient is false during SSR/hydration (so the server and the first
+  // client render both emit the non-breaking-space placeholder) and true on the client. The
+  // displayed time is derived during render from a `tick` counter that the interval bumps, so the
+  // clock advances without seeding state from an effect (no setState-in-effect mount cascade or
+  // hydration jump). `tick` is the stable effect dependency, while `now` is re-read each tick.
+  const isClient = useIsClient();
+  const [tick, setTick] = useState(0);
+  const now = isClient ? new Date() : null;
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- setTick only fires from setTimeout/setInterval callbacks (never a synchronous cascade); depending on [tick] re-aligns the next timeout to the upcoming minute boundary after each update.
   useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- SSR-safe wall clock: server cannot render a stable client time, so `now` stays null until mount and a lazy initializer / useState(new Date()) would produce a hydration mismatch and a visible time jump.
-    setNow(new Date());
-  }, []);
-
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the only setState is setNow, fired from setTimeout/setInterval callbacks (never a synchronous cascade); depending on [now] is intentional so the tick re-aligns to the next minute boundary after each update.
-  useEffect(() => {
-    if (!now) return;
-    const ms = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
-    const timeout = setTimeout(() => {
-      setNow(new Date());
-    }, ms);
-    const interval = setInterval(() => setNow(new Date()), 60_000);
+    if (!isClient) return;
+    const stamp = new Date();
+    const ms = (60 - stamp.getSeconds()) * 1000 - stamp.getMilliseconds();
+    const bump = () => setTick((t) => t + 1);
+    const timeout = setTimeout(bump, ms);
+    const interval = setInterval(bump, 60_000);
     return () => {
       clearTimeout(timeout);
       clearInterval(interval);
     };
-  }, [now]);
+  }, [isClient, tick]);
 
   return (
     <span className="tabular-nums whitespace-pre">{now ? formatMenuBarClock(now) : "\u00A0"}</span>
@@ -59,14 +62,9 @@ function MenuBarClock() {
 }
 
 function MenuBarUser() {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsClient();
   const { isLoaded, isSignedIn } = useAuth();
   const { active: billingActive } = useMatrixBillingAccess();
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- SSR mount gate: the server must render the placeholder icon, so `mounted` starts false and flips true only on the client; initializing it true would render the Clerk UserButton during SSR and break hydration.
-    setMounted(true);
-  }, []);
 
   if (!mounted || !isLoaded || !isSignedIn) {
     return (

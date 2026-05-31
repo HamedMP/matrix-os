@@ -36,6 +36,7 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
   }
 
   return (
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this node card wraps interactive descendants (a TerminalPane, Attach/Create buttons) and a native button may not contain interactive content (invalid HTML, breaks nested focus/click). role="button" + aria-pressed models the focus-toggle here; keyboard activation is handled by the onKeyDown below.
     <div
       role="button"
       tabIndex={0}

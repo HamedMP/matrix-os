@@ -78,7 +78,8 @@ export function SelectionRect({ onSelect }: SelectionRectProps) {
             top: rect.y,
             width: rect.w,
             height: rect.h,
-            zIndex: 9999,
+            // react-doctor-disable-next-line react-doctor/no-z-index-9999 -- the marquee is a sibling of the CanvasWindow stack, whose z-index is a runtime-incrementing value (useWindowManager.nextZ) with no static ceiling, so a 1–50 scale value cannot reliably paint above the selected windows. 1000 sits above the window layer but below the fullscreen overlay (9999).
+            zIndex: 1000,
           }}
         />
       )}

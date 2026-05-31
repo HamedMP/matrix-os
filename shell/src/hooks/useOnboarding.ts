@@ -341,7 +341,7 @@ export function useOnboarding(): OnboardingHook {
         if (!mountedRef.current || requestSeq !== readinessRefreshSeqRef.current) return;
         const activeAgents = pendingActiveAgentsRef.current;
         setReadiness(activeAgents ? { ...next, activeAgents } : next);
-        setSelectedGoalIds(next.goals.filter((goal) => goal.selected).map((goal) => goal.id));
+        setSelectedGoalIds(next.goals.flatMap((goal) => (goal.selected ? [goal.id] : [])));
       })
       .catch((err: unknown) => {
         console.warn("[onboarding] readiness refresh failed:", err instanceof Error ? err.message : String(err));
@@ -379,6 +379,7 @@ export function useOnboarding(): OnboardingHook {
       ctx = new AudioContext({ sampleRate: 16000 });
       micCtxRef.current = ctx;
 
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- dependent await, cannot defer: the AudioWorkletNode constructed below requires the "pcm16-processor" module to be fully registered first, and the post-await mountedRef bail-out must run only after the module finishes loading; there is no independent work to interleave before this point.
       await ctx.audioWorklet.addModule("/audio-worklet-processor.js");
       if (!mountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
@@ -541,6 +542,7 @@ export function useOnboarding(): OnboardingHook {
   }, [playAudio, refreshReadiness, enqueueWords, clearWordReveal]);
 
   const connect = useCallback(async (): Promise<WebSocket | null> => {
+    // react-doctor-disable-next-line react-doctor/async-defer-await -- dependent await, cannot defer: the resolved wsUrl is the sole input to the `new WebSocket(wsUrl)` below, and the mountedRef bail-out must run after auth resolves so we never open a socket for an unmounted hook; there is no independent work to start before the URL is known.
     const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");
     if (!mountedRef.current) return null;
 

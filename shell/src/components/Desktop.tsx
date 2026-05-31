@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type CSSProperties } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
@@ -118,6 +118,7 @@ function MatrixFirstRunLoading() {
               color: "transparent",
               backgroundImage: MATRIX_SHIMMER,
               backgroundSize: "300% 100%",
+              // eslint-disable-next-line react-doctor/no-long-transition-duration -- intentional ambient infinite shimmer/glow on the first-run loading brand, not UI feedback
               animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
             }}
           >
@@ -159,13 +160,13 @@ function findAppByName<T extends { name: string }>(apps: T[], query: string): T 
   // Query ⊂ app name — prefer shortest match (most specific).
   const contains = apps.filter((a) => a.name.toLowerCase().includes(q));
   if (contains.length > 0) {
-    return [...contains].sort((a, b) => a.name.length - b.name.length)[0];
+    return contains.reduce((best, a) => (a.name.length < best.name.length ? a : best));
   }
 
   // App name ⊂ query ("open the notes app" contains "Notes") — prefer longest.
   const reverse = apps.filter((a) => q.includes(a.name.toLowerCase()));
   if (reverse.length > 0) {
-    return [...reverse].sort((a, b) => b.name.length - a.name.length)[0];
+    return reverse.reduce((best, a) => (a.name.length > best.name.length ? a : best));
   }
 
   // Word-level: at least half the query's meaningful words appear in
@@ -173,12 +174,13 @@ function findAppByName<T extends { name: string }>(apps: T[], query: string): T 
   const words = q.split(/\s+/).filter((w) => w.length > 1);
   if (words.length > 0) {
     const scored = apps
-      .map((a) => {
+      .reduce<{ app: T; score: number }[]>((acc, a) => {
         const nameLower = a.name.toLowerCase();
         const hits = words.filter((w) => nameLower.includes(w)).length;
-        return { app: a, score: hits / words.length };
-      })
-      .filter((x) => x.score >= 0.5)
+        const score = hits / words.length;
+        if (score >= 0.5) acc.push({ app: a, score });
+        return acc;
+      }, [])
       .sort((a, b) => b.score - a.score || a.app.name.length - b.app.name.length);
     if (scored.length > 0) return scored[0].app;
   }
@@ -545,7 +547,7 @@ interface DesktopProps {
   chat?: import("@/hooks/useChatState").ChatState;
 }
 
-// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 9 useState values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, showOnboarding, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the 9 useState values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, showOnboarding, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
@@ -591,9 +593,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
   if (minimizeTimers.current === null) minimizeTimers.current = new Map();
-  const focusedWindow = windows
-    .filter((w) => !w.minimized)
-    .sort((a, b) => b.zIndex - a.zIndex)[0];
+  const focusedWindow = windows.reduce<typeof windows[number] | undefined>(
+    (best, w) =>
+      !w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best,
+    undefined,
+  );
 
   useEffect(() => {
     const timers = minimizeTimers.current!;
@@ -868,9 +872,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
     const setupTerminal = windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH);
-    const existingTerminal = focusedTerminal ?? setupTerminal ?? windows
-      .filter((w) => w.path.startsWith("__terminal__"))
-      .sort((a, b) => b.zIndex - a.zIndex)[0];
+    const existingTerminal = focusedTerminal ?? setupTerminal ?? windows.reduce<typeof windows[number] | undefined>(
+      (best, w) =>
+        w.path.startsWith("__terminal__") && (best === undefined || w.zIndex > best.zIndex) ? w : best,
+      undefined,
+    );
     if (existingTerminal) {
       wmRestoreAndFocusWindow(existingTerminal.id);
     } else {
@@ -1009,6 +1015,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
             let metaRes: Response | undefined;
             for (const candidate of metaCandidates) {
+              // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design priority fallback: tries the candidate manifest filenames in order and breaks on the first that exists; parallelizing would always fire every request and lose the priority semantics
               const res = await fetch(candidate, {
                 signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
               });
@@ -1518,7 +1525,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               element stays in place. */}
           {(() => {
             const pinnedSet = new Set(pinnedApps);
-            const visibleWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
+            const visibleWindowPaths = windows.reduce<string[]>((acc, w) => {
+              if (!w.minimized) acc.push(w.path);
+              return acc;
+            }, []);
             const hasVisibleWindow = (appPath: string) =>
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
 
@@ -1639,7 +1649,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               section -- always at the dock's inner edge. */}
           {(() => {
             const pinnedSet = new Set(pinnedApps);
-            const visibleWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
+            const visibleWindowPaths = windows.reduce<string[]>((acc, w) => {
+              if (!w.minimized) acc.push(w.path);
+              return acc;
+            }, []);
             const hasVisibleWindow = (appPath: string) =>
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
             const systemAppsRaw = apps.filter(
@@ -1815,11 +1828,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             <div className="shrink-0">
               <UserButton />
             </div>
-            {apps.filter((a) => pinnedApps.includes(a.path)).map((app) => {
+            {apps.reduce<ReactNode[]>((acc, app) => {
+              if (!pinnedApps.includes(app.path)) return acc;
               const win = windows.find(
                 (w) => w.path === app.path && !w.minimized,
               );
-              return (
+              acc.push(
                 <button
                   type="button"
                   key={app.path}
@@ -1831,9 +1845,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   }`}
                 >
                   <span className="text-xs font-medium truncate max-w-[80px]">{app.name}</span>
-                </button>
+                </button>,
               );
-            })}
+              return acc;
+            }, [])}
           </nav>
         )}
 
@@ -1842,7 +1857,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
           <MissionControl
             open={taskBoardOpen}
             apps={apps}
-            openWindows={new Set(windows.filter((w) => !w.minimized).map((w) => w.path))}
+            openWindows={windows.reduce<Set<string>>((acc, w) => {
+              if (!w.minimized) acc.add(w.path);
+              return acc;
+            }, new Set())}
             onOpenApp={openWindow}
             onClose={() => setTaskBoardOpen(false)}
             pinnedApps={pinnedApps}

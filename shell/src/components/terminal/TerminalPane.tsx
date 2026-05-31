@@ -286,6 +286,7 @@ interface TerminalPaneProps {
   suppressNativeKeyboard?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-many-boolean-props -- cohesive xterm lifecycle owner: terminal creation, WS attach/replay, fit/resize, addon wiring, and caching are one tightly-coupled effect graph that cannot be split without leaking refs across components; the boolean props (isFocused, isClosing, allowRemoteResize, suppressNativeKeyboard) are independent terminal modes, not a hidden variant enum, so collapsing them into an options object would obscure call sites.
 export function TerminalPane({
   paneId,
   cwd,
@@ -519,7 +520,9 @@ export function TerminalPane({
         scheduleStableFit();
       } else {
         // Cache miss — create fresh terminal
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading xterm this way is intentional code-splitting, not a defect.
         const { Terminal: XTerm } = await import("@xterm/xterm");
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading the fit addon this way is intentional code-splitting, not a defect.
         const { FitAddon } = await import("@xterm/addon-fit");
 
         if (disposed) return;
@@ -564,6 +567,7 @@ export function TerminalPane({
 
         // Search addon
         try {
+          // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading the search addon this way is intentional code-splitting, not a defect.
           const { SearchAddon } = await import("@xterm/addon-search");
           const addon = new SearchAddon();
           xterm.loadAddon(addon);
@@ -580,6 +584,7 @@ export function TerminalPane({
 
         // Serialize addon
         try {
+          // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading the serialize addon this way is intentional code-splitting, not a defect.
           const { SerializeAddon } = await import("@xterm/addon-serialize");
           xterm.loadAddon(new SerializeAddon());
         } catch (_e: unknown) { /* unavailable */ }
@@ -612,6 +617,7 @@ export function TerminalPane({
               return false;
             }
             const fallbackCopy = () => {
+              // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally; the finally clause guarantees the temporary textarea is removed regardless of copy outcome, which is the correct shape here.
               try {
                 const ta = document.createElement("textarea");
                 ta.value = text;

@@ -143,7 +143,7 @@ export function InstallPrompt() {
   if (dismissed || (!deferred && !iosHint)) return null;
 
   return (
-    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- native <dialog> defaults to display:none and requires imperative show()/showModal(); this is a persistently-rendered positioned banner, so role="dialog" preserves behavior.
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role, react-doctor/prefer-html-dialog -- native <dialog> defaults to display:none and requires imperative show()/showModal(); this is a persistently-rendered positioned banner (not a modal opened on demand), so role="dialog" preserves behavior without wiring up showModal().
     <div role="dialog" aria-label="Install Matrix OS" style={CONTAINER_STYLE}>
       <Image
         src="/icon-192.png"

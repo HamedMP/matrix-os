@@ -310,6 +310,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       // refresh (gateway down) would let every incoming session-expired event
       // through and flood the gateway with retries.
       lastRefreshAtRef.current = Date.now();
+      // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower a try/finally (BuildHIR Todo: TryStatement with a finalizer); the finally block is required to clear refreshInFlightRef even when the session refresh throws, so the pattern is intentional and behavior-preserving.
       try {
         await openAppSession(slug, { gatewayUrl: GATEWAY_URL });
         setRefreshKey((k) => k + 1);

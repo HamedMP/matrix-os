@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
+import { useIsClient } from "@/hooks/useIsClient";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import {
   Tooltip,
@@ -26,12 +26,11 @@ function Placeholder() {
 }
 
 export function UserButton() {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- intentional SSR hydration guard: `mounted` must be false on the server and flip to true only after mount so the Clerk <UserButton> (which reads browser-only auth state) renders the static Placeholder during SSR/first paint and avoids a hydration mismatch. A lazy initializer cannot express "false on server, true on client".
-    setMounted(true);
-  }, []);
+  // SSR hydration guard: useIsClient is false on the server and during the first client render
+  // (so the static Placeholder renders during SSR/first paint), then true on the client, so the
+  // Clerk <UserButton> -- which reads browser-only auth state -- mounts without a hydration
+  // mismatch or a setState-in-effect cascade.
+  const mounted = useIsClient();
 
   if (!mounted) {
     return <Placeholder />;

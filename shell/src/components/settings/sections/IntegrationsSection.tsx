@@ -87,6 +87,7 @@ function groupByService(connections: ConnectedService[]): Map<string, ConnectedS
 }
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the available/connected lists, load/error flags, and the many independent per-action progress flags (connecting, disconnecting, checkingStatus, renaming, etc.) are distinct UI concerns, not a single cohesive state machine; a reducer would not simplify them.
+// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive integrations panel whose connect/disconnect/rename/check/poll handlers all close over shared local state; splitting would scatter that state and the poll-ref lifecycle across props/context without reducing complexity. Real decomposition is out of scope for this behavior-preserving pass.
 export function IntegrationsSection() {
   const [available, setAvailable] = useState<ServiceDef[]>([]);
   const [connected, setConnected] = useState<ConnectedService[]>([]);
@@ -107,6 +108,7 @@ export function IntegrationsSection() {
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `loading` on every path; the code is correct and the finalizer must run whether the loads resolve, reject, or throw.
     try {
       const [availRes, connRes] = await Promise.all([
         fetch(`${GATEWAY}/api/integrations/available`, { signal: AbortSignal.timeout(10_000) }),
@@ -162,6 +164,7 @@ export function IntegrationsSection() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     setError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `refreshing` on every path; the code is correct and the finalizer must run whether the sync resolves, rejects, or throws.
     try {
       const res = await fetch(`${GATEWAY}/api/integrations/sync`, {
         method: "POST",
@@ -343,6 +346,7 @@ export function IntegrationsSection() {
     setDisconnecting(id);
     setConfirmDisconnect(null);
     setError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `disconnecting` on every path; the code is correct and the finalizer must run whether the delete resolves, rejects, or throws.
     try {
       const res = await fetch(`${GATEWAY}/api/integrations/${id}`, {
         method: "DELETE",
@@ -377,6 +381,7 @@ export function IntegrationsSection() {
     }
     setSavingRename(id);
     setError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `savingRename` on every path; the code is correct and the finalizer must run whether the rename resolves, rejects, or throws.
     try {
       const res = await fetch(`${GATEWAY}/api/integrations/${id}`, {
         method: "PATCH",
@@ -413,6 +418,7 @@ export function IntegrationsSection() {
   const handleCheckStatus = useCallback(async (id: string) => {
     setCheckingStatus(id);
     setError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `checkingStatus` on every path; the code is correct and the finalizer must run whether the status check resolves, rejects, or throws.
     try {
       const res = await fetch(`${GATEWAY}/api/integrations/${id}/status`, {
         signal: AbortSignal.timeout(10_000),

@@ -6,7 +6,7 @@ export function autoArrangeWindows() {
   const wins = wm.windows.filter((w) => !w.minimized);
   if (wins.length === 0) return;
 
-  const sorted = [...wins].sort((a, b) => {
+  const sorted = wins.toSorted((a, b) => {
     const rowA = Math.round(a.y / 200);
     const rowB = Math.round(b.y / 200);
     if (rowA !== rowB) return rowA - rowB;

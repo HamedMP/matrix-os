@@ -21,8 +21,8 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import {
   createContext,
   memo,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -467,7 +467,7 @@ export const CodeBlockCopyButton = ({
   // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- false positive: `isCopied` IS read during render (the `Icon = isCopied ? CheckIcon : CopyIcon` line below) to swap the button icon, so it must trigger a re-render. A ref would not re-render and the copied checkmark would never appear.
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<number>(0);
-  const { code } = useContext(CodeBlockContext);
+  const { code } = use(CodeBlockContext);
 
   const copyToClipboard = useCallback(async () => {
     if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {

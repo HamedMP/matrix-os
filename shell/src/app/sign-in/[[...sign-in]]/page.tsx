@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import { SignIn } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
+
+export const metadata: Metadata = {
+  title: "Sign in | Matrix OS",
+  description: "Sign in to your Matrix OS computer. One session carries across matrix-os.com and app.matrix-os.com.",
+};
 
 export default function SignInPage() {
   return (

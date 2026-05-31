@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2Icon, LogInIcon } from "lucide-react";
@@ -158,7 +158,29 @@ function SubscriptionConfirmationPending() {
   );
 }
 
+function BillingStatusLoading() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
+      <output className="flex items-center gap-2 text-sm">
+        <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
+        Loading billing status
+      </output>
+    </main>
+  );
+}
+
 export function BillingGate({ children }: { children: ReactNode }) {
+  // useSearchParams() (read inside BillingGateInner) requires a <Suspense> boundary so the page
+  // is not forced into full client-side rendering; the fallback mirrors the gate's own loading
+  // state so there is no visible change while search params resolve.
+  return (
+    <Suspense fallback={<BillingStatusLoading />}>
+      <BillingGateInner>{children}</BillingGateInner>
+    </Suspense>
+  );
+}
+
+function BillingGateInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth();
   const { active: billingActive } = useMatrixBillingAccess();
   const router = useRouter();
@@ -189,6 +211,7 @@ export function BillingGate({ children }: { children: ReactNode }) {
         surface: "shell",
         source: "billing_gate",
       });
+      // react-doctor-disable-next-line react-doctor/nextjs-no-client-side-redirect -- legit post-action client redirect: once billing access is confirmed for a returning Stripe checkout, this strips the `?checkout=success` query so a reload does not re-trigger the confirmation flow. It must run client-side after the async billing-access check resolves (a server redirect() cannot observe client billing state), and it is gated on hasBillingAccess && checkoutReturnRequested so it fires once, not on every render.
       router.replace("/");
     }
   }, [checkoutReturnRequested, hasBillingAccess, router]);
@@ -223,14 +246,7 @@ export function BillingGate({ children }: { children: ReactNode }) {
   }
 
   if (!isLoaded || billingChecking) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
-        <output className="flex items-center gap-2 text-sm">
-          <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
-          Loading billing status
-        </output>
-      </main>
-    );
+    return <BillingStatusLoading />;
   }
 
   if (!isSignedIn) {

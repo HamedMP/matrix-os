@@ -110,6 +110,7 @@ export function AgentStatusCard({
                 width: "30%",
                 background:
                   "linear-gradient(90deg, transparent, var(--primary), transparent)",
+                // react-doctor-disable-next-line react-doctor/no-long-transition-duration -- this is an infinite ambient indeterminate-progress shimmer, not a one-shot UI-feedback transition; the 1.6s sweep is the designed loading cadence and clamping it under 1s would speed up the shimmer and change its feel.
                 animation: "agent-status-shimmer 1.6s ease-in-out infinite",
               }}
             />

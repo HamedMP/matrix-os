@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import { SignUp } from "@clerk/nextjs";
 import { shadcn } from "@clerk/ui/themes";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
+
+export const metadata: Metadata = {
+  title: "Create your account | Matrix OS",
+  description: "Sign up for Matrix OS. No card required until you provision a hosted Matrix computer.",
+};
 
 export default function SignUpPage() {
   return (

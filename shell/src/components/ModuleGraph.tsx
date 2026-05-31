@@ -46,8 +46,13 @@ export function ModuleGraph() {
     if (!containerRef.current) return;
 
     async function render() {
-      const { Network } = await import("vis-network");
-      const { DataSet } = await import("vis-data");
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the await must run before the `if (!containerRef.current) return;` re-check below, which bails if the container unmounted during the import. The rule misses that this is a post-await staleness guard, not a fast-skip path.
+      const [{ Network }, { DataSet }] = await Promise.all([
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading vis-network this way is intentional code-splitting, not a defect.
+        import("vis-network"),
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading vis-data this way is intentional code-splitting, not a defect.
+        import("vis-data"),
+      ]);
 
       if (!containerRef.current) return;
 

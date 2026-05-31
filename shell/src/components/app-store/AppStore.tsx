@@ -159,6 +159,7 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
 
   return (
     <div className="fixed inset-0 z-[45]">
+      {/* react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- this is a full-viewport dismiss backdrop layered behind the dialog content, not a content control; a real <button> spanning inset-0 would introduce default button semantics/styling and complicate the stacking with the panel it sits behind. role="button" + tabIndex + Enter/Space keydown gives the same accessible dismiss affordance without those side effects. */}
       <div
         role="button"
         tabIndex={0}

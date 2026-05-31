@@ -41,6 +41,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
       for (const p of paths) {
         if (controller.signal.aborted) return;
         try {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered/dependent iterations: Miller columns must build root->leaf in sequence. Each column's `selected` segment is derived from `cols.length` (the count pushed so far), the loop checks `controller.signal.aborted` before every request to stop a superseded navigation early, and a fetch failure must `break` the chain so we never render a deeper column past a broken parent. Parallelizing would lose the abort short-circuit and the sequential selected-segment indexing.
           const res = await fetch(
             `${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(p)}`,
             { signal: AbortSignal.timeout(COLUMN_VIEW_FETCH_TIMEOUT_MS) },

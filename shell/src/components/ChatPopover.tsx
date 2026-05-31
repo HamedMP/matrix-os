@@ -204,6 +204,7 @@ export function ChatPopover({
             height: "min(56vh, 460px)",
             width: popupWidth,
             transformOrigin: "bottom center",
+            // react-doctor-disable-next-line react-doctor/no-permanent-will-change -- intentional ambient GPU promotion: this popover surface only mounts while open, animates on open/close + width transitions, and is deliberately layer-promoted (see transform-gpu above) so streaming text below does not repaint the whole surface; toggling will-change per-animation here would reintroduce the streaming flicker this optimization fixes.
             willChange: "transform, opacity",
           }}
           aria-describedby={undefined}
@@ -261,7 +262,7 @@ function groupConversationsByTime(conversations: ConversationMeta[]) {
     { label: "Older", items: [] },
   ];
 
-  const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+  const sorted = conversations.toSorted((a, b) => b.updatedAt - a.updatedAt);
   for (const conv of sorted) {
     if (conv.updatedAt >= todayMs) groups[0].items.push(conv);
     else if (conv.updatedAt >= yesterdayMs) groups[1].items.push(conv);
@@ -649,6 +650,7 @@ const ChatInputBar = memo(function ChatInputBar({
         style={{
           background:
             "conic-gradient(from 180deg at 50% 50%, var(--primary), #7c3aed, #06b6d4, var(--primary))",
+          // react-doctor-disable-next-line react-doctor/no-large-animated-blur -- intentionally ambient decorative aurora bloom behind the input; the soft 36px radius is the visual effect itself and clamping to <10px would collapse the glow into a hard ring, changing the designed appearance. Element is pointer-events-none, single-layer, and only animates opacity.
           filter: "blur(36px)",
           animation: auroraAnimation,
         }}

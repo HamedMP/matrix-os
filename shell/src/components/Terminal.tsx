@@ -16,8 +16,12 @@ export function Terminal() {
     let disposed = false;
 
     async function init() {
-      const { Terminal: XTerm } = await import("@xterm/xterm");
-      const { FitAddon } = await import("@xterm/addon-fit");
+      const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading xterm this way is intentional code-splitting, not a defect.
+        import("@xterm/xterm"),
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading the fit addon this way is intentional code-splitting, not a defect.
+        import("@xterm/addon-fit"),
+      ]);
 
       if (disposed || !containerRef.current) return;
 

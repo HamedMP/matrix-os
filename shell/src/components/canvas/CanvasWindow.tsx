@@ -33,6 +33,13 @@ function useThemeStyle() {
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 
+const win98Bevel = {
+  borderTop: "1.5px solid var(--neu-shadow-light)",
+  borderLeft: "1.5px solid var(--neu-shadow-light)",
+  borderBottom: "1.5px solid var(--neu-shadow-dark)",
+  borderRight: "1.5px solid var(--neu-shadow-dark)",
+};
+
 interface CanvasWindowProps {
   win: AppWindow;
   /** When true, the window stays mounted but is visually hidden so iframe
@@ -40,6 +47,7 @@ interface CanvasWindowProps {
   hidden?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-window renderer: the bulk is two theme-specific title-bar JSX trees (mac vs win98) plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
 export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
@@ -86,8 +94,8 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
 
-  // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- `contentFocused` is event-captured (set true on the overlay pointerdown), not derivable from props; this effect resets it to false when the canvas starts scrolling or the window loses focus so the click-to-interact overlay reappears. Computing it in render would discard the user's click.
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- `contentFocused` is event-captured (set true on the overlay pointerdown), not derivable from props; this effect resets it to false when the canvas starts scrolling or the window loses focus so the click-to-interact overlay reappears. Computing it in render would discard the user's click.
     if (isCanvasScrolling || !isFocused) setContentFocused(false);
   }, [isCanvasScrolling, isFocused]);
 
@@ -131,8 +139,10 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
     return () => {
       window.removeEventListener("resize", measure);
       for (const s of saved) {
-        s.el.style.overflow = s.overflow;
-        s.el.style.zIndex = s.zIndex;
+        // Restore both saved inline values in one write to avoid sequential
+        // style mutations; Object.assign on the style object leaves unrelated
+        // inline properties untouched.
+        Object.assign(s.el.style, { overflow: s.overflow, zIndex: s.zIndex });
       }
     };
   }, [isFullscreen]);
@@ -241,13 +251,6 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
 
   const titleBarHeight = 36;
   const titleBarGap = 8;
-
-  const win98Bevel = {
-    borderTop: "1.5px solid var(--neu-shadow-light)",
-    borderLeft: "1.5px solid var(--neu-shadow-light)",
-    borderBottom: "1.5px solid var(--neu-shadow-dark)",
-    borderRight: "1.5px solid var(--neu-shadow-dark)",
-  };
 
   const macTitleBar = (
     <div

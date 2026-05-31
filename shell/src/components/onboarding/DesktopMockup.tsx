@@ -30,6 +30,7 @@ export function DesktopMockup({ highlights }: DesktopMockupProps) {
   }, [highlights]);
 
   const isActive = (id: string) => revealed.has(id);
+  const activeElements = ELEMENTS.filter((el) => isActive(el.id));
 
   return (
     <div className="w-full max-w-md">
@@ -129,9 +130,9 @@ export function DesktopMockup({ highlights }: DesktopMockupProps) {
         </div>
 
         {/* Labels for active elements */}
-        {ELEMENTS.filter((el) => isActive(el.id)).length > 0 && (
+        {activeElements.length > 0 && (
           <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-2">
-            {ELEMENTS.filter((el) => isActive(el.id)).map((el) => (
+            {activeElements.map((el) => (
               <span
                 key={el.id}
                 className="text-[9px] uppercase tracking-widest text-foreground/30 px-2 py-0.5 rounded-full border border-foreground/5"

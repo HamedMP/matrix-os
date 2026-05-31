@@ -85,8 +85,10 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
+const COUNT_FORMATTER = new Intl.NumberFormat("en-US");
+
 function formatCount(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return COUNT_FORMATTER.format(value);
 }
 
 function projectLabel(project: ProjectSummary): string {
@@ -102,7 +104,7 @@ function worktreePrNumber(worktree?: WorkspaceWorktree): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
-// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 22 useState fields are mostly independent (separate form inputs, transient status messages, multiple server lists, and per-action in-flight flags) rather than one related cluster; collapsing them into a single reducer would not be a mechanical, behavior-identical change and would obscure the independent update sites.
+// react-doctor-disable-next-line react-doctor/prefer-useReducer, react-doctor/no-giant-component -- the 22 useState fields are mostly independent (separate form inputs, transient status messages, multiple server lists, and per-action in-flight flags) rather than one related cluster; collapsing them into a single reducer would not be a mechanical, behavior-identical change and would obscure the independent update sites. The component is a single cohesive workspace dashboard whose handlers all close over this shared state, so splitting it would require threading every setter through props with no behavior change.
 export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState(initialProjectSlug ?? "");
@@ -183,6 +185,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     if (!projectSlug) return;
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the await must run before the `activeSlugRef.current !== projectSlug` staleness check below: that guard discards results from a superseded selection AFTER the fetch resolves, so the await cannot be deferred past it. The rule misses this because the ref is named `activeSlugRef`, not a bare guard identifier.
       const [taskData, sessionData, reviewData, worktreeData, previewData, eventData] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
         fetchJson<{ sessions: WorkspaceSession[] }>(`/api/sessions?projectSlug=${encodedSlug}&limit=100`),
@@ -264,6 +267,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     }
 
     setCreatingProject(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally; the finally clause guarantees the in-flight flag resets regardless of outcome, which is the correct shape here.
     try {
       const data = await fetchJson<{ project?: ProjectSummary }>("/api/projects", {
         method: "POST",
@@ -308,7 +312,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     }
 
     setCreatingWorktree(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally; the finally clause guarantees the in-flight flag resets regardless of outcome, which is the correct shape here.
     try {
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the await must run before the `activeSlugRef.current !== activeSlug` staleness check below: that guard validates the request is still relevant AFTER the network round-trip, so the await cannot be deferred past it. The rule misses this because the ref is named `activeSlugRef`, not a bare guard identifier.
       const data = await fetchJson<{ worktree?: WorkspaceWorktree }>(`/api/projects/${encodeURIComponent(activeSlug)}/worktrees`, {
         method: "POST",
         body: JSON.stringify({ branch }),
@@ -356,6 +362,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     }
 
     setStartingAgent(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally; the finally clause guarantees the in-flight flag resets regardless of outcome, which is the correct shape here.
     try {
       const selectedWorktree = worktrees.find((worktree) => worktree.id === worktreeId);
       const pr = worktreePrNumber(selectedWorktree);

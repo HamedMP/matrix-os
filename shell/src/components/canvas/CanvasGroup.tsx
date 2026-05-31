@@ -28,9 +28,10 @@ export function CanvasGroupRect({ group }: CanvasGroupProps) {
     (e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      const windowsById = new Map(windows.map((w) => [w.id, w]));
       const memberPositions = new Map<string, { x: number; y: number }>();
       for (const winId of group.windowIds) {
-        const win = windows.find((w) => w.id === winId);
+        const win = windowsById.get(winId);
         if (win) memberPositions.set(winId, { x: win.x, y: win.y });
       }
       dragRef.current = { startX: e.clientX, startY: e.clientY, memberPositions };
