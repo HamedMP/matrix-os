@@ -262,7 +262,7 @@ describe("T711: GET /api/apps", () => {
     expect(names).toContain("Timer");
   });
 
-  it("ships icons for every default app manifest", () => {
+  it("requires every default app manifest to declare a shipped icon", () => {
     const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
     const appsRoot = join(repoRoot, "home/apps");
     const iconsRoot = join(repoRoot, "home/system/icons");
@@ -287,7 +287,9 @@ describe("T711: GET /api/apps", () => {
           continue;
         }
         const manifest = JSON.parse(readFileSync(fullPath, "utf8")) as { icon?: unknown };
-        if (typeof manifest.icon === "string" && !shippedIcons.has(manifest.icon)) {
+        if (typeof manifest.icon !== "string") {
+          missing.push(`${fullPath.replace(`${repoRoot}/`, "")}: missing icon`);
+        } else if (!shippedIcons.has(manifest.icon)) {
           missing.push(`${fullPath.replace(`${repoRoot}/`, "")}: ${manifest.icon}`);
         }
       }
