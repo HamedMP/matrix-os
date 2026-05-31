@@ -170,6 +170,28 @@ describe('customer VPS host bundle', () => {
     expect(workflow).not.toContain('paths-ignore:');
   });
 
+  it('host bundle release workflow uploads only publishable bundle artifacts', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('name: Upload bundle artifact');
+    expect(workflow).toContain('dist/host-bundle/matrix-host-bundle.tar.gz');
+    expect(workflow).toContain('dist/host-bundle/matrix-host-bundle.tar.gz.sha256');
+    expect(workflow).toContain('dist/host-bundle/manifest.json');
+    expect(workflow).toContain('dist/host-bundle/release.json');
+    expect(workflow).not.toContain('path: dist/host-bundle/');
+    expect(workflow).not.toContain('dist/host-bundle/stage');
+  });
+
+  it('host bundle release workflow cancels only superseded dev-channel builds', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain("group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}");
+    expect(workflow).toContain("cancel-in-progress: ${{ github.ref_type != 'tag' && (github.event_name != 'workflow_dispatch' || inputs.channel == 'dev' || inputs.channel == '') }}");
+    expect(workflow).not.toContain('cancel-in-progress: false');
+  });
+
   it('dev bundle gate builds branch pushes even when commit messages request a skip', () => {
     const result = runDevBundleGate({
       GITHUB_EVENT_NAME: 'push',
