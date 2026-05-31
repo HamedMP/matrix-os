@@ -51,6 +51,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: host-bundle-release-${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_type == 'tag' && github.ref_name || 'dev' }}
@@ -76,35 +77,55 @@ jobs:
           set -euo pipefail
           scripts/ci/dev-bundle-gate.sh
 
-  test:
-    name: Test
+  ci-gate:
+    name: Same-SHA CI gate
     needs: dev-bundle-gate
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v6
+      - name: Wait for CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
 
-      - uses: pnpm/action-setup@v6
+          deadline=$((SECONDS + 30 * 60))
+          while true; do
+            runs="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow CI \
+              --commit "$TARGET_SHA" \
+              --limit 20 \
+              --json databaseId,status,conclusion,url,headSha,workflowName)"
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
+            success_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion == "success")) | .[0].url // ""')"
+            if [ -n "$success_url" ]; then
+              echo "CI passed for $TARGET_SHA: $success_url"
+              exit 0
+            fi
 
-      - uses: oven-sh/setup-bun@v2
+            pending_count="$(printf '%s' "$runs" | jq 'map(select(.status != "completed")) | length')"
+            failed_url="$(printf '%s' "$runs" | jq -r 'map(select(.status == "completed" and .conclusion != "success")) | .[0].url // ""')"
+            if [ "$pending_count" -eq 0 ] && [ -n "$failed_url" ]; then
+              echo "CI completed without a successful run for $TARGET_SHA: $failed_url" >&2
+              exit 1
+            fi
 
-      - run: pnpm install --frozen-lockfile
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for CI to pass on $TARGET_SHA" >&2
+              printf '%s\n' "$runs" >&2
+              exit 1
+            fi
 
-      - name: Type check
-        run: bun run typecheck
-
-      - name: Unit tests
-        run: bun run test
+            echo "Waiting for CI to pass on $TARGET_SHA..."
+            sleep 20
+          done
 
   build:
     name: Build host bundle
-    needs: [dev-bundle-gate, test]
+    needs: [dev-bundle-gate, ci-gate]
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
