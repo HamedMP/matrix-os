@@ -4,6 +4,7 @@ import {
   getBillingEntitlement,
   getBillingCustomerByClerkUserId,
   insertBillingWebhookEvent,
+  upsertBillingOverride,
   upsertBillingCustomer,
   upsertBillingEntitlement,
   type PlatformDB,
@@ -216,6 +217,43 @@ describe('platform billing routes', () => {
     expect(stripe.createPortalSession).toHaveBeenCalledWith({
       customerId: 'cus_123',
       returnUrl: 'https://app.matrix-os.com/?billing=portal',
+    });
+  });
+
+  it('reports active access from internal billing overrides', async () => {
+    await upsertBillingOverride(db, {
+      id: 'override_internal',
+      clerkUserId: 'user_123',
+      planSlug: 'internal',
+      status: 'active',
+      maxRuntimeSlots: 3,
+      includedRuntimeSlots: 3,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx52',
+      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      reason: 'internal engineer access',
+      createdBy: 'test',
+      expiresAt: null,
+      revokedAt: null,
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/status', { method: 'GET' });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: {
+        source: 'override',
+        planSlug: 'internal',
+        status: 'active',
+        maxRuntimeSlots: 3,
+        defaultServerType: 'cpx52',
+      },
+      access: {
+        runtimeProxyAllowed: true,
+        reason: 'active',
+      },
     });
   });
 

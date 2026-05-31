@@ -5,6 +5,7 @@ import {
   getBillingCustomerByClerkUserId,
   getBillingCustomerByStripeCustomerId,
   getBillingEntitlement,
+  getBillingEntitlementState,
   insertBillingCustomerIfAbsent,
   insertBillingWebhookEvent,
   runBillingWebhookTransaction,
@@ -13,11 +14,13 @@ import {
 } from './db.js';
 import {
   DEFAULT_BILLING_PLAN_DEFINITIONS,
+  computeEffectiveEntitlement,
   deriveStripeEntitlement,
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
   parseBillingEntitlementRecord,
+  parseBillingOverrideRecord,
   type BillingEntitlementStatus,
   type MatrixBillingPlanSlug,
   type MatrixBillingInterval,
@@ -153,9 +156,15 @@ export function createBillingRoutes(options: {
     const clerkUserId = await resolveRouteClerkUserId(c, 'status');
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
     try {
-      const entitlement = await getBillingEntitlement(options.db, clerkUserId);
-      const access = getRuntimeAccessDecision(parseBillingEntitlementRecord(entitlement), now());
-      return c.json({ entitlement: entitlement ?? null, access }, 200);
+      const currentTime = now();
+      const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
+      const entitlement = computeEffectiveEntitlement({
+        stripeEntitlement: parseBillingEntitlementRecord(state.entitlement),
+        override: parseBillingOverrideRecord(state.override),
+        now: currentTime,
+      });
+      const access = getRuntimeAccessDecision(entitlement, currentTime);
+      return c.json({ entitlement, access }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'Billing unavailable' }, 503);
