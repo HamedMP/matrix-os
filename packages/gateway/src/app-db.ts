@@ -135,6 +135,17 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
         )
         .execute(kysely);
 
+      // Migrate existing tables: add any newly-declared columns. CREATE TABLE
+      // IF NOT EXISTS is a no-op when the table already exists, so without this
+      // an app that adds/renames a storage column would 500 on insert/find
+      // ("column X does not exist"). ADD COLUMN IF NOT EXISTS is idempotent.
+      for (const [name, type] of Object.entries(columns)) {
+        if (BUILTIN_COLUMNS.has(name) || !isSafeName(name)) continue;
+        await sql
+          .raw(`ALTER TABLE ${fullTable} ADD COLUMN IF NOT EXISTS "${name}" ${pgType(type)}`)
+          .execute(kysely);
+      }
+
       if (indexes) {
         for (const col of indexes) {
           if (!isSafeName(col)) continue;

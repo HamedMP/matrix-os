@@ -749,16 +749,26 @@ export async function createGateway(config: GatewayConfig) {
         const apps = await listApps(homePath);
         let registered = 0;
         for (const app of apps) {
-          const appDir = app.file.includes("/")
-            ? join(homePath, "apps", app.file.replace(/\/index\.html$/, ""))
-            : null;
-          if (!appDir) continue;
-          const manifest = loadAppManifest(appDir);
-          if (manifest?.storage?.tables && Object.keys(manifest.storage.tables).length > 0) {
-            const slug = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
-            if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(slug)) continue;
+          if (!app.file.includes("/")) continue;
+          const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+          const manifest = loadAppManifest(join(homePath, "apps", relDir));
+          if (!manifest?.storage?.tables || Object.keys(manifest.storage.tables).length === 0) {
+            continue;
+          }
+          // The storage slug MUST match what /api/bridge/query derives from the
+          // app identity: all non-[A-Za-z0-9_-] characters stripped. So nested
+          // games like "games/2048" register under schema "games2048" — the same
+          // value the bridge queries. Schema names must start with a letter
+          // (SAFE_SLUG), so numeric-only slugs ("2048") are folded into their path.
+          const storageSlug = relDir.replace(/[^a-zA-Z0-9_-]/g, "");
+          if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) {
+            console.warn(`[app-db] Skipping registration for ${relDir}: unusable storage slug "${storageSlug}"`);
+            continue;
+          }
+          // Register each app independently — one failure must not abort the rest.
+          try {
             await appRegistry.register({
-              slug,
+              slug: storageSlug,
               name: manifest.name,
               description: manifest.description,
               version: manifest.version,
@@ -767,6 +777,8 @@ export async function createGateway(config: GatewayConfig) {
               tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
             });
             registered++;
+          } catch (appRegErr) {
+            console.error(`[app-db] Registration failed for ${relDir} (slug ${storageSlug}):`, (appRegErr as Error).message);
           }
         }
         if (registered > 0) {
