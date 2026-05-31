@@ -139,7 +139,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
   if (!isOpen) return null;
 
   return (
-    <search
+    <div
       role="search"
       onKeyDown={handleKeyDown}
       style={{
@@ -207,6 +207,6 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
       >
         &times;
       </button>
-    </search>
+    </div>
   );
 }
