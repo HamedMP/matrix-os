@@ -84,34 +84,129 @@ async function saveMatch(record: MatchRecord, setError: (s: string | null) => vo
   }
 }
 
-// ---- presentation helpers --------------------------------------------------
+// ---- board geometry --------------------------------------------------------
+// Single responsive SVG. viewBox units; the SVG scales to fit its container
+// via CSS (width/height 100%, preserveAspectRatio). All coordinates below are
+// in these abstract units.
+
+const VB_W = 1000;
+const VB_H = 640;
+const FRAME = 16; // outer wood frame thickness
+const PLAY_X = FRAME; // left edge of the felt play area
+const PLAY_Y = FRAME;
+const TRAY_W = 96; // bear-off tray on the right
+const BAR_W = 56; // central bar
+const PLAY_W = VB_W - FRAME * 2 - TRAY_W; // width of the two felt halves + bar
+const PLAY_H = VB_H - FRAME * 2;
+const HALF_W = (PLAY_W - BAR_W) / 2; // width of one 6-point half
+const POINT_W = HALF_W / 6;
+const POINT_H = PLAY_H * 0.42; // triangle height
+const CHK_R = POINT_W * 0.42; // checker radius
+const CHK_GAP = CHK_R * 1.78; // vertical spacing between stacked checkers
+const MAX_VISIBLE = 5;
+
+const leftHalfX = PLAY_X;
+const barX = PLAY_X + HALF_W;
+const rightHalfX = barX + BAR_W;
+const trayX = rightHalfX + HALF_W;
+
+// Map a board point (1..24) to its column slot.
+// Visual standard layout:
+//   top row L->R:    13 14 15 16 17 18 | 19 20 21 22 23 24
+//   bottom row L->R: 12 11 10  9  8  7 |  6  5  4  3  2  1
+interface Slot {
+  cx: number; // center X of the point column
+  baseY: number; // Y at the open edge (where checker stack starts)
+  dir: 1 | -1; // +1 stacks downward (top points), -1 stacks upward (bottom points)
+  top: boolean;
+}
+
+function pointSlot(point: number): Slot {
+  // top points: 13..24
+  if (point >= 13) {
+    const idx = point - 13; // 0..11 left to right
+    const half = idx < 6 ? 0 : 1;
+    const within = half === 0 ? idx : idx - 6;
+    const halfStart = half === 0 ? leftHalfX : rightHalfX;
+    const cx = halfStart + within * POINT_W + POINT_W / 2;
+    return { cx, baseY: PLAY_Y, dir: 1, top: true };
+  }
+  // bottom points: 1..12. bottom-left (L->R) = 12 11 10 9 8 7, bottom-right = 6 5 4 3 2 1
+  const idx = 12 - point; // point 12 -> idx 0 (leftmost), point 1 -> idx 11 (rightmost)
+  const half = idx < 6 ? 0 : 1;
+  const within = half === 0 ? idx : idx - 6;
+  const halfStart = half === 0 ? leftHalfX : rightHalfX;
+  const cx = halfStart + within * POINT_W + POINT_W / 2;
+  return { cx, baseY: PLAY_Y + PLAY_H, dir: -1, top: false };
+}
+
+// Stacked checker centers for a point, clamped to MAX_VISIBLE.
+function stackCenters(slot: Slot, count: number): { cy: number }[] {
+  const n = Math.min(count, MAX_VISIBLE);
+  const out: { cy: number }[] = [];
+  const first = slot.baseY + slot.dir * (CHK_R + 4);
+  for (let i = 0; i < n; i++) {
+    out.push({ cy: first + slot.dir * i * CHK_GAP });
+  }
+  return out;
+}
+
+// Bar checker stack: vertical column from the top or bottom row toward center.
+function barCenters(count: number, fromTop: boolean): number[] {
+  const n = Math.min(count, MAX_VISIBLE);
+  const out: number[] = [];
+  const dir = fromTop ? 1 : -1;
+  const start = fromTop ? PLAY_Y + CHK_R + 6 : PLAY_Y + PLAY_H - CHK_R - 6;
+  for (let i = 0; i < n; i++) out.push(start + dir * i * CHK_GAP);
+  return out;
+}
+
+const barCx = barX + BAR_W / 2;
+const trayCx = trayX + TRAY_W / 2;
+const TRAY_INNER_W = TRAY_W - 18;
+const BORNE_H = 13;
 
 const PLAYER_NAME: Record<Player, string> = { white: "White", black: "Black" };
 
-// Visual board layout. Top row (left->right) = points 13..18 | 19..24.
-// Bottom row (left->right) = points 12..7 | 6..1. (Standard backgammon layout.)
-const TOP_LEFT = [13, 14, 15, 16, 17, 18];
-const TOP_RIGHT = [19, 20, 21, 22, 23, 24];
-const BOTTOM_LEFT = [12, 11, 10, 9, 8, 7];
-const BOTTOM_RIGHT = [6, 5, 4, 3, 2, 1];
+// pip positions for die faces 1..6 on a 3x3 grid (cell indices 0..8)
+const DIE_PIPS: Record<number, number[]> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
+};
 
 function DieFace({ value, used, rolling }: { value: number; used: boolean; rolling: boolean }) {
-  // pip positions for 1..6 on a 3x3 grid (indices 0..8)
-  const map: Record<number, number[]> = {
-    1: [4],
-    2: [0, 8],
-    3: [0, 4, 8],
-    4: [0, 2, 6, 8],
-    5: [0, 2, 4, 6, 8],
-    6: [0, 2, 3, 5, 6, 8],
-  };
-  const on = new Set(map[value] ?? []);
+  const on = new Set(DIE_PIPS[value] ?? []);
   return (
     <div className={`die${used ? " used" : ""}${rolling ? " rolling" : ""}`} aria-label={`die ${value}`}>
       {Array.from({ length: 9 }).map((_, i) => (
         <span key={i} className={`pip${on.has(i) ? "" : " off"}`} />
       ))}
     </div>
+  );
+}
+
+// Bear-off tray fill: each borne checker is a thin stacked horizontal bar.
+function TrayStack({ count, player, fromTop }: { count: number; player: Player; fromTop: boolean }) {
+  const dir = fromTop ? 1 : -1;
+  const start = fromTop ? PLAY_Y + 20 : PLAY_Y + PLAY_H - 20 - BORNE_H;
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <rect
+          key={`${player}-${i}`}
+          className={`borne ${player}`}
+          x={trayCx - TRAY_INNER_W / 2}
+          y={start + dir * i * (BORNE_H + 2)}
+          width={TRAY_INNER_W}
+          height={BORNE_H}
+          rx={3}
+        />
+      ))}
+    </>
   );
 }
 
@@ -154,7 +249,6 @@ export default function App() {
     return generateLegalMoves(state);
   }, [state, rolled, result]);
 
-  // destinations available from the currently selected source
   const legalFromSelected = useMemo<Move[]>(() => {
     if (selected === null) return [];
     return legalMoves.filter((m) => m.from === selected);
@@ -185,7 +279,6 @@ export default function App() {
     }
   }, [state]);
 
-  // auto-advance turn when no moves remain or none are possible
   useEffect(() => {
     if (!rolled || result) return;
     if (legalMoves.length === 0) {
@@ -216,22 +309,14 @@ export default function App() {
     setSelected(null);
   }, []);
 
-  const doMove = useCallback(
-    (move: Move) => {
-      setState((prev) => {
-        const next = applyMove(prev, move);
-        return next;
-      });
-      setSelected(null);
-    },
-    [],
-  );
+  const doMove = useCallback((move: Move) => {
+    setState((prev) => applyMove(prev, move));
+    setSelected(null);
+  }, []);
 
-  // when movesLeft empties after a move, allow ending the turn
   useEffect(() => {
     if (!rolled || result) return;
     if (state.movesLeft.length === 0 && state.dice.length > 0) {
-      // turn done
       const timer = window.setTimeout(endTurn, 250);
       return () => window.clearTimeout(timer);
     }
@@ -271,7 +356,6 @@ export default function App() {
     setStatus("Roll the dice to begin.");
   }, []);
 
-  // keyboard: R roll, U undo, N new game
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -290,68 +374,103 @@ export default function App() {
   const canRoll = !rolled && !result;
   const canPass = rolled && !result && legalMoves.length === 0 && state.movesLeft.length > 0;
 
-  const renderPoint = (point: number, position: "top" | "bottom") => {
+  // -- click routing for a point: prefer landing if it's a legal target --------
+  const onPointClick = useCallback(
+    (point: number) => {
+      if (legalTargets.has(point)) handleTarget(point);
+      else handleSource(point);
+    },
+    [legalTargets, handleTarget, handleSource],
+  );
+
+  const offTargetable = (player: Player) =>
+    selected !== null && legalTargets.has(OFF) && state.turn === player;
+
+  // ---- SVG point rendering ---------------------------------------------------
+  const renderPoint = (point: number) => {
     const pt = state.points[point];
+    const slot = pointSlot(point);
     const isLegalTarget = legalTargets.has(point);
     const isSelected = selected === point;
     const movable = sourcesWithMoves.has(point);
-    const triClass = point % 2 === 0 ? "a" : "b";
-    const maxVisible = 5;
-    const visible = Math.min(pt.count, maxVisible);
-    const extra = pt.count - maxVisible;
+    const odd = point % 2 === 1;
+
+    // triangle apex points toward the center of the board
+    const apexY = slot.baseY + slot.dir * POINT_H;
+    const x0 = slot.cx - POINT_W / 2 + 1.5;
+    const x1 = slot.cx + POINT_W / 2 - 1.5;
+    const tri = `${x0},${slot.baseY} ${x1},${slot.baseY} ${slot.cx},${apexY}`;
+
+    const centers = stackCenters(slot, pt.count);
+    const extra = pt.count - MAX_VISIBLE;
+    // label position for the +N count: just inside the apex of the last checker
+    const lastCy = centers.length ? centers[centers.length - 1].cy : slot.baseY;
 
     return (
-      <div
+      <g
         key={point}
         data-testid={`point-${point}`}
-        className={`bg-point ${position}`}
         data-owner={pt.player ?? "none"}
         data-count={pt.count}
         data-legal={isLegalTarget ? "true" : "false"}
         data-selected={isSelected ? "true" : "false"}
         data-movable={movable ? "true" : "false"}
-        onClick={() => (isLegalTarget ? handleTarget(point) : handleSource(point))}
+        className={`pt${isLegalTarget ? " legal" : ""}${isSelected ? " selected" : ""}${movable ? " movable" : ""}`}
         role="button"
         tabIndex={0}
         aria-label={`point ${point}${pt.player ? `, ${pt.count} ${pt.player}` : ", empty"}`}
+        onClick={() => onPointClick(point)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onPointClick(point);
+          }
+        }}
       >
-        <div className={`bg-triangle ${triClass}`} />
-        <div className="bg-checkers">
-          {Array.from({ length: visible }).map((_, i) => (
-            <div
+        <polygon className={`tri ${odd ? "tri-a" : "tri-b"}`} points={tri} />
+        {isLegalTarget ? <polygon className="tri-target" points={tri} /> : null}
+        {isSelected ? <polygon className="tri-selected" points={tri} /> : null}
+        {centers.map((c, i) => {
+          const top = i === centers.length - 1;
+          return (
+            <circle
               key={i}
-              className={`checker ${pt.player}${movable && i === visible - 1 ? " movable top-stack" : ""}`}
+              className={`chk ${pt.player}${movable && top ? " movable-top" : ""}`}
+              cx={slot.cx}
+              cy={c.cy}
+              r={CHK_R}
             />
-          ))}
-          {extra > 0 && <div className="checker-extra">+{extra}</div>}
-        </div>
-      </div>
+          );
+        })}
+        {extra > 0 ? (
+          <text className="chk-count" x={slot.cx} y={lastCy} dominantBaseline="central" textAnchor="middle">
+            +{extra}
+          </text>
+        ) : null}
+        {/* invisible hit area so the whole column is clickable */}
+        <rect
+          className="hit"
+          x={slot.cx - POINT_W / 2}
+          y={slot.top ? PLAY_Y : PLAY_Y + PLAY_H / 2}
+          width={POINT_W}
+          height={PLAY_H / 2}
+          fill="transparent"
+        />
+      </g>
     );
   };
 
+  // black hit checkers sit on the top of the bar, white on the bottom (mirrors home dirs)
+  const blackBarLegal = onBar && state.turn === "black" && sourcesWithMoves.has(BAR);
+  const whiteBarLegal = onBar && state.turn === "white" && sourcesWithMoves.has(BAR);
+
   return (
     <div className="bg-app">
-      <div className="bg-topbar">
+      {/* ---------- header ---------- */}
+      <header className="bg-topbar">
         <div className="bg-title">
-          <Dices size={20} />
+          <Dices size={18} />
           <span>Backgammon</span>
-        </div>
-
-        <div className="bg-spacer" />
-
-        <div className="bg-pips">
-          <div className="bg-pip">
-            <span className="label">White pip</span>
-            <span className="value" data-testid="pip-white">
-              {pips.white}
-            </span>
-          </div>
-          <div className="bg-pip">
-            <span className="label">Black pip</span>
-            <span className="value" data-testid="pip-black">
-              {pips.black}
-            </span>
-          </div>
         </div>
 
         <div className="bg-turn" data-testid="turn-indicator">
@@ -361,7 +480,7 @@ export default function App() {
 
         <div className="bg-dice" data-testid="dice">
           {state.dice.length === 0 ? (
-            <span className="bg-note">no roll</span>
+            <span className="bg-note">tap roll</span>
           ) : (
             state.dice.map((d, i) => {
               const used = !diceStillAvailable(state, d, i);
@@ -370,93 +489,169 @@ export default function App() {
           )}
         </div>
 
-        <button className="bg-btn primary" onClick={handleRoll} disabled={!canRoll}>
-          Roll
-        </button>
-        {canPass ? (
-          <button className="bg-btn" onClick={endTurn}>
-            Pass
-          </button>
-        ) : null}
-        <button className="bg-btn" onClick={handleUndo} disabled={state.history.length === 0} title="Undo (U)">
-          <Undo2 size={15} />
-        </button>
-        <button className="bg-btn" onClick={handleNewGame} title="New game (N)">
-          <RotateCcw size={15} />
-        </button>
-      </div>
+        <div className="bg-spacer" />
 
+        <div className="bg-pips">
+          <div className="bg-pip">
+            <span className="label">White</span>
+            <span className="value" data-testid="pip-white">
+              {pips.white}
+            </span>
+          </div>
+          <div className="bg-pip">
+            <span className="label">Black</span>
+            <span className="value" data-testid="pip-black">
+              {pips.black}
+            </span>
+          </div>
+        </div>
+
+        <div className="bg-actions">
+          <button type="button" className="bg-btn primary" onClick={handleRoll} disabled={!canRoll}>
+            <Dices size={15} /> Roll
+          </button>
+          {canPass ? (
+            <button type="button" className="bg-btn" onClick={endTurn}>
+              Pass
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="bg-btn icon"
+            onClick={handleUndo}
+            disabled={state.history.length === 0}
+            title="Undo (U)"
+            aria-label="Undo"
+          >
+            <Undo2 size={15} />
+          </button>
+          <button
+            type="button"
+            className="bg-btn icon"
+            onClick={handleNewGame}
+            title="New game (N)"
+            aria-label="New game"
+          >
+            <RotateCcw size={15} />
+          </button>
+        </div>
+      </header>
+
+      {/* ---------- board ---------- */}
       <div className="bg-board-wrap">
         <div className="bg-board" data-testid="board">
-          {/* top-left quadrant: 13..18 */}
-          <div className="bg-quadrant top">{TOP_LEFT.map((p) => renderPoint(p, "top"))}</div>
+          <svg
+            className="bg-svg"
+            viewBox={`0 0 ${VB_W} ${VB_H}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="Backgammon board"
+          >
+            {/* wood frame */}
+            <rect className="frame" x={0} y={0} width={VB_W} height={VB_H} rx={20} />
+            {/* felt halves */}
+            <rect className="felt" x={leftHalfX} y={PLAY_Y} width={HALF_W} height={PLAY_H} />
+            <rect className="felt" x={rightHalfX} y={PLAY_Y} width={HALF_W} height={PLAY_H} />
+            {/* center bar */}
+            <rect className="bar" x={barX} y={PLAY_Y} width={BAR_W} height={PLAY_H} rx={6} />
+            {/* bear-off tray */}
+            <rect className="tray" x={trayX + 4} y={PLAY_Y} width={TRAY_W - 8} height={PLAY_H} rx={8} />
+            <line
+              className="tray-divider"
+              x1={trayX + 12}
+              y1={PLAY_Y + PLAY_H / 2}
+              x2={trayX + TRAY_W - 12}
+              y2={PLAY_Y + PLAY_H / 2}
+            />
 
-          {/* bar */}
-          <div className="bg-bar">
-            <div
-              className="bar-slot"
+            {/* points */}
+            {Array.from({ length: 24 }, (_, i) => renderPoint(i + 1))}
+
+            {/* bar: hit checkers + click targets */}
+            <g
               data-testid="bar-black"
-              data-legal={onBar && state.turn === "black" && sourcesWithMoves.has(BAR) ? "true" : "false"}
+              data-legal={blackBarLegal ? "true" : "false"}
               data-selected={selected === BAR && state.turn === "black" ? "true" : "false"}
+              className={`bar-slot${blackBarLegal ? " legal" : ""}${selected === BAR && state.turn === "black" ? " selected" : ""}`}
               onClick={() => {
                 if (state.turn === "black" && onBar) handleSource(BAR);
               }}
             >
-              {Array.from({ length: state.bar.black }).map((_, i) => (
-                <div key={i} className="checker black" />
+              <rect
+                className="bar-hit"
+                x={barX}
+                y={PLAY_Y}
+                width={BAR_W}
+                height={PLAY_H / 2}
+                fill="transparent"
+              />
+              {barCenters(state.bar.black, true).map((cy, i) => (
+                <circle key={i} className="chk black" cx={barCx} cy={cy} r={CHK_R} />
               ))}
-            </div>
-            <div
-              className="bar-slot"
+            </g>
+            <g
               data-testid="bar-white"
-              data-legal={onBar && state.turn === "white" && sourcesWithMoves.has(BAR) ? "true" : "false"}
+              data-legal={whiteBarLegal ? "true" : "false"}
               data-selected={selected === BAR && state.turn === "white" ? "true" : "false"}
+              className={`bar-slot${whiteBarLegal ? " legal" : ""}${selected === BAR && state.turn === "white" ? " selected" : ""}`}
               onClick={() => {
                 if (state.turn === "white" && onBar) handleSource(BAR);
               }}
             >
-              {Array.from({ length: state.bar.white }).map((_, i) => (
-                <div key={i} className="checker white" />
+              <rect
+                className="bar-hit"
+                x={barX}
+                y={PLAY_Y + PLAY_H / 2}
+                width={BAR_W}
+                height={PLAY_H / 2}
+                fill="transparent"
+              />
+              {barCenters(state.bar.white, false).map((cy, i) => (
+                <circle key={i} className="chk white" cx={barCx} cy={cy} r={CHK_R} />
               ))}
-            </div>
-          </div>
+            </g>
 
-          {/* top-right quadrant: 19..24 (black home) */}
-          <div className="bg-quadrant top">{TOP_RIGHT.map((p) => renderPoint(p, "top"))}</div>
-
-          {/* off trays */}
-          <div className="bg-off">
-            <div
-              className="bg-tray"
+            {/* off trays (black top, white bottom — matches home-board sides) */}
+            <g
               data-testid="off-black"
-              data-legal={selected !== null && legalTargets.has(OFF) && state.turn === "black" ? "true" : "false"}
-              onClick={() => legalTargets.has(OFF) && state.turn === "black" && handleTarget(OFF)}
+              data-legal={offTargetable("black") ? "true" : "false"}
+              className={`tray-slot${offTargetable("black") ? " legal" : ""}`}
+              onClick={() => offTargetable("black") && handleTarget(OFF)}
             >
-              <span className="tray-label">Black off</span>
-              {Array.from({ length: state.off.black }).map((_, i) => (
-                <div key={i} className="bg-borne black" />
-              ))}
-            </div>
-            <div
-              className="bg-tray"
+              <rect
+                className="tray-hit"
+                x={trayX + 4}
+                y={PLAY_Y}
+                width={TRAY_W - 8}
+                height={PLAY_H / 2}
+                fill="transparent"
+              />
+              <TrayStack count={state.off.black} player="black" fromTop />
+            </g>
+            <g
               data-testid="off-white"
-              data-legal={selected !== null && legalTargets.has(OFF) && state.turn === "white" ? "true" : "false"}
-              onClick={() => legalTargets.has(OFF) && state.turn === "white" && handleTarget(OFF)}
+              data-legal={offTargetable("white") ? "true" : "false"}
+              className={`tray-slot${offTargetable("white") ? " legal" : ""}`}
+              onClick={() => offTargetable("white") && handleTarget(OFF)}
             >
-              <span className="tray-label">White off</span>
-              {Array.from({ length: state.off.white }).map((_, i) => (
-                <div key={i} className="bg-borne white" />
-              ))}
-            </div>
-          </div>
+              <rect
+                className="tray-hit"
+                x={trayX + 4}
+                y={PLAY_Y + PLAY_H / 2}
+                width={TRAY_W - 8}
+                height={PLAY_H / 2}
+                fill="transparent"
+              />
+              <TrayStack count={state.off.white} player="white" fromTop={false} />
+            </g>
 
-          {/* bottom-left quadrant: 12..7 */}
-          <div className="bg-quadrant bottom">{BOTTOM_LEFT.map((p) => renderPoint(p, "bottom"))}</div>
-          {/* bottom bar spacer (shares the .bg-bar column visually) */}
-          <div className="bg-bar" style={{ visibility: "hidden", gridRow: "auto" }} />
-          {/* bottom-right quadrant: 6..1 (white home) */}
-          <div className="bg-quadrant bottom">{BOTTOM_RIGHT.map((p) => renderPoint(p, "bottom"))}</div>
-          <div className="bg-off" style={{ visibility: "hidden", gridRow: "auto" }} />
+            <text className="tray-tag" x={trayCx} y={PLAY_Y + PLAY_H / 2 - 4} textAnchor="middle">
+              {state.off.black}
+            </text>
+            <text className="tray-tag" x={trayCx} y={PLAY_Y + PLAY_H / 2 + 16} textAnchor="middle">
+              {state.off.white}
+            </text>
+          </svg>
 
           {result ? (
             <div className="bg-overlay">
@@ -469,7 +664,7 @@ export default function App() {
                     : "Backgammon"}{" "}
                 · {result.points} point{result.points > 1 ? "s" : ""}
               </p>
-              <button className="bg-btn primary" onClick={handleNewGame}>
+              <button type="button" className="bg-btn primary" onClick={handleNewGame}>
                 New game
               </button>
             </div>
@@ -477,7 +672,8 @@ export default function App() {
         </div>
       </div>
 
-      <div className="bg-status">
+      {/* ---------- footer ---------- */}
+      <footer className="bg-status">
         {error ? (
           <span className="err">{error}</span>
         ) : status === "Saved to Matrix Postgres" ? (
@@ -488,10 +684,7 @@ export default function App() {
         <span className="bg-records" data-testid="match-count">
           {matches.length} match{matches.length === 1 ? "" : "es"} recorded
         </span>
-      </div>
-      <div className="bg-note" style={{ textAlign: "center" }}>
-        Local two-player · doubling cube deferred · keys: R roll, U undo, N new game
-      </div>
+      </footer>
     </div>
   );
 }
@@ -502,10 +695,8 @@ function other(p: Player): Player {
 
 // Determine whether the i-th rolled die is still unconsumed (for grey-out).
 function diceStillAvailable(state: GameState, value: number, index: number): boolean {
-  // Count how many of `value` remain vs how many were rolled.
   const rolledCount = state.dice.filter((d) => d === value).length;
   const leftCount = state.movesLeft.filter((d) => d === value).length;
-  // The first `leftCount` occurrences are still available.
   const occurrenceIndex = state.dice.slice(0, index + 1).filter((d) => d === value).length;
   return occurrenceIndex <= leftCount && rolledCount > 0;
 }
