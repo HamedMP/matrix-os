@@ -11,12 +11,16 @@ export function formatCliSuccess(data: Record<string, unknown>): string {
   return JSON.stringify({ v: CLI_OUTPUT_VERSION, ok: true, data });
 }
 
+export function formatCliErrorMessage(code: string, message?: string): string {
+  return message ?? GENERIC_MESSAGES[code] ?? "Request failed";
+}
+
 export function formatCliError(code: string, message?: string): string {
   return JSON.stringify({
     v: CLI_OUTPUT_VERSION,
     error: {
       code,
-      message: message ?? GENERIC_MESSAGES[code] ?? "Request failed",
+      message: formatCliErrorMessage(code, message),
     },
   });
 }

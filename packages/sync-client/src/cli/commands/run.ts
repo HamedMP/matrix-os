@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { randomUUID } from "node:crypto";
 import { resolveCliProfile } from "../profiles.js";
-import { formatCliError, formatCliSuccess } from "../output.js";
+import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 import { createShellClient, type ShellClient } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 
@@ -96,11 +96,22 @@ function writeError(err: unknown, json: boolean): void {
     err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : "request_failed";
+  const canShowErrorMessage =
+    code === "not_authenticated" ||
+    (code === "auth_expired" && err instanceof Error && err.message !== "Request failed") ||
+    code === "invalid_request" ||
+    code === "not_implemented";
   const safeMessage =
-    code === "not_authenticated" || code === "auth_expired" || code === "invalid_request" || code === "not_implemented"
+    canShowErrorMessage
       ? err instanceof Error ? err.message : undefined
       : undefined;
-  console.error(json ? formatCliError(code, safeMessage) : safeMessage ?? `Error: Request failed (${code})`);
+  console.error(
+    json
+      ? formatCliError(code, safeMessage)
+      : code === "auth_expired"
+        ? formatCliErrorMessage(code, safeMessage)
+        : safeMessage ?? `Error: Request failed (${code})`,
+  );
 }
 
 export const runCommand = defineCommand({

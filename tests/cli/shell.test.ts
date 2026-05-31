@@ -185,6 +185,36 @@ describe("shell CLI command", () => {
     });
   });
 
+  it("prompts for login when the gateway rejects profile auth", async () => {
+    await saveProfileAuth("local", {
+      accessToken: "stale-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      userId: "user-1",
+      handle: "local",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401 },
+    )));
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
+      errors.push(String(line));
+    });
+
+    await shellCommand.subCommands!.ls.run!({
+      args: { dev: true, json: true },
+    } as never);
+
+    expect(JSON.parse(errors[0]!)).toEqual({
+      v: 1,
+      error: {
+        code: "auth_expired",
+        message: "Matrix CLI auth expired. Run `matrix login` to refresh your session.",
+      },
+    });
+  });
+
   it("emits one clean JSON error from the real CLI when auth is missing", () => {
     const bin = join(process.cwd(), "packages/sync-client/bin/matrix.mjs");
 
