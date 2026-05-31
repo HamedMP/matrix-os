@@ -1,323 +1,316 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/HamedMP/matrix-os/main/www/public/rabbit.svg" alt="Matrix OS" width="120">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="www/public/rabbit-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="www/public/rabbit.svg">
+    <img src="www/public/rabbit.svg" alt="Matrix OS" width="118">
+  </picture>
 </p>
 
 <h1 align="center">Matrix OS</h1>
 
 <p align="center">
-  <strong>The AI operating system where software writes itself.</strong>
+  <strong>Your cloud computer for AI agents, apps, terminals, files, and integrations.</strong>
+</p>
+
+<p align="center">
+  <a href="https://matrix-os.com">Website</a> ·
+  <a href="https://matrix-os.com/docs">Docs</a> ·
+  <a href="https://matrix-os.com/whitepaper">Whitepaper</a> ·
+  <a href="https://matrix-os.com/skills.md">Agent setup</a> ·
+  <a href="https://deepwiki.com/HamedMP/matrix-os">DeepWiki</a> ·
+  <a href="https://discord.gg/cSBBQWtPwV">Discord</a> ·
+  <a href="https://x.com/joinmatrixos">X</a>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg?style=for-the-badge" alt="AGPL-3.0 License"></a>
-  <a href="https://deepwiki.com/HamedMP/matrix-os"><img src="https://img.shields.io/badge/DeepWiki-HamedMP%2Fmatrix--os-blue.svg?style=for-the-badge&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
-  <a href="https://matrix-os.com"><img src="https://img.shields.io/badge/Website-matrix--os.com-orange?style=for-the-badge" alt="Website"></a>
-  <a href="https://matrix-os.com/skills.md"><img src="https://img.shields.io/badge/Agent_Skill-skills.md-434E3F?style=for-the-badge" alt="Agent skill"></a>
+  <a href="https://matrix-os.com"><img src="https://img.shields.io/badge/Live-matrix--os.com-D06F25?style=for-the-badge" alt="matrix-os.com"></a>
+  <a href="https://matrix-os.com/skills.md"><img src="https://img.shields.io/badge/Agent_Setup-skills.md-434E3F?style=for-the-badge" alt="Agent setup"></a>
   <a href="https://skills.sh/HamedMP/matrix-os"><img src="https://skills.sh/b/HamedMP/matrix-os" alt="skills.sh"></a>
-  <a href="https://x.com/joinmatrixos"><img src="https://img.shields.io/badge/X-@joinmatrixos-000?style=for-the-badge&logo=x&logoColor=white" alt="X / Twitter"></a>
-  <a href="https://discord.gg/cSBBQWtPwV"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+  <img src="https://img.shields.io/badge/Built_with-Claude_Opus_4.6-cc785c?style=for-the-badge" alt="Built with Claude Opus 4.6">
+  <img src="https://img.shields.io/badge/Tests-3,032_passing-brightgreen?style=for-the-badge" alt="3,032 tests">
 </p>
+
+Matrix OS gives you a hosted cloud computer: browser desktop, files, terminal sessions, apps, integrations, messages, and AI agents running on your personal VPS. Open any browser, sign in, and your workspace is there. Install the Matrix CLI and Claude, Codex, GitHub CLI, or Hermes can attach to the same machine.
+
+It is not a chat box beside your software. The AI is the kernel. The shell, gateway, files, apps, terminal, channels, and agents are one operating environment.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Built_with-Claude_Opus_4.6-cc785c?style=for-the-badge" alt="Built with Claude Opus 4.6">
-  <img src="https://img.shields.io/badge/Tests-3,032_passing-brightgreen?style=for-the-badge" alt="3,032 Tests">
-  <img src="https://img.shields.io/badge/TypeScript-100K+_lines-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="www/public/images/app-screenshot.jpg" alt="Matrix OS browser desktop with generated apps" width="900">
 </p>
 
-Matrix OS is an AI-native operating system where software doesn't exist until you need it. You speak, and applications materialize -- generated in real time, saved as real files, yours to keep, inspect, and modify. The AI isn't a feature bolted onto the side. It IS the kernel.
+---
+
+## Why Matrix OS
+
+Most AI products leave your work scattered across chats, terminals, dashboards, and local machines. Matrix OS gives agents a persistent place to work.
+
+| You need | Matrix OS gives you |
+|----------|---------------------|
+| A real workspace for AI agents | A hosted personal VPS with browser shell, terminal sessions, files, apps, and logs |
+| Software without waiting on a SaaS roadmap | Apps generated from natural language and saved as inspectable projects |
+| Continuity across devices | One cloud desktop reachable from the web, Matrix CLI, and messaging channels |
+| Data you can leave with | Owner-controlled files plus Postgres for durable app and workspace data |
+| A system that can improve itself | Agents, skills, hooks, cron jobs, and self-healing workflows |
+
+Matrix OS is the foundation for **Web 4**: a unified environment where operating system, messaging, social identity, apps, games, files, and AI agents are one system.
+
+---
+
+## Quick Start
+
+### Hosted Cloud Computer
+
+Start at the landing page: [matrix-os.com](https://matrix-os.com).
+
+Sign up or log in from there, choose a Matrix handle, provision your private runtime, and open the browser desktop. Hosted Matrix OS uses a platform control plane plus one VPS-native runtime per active user. That VPS is where your files, terminal sessions, generated apps, integrations, and coding agents live.
+
+### Matrix CLI
+
+Install the CLI:
+
+```bash
+# macOS or Linux with Homebrew
+brew install finnaai/tap/matrix
+
+# Or with npm
+npm install -g @finnaai/matrix
+
+# Or with the install script
+curl -fsSL https://get.matrix-os.com | sh
+```
+
+Log in from the CLI and inspect your instance:
+
+```bash
+matrix login
+matrix whoami
+matrix status
+matrix instance info
+```
+
+`matrix login` opens a browser/device flow against the hosted Matrix cloud. If it says no Matrix instance exists yet, sign up at [matrix-os.com](https://matrix-os.com), finish provisioning, then run `matrix login` again.
+
+### Agent Setup
+
+Agents should read the public skill file and follow it:
+
+```text
+https://matrix-os.com/skills.md
+```
+
+Install the skill locally if your agent runtime supports file skills:
+
+```bash
+npx skills add HamedMP/matrix-os --skill matrix-os
+```
+
+Then use Matrix shell sessions for remote work:
+
+```bash
+# Bring your own terminal agent.
+matrix run -it -- claude
+matrix run -it -- codex
+
+# Use a named setup session so the web terminal and local CLI can reattach.
+matrix run -it --session setup -- gh auth login
+matrix run -it --session setup -- claude
+matrix run -it --session setup -- codex
+matrix shell attach setup
+```
+
+Detach from an interactive session with `Ctrl-\ Ctrl-\`. The remote zellij session stays alive and can be reattached from the Matrix web terminal or CLI. This is the same computer the hosted browser shell shows.
+
+### From Source
+
+Use the source install when contributing to Matrix OS itself:
+
+```bash
+git clone https://github.com/HamedMP/matrix-os.git
+cd matrix-os
+
+flox activate
+bun run dev
+```
+
+Without Flox, install Node.js 24+, pnpm 10, and bun, then run:
+
+```bash
+pnpm install
+bun run dev
+```
+
+Development services:
+
+```bash
+bun run dev:gateway    # Hono gateway
+bun run dev:shell      # Next.js shell
+bun run dev:proxy      # Shared API proxy
+bun run dev:platform   # Multi-tenant platform
+bun run dev:www        # matrix-os.com website
+```
+
+---
+
+## What It Can Do
+
+<table>
+<tr><td><b>Generate apps</b></td><td>Describe a tool in plain English. Matrix creates a working app, saves it as files, and opens it in the shell.</td></tr>
+<tr><td><b>Run a browser desktop</b></td><td>Canvas-first web shell with windows, dock, app launcher, wallpapers, terminal, file browser, and generated apps.</td></tr>
+<tr><td><b>Keep agent work persistent</b></td><td>Projects, terminals, task context, logs, app state, and workspace state survive across sessions and devices.</td></tr>
+<tr><td><b>Talk through channels</b></td><td>Reach the same kernel through web, CLI, Telegram, WhatsApp, Discord, Slack, Matrix protocol, and voice surfaces as they are enabled.</td></tr>
+<tr><td><b>Connect services</b></td><td>Pipedream Connect integration for Gmail, Slack, GitHub, and 2,400+ services with OAuth-managed settings.</td></tr>
+<tr><td><b>Automate on schedule</b></td><td>Cron jobs, heartbeat workflows, proactive tasks, and scheduled agent runs.</td></tr>
+<tr><td><b>Heal and expand</b></td><td>Specialized agents can diagnose failures, repair files, add skills, and grow new capabilities.</td></tr>
+<tr><td><b>Own your data</b></td><td>Identity and configuration are files. App and workspace data live in owner-controlled Postgres, not an opaque platform database.</td></tr>
+</table>
+
+---
+
+## Demo
 
 <p align="center">
   <a href="https://youtu.be/CSFIYUeOvlc">
-    <img src="https://img.youtube.com/vi/CSFIYUeOvlc/maxresdefault.jpg" alt="Matrix OS Demo" width="800">
+    <img src="https://img.youtube.com/vi/CSFIYUeOvlc/maxresdefault.jpg" alt="Matrix OS demo video" width="820">
   </a>
   <br>
-  <em>Watch the demo</em>
+  <em>Watch the original Matrix OS demo.</em>
 </p>
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/HamedMP/matrix-os/main/www/public/images/screenshot-desktop.png" alt="Matrix OS desktop" width="800">
-</p>
-
-Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) (Feb 10-16, 2026) where it placed in the **top 20**. Now being built into a production-ready platform. The entire system -- kernel, shell, platform, website, and this README -- was written with Claude Code.
+Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) in February 2026, where Matrix OS placed in the **top 20**.
 
 <p align="center">
-  <img src="docs/images/anthropic-hackathon.jpg" alt="Matrix OS at the Claude Code Birthday Party, Anthropic HQ" width="600">
+  <img src="docs/images/anthropic-hackathon.jpg" alt="Matrix OS at the Claude Code Birthday Party, Anthropic HQ" width="620">
   <br>
-  <em>Matrix OS at the Claude Code Birthday Party at Anthropic HQ (Feb 2026) -- Top 20 finalist</em>
+  <em>Matrix OS at the Claude Code Birthday Party at Anthropic HQ.</em>
 </p>
-
----
-
-## The Idea
-
-Every OS you've ever used works the same way: someone wrote the software months before you touched it. They decided what it looks like, what it does, what you're allowed to change.
-
-Matrix OS starts from a different premise: **what if the software didn't exist until the moment you needed it?**
-
-You open Matrix OS and see a clean surface. You tell it what you need, and the system writes it into existence. Not a template. Not a widget from a library. Real software, generated for you, tailored to your request, saved as files you own.
-
-And it goes further. Matrix OS is also your personal AI assistant, your messaging platform, your social network, and your game console -- unified under one identity, one file system, one AI kernel. We call this **Web 4**.
-
-```
-Terminal (1970s) -> GUI (1980s) -> Web (1990s) -> Mobile (2000s) -> AI Assistants (2020s)
-  -> Matrix OS / Web 4 (2026)
-```
-
----
-
-## What It Does
-
-**Generate apps from conversation.** Say "I need an expense tracker" and a fully functional expense tracker appears on your desktop -- styled to your theme, persisted to your file system, ready to use.
-
-**5 specialized agents.** Builder generates apps. Researcher gathers information. Deployer ships modules. Healer detects and fixes failures. Evolver grows new capabilities.
-
-**Self-healing.** Break something? The OS detects the problem, diagnoses it, and repairs it automatically.
-
-**Self-expanding.** The OS writes its own capabilities. New agents, new skills, new tools -- all generated on demand.
-
-**Multi-channel.** Talk to your OS from the web desktop, Telegram, WhatsApp, Discord, or Slack. Same kernel, same identity, same file system.
-
-**Voice interface.** Talk to your OS with voice -- text-to-speech, speech-to-text, and telephony support via Twilio. Multiple TTS providers (Edge TTS, ElevenLabs, OpenAI) with automatic fallback.
-
-**Finder-class file browser.** Full file management with column view, preview panel, inline rename, trash with restore, search (filename + content), and drag-and-drop.
-
-**Social network.** Profiles, posts, comments, likes, follows, and activity feeds. Built on Postgres with real-time updates. Foundation for federated social via Matrix protocol.
-
-**Messages.** Real-time messaging built on Matrix protocol with Conduit homeserver integration.
-
-**IDE-grade terminal.** Split panes, multiple tabs, integrated Claude Code sessions, layout persistence, WebGL rendering, and search.
-
-**Canvas desktop.** Infinite pan/zoom workspace with app grouping, minimap, and spatial organization.
-
-**Platform integrations.** Connect to 2,400+ services via Pipedream Connect -- Gmail, Slack, GitHub, and more. OAuth-based, managed from the settings panel.
-
-**Proactive.** Cron jobs, heartbeats, scheduled tasks. The OS doesn't just respond -- it anticipates.
-
-**SOUL identity.** Every instance has a personality defined in `~/system/soul.md`. It shapes how the AI thinks, communicates, and acts.
-
-**20 built-in skills.** Summarize, research, budget tracking, image generation, web search, code review, and more. Users can create their own skills from conversation.
-
-**Personalized onboarding.** Conversational setup adapts to your role (student, developer, entrepreneur). Proposes apps, skills, and personality. Builds everything after confirmation.
-
-**Desktop customization.** 6 theme presets, custom backgrounds (patterns, gradients, wallpapers), configurable dock, AI-generated app icons.
-
-**Connection health.** WebSocket heartbeat, message queue with replay, exponential backoff reconnection, and visibility recovery. Status indicator in the shell.
-
-**Observability.** Prometheus metrics for gateway, platform, and proxy. Ready for Grafana dashboards and alerting.
-
-**Cloud-native + Multi-tenant.** Sign up at matrix-os.com and open Matrix at `app.matrix-os.com`. Each active user gets a dedicated customer VPS with persistent Matrix home storage and owner-local Postgres.
-
-**Agent-readable setup.** Coding agents can read [matrix-os.com/skills.md](https://matrix-os.com/skills.md), install the Matrix CLI, help the human claim/login, and attach to the user's VPS through shared zellij-backed shell sessions.
-
-**skills.sh install.** Install the Matrix setup skill with `npx skills add HamedMP/matrix-os --skill matrix-os`, or browse it at [skills.sh/HamedMP/matrix-os](https://skills.sh/HamedMP/matrix-os).
-
-**Documentation site.** Public docs at [matrix-os.com/docs](https://matrix-os.com/docs) built with Fumadocs.
 
 ---
 
 ## Architecture
 
-```
-Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
-  |-- Next.js shell (desktop UI)        |-- Channel adapters
-  |                                     |
-  +------------- Gateway (localhost:4000) ---------------+
-                  |-- WebSocket (chat, file watcher, terminal, voice)
-                  |-- REST API (messages, files, social, themes, layout)
-                  |-- Channel manager, cron, heartbeat
-                  |-- Prometheus metrics (/metrics)
-                  |
-                  +---> Dispatcher ---> Kernel (Claude Agent SDK)
-                                          |-- Builder agent (generates apps)
-                                          |-- Researcher agent (gathers info)
-                                          |-- Deployer agent (ships modules)
-                                          |-- Healer agent (fixes breakage)
-                                          |-- Evolver agent (grows the OS)
+```text
+Web shell / CLI / Telegram / WhatsApp / Discord / Slack / Matrix / Voice
+                               |
+                               v
+                    Hono Gateway + WebSocket bus
+             REST, terminal, files, messages, apps, cron, metrics
+                               |
+                               v
+              Dispatcher -> AI Kernel (Claude Agent SDK V1)
+                               |
+          Builder / Researcher / Deployer / Healer / Evolver agents
+                               |
+                               v
+       Owner-controlled files + Postgres + generated apps + integrations
 ```
 
-The core metaphor maps precisely to computer architecture:
+The OS metaphor is literal:
 
-| Computer | Matrix OS |
-|----------|-----------|
-| CPU | Claude Opus 4.6 |
-| RAM | Agent context window |
-| Kernel | Main agent with tool access |
-| Processes | Sub-agents via Task tool |
-| Disk | File system (`~/apps`, `~/data`, `~/system`) |
-| System calls | 26 IPC tools via MCP server |
-| Device drivers | MCP servers |
-| IPC | File-based coordination + PostgreSQL-backed task queue |
-
-### The Web 4 Vision
-
-Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, messaging, social media, AI assistant, apps, games, and identity are all one thing.
-
-- **Federated identity** via [Matrix protocol](https://spec.matrix.org/latest/): `@you:matrix-os.com` (human) + `@you_ai:matrix-os.com` (AI agent)
-- **AI-to-AI communication**: your AI talks to other AIs via Matrix rooms with custom event types
-- **Peer-to-peer sync**: git is the sync layer -- all devices are equal peers
-- **App marketplace**: apps are files -- distribution is file sharing
-- **Multiplayer games**: generate games from conversation, play against humans or AIs
-- **E2E encrypted**: Olm/Megolm encryption on all AI-to-AI and human-to-human communication
+| Computer concept | Matrix OS equivalent |
+|------------------|----------------------|
+| CPU | Frontier model routing, currently Claude Opus 4.6 |
+| Kernel | Main Agent SDK V1 `query()` loop with `resume` |
+| Processes | Specialized sub-agents with isolated context |
+| Disk | Matrix home files plus owner-controlled Postgres |
+| System calls | MCP and gateway IPC tools |
+| Drivers | Channel adapters, integrations, browser, terminal, voice |
+| Shell | Next.js desktop/canvas UI, CLI, and messaging surfaces |
 
 ---
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Language | TypeScript 5.5+, strict mode, ES modules |
+|-------|------------|
+| Language | TypeScript 5.5+ strict, ES modules |
 | Runtime | Node.js 24+ |
-| AI | Claude Agent SDK V1 (`query()` + `resume`), Opus 4.6 |
-| Frontend | Next.js 16 (Turbopack, React Compiler), React 19 |
-| Backend | Hono (HTTP/WebSocket gateway) |
-| Database | PostgreSQL via Kysely for kernel durable state, platform, social, app, and user data |
-| Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
-| Federation | Matrix protocol (matrix-js-sdk), Conduit homeserver |
-| Voice | Edge TTS, ElevenLabs, OpenAI TTS/Whisper, Twilio |
-| Terminal | node-pty, @xterm/xterm + WebGL addon |
-| Integrations | Pipedream Connect (2,400+ services) |
-| Validation | Zod 4 |
-| Observability | Prometheus metrics (prom-client) |
-| Testing | Vitest (3,032 tests, TDD, 244 test files) |
-| Package mgr | pnpm (install), bun (scripts) |
+| AI | Claude Agent SDK V1 `query()` + `resume`, Opus 4.6 |
+| Frontend | Next.js 16, React 19, Turbopack, React Compiler |
+| Backend | Hono HTTP/WebSocket gateway |
+| Database | PostgreSQL via Kysely |
+| Validation | Zod 4 via `zod/v4` |
+| Terminal | node-pty, xterm.js, WebGL renderer |
+| Integrations | Pipedream Connect |
+| Observability | Prometheus metrics |
+| Testing | Vitest, `@vitest/coverage-v8` |
+| Package manager | pnpm for install, bun for scripts |
 
 ---
 
-## Project Structure
+## Repository Map
 
-```
-packages/kernel/     # AI kernel (Agent SDK, agents, IPC tools, hooks, SOUL, skills)
-packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat + voice
-packages/platform/   # Multi-tenant orchestrator (Hono :9000, Kysely/Postgres, dockerode, social API)
-packages/proxy/      # Shared API proxy (Hono :8080, usage tracking)
-shell/               # Next.js 16 frontend (desktop shell, file browser, terminal, canvas)
-www/                 # matrix-os.com + /docs (Next.js on Vercel, Clerk auth, Fumadocs)
-home/                # File system template (apps, agents, skills -- copied on first boot)
-tests/               # Vitest test suites (244 files)
-specs/               # Architecture specs (63 specs)
-docs/                # Reference documentation
-distro/              # Docker, cloudflared, systemd deployment configs
+```text
+packages/kernel/     AI kernel, agents, hooks, SOUL, skills
+packages/gateway/    Hono HTTP/WS gateway, channels, cron, terminal, voice
+packages/platform/   Hosted control plane, auth, provisioning, routing
+packages/proxy/      Shared API proxy and usage tracking
+packages/ui/         Shared UI components
+shell/               Next.js desktop and canvas shell
+www/                 matrix-os.com and public docs
+home/                Matrix home template copied on first boot
+specs/               Architecture and feature specs
+tests/               Vitest suites
+docs/                Developer and operations docs
 ```
 
 ---
 
-## Getting Started
+## Development
 
-### Prerequisites
-
-- Node.js 24+
-- pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
-- `ANTHROPIC_API_KEY` environment variable
-
-### Install
+Run the core checks before opening a PR:
 
 ```bash
-pnpm install
+bun run typecheck
+bun run check:patterns
+bun run test
 ```
 
-### Run Tests
+Other useful commands:
 
 ```bash
-bun run test              # 3,032 tests (~50s)
-bun run test:watch        # Watch mode
-bun run test:integration  # Integration tests (needs API key, uses haiku)
-bun run test:coverage     # Coverage report
+bun run test:watch
+bun run test:integration
+bun run test:coverage
+bun run test:e2e
 ```
 
-### Start Development
-
-```bash
-# All at once (gateway + shell):
-bun run dev
-
-# Or individually:
-bun run dev:gateway   # Gateway on http://localhost:4000
-bun run dev:shell     # Shell on http://localhost:3000
-```
-
-### Docker Development (Primary)
-
-Requires [OrbStack](https://orbstack.dev) on macOS.
-
-```bash
-bun run docker          # Dev only (gateway + shell with HMR)
-bun run docker:full     # + proxy, platform, conduit
-bun run docker:all      # + observability (Grafana, Prometheus, Loki)
-bun run docker:stop     # Stop all containers (preserves data)
-bun run docker:logs     # Tail dev container logs
-bun run docker:shell    # Shell into container
-```
-
-The gateway boots the home directory at `~/matrixos/` on first run.
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | Required for AI features | -- |
-| `MATRIX_HOME` | Home directory path | `~/matrixos/` |
-| `MATRIX_HANDLE` | User handle | `dev` |
-| `MATRIX_AUTH_TOKEN` | Bearer token for cloud auth | -- |
-| `PORT` | Gateway port | `4000` |
-| `FAL_API_KEY` | AI icon generation (fal.ai) | -- |
-| `DATABASE_URL` | Postgres connection (social/app data) | -- |
+Docker commands are available for local legacy development, but production Matrix OS is VPS-native per user. Customer runtime updates ship as host bundles, not rolling Docker image restarts.
 
 ---
 
 ## Current Status
 
-**3,032 tests passing across 244 test files. 100K+ lines of TypeScript. 329 commits. Platform is live at [matrix-os.com](https://matrix-os.com).**
+Matrix OS is live at [matrix-os.com](https://matrix-os.com), with hosted runtime provisioning, a canvas-first shell, file browser, terminal, generated apps, onboarding, integrations, observability, docs, and the early Web 4 foundation in place.
 
-### Completed
+Current focus areas:
 
-- **Phases 1-6**: Core OS -- monorepo, kernel (Agent SDK V1 query+resume), IPC MCP server (26 tools), 8 hooks, Hono gateway, Next.js desktop shell, self-healing, self-evolution
-- **Phase 7**: Concurrent kernel dispatch -- serial queue, maxConcurrency, process registration
-- **Phase 8**: Cloud deployment -- single-user Docker + multi-tenant platform (dockerode, Clerk auth, Cloudflare Tunnels, admin dashboard)
-- **Phase 9**: SOUL identity + skills + observability -- 20 skills, handle registry (`@user:matrix-os.com`), interaction logger, safe mode, git sync, mobile responsive, PWA
-- **Phase 10**: Multi-channel messaging -- Telegram adapter, channel-aware dispatcher, formatForChannel
-- **Phase 11**: Cron + Heartbeat -- CronService, CronStore, manage_cron tool, HeartbeatRunner
-- **Phase 12**: Onboarding -- persona engine (7 roles), setup plan, provisioner, Mission Control, Cmd+K palette
-- **Phase 25**: Security hardening -- content wrapping, SSRF protection, audit tool
-- **Phase 31**: Desktop customization -- 6 themes, backgrounds, dock config, AI-generated icons
-- **Phase 33**: Documentation site -- Fumadocs at matrix-os.com/docs
-- **Phase 34A**: Prometheus metrics -- gateway, platform, and proxy instrumentation
-- **Phase 35**: Canvas desktop -- infinite pan/zoom, app grouping, minimap
-- **Phase 44**: Docker-primary development -- non-root user, su-exec, identity from env
-- **Phase 46**: Voice system -- TTS (Edge/ElevenLabs/OpenAI), STT (Whisper), telephony (Twilio)
-- **Phase 48**: File browser -- Finder-class with column view, preview, trash, search
-- **Phase 49**: Platform integrations -- Pipedream Connect, OAuth, 2,400+ services, settings UI
-- **Phase 50**: Postgres app data layer -- Kysely, per-app schemas, bridge API, per-user databases
-- **Phase 56**: Terminal upgrade -- node-pty backend, xterm.js + WebGL frontend, Hono WebSocket, split panes, Claude Code integration
-- **Phase 59**: Shell reliability -- WebSocket heartbeat, message queue with replay, exponential backoff, visibility recovery, connection health UI
-- **Social**: Social network -- profiles, posts, comments, likes, follows, activity feeds, messages
-- **Landing page**: Direction 2 rebrand -- editorial design with brand palette (forest/stone/moss), botanical scatter, structured data, SEO
+- Paid beta readiness and production polish
+- Canvas workspace and cloud coding workflows
+- Mobile shell
+- Matrix messaging bridge for Telegram and WhatsApp
+- SDK-native skills and agent-readable setup
 
-### In Progress
+See:
 
-- **Spec 063**: React app runtime -- run React/Next.js apps inside the OS shell
-- **Spec 060**: Default apps -- prebuilt apps that ship with every instance
-- **Spec 065**: SDK-native skills -- Agent Skills standard with open spec
+- [Web 4 Vision](specs/web4-vision.md)
+- [Matrix OS Vision](specs/matrixos-vision.md)
+- [Public docs](https://matrix-os.com/docs)
+- [DeepWiki](https://deepwiki.com/HamedMP/matrix-os)
 
 ---
 
-## Principles
+## Community
 
-1. **Everything Is a File** -- apps, profiles, config, AI personality -- all files. Sync = git. Share = send a file. Backup = copy a folder.
-2. **Agent Is the Kernel** -- Claude Agent SDK V1 `query()` with `resume`. The AI has full system access. It writes software, manages files, communicates with other AIs.
-3. **Headless Core, Multi-Shell** -- the core is a gateway + kernel. Web shell, mobile app, Telegram bot, voice interface -- all shells.
-4. **Self-Healing and Self-Expanding** -- the OS fixes itself and grows new capabilities on demand.
-5. **Simplicity Over Sophistication** -- the simplest implementation that works.
-6. **TDD** -- tests first, 3,032 passing, targeting 99-100% coverage.
+- [Discord](https://discord.gg/cSBBQWtPwV)
+- [X / Twitter](https://x.com/joinmatrixos)
+- [LinkedIn](https://www.linkedin.com/company/matrix-os)
+- [Agent setup skill](https://matrix-os.com/skills.md)
+- [skills.sh listing](https://skills.sh/HamedMP/matrix-os)
 
----
+## Star History
 
-## Vision Documents
-
-- [Web 4 Vision](specs/web4-vision.md) -- the north star for the unified AI OS platform
-- [Matrix OS Vision](specs/matrixos-vision.md) -- the full product vision
-- [DeepWiki Documentation](https://deepwiki.com/HamedMP/matrix-os) -- AI-generated docs for the codebase
-
----
+[![Star History Chart](https://api.star-history.com/svg?repos=HamedMP/matrix-os&type=date&legend=top-left)](https://www.star-history.com/#HamedMP/matrix-os&type=date&legend=top-left)
 
 ## License
 
@@ -325,4 +318,4 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 
 ---
 
-*Matrix OS. Software that doesn't exist until you need it. And once it does, it's yours.*
+*Matrix OS. Software that does not exist until you need it. Once it does, it is yours.*
