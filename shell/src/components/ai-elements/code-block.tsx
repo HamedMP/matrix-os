@@ -149,13 +149,14 @@ const getHighlighter = (
   const highlighterPromise = createHighlighter({
     langs: [language],
     themes: ["github-light", "github-dark"],
-  }).catch(() =>
+  }).catch((error: unknown) => {
+    console.warn("[ai-elements] Failed to create language highlighter:", error);
     // Fall back to 'text' for unknown languages (e.g. ui:cards during streaming)
-    createHighlighter({
+    return createHighlighter({
       langs: ["text" as BundledLanguage],
       themes: ["github-light", "github-dark"],
-    })
-  );
+    });
+  });
 
   highlighterCache.set(language, highlighterPromise);
   return highlighterPromise;

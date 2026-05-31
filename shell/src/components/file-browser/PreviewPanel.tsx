@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
+const PREVIEW_PANEL_FETCH_TIMEOUT_MS = 10_000;
 
 interface FileStat {
   name: string;
@@ -51,31 +52,42 @@ export function PreviewPanel() {
       return;
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
+    let active = true;
 
     fetch(
       `${GATEWAY_URL}/api/files/stat?path=${encodeURIComponent(selectedFullPath)}`,
-      { signal },
+      { signal: AbortSignal.timeout(PREVIEW_PANEL_FETCH_TIMEOUT_MS) },
     )
       .then((r) => r.json())
-      .then((data: FileStat) => { if (!signal.aborted) setStat(data); })
-      .catch(() => { if (!signal.aborted) setStat(null); });
+      .then((data: FileStat) => { if (active) setStat(data); })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.warn("Failed to load preview file stats", error);
+        setStat(null);
+      });
 
     if (selectedName && isTextLike(selectedName)) {
-      fetch(`${GATEWAY_URL}/files/${selectedFullPath}`, { signal })
+      fetch(`${GATEWAY_URL}/files/${selectedFullPath}`, {
+        signal: AbortSignal.timeout(PREVIEW_PANEL_FETCH_TIMEOUT_MS),
+      })
         .then((r) => (r.ok ? r.text() : null))
         .then((text) => {
-          if (!signal.aborted && text) {
+          if (active && text) {
             setPreview(text.split("\n").slice(0, 20).join("\n"));
           }
         })
-        .catch(() => { if (!signal.aborted) setPreview(null); });
+        .catch((error: unknown) => {
+          if (!active) return;
+          console.warn("Failed to load preview file content", error);
+          setPreview(null);
+        });
     } else {
       setPreview(null);
     }
 
-    return () => controller.abort();
+    return () => {
+      active = false;
+    };
   }, [selectedFullPath, showPreviewPanel, selectedName]);
 
   if (!showPreviewPanel) return null;

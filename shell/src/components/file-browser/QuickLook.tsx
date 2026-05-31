@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { XIcon } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
+const QUICK_LOOK_FETCH_TIMEOUT_MS = 10_000;
 
 export function QuickLook() {
   const quickLookPath = useFileBrowser((s) => s.quickLookPath);
@@ -33,19 +34,26 @@ export function QuickLook() {
       return;
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
+    let active = true;
 
-    fetch(`${GATEWAY_URL}/files/${fullPath}`, { signal })
+    fetch(`${GATEWAY_URL}/files/${fullPath}`, {
+      signal: AbortSignal.timeout(QUICK_LOOK_FETCH_TIMEOUT_MS),
+    })
       .then((r) => (r.ok ? r.text() : null))
       .then((text) => {
-        if (signal.aborted) return;
+        if (!active) return;
         if (text) setContent(text.split("\n").slice(0, 50).join("\n"));
         else setContent(null);
       })
-      .catch(() => { if (!signal.aborted) setContent(null); });
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.warn("Failed to load quick look preview", error);
+        setContent(null);
+      });
 
-    return () => controller.abort();
+    return () => {
+      active = false;
+    };
   }, [fullPath, quickLookPath]);
 
   if (!quickLookPath || !fullPath) return null;
