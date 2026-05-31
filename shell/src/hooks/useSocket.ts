@@ -215,6 +215,7 @@ export function useSocket() {
     sendMessage(msg);
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only-live-ref: the cleanup reads handlerRef.current at teardown time to delete whatever handler is registered then (the subscribe callback updates the ref over the component's life). Snapshotting it at effect-setup would delete a stale/null handler and leak the live one; an empty dep array is required so the shared socket subscription wires up exactly once.
   useEffect(() => {
     ensureConnected();
 

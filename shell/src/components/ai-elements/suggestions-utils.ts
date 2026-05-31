@@ -16,10 +16,8 @@ export function parseSuggestions(content: string): string[] {
       if (Array.isArray(parsed)) {
         return parsed.filter((s): s is string => typeof s === "string");
       }
-    } catch (error: unknown) {
-      if (!(error instanceof SyntaxError)) {
-        console.warn("[ai-elements] Failed to parse suggestions:", error);
-      }
+    } catch (err: unknown) {
+      console.warn("[suggestions] Failed to parse suggestions:", err instanceof Error ? err.message : String(err));
     }
   }
   return [];

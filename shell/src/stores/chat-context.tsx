@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 
 const ChatContext = createContext<ChatState | null>(null);
@@ -10,5 +10,5 @@ export function ChatProvider({ value, children }: { value: ChatState; children: 
 }
 
 export function useChatContext(): ChatState | null {
-  return useContext(ChatContext);
+  return use(ChatContext);
 }

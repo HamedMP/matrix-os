@@ -245,6 +245,34 @@ function layoutUsesOnlyCanonicalShellSessions(layout: TerminalLayout): boolean {
   return sessionIds.length > 0 && sessionIds.every((sessionId) => isCanonicalShellSessionId(sessionId));
 }
 
+function destroyTerminalSessions(sessionIds: string[]) {
+  const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
+  for (const sessionId of uniqueIds) {
+    const isCanonical = isCanonicalShellSessionId(sessionId);
+    const isLegacyPty = isLegacyPtySessionId(sessionId);
+    if (!isCanonical && !isLegacyPty) {
+      continue;
+    }
+    const path = isCanonical
+      ? `/api/terminal/sessions/${encodeURIComponent(sessionId)}?force=1`
+      : `/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`;
+    void fetch(`${getGatewayUrl()}${path}`, {
+      method: "DELETE",
+      keepalive: true,
+      signal: AbortSignal.timeout(5_000),
+    }).then((res) => {
+      if (!res.ok && res.status !== 404) {
+        console.warn(`Failed to destroy terminal session "${sessionId}" on explicit close: ${res.status}`);
+      }
+    }).catch((err: unknown) => {
+      console.warn(
+        `Failed to destroy terminal session "${sessionId}" on explicit close:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
+  }
+}
+
 async function ensureDefaultShellSession(): Promise<boolean> {
   try {
     const listRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
@@ -364,34 +392,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }).catch((err: unknown) => {
       console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
     });
-  };
-
-  const destroyTerminalSessions = (sessionIds: string[]) => {
-    const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
-    for (const sessionId of uniqueIds) {
-      const isCanonical = isCanonicalShellSessionId(sessionId);
-      const isLegacyPty = isLegacyPtySessionId(sessionId);
-      if (!isCanonical && !isLegacyPty) {
-        continue;
-      }
-      const path = isCanonical
-        ? `/api/terminal/sessions/${encodeURIComponent(sessionId)}?force=1`
-        : `/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`;
-      void fetch(`${getGatewayUrl()}${path}`, {
-        method: "DELETE",
-        keepalive: true,
-        signal: AbortSignal.timeout(5_000),
-      }).then((res) => {
-        if (!res.ok && res.status !== 404) {
-          console.warn(`Failed to destroy terminal session "${sessionId}" on explicit close: ${res.status}`);
-        }
-      }).catch((err: unknown) => {
-        console.warn(
-          `Failed to destroy terminal session "${sessionId}" on explicit close:`,
-          err instanceof Error ? err.message : err,
-        );
-      });
-    }
   };
 
   const getPendingSessionIds = (paneIds: string[]) => {

@@ -208,6 +208,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       ctx = new AudioContext({ sampleRate: 16000 });
       micCtxRef.current = ctx;
 
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- ordered, not deferrable: the worklet module must finish loading before `new AudioWorkletNode(ctx, "pcm16-processor")` below (the "pcm16-processor" name is only registered by addModule), and the early-return guard immediately after is a deliberate post-await mount re-check that tears down the now-abandoned stream/context if the session unmounted during the load.
       await ctx.audioWorklet.addModule("/audio-worklet-processor.js");
       if (!mountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
