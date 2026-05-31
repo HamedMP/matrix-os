@@ -46,6 +46,20 @@ build config exactly. Use `lucide-react` for icons. React 19. No external CDNs.
 
 ## 2. Data — the MatrixOS DB bridge (canonical types)
 
+> **HARD RULE — the #1 cause of broken apps. Read twice.**
+> Apps run inside a **sandboxed `srcdoc` iframe with `origin: null`** and a strict CSP
+> (`connect-src 'self'`). Therefore:
+> - **NEVER call `fetch()` to `/api/bridge/*` (or any URL) directly.** It is blocked by both CORS
+>   (null origin) and CSP. The shell shows `Access-Control-Allow-Origin … blocked` and the app breaks.
+> - **`localStorage` may throw `SecurityError`** in this sandbox — do not rely on it in the shell.
+>   It is fine only as a guarded fallback for the jsdom test environment.
+> - The **only** valid persistence transport is the injected `window.MatrixOS` bridge
+>   (`db.*`, and `readData`/`writeData`), which uses `postMessage` to the parent shell. Use it.
+> - **External APIs are also blocked** by `connect-src 'self'` — you cannot fetch third-party URLs
+>   from the iframe. If your app wants external data, degrade gracefully to seeded/demo data.
+> Verdict: route ALL persistence through `window.MatrixOS.db`. Guard for `undefined` (tests). Never `fetch`.
+
+
 If your app has durable structured data, declare tables in `matrix.json` `storage` (§4) and use
 `window.MatrixOS.db`. It is injected by the shell and proxies to owner-controlled Postgres via the
 gateway. **The bridge always returns rows with an auto-generated `id` (uuid) and `created_at`
