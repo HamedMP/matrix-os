@@ -48,6 +48,7 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           setSelectedNode(node.id);
+          setFocusedNode(isFocused ? null : node.id);
         }
       }}
     >
