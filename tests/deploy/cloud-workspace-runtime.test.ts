@@ -11,9 +11,17 @@ describe("cloud workspace runtime gates", () => {
     for (const tool of ["zellij", "tmux", "gh", "openssh-client", "bubblewrap", "git", "sudo", "code-server"]) {
       expect(dockerfile).toContain(tool);
     }
-    for (const agentCli of ["@anthropic-ai/claude-code@latest", "@openai/codex@latest", "opencode-ai", "@mariozechner/pi-coding-agent"]) {
+    for (const agentCli of [
+      "@anthropic-ai/claude-code@latest",
+      "@openai/codex@latest",
+      "OPENCODE_AI_VERSION=latest",
+      "PI_CODING_AGENT_VERSION=latest",
+      '"opencode-ai@${OPENCODE_AI_VERSION}"',
+      '"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"',
+    ]) {
       expect(dockerfile).toContain(agentCli);
     }
+    expect(dockerfile).toContain("npm install -g --ignore-scripts");
     expect(dockerfile).toContain("hermes-agent/main/scripts/install.sh");
   });
 

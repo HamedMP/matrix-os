@@ -100,6 +100,7 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
+const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
 const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
 const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
@@ -188,6 +189,19 @@ const AppSessionExchangeBodySchema = z.object({
   redirectTo: z.string().min(1).max(2048).optional(),
   runtime: RuntimeSlotSchema.optional(),
 }).strict();
+
+const AppSessionProvisionBodySchema = z.object({
+  runtime: RuntimeSlotSchema.optional().default('primary'),
+}).strict();
+
+const ClerkUserProfileSchema = z.object({
+  username: z.string().nullable().optional(),
+  primary_email_address_id: z.string().nullable().optional(),
+  email_addresses: z.array(z.object({
+    id: z.string().optional(),
+    email_address: z.string().optional(),
+  }).passthrough()).optional(),
+}).passthrough();
 
 function sanitizeProxyResponseHeaders(headers: Headers): Headers {
   const sanitized = new Headers(headers);
@@ -675,6 +689,147 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Cloudflare-CDN-Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   c.header('Expires', '0');
+}
+
+function isPostgresUniqueViolation(err: unknown): boolean {
+  return err instanceof Error && (err as Error & { code?: unknown }).code === '23505';
+}
+
+function jsonCustomerVpsError(c: import('hono').Context, err: unknown, context: string) {
+  if (err instanceof CustomerVpsError) {
+    const status = err.status === 402 ? 402 : err.status === 409 ? 409 : 503;
+    const code = err.status === 402
+      ? 'billing_required'
+      : err.status === 409
+        ? 'provisioning_conflict'
+        : 'provisioning_failed';
+    return c.json({ error: err.publicMessage, code }, status as never);
+  }
+  if (isPostgresUniqueViolation(err)) {
+    return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
+  }
+  logPlatformRouteError(context, err);
+  return c.json({ error: 'Provisioning failed', code: 'provisioning_failed' }, 503);
+}
+
+function normalizeProvisionHandleCandidate(value: string | undefined | null): string | null {
+  if (!value) return null;
+  const candidate = value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 31)
+    .replace(/-+$/g, '');
+  return HANDLE_PATTERN.test(candidate) ? candidate : null;
+}
+
+function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string): string {
+  const suffix = createHmac('sha256', secretKey)
+    .update(userId)
+    .digest('hex')
+    .slice(0, 12);
+  return `u${suffix}`;
+}
+
+async function resolveProvisionHandleCandidatesFromClerkProfile(
+  userId: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  const secretKey = env.CLERK_SECRET_KEY;
+  if (!secretKey) {
+    throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(userId)}`, {
+      headers: {
+        authorization: `Bearer ${secretKey}`,
+        accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(CLERK_USER_LOOKUP_TIMEOUT_MS),
+      redirect: 'error',
+    });
+  } catch (err: unknown) {
+    logPlatformRouteError('/api/auth/provision-runtime clerk lookup', err);
+    throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+  }
+  if (!response.ok) {
+    logPlatformRouteError(
+      '/api/auth/provision-runtime clerk lookup',
+      new Error(`Clerk user lookup failed with status ${response.status}`),
+    );
+    throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+  }
+
+  const profile = ClerkUserProfileSchema.safeParse(await response.json());
+  if (!profile.success) {
+    throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+  }
+  const candidates: string[] = [];
+  const addCandidate = (candidate: string | null) => {
+    if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
+  };
+  const usernameHandle = normalizeProvisionHandleCandidate(profile.data.username);
+  addCandidate(usernameHandle);
+
+  const primaryEmail = profile.data.email_addresses?.find(
+    (email) => email.id && email.id === profile.data.primary_email_address_id,
+  )?.email_address;
+  const primaryEmailHandle = normalizeProvisionHandleCandidate(primaryEmail?.split('@')[0]);
+  addCandidate(primaryEmailHandle);
+
+  const firstEmailHandle = normalizeProvisionHandleCandidate(
+    profile.data.email_addresses?.[0]?.email_address?.split('@')[0],
+  );
+  addCandidate(firstEmailHandle);
+  addCandidate(fallbackProvisionHandleForClerkUser(userId, secretKey));
+  return candidates;
+}
+
+async function isProvisionHandleAvailableForClerkUser(
+  db: PlatformDB,
+  handle: string,
+  clerkUserId: string,
+): Promise<boolean> {
+  const conflictingActiveHandleMachine = await db.executor
+    .selectFrom('user_machines')
+    .select('clerk_user_id')
+    .where('handle', '=', handle)
+    .where('deleted_at', 'is', null)
+    .where('clerk_user_id', '!=', clerkUserId)
+    .executeTakeFirst();
+  if (conflictingActiveHandleMachine) {
+    return false;
+  }
+  // Same-user VPS machines supersede stale docker-era container rows for the same handle.
+  const ownedActiveHandleMachine = await db.executor
+    .selectFrom('user_machines')
+    .select('machine_id')
+    .where('handle', '=', handle)
+    .where('deleted_at', 'is', null)
+    .where('clerk_user_id', '=', clerkUserId)
+    .executeTakeFirst();
+  if (ownedActiveHandleMachine) {
+    return true;
+  }
+  const legacyHandleContainer = await getContainer(db, handle);
+  return !legacyHandleContainer || legacyHandleContainer.clerkUserId === clerkUserId;
+}
+
+async function selectProvisionHandleForClerkUser(
+  db: PlatformDB,
+  userId: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | null> {
+  const candidates = await resolveProvisionHandleCandidatesFromClerkProfile(userId, env);
+  for (const handle of candidates) {
+    if (await isProvisionHandleAvailableForClerkUser(db, handle, userId)) {
+      return handle;
+    }
+  }
+  return null;
 }
 
 function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
@@ -1454,6 +1609,37 @@ function getAuthPage(
     var redirectTarget = ${redirectTargetJson};
     var signOutTarget = ${signOutTargetJson};
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
+    var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
+    var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
+    function hasTrustedCheckoutReturn() {
+      try {
+        var rawAttemptAt = window.sessionStorage.getItem(checkoutAttemptStorageKey);
+        if (!rawAttemptAt) return false;
+        var attemptAt = Number(rawAttemptAt);
+        return Number.isFinite(attemptAt) && Date.now() - attemptAt <= checkoutAttemptMaxAgeMs;
+      } catch (err) {
+        console.warn('[matrix] Unable to read checkout attempt state', err instanceof Error ? err.message : String(err));
+        return false;
+      }
+    }
+    function stripCheckoutReturnParams() {
+      try {
+        var currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.delete('checkout');
+        if (currentUrl.searchParams.get('billing') === 'success') currentUrl.searchParams.delete('billing');
+        window.history.replaceState(null, '', currentUrl.pathname + currentUrl.search + currentUrl.hash);
+      } catch (err) {
+        console.warn('[matrix] Unable to clear checkout return state', err instanceof Error ? err.message : String(err));
+      }
+    }
+    var checkoutReturnRequested = new URLSearchParams(window.location.search || '').get('checkout') === 'success';
+    var checkoutJustCompleted = checkoutReturnRequested && hasTrustedCheckoutReturn();
+    if (checkoutReturnRequested) stripCheckoutReturnParams();
+    var provisionStarted = false;
+    var provisioningPolls = 0;
+    var maxProvisioningPolls = 60;
+    var billingConfirmationPolls = 0;
+    var maxBillingConfirmationPolls = 60;
     var appearance = {
       variables: {
         colorPrimary: '#D06F25',
@@ -1551,10 +1737,177 @@ function getAuthPage(
     function showNoRuntimeState() {
       renderSessionState(
         'No Matrix computer is attached',
-        'This Clerk account is signed in, but it does not have a Matrix computer yet. Sign out to use another account, or ask the operator to provision this account.',
-        'Check again',
-        continueWithClerkSession
+        'This account is signed in, but Matrix could not find an attached cloud computer yet.',
+        'Provision Matrix computer',
+        startProvisioningFromClerkSession
       );
+    }
+    function showBillingRequiredState() {
+      renderSessionState(
+        'Billing required',
+        'Start hosted billing before Matrix provisions your cloud computer.',
+        'Start checkout',
+        startBillingCheckoutFromClerkSession
+      );
+    }
+    function rememberBillingCheckoutAttempt() {
+      try {
+        window.sessionStorage.setItem(checkoutAttemptStorageKey, String(Date.now()));
+      } catch (err) {
+        console.warn('[matrix] Unable to write checkout attempt state', err instanceof Error ? err.message : String(err));
+      }
+    }
+    function startBillingCheckoutFromClerkSession() {
+      showLoadingState('Opening secure checkout...');
+      if (!window.Clerk.session) {
+        showSignedInRecoveryState();
+        return;
+      }
+      window.Clerk.session.getToken()
+        .then(function(token) {
+          if (!token) {
+            showSignedInRecoveryState();
+            return null;
+          }
+          var controller = new AbortController();
+          var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
+          return fetch('/billing/checkout', {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json',
+              Accept: 'application/json'
+            },
+            body: JSON.stringify({
+              planSlug: 'matrix_builder',
+              interval: 'monthly',
+              regionSlug: 'region_fsn1'
+            }),
+            credentials: 'same-origin',
+            signal: controller.signal
+          }).finally(function() {
+            window.clearTimeout(timeoutId);
+          });
+        })
+        .then(function(res) {
+          if (!res) return null;
+          return res.json().catch(function(err) {
+            console.warn('[matrix] Unable to parse checkout response', err instanceof Error ? err.message : String(err));
+            return null;
+          }).then(function(body) {
+            if (!res.ok || !body || typeof body.url !== 'string') {
+              showBillingRequiredState();
+              return;
+            }
+            rememberBillingCheckoutAttempt();
+            window.location.assign(body.url);
+          });
+        })
+        .catch(function(err) {
+          console.error('[matrix] Billing checkout failed', err instanceof Error ? err.message : String(err));
+          showBillingRequiredState();
+        });
+    }
+    function pollProvisioningSession() {
+      provisioningPolls += 1;
+      if (provisioningPolls > maxProvisioningPolls) {
+        provisionStarted = false;
+        checkoutJustCompleted = false;
+        billingConfirmationPolls = 0;
+        showSignedInRecoveryState();
+        return;
+      }
+      window.setTimeout(continueWithClerkSession, 8000);
+    }
+    function retryProvisioningAfterBillingDelay() {
+      billingConfirmationPolls += 1;
+      if (billingConfirmationPolls > maxBillingConfirmationPolls) {
+        provisionStarted = false;
+        checkoutJustCompleted = false;
+        showBillingRequiredState();
+        return;
+      }
+      provisionStarted = false;
+      showLoadingState('Confirming billing...');
+      window.setTimeout(startProvisioningFromClerkSession, 8000);
+    }
+    function startProvisioningFromClerkSession() {
+      if (provisionStarted) return;
+      provisionStarted = true;
+      showLoadingState('Starting your Matrix computer...');
+      if (!window.Clerk.session) {
+        provisionStarted = false;
+        showSignedInRecoveryState();
+        return;
+      }
+      window.Clerk.session.getToken()
+        .then(function(token) {
+          if (!token) {
+            provisionStarted = false;
+            showSignedInRecoveryState();
+            return null;
+          }
+          var controller = new AbortController();
+          var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
+          return fetch('/api/auth/provision-runtime', {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              runtime: requestedRuntime || undefined
+            }),
+            credentials: 'same-origin',
+            signal: controller.signal
+          }).finally(function() {
+            window.clearTimeout(timeoutId);
+          });
+        })
+        .then(function(res) {
+          if (!res) return null;
+          if (res.ok) {
+            billingConfirmationPolls = 0;
+            provisioningPolls = 0;
+            showLoadingState('Preparing your Matrix computer...');
+            pollProvisioningSession();
+            return null;
+          }
+          if (res.status === 402) {
+            if (checkoutJustCompleted) {
+              retryProvisioningAfterBillingDelay();
+              return null;
+            }
+            provisionStarted = false;
+            showBillingRequiredState();
+            return null;
+          }
+          if (res.status === 409) {
+            return res.json().catch(function(err) {
+              console.warn('[matrix] Unable to parse provisioning conflict response', err instanceof Error ? err.message : String(err));
+              return null;
+            }).then(function(body) {
+              if (body && body.code === 'provisioning_conflict') {
+                billingConfirmationPolls = 0;
+                provisioningPolls = 0;
+                showLoadingState('Preparing your Matrix computer...');
+                pollProvisioningSession();
+                return;
+              }
+              checkoutJustCompleted = false;
+              provisionStarted = false;
+              showSignedInRecoveryState();
+            });
+          }
+          provisionStarted = false;
+          showSignedInRecoveryState();
+          return null;
+        })
+        .catch(function(err) {
+          console.error('[matrix] Runtime provisioning failed', err instanceof Error ? err.message : String(err));
+          provisionStarted = false;
+          showSignedInRecoveryState();
+        });
     }
     function continueWithClerkSession() {
       showLoadingState('Loading your Matrix computer...');
@@ -1582,6 +1935,15 @@ function getAuthPage(
           if (!res) return null;
           if (res.ok) return res.json();
           if (res.status === 404) {
+            if (provisionStarted) {
+              showLoadingState('Preparing your Matrix computer...');
+              pollProvisioningSession();
+              return null;
+            }
+            if (checkoutJustCompleted) {
+              startProvisioningFromClerkSession();
+              return null;
+            }
             showNoRuntimeState();
             return null;
           }
@@ -2686,6 +3048,78 @@ export function createApp(deps: {
     return c.json({ cleared: true });
   });
 
+  app.post('/api/auth/provision-runtime', bodyLimit({ maxSize: 1024 }), async (c) => {
+    if (!clerkAuth) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!deps.customerVpsService) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        logPlatformRouteError('/api/auth/provision-runtime parse', err);
+      }
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    const parsed = AppSessionProvisionBodySchema.safeParse(body);
+    if (!parsed.success) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
+    if (!token) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const result = await clerkAuth.verify(token);
+    if (!result.authenticated || !result.userId) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    try {
+      const handle = await selectProvisionHandleForClerkUser(db, result.userId, appEnv);
+      if (!handle) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
+      }
+      const provisioned = await deps.customerVpsService.provision({
+        handle,
+        clerkUserId: result.userId,
+        runtimeSlot: parsed.data.runtime,
+      });
+      if (matrixProvisioner) {
+        try {
+          await matrixProvisioner.provisionUser(handle);
+        } catch (matrixErr: unknown) {
+          console.error(
+            `[matrix] Failed to provision Matrix accounts for ${handle}:`,
+            matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
+          );
+        }
+      }
+      applyNoStoreHeaders(c);
+      return c.json({
+        runtime: 'customer_vps',
+        handle,
+        clerkUserId: result.userId,
+        ...provisioned,
+        runtimeSlot: parsed.data.runtime,
+      }, 202);
+    } catch (err: unknown) {
+      applyNoStoreHeaders(c);
+      return jsonCustomerVpsError(c, err, '/api/auth/provision-runtime');
+    }
+  });
+
   app.post('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
     if (!platformJwtSecret || !clerkAuth) {
       applyNoStoreHeaders(c);
@@ -2772,7 +3206,8 @@ export function createApp(deps: {
       reqPath === '/auth/device' ||
       reqPath.startsWith('/auth/device/') ||
       reqPath.startsWith('/api/auth/device/') ||
-      reqPath === '/api/auth/app-session'
+      reqPath === '/api/auth/app-session' ||
+      reqPath === '/api/auth/provision-runtime'
     )) {
       return next();
     }

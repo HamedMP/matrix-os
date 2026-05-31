@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+import { createHmac } from "node:crypto";
 import {
   type PlatformDB,
   deleteContainer,
@@ -27,6 +28,13 @@ import type Dockerode from "dockerode";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
+
+function expectedFallbackProvisionHandle(clerkUserId: string, secretKey = "sk_test_matrix"): string {
+  return `u${createHmac("sha256", secretKey)
+    .update(clerkUserId)
+    .digest("hex")
+    .slice(0, 12)}`;
+}
 
 function stubOrchestrator(): Orchestrator {
   return {
@@ -1285,6 +1293,412 @@ describe("platform proxy routing", () => {
     expect(exchange.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
+  it("lets a signed-in checkout return start hosted runtime provisioning without admin credentials", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "newuser",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toEqual({
+      runtime: "customer_vps",
+      handle: "newuser",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+      status: "provisioning",
+      etaSeconds: 90,
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.clerk.com/v1/users/user_new",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer sk_test_matrix",
+          accept: "application/json",
+        }),
+        redirect: "error",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("trims generated handles again after length limiting", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "very-long-username-with-hyphen");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "very-long-username-with-hyphen-x",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "fallback@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({ status: "provisioning" }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toMatchObject({
+      handle: "very-long-username-with-hyphen",
+      clerkUserId: "user_new",
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "very-long-username-with-hyphen",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+  });
+
+  it("falls back instead of claiming another user's active Clerk handle", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff151",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123482,
+      publicIPv4: "203.0.113.33",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:00:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "alice",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "alice@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({ status: "provisioning" }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    const fallbackHandle = expectedFallbackProvisionHandle("user_new");
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toEqual({
+      runtime: "customer_vps",
+      handle: fallbackHandle,
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+      status: "provisioning",
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: fallbackHandle,
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+  });
+
+  it("falls back instead of claiming another user's active handle in another slot", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff152",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123483,
+      publicIPv4: "203.0.113.34",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:00:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "alice",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "alice@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({ status: "provisioning" }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    const fallbackHandle = expectedFallbackProvisionHandle("user_new");
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toEqual({
+      runtime: "customer_vps",
+      handle: fallbackHandle,
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+      status: "provisioning",
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: fallbackHandle,
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+  });
+
+  it("keeps a same-user active machine handle even with a stale legacy container row", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff153",
+      clerkUserId: "user_new",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123484,
+      publicIPv4: "203.0.113.35",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:00:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "alice",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "alice@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({ status: "running" }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toEqual({
+      runtime: "customer_vps",
+      handle: "alice",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+      status: "running",
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "alice",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+  });
+
+  it("keeps a same-user handle when another runtime slot already uses it", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff155",
+      clerkUserId: "user_new",
+      handle: "alice",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123486,
+      publicIPv4: "203.0.113.37",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:00:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "alice",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "alice@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({ status: "provisioning" }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toEqual({
+      runtime: "customer_vps",
+      handle: "alice",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+      status: "provisioning",
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "alice",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+  });
+
+  it("falls back instead of claiming another user's legacy container handle", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "alice",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "alice@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({ status: "provisioning" }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    const fallbackHandle = expectedFallbackProvisionHandle("user_new");
+    expect(provision.status).toBe(202);
+    await expect(provision.json()).resolves.toEqual({
+      runtime: "customer_vps",
+      handle: fallbackHandle,
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+      status: "provisioning",
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: fallbackHandle,
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+  });
+
   it("continues signed-in auth pages through a Clerk token exchange", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
     const app = createApp({
@@ -1304,8 +1718,29 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain("window.Clerk.session.getToken()");
     expect(html).toContain("fetch('/api/auth/app-session'");
+    expect(html).toContain("fetch('/api/auth/provision-runtime'");
+    expect(html).toContain("signal: controller.signal");
+    expect(html).toContain("window.clearTimeout(timeoutId);");
+    expect(html).toContain("matrix.billing.checkoutAttemptAt");
+    expect(html).toContain("hasTrustedCheckoutReturn()");
+    expect(html).toContain("stripCheckoutReturnParams()");
+    expect(html).toContain("if (provisionStarted)");
+    expect(html).toContain("maxBillingConfirmationPolls");
+    expect(html).toContain("provisioningPolls = 0;");
+    expect(html).toContain("Billing required");
+    expect(html).toContain("fetch('/billing/checkout'");
+    expect(html).toContain("planSlug: 'matrix_builder'");
+    expect(html).toContain("Opening secure checkout");
+    expect(html).toContain("retryProvisioningAfterBillingDelay()");
+    expect(html).toContain("Confirming billing");
+    expect(html).toContain("provisioning_conflict");
+    expect(html).toContain("if (body && body.code === 'provisioning_conflict') {\n                billingConfirmationPolls = 0;\n                provisioningPolls = 0;");
+    expect(html).toContain("checkoutJustCompleted = false;");
+    expect(html).toContain("Starting your Matrix computer");
+    expect(html).toContain("Preparing your Matrix computer");
     expect(html).toContain("method: 'DELETE'");
     expect(html).toContain("Loading your Matrix computer");
+    expect(html).not.toContain("ask the operator to provision this account");
     expect(html).not.toContain("You are already signed in");
   });
 
