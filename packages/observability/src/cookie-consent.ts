@@ -87,6 +87,18 @@ function persistCookieConsent(consent: Exclude<StoredCookieConsent, null>): void
   }
 }
 
+function resolveConsentStatus(args: {
+  stored: StoredCookieConsent;
+  loaded: boolean;
+  explicit: ConsentStatus | undefined;
+}): ConsentStatus {
+  const { stored, loaded, explicit } = args;
+  if (stored === "declined") return "denied";
+  if (stored === "accepted") return "granted";
+  if (!loaded) return "pending";
+  return explicit ?? "pending";
+}
+
 export function PostHogCookieBanner({
   config,
   visitorCountry,
@@ -103,39 +115,36 @@ export function PostHogCookieBanner({
 
   useEffect(() => {
     if (!config || !consentRequired) return;
-    if (previewForced) {
-      setConsentStatus("pending");
-      return;
-    }
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
     let retries = 0;
 
-    function refreshConsentStatus() {
-      if (cancelled) return;
-      const storedConsent = getStoredCookieConsent();
-      if (storedConsent === "declined") {
-        setConsentStatus("denied");
-        return;
-      }
-      if (!posthogClient.__loaded) {
-        setConsentStatus(storedConsent === "accepted" ? "granted" : "pending");
-        if (retries < POSTHOG_LOAD_MAX_RETRIES) {
-          retries += 1;
-          timeout = setTimeout(refreshConsentStatus, POSTHOG_LOAD_POLL_INTERVAL_MS);
-        }
-        return;
-      }
-      if (storedConsent === "accepted") {
-        posthogClient.opt_in_capturing();
-        setConsentStatus("granted");
-        return;
-      }
-      setConsentStatus(posthogClient.get_explicit_consent_status() ?? "pending");
+    function schedule(delayMs: number) {
+      timeout = setTimeout(resolveConsent, delayMs);
     }
 
-    refreshConsentStatus();
+    // All state transitions run inside this async (timer) callback so the banner
+    // state is never adjusted synchronously during the prop-keyed effect. It also
+    // keeps the initial render deterministic (status stays "unknown" on the server
+    // and first client render), avoiding a hydration mismatch.
+    function resolveConsent() {
+      if (cancelled) return;
+      const stored = previewForced ? null : getStoredCookieConsent();
+      const loaded = !previewForced && posthogClient.__loaded === true;
+      if (loaded && stored === "accepted") {
+        posthogClient.opt_in_capturing();
+      }
+      const explicit = loaded ? posthogClient.get_explicit_consent_status() : undefined;
+      setConsentStatus(previewForced ? "pending" : resolveConsentStatus({ stored, loaded, explicit }));
+
+      if (!previewForced && stored !== "declined" && !loaded && retries < POSTHOG_LOAD_MAX_RETRIES) {
+        retries += 1;
+        schedule(POSTHOG_LOAD_POLL_INTERVAL_MS);
+      }
+    }
+
+    schedule(0);
 
     return () => {
       cancelled = true;
