@@ -134,6 +134,21 @@ describe("profile-aware auth CLI commands", () => {
     ]);
   });
 
+  it("reports authenticated when whoami uses an explicit token override", async () => {
+    const logs = captureLogs();
+
+    await whoamiCommand.run!({ args: { dev: true, token: "operator-token", json: true } } as never);
+
+    expect(JSON.parse(logs[0]!)).toEqual({
+      v: 1,
+      ok: true,
+      data: {
+        profile: "local",
+        authenticated: true,
+      },
+    });
+  });
+
   it("uses the resolved profile and token for status checks", async () => {
     await mkdir(join(process.env.HOME!, ".matrixos"), { recursive: true });
     await writeFile(

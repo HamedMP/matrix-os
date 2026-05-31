@@ -1,8 +1,8 @@
 import { defineCommand } from "citty";
-import { isExpired, loadProfileAuth } from "../../auth/token-store.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
 import { probeGatewayHealth } from "../gateway-health.js";
+import { resolveCliAuthStatus } from "../auth-state.js";
 
 function writeError(err: unknown, json: boolean): void {
   const code =
@@ -25,13 +25,14 @@ export const statusCommand = defineCommand({
     const json = args.json === true;
     try {
       const profile = await resolveCliProfile(args);
-      const auth = profile.token ? null : await loadProfileAuth(profile.name);
-      const token = profile.token ?? (auth && !isExpired(auth) ? auth.accessToken : undefined);
+      const authStatus = await resolveCliAuthStatus(profile);
+      const token = authStatus.status === "authenticated" ? authStatus.token : undefined;
       const gateway = await probeGatewayHealth(profile.gatewayUrl, token);
       const data = {
         profile: profile.name,
         gatewayUrl: profile.gatewayUrl,
         authenticated: !!token,
+        ...(authStatus.status === "expired" ? { auth: "expired" as const } : {}),
         gateway,
       };
 
@@ -40,7 +41,7 @@ export const statusCommand = defineCommand({
       } else {
         console.log(`Profile: ${data.profile}`);
         console.log(`Gateway: ${data.gatewayUrl} (${data.gateway.status})`);
-        console.log(`Authenticated: ${data.authenticated ? "yes" : "no"}`);
+        console.log(`Authenticated: ${data.authenticated ? "yes" : authStatus.status === "expired" ? "expired" : "no"}`);
       }
     } catch (err: unknown) {
       writeError(err, json);
