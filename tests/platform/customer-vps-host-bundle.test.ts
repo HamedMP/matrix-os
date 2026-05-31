@@ -51,17 +51,11 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
-    expect(script).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
-    expect(script).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(script).toContain('GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"');
     expect(script).toContain('GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
-    expect(script).toContain('runtime/code-server');
-    expect(script).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-gateway"');
-    expect(script).toContain('chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"');
-    expect(script).toContain('find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
     expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
@@ -69,6 +63,35 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('bin app runtime systemd release.json');
+  });
+
+  it('host bundle defers heavy optional tools to selectable boot-time packs', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
+
+    expect(script).toContain('matrix-install-tool-pack');
+    expect(script).not.toContain('curl --fail --location --max-time 180 "$CODE_SERVER_URL"');
+    expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
+    expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
+    expect(installer).toContain('install_coding_agents()');
+    expect(installer).toContain('install_code_server()');
+    expect(installer).toContain('install_hermes()');
+    expect(installer).toContain('@anthropic-ai/claude-code@latest');
+    expect(installer).toContain('@openai/codex@latest');
+    expect(installer).toContain('opencode-ai@1.14.25');
+    expect(installer).toContain('@mariozechner/pi-coding-agent@0.70.2');
+    expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
+    expect(installer).toContain('sync-matrix-agent-skills.sh');
+    expect(installer).toContain('coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('return 75');
+    expect(installer).not.toContain('exit 0');
+    expect(installer).toContain('systemctl start matrix-linux-tools.service');
+    expect(installer).toContain('sudo systemctl start matrix-linux-tools.service');
+    expect(installer).toContain('failed=0');
+    expect(installer).toContain('if ! wait "$pid"; then');
+    expect(installer).toContain('exit "$failed"');
+    expect(installer).not.toMatch(/wait "\$pid_coding_agents" "\$pid_code_server"/);
   });
 
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {

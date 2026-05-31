@@ -10,10 +10,6 @@ NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_ARCHIVE="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
 NODE_URL="${NODE_BASE_URL}/${NODE_ARCHIVE}"
-CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
-CODE_SERVER_DIST="code-server-${CODE_SERVER_VERSION}-linux-amd64"
-CODE_SERVER_ARCHIVE="${CODE_SERVER_DIST}.tar.gz"
-CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"
 ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.1}"
 ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
 ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
@@ -59,29 +55,16 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 
-curl --fail --location --max-time 180 "$CODE_SERVER_URL" -o "$DIST_DIR/$CODE_SERVER_ARCHIVE"
-tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE" -C "$STAGE_DIR/runtime"
-mv "$STAGE_DIR/runtime/$CODE_SERVER_DIST" "$STAGE_DIR/runtime/code-server"
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
 chmod 0755 "$STAGE_DIR/bin/zellij"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
-cat > "$STAGE_DIR/runtime/node/bin/code-server" <<'EOS'
-#!/usr/bin/env sh
-exec /opt/matrix/runtime/code-server/bin/code-server "$@"
-EOS
-chmod 0755 "$STAGE_DIR/runtime/node/bin/code-server"
-"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node" \
-  @anthropic-ai/claude-code@latest \
-  @openai/codex@latest \
-  opencode-ai@1.14.25 \
-  @mariozechner/pi-coding-agent@0.70.2
 curl --fail --location --max-time 120 "$UV_INSTALLER_URL" -o "$DIST_DIR/uv-install.sh"
 INSTALLER_NO_MODIFY_PATH=1 UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin" sh "$DIST_DIR/uv-install.sh"
-# Customer VPS terminals run as the matrix user. Keep global CLI packages and
-# bin shims group-writable so Codex/Claude/opencode/pi/uv can self-update in place.
+# Customer VPS terminals run as the matrix user. Keep the runtime prefix
+# group-writable so selectable boot-time tool packs can install in place.
 chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
@@ -89,7 +72,7 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
+chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"

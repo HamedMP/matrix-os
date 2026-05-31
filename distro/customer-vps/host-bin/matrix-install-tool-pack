@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-/home/matrix}"
+MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
+NODE_PREFIX="${MATRIX_NODE_PREFIX:-$MATRIX_RUNTIME_DIR/node}"
+CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
+CODE_SERVER_DIST="code-server-${CODE_SERVER_VERSION}-linux-amd64"
+CODE_SERVER_ARCHIVE="${CODE_SERVER_DIST}.tar.gz"
+CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"
+export PATH="$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+log() {
+  printf 'matrix-install-tool-pack: %s\n' "$*"
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: matrix-install-tool-pack <coding-agents|code-server|hermes|linux-tools|all>
+EOF
+}
+
+retry() {
+  local max_attempts="$1"
+  local delay_seconds="$2"
+  shift 2
+  local attempt=1
+  until "$@"; do
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      return 1
+    fi
+    log "attempt ${attempt} failed, retrying in ${delay_seconds}s"
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}
+
+run_as_matrix() {
+  if [ "$(id -u -n)" = "$MATRIX_RUNTIME_USER" ]; then
+    env HOME="$MATRIX_RUNTIME_HOME" PATH="$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" "$@"
+    return
+  fi
+  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+    HOME="$MATRIX_RUNTIME_HOME" \
+    PATH="$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+    "$@"
+}
+
+runtime_chmod() {
+  if [ "$(id -u)" = "0" ]; then
+    chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
+    find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} +
+    return
+  fi
+  sudo chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
+  sudo find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} +
+}
+
+with_pack_lock() {
+  local pack="$1"
+  shift
+  local lock_path="/tmp/matrix-tool-pack-${pack}.lock"
+  exec 9>"$lock_path"
+  if ! flock -n 9; then
+    log "${pack} install is already running"
+    return 75
+  fi
+  "$@"
+}
+
+sync_agent_skills() {
+  if [ -x "$MATRIX_APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$MATRIX_APP_DIR/skills/matrix" ]; then
+    run_as_matrix bash -lc "cd '$MATRIX_APP_DIR' && MATRIX_SKILL_TARGETS=matrix,claude,codex MATRIX_SKILLS_SOURCE='$MATRIX_APP_DIR/skills/matrix' MATRIX_HOME='${MATRIX_HOME:-$MATRIX_RUNTIME_HOME/home}' ./scripts/sync-matrix-agent-skills.sh"
+  fi
+}
+
+install_coding_agents() {
+  log "installing coding agent CLIs"
+  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
+    @anthropic-ai/claude-code@latest \
+    @openai/codex@latest \
+    opencode-ai@1.14.25 \
+    @mariozechner/pi-coding-agent@0.70.2
+  runtime_chmod
+  sync_agent_skills
+  log "coding agent CLIs installed"
+}
+
+install_code_server() {
+  if command -v code-server >/dev/null 2>&1; then
+    log "code-server is already installed"
+    return
+  fi
+  log "installing code-server ${CODE_SERVER_VERSION}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir:-}"' RETURN
+  retry 3 15 curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+    --connect-timeout 10 --max-time 180 \
+    "$CODE_SERVER_URL" -o "$tmp_dir/$CODE_SERVER_ARCHIVE"
+  tar -xzf "$tmp_dir/$CODE_SERVER_ARCHIVE" -C "$tmp_dir"
+  sudo rm -rf "$MATRIX_RUNTIME_DIR/code-server"
+  sudo mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"
+  sudo chown -R root:matrix "$MATRIX_RUNTIME_DIR/code-server"
+  sudo chmod -R g+rwX "$MATRIX_RUNTIME_DIR/code-server"
+  cat > "$NODE_PREFIX/bin/code-server" <<'EOS'
+#!/usr/bin/env sh
+exec /opt/matrix/runtime/code-server/bin/code-server "$@"
+EOS
+  chmod 0755 "$NODE_PREFIX/bin/code-server"
+  log "code-server installed"
+}
+
+install_hermes() {
+  log "installing Hermes"
+  if [ "$(id -u)" = "0" ]; then
+    /opt/matrix/bin/matrix-install-hermes
+  else
+    sudo /opt/matrix/bin/matrix-install-hermes
+  fi
+}
+
+install_linux_tools() {
+  log "installing Linux developer tools"
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files matrix-linux-tools.service >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      systemctl start matrix-linux-tools.service
+    else
+      sudo systemctl start matrix-linux-tools.service
+    fi
+    return
+  fi
+  if [ "$(id -u)" = "0" ]; then
+    sudo -H -u "$MATRIX_RUNTIME_USER" /opt/matrix/bin/matrix-install-linux-tools
+  else
+    /opt/matrix/bin/matrix-install-linux-tools
+  fi
+}
+
+pack="${1:-}"
+case "$pack" in
+  coding-agents) with_pack_lock "$pack" install_coding_agents ;;
+  code-server) with_pack_lock "$pack" install_code_server ;;
+  hermes) with_pack_lock "$pack" install_hermes ;;
+  linux-tools) with_pack_lock "$pack" install_linux_tools ;;
+  all)
+    with_pack_lock coding-agents install_coding_agents &
+    pid_coding_agents="$!"
+    with_pack_lock code-server install_code_server &
+    pid_code_server="$!"
+    with_pack_lock hermes install_hermes &
+    pid_hermes="$!"
+    with_pack_lock linux-tools install_linux_tools &
+    pid_linux_tools="$!"
+    failed=0
+    for pid in "$pid_coding_agents" "$pid_code_server" "$pid_hermes" "$pid_linux_tools"; do
+      if ! wait "$pid"; then
+        failed=1
+      fi
+    done
+    exit "$failed"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
