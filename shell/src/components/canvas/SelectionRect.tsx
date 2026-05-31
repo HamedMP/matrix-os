@@ -13,6 +13,7 @@ export function SelectionRect({ onSelect }: SelectionRectProps) {
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const screenToCanvas = useCanvasTransform((s) => s.screenToCanvas);
   const zoom = useCanvasTransform((s) => s.zoom);
+  const marqueeZIndex = useWindowManager((s) => s.nextZ + 1);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -78,7 +79,8 @@ export function SelectionRect({ onSelect }: SelectionRectProps) {
             top: rect.y,
             width: rect.w,
             height: rect.h,
-            zIndex: 9999,
+            // The marquee is a sibling of the runtime-incrementing window stack, so it must track the current top window.
+            zIndex: marqueeZIndex,
           }}
         />
       )}

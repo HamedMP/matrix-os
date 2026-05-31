@@ -1,7 +1,7 @@
 "use client";
 
 // Inspired by AI Elements speech-input pattern, uses Web Speech API
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
@@ -63,15 +63,21 @@ function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
   );
 }
 
+// Browser capability never changes after load, so subscribe is a no-op.
+const subscribeNever = () => () => {};
+const getIsSupportedSnapshot = () => getSpeechRecognition() !== null;
+// SSR has no SpeechRecognition; report unsupported on the server to keep the
+// hydrated markup stable, then read the real capability client-side.
+const getIsSupportedServerSnapshot = () => false;
+
 export function useSpeechInput(opts?: UseSpeechInputOptions): UseSpeechInputReturn {
   const [state, setState] = useState<SpeechState>("idle");
-  const [isSupported, setIsSupported] = useState(false);
+  const isSupported = useSyncExternalStore(
+    subscribeNever,
+    getIsSupportedSnapshot,
+    getIsSupportedServerSnapshot,
+  );
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- client-only browser feature detection: getSpeechRecognition() reads window.(webkit)SpeechRecognition which is unavailable during SSR. Defaulting to false on the server and flipping after mount avoids a hydration mismatch; the value is not derivable in render.
-    setIsSupported(getSpeechRecognition() !== null);
-  }, []);
 
   const stop = useCallback(() => {
     if (recognitionRef.current) {

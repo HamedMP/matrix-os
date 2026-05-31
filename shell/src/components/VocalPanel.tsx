@@ -64,6 +64,7 @@ interface VocalPanelProps {
   onDismissChat?: () => void;
 }
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose vocal/build-delegation panel: the mic/WS lifecycle, delegation snapshot throttling, build-progress indicator, and entrance animations are tightly coupled around one shared session and timer set; splitting them would fragment the session lifecycle and add prop-drilling without reducing real complexity.
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (enabled, hasEntered, delegation, rememberedFlash, buildProgress) are independent concerns with separate lifecycles and update sources; collapsing them into one reducer would couple unrelated state and is not a mechanical transform.
 export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPanelProps) {
   // Delay WS/mic mount by one tick so React strict-mode's double-mount
@@ -316,6 +317,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   // avoids ~30 useless WS sends per typical build.
   const chatMessagesRef = useRef(chat?.messages ?? []);
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/immutability -- deliberate "latest value" ref-sync: chatMessagesRef mirrors the current messages so the throttled snapshot effect below can read them without re-subscribing on every message. React Compiler cannot model a ref written from the same dep it observes; the write is idempotent and the ref is not rendered.
     chatMessagesRef.current = chat?.messages ?? [];
   }, [chat?.messages]);
 
@@ -465,6 +467,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
                   className="absolute inline-flex h-full w-full rounded-full opacity-75"
                   style={{
                     background: "#ffffff",
+                    // react-doctor-disable-next-line react-doctor/no-long-transition-duration -- this is an infinite ambient status-indicator pulse (the "build running" ping), not a one-shot UI-feedback transition; the 1.4s cadence is the designed pulse rhythm and clamping it under 1s would speed up the indicator and change its visual feel.
                     animation: "vocal-dot-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
                   }}
                 />

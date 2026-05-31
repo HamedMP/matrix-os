@@ -23,8 +23,8 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import {
   createContext,
   memo,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -128,7 +128,7 @@ const MessageBranchContext = createContext<MessageBranchContextType | null>(
 );
 
 const useMessageBranch = () => {
-  const context = useContext(MessageBranchContext);
+  const context = use(MessageBranchContext);
 
   if (!context) {
     throw new Error(

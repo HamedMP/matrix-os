@@ -23,6 +23,7 @@ export function CanvasTransform({
   const panX = useCanvasTransform((s) => s.panX);
   const panY = useCanvasTransform((s) => s.panY);
   const isAnimating = useCanvasTransform((s) => s.isAnimating);
+  const isScrolling = useCanvasTransform((s) => s.isScrolling);
   const zoomAtPoint = useCanvasTransform((s) => s.zoomAtPoint);
   const panBy = useCanvasTransform((s) => s.panBy);
   const navMode = useCanvasSettings((s) => s.navMode);
@@ -101,10 +102,11 @@ export function CanvasTransform({
     [zoom, zoomAtPoint, panBy, navMode, panEnabled, isCanvasSurfaceEvent],
   );
 
-  // react-doctor-disable-next-line react-hooks-js/advanced-event-handler-refs -- intentional non-passive native wheel listener: React's JSX onWheel is registered passively and cannot call preventDefault() to block page scroll/zoom, so the handler must be attached manually with { passive: false }. It is re-attached whenever the memoized onWheel identity changes.
+  // react-doctor-disable-next-line react-doctor/advanced-event-handler-refs -- intentional non-passive native wheel listener: React's JSX onWheel is registered passively and cannot call preventDefault() to block page scroll/zoom, so the handler must be attached manually with { passive: false }. It is re-attached whenever the memoized onWheel identity changes.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    // react-doctor-disable-next-line react-doctor/client-passive-event-listeners -- must be { passive: false }: onWheel calls e.preventDefault() to suppress native page scroll/zoom while panning the canvas, which a passive listener cannot do.
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [onWheel]);
@@ -248,7 +250,11 @@ export function CanvasTransform({
           transformOrigin: "0 0",
           transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
           pointerEvents: isAnimating ? "none" : "auto",
-          willChange: "transform",
+          // Hint the compositor only while the transform is actively changing
+          // (programmatic animation or wheel pan/zoom); a permanent will-change
+          // keeps a GPU layer alive for every idle canvas.
+          // react-doctor-disable-next-line react-doctor/no-permanent-will-change -- not permanent: will-change is gated on isAnimating/isScrolling and falls back to undefined when the canvas is idle, so the GPU layer is only promoted during active pan/zoom/animation.
+          willChange: isAnimating || isScrolling ? "transform" : undefined,
         }}
         onDoubleClick={onDoubleClick}
       >

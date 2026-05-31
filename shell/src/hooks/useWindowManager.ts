@@ -93,9 +93,11 @@ function debouncedSave(state: WindowManagerState) {
       state: w.minimized ? ("minimized" as const) : ("open" as const),
     }));
 
+    const layoutPaths = new Set(layoutWindows.map((lw) => lw.path));
+    const appsByPath = new Map(state.apps.map((a) => [a.path, a]));
     for (const path of state.closedPaths) {
-      if (!layoutWindows.find((lw) => lw.path === path)) {
-        const app = state.apps.find((a) => a.path === path);
+      if (!layoutPaths.has(path)) {
+        const app = appsByPath.get(path);
         layoutWindows.push({
           path,
           title: app?.name ?? path,

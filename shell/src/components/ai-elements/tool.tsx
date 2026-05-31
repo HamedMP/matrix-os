@@ -117,6 +117,7 @@ export type ToolInputProps = ComponentProps<"div"> & {
   input: ToolPart["input"];
 };
 
+// react-doctor-disable-next-line react-doctor/no-multi-comp -- cohesive ai-elements compound primitive: Tool/ToolHeader/ToolContent/ToolInput/ToolOutput are one conventional tool-call display unit sharing the Collapsible layout and ship together as one module.
 export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
   <div className={cn("space-y-2 overflow-hidden", className)} {...props}>
     <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
@@ -133,6 +134,7 @@ export type ToolOutputProps = ComponentProps<"div"> & {
   errorText: ToolPart["errorText"];
 };
 
+// react-doctor-disable-next-line react-doctor/no-multi-comp -- cohesive ai-elements compound primitive: see ToolInput above; co-located tool-call display subcomponent.
 export const ToolOutput = ({
   className,
   output,

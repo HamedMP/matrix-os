@@ -118,7 +118,7 @@ function groupConversationsByTime(conversations: ConversationMeta[]) {
     { label: "Older", items: [] },
   ];
 
-  const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+  const sorted = conversations.toSorted((a, b) => b.updatedAt - a.updatedAt);
 
   for (const conv of sorted) {
     if (conv.updatedAt >= todayMs) groups[0].items.push(conv);
@@ -140,13 +140,14 @@ export function ChatApp({
   onSwitchConversation,
   onSubmit,
   mobile = false,
-}: ChatAppProps) {
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields (sidebarOpen, searchQuery, setupOpen, model, channels) are independent UI concerns with separate update sites and lifecycles, not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
+}: ChatAppProps) {
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
     initialHermesSetupRef.current ??= readHermesSetup();
     return initialHermesSetupRef.current;
   };
@@ -455,6 +456,14 @@ function EmptyState({
   );
 }
 
+const HERMES_MODELS = ["Hermes default", "Claude specialist", "Codex coding", "Bring your own"];
+const HERMES_CHANNEL_OPTIONS = [
+  { id: "shell", label: "Shell", icon: MessageSquareIcon },
+  { id: "email", label: "Email", icon: MailIcon },
+  { id: "calendar", label: "Calendar", icon: CalendarIcon },
+  { id: "github", label: "GitHub", icon: GithubIcon },
+];
+
 function HermesSetupPanel({
   model,
   onModelChange,
@@ -466,13 +475,8 @@ function HermesSetupPanel({
   channels: Set<string>;
   onToggleChannel: (channel: string) => void;
 }) {
-  const models = ["Hermes default", "Claude specialist", "Codex coding", "Bring your own"];
-  const channelOptions = [
-    { id: "shell", label: "Shell", icon: MessageSquareIcon },
-    { id: "email", label: "Email", icon: MailIcon },
-    { id: "calendar", label: "Calendar", icon: CalendarIcon },
-    { id: "github", label: "GitHub", icon: GithubIcon },
-  ];
+  const models = HERMES_MODELS;
+  const channelOptions = HERMES_CHANNEL_OPTIONS;
 
   return (
     <section className="border-b border-border/30 bg-muted/30 px-3 py-3">

@@ -121,6 +121,7 @@ export function RuntimeIdentityBanner() {
         method: "POST",
         signal: AbortSignal.timeout(10_000),
       });
+      // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower a ThrowStatement inside try/catch (BuildHIR Todo: Support ThrowStatement inside of try/catch); throwing here routes the failed reset into the shared catch below for logging and state reset, which is the intended control flow.
       if (!res.ok) throw new Error("onboarding reset request failed");
       window.location.reload();
     } catch (err: unknown) {

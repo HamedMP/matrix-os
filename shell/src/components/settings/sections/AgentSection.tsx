@@ -54,6 +54,7 @@ export function AgentSection() {
 
   const handleSaveSoul = useCallback(async (content: string) => {
     setSaving(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
       await fetch(`${GATEWAY}/api/bridge/data`, {
         method: "POST",

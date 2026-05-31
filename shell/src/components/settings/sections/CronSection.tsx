@@ -116,6 +116,7 @@ export function CronSection() {
     }
 
     setSaving(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
       const res = await fetch(`${GATEWAY}/api/cron`, {
         method: "POST",

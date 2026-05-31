@@ -95,6 +95,7 @@ function coerceReleaseChannel(value: unknown): ReleaseChannel {
 }
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- system info, health, update status, release list, the selected channel, and the several independent upgrade-progress flags are distinct concerns, not a single cohesive state machine; a reducer would not simplify them.
+// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive system panel (health, updates, release list, info) whose handlers share the upgrade lifecycle state and refs (mountedRef, reloadTimeoutRef, releaseRequestIdRef); splitting would scatter that coupled state without reducing complexity. Real decomposition is out of scope for this behavior-preserving pass.
 export function SystemSection({ billingActive = true }: { billingActive?: boolean }) {
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -125,7 +126,9 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     releaseRequestIdRef.current = requestId;
     setReleaseLoading(true);
     setUpgradeError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `releaseLoading` only for the latest request id on every path; the code is correct and the finalizer must run whether the loads resolve, reject, or throw.
     try {
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the post-await early-returns are stale-request guards (releaseRequestIdRef !== requestId) that can only change DURING this await via a newer invocation, so they cannot be hoisted before it; this is intentional request coalescing, not a skippable synchronous guard.
       const [updateRes, releasesRes] = await Promise.all([
         fetch(`${GATEWAY}/api/system/update?channel=${channel}`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) }),
         fetch(`${GATEWAY}/api/system/releases?channel=${channel}`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) }),
@@ -196,6 +199,8 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   ) => {
     const deadline = Date.now() + UPDATE_INSTALL_TIMEOUT_MS;
     while (Date.now() < deadline) {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered poll loop: each iteration intentionally waits, then re-checks install state until the target version lands or the deadline passes; iterations are dependent, not independent operations to parallelize with Promise.all.
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- this await IS the poll backoff delay; the following mount guard must run AFTER the wait, so the await cannot be deferred past it without dropping the intended delay-then-check semantics.
       await new Promise((resolve) => setTimeout(resolve, UPDATE_INSTALL_POLL_MS));
       if (!mountedRef.current) return false;
       try {
@@ -203,6 +208,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) continue;
+        // react-doctor-disable-next-line react-doctor/async-defer-await -- the post-await mount/install guards operate on the parsed poll result and on state that can only change during this await; they cannot be hoisted before parsing the response body, so this is intentional polling, not a skippable synchronous guard.
         const nextInfo = await res.json() as SystemInfo;
         const installedVersion = nextInfo.release?.version ?? nextInfo.version;
         const polledChannel = coerceReleaseChannel(nextInfo.release?.channel);
@@ -273,6 +279,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       setUpgradeMessage("Upgrade started. Waiting for services to come back...");
     }
 
+    // react-doctor-disable-next-line react-doctor/async-defer-await -- ordered flow: the update POST must complete before we poll for the installed version, and the awaited `installed` result is used immediately below; the post-await mount guard checks state that can only change during this long wait, so the await cannot be deferred past it.
     const installed = await waitForInstalledUpdate(target);
     if (!mountedRef.current) return;
     if (!installed) {
@@ -532,12 +539,16 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             ["Node.js", info.nodeVersion],
             ["Platform", info.platform],
             ["Today Cost", info.todayCost != null ? `$${info.todayCost.toFixed(4)}` : undefined],
-          ].filter(([, v]) => v).map(([label, value]) => (
-            <div key={label} className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">{label}</span>
-              <span className="font-mono text-xs">{value}</span>
-            </div>
-          ))}
+          ].flatMap(([label, value]) =>
+            value
+              ? [
+                  <div key={label} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="font-mono text-xs">{value}</span>
+                  </div>,
+                ]
+              : [],
+          )}
         </CardContent>
       </Card>
 

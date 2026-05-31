@@ -82,8 +82,8 @@ export function ChatPanel({
                 <SelectValue placeholder="Select..." />
               </SelectTrigger>
               <SelectContent>
-                {[...conversations]
-                  .sort((a, b) => b.updatedAt - a.updatedAt)
+                {conversations
+                  .toSorted((a, b) => b.updatedAt - a.updatedAt)
                   .map((c) => (
                     <SelectItem key={c.id} value={c.id} className="text-xs">
                       {c.preview

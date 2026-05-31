@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   BotIcon,
   FilesIcon,
@@ -292,7 +292,7 @@ interface TerminalAppProps {
   mobile?: boolean;
 }
 
-// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
@@ -470,6 +470,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const name = `zellij-${genId()}`;
       try {
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -885,7 +886,7 @@ interface TerminalAppContextType {
 const TerminalAppContext = createContext<TerminalAppContextType | null>(null);
 
 function useTerminalAppContext() {
-  const ctx = useContext(TerminalAppContext);
+  const ctx = use(TerminalAppContext);
   if (!ctx) throw new Error("Must be inside TerminalApp");
   return ctx;
 }
@@ -1228,7 +1229,7 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
-// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
   const [tab, setTab] = useState<SidebarTab>("projects");
@@ -1259,6 +1260,7 @@ function LocalTerminalSidebar() {
   const fetchProjects = useCallback(async () => {
     setProjectsLoading(true);
     setProjectsError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
     try {
       const res = await fetch(`${getGatewayUrl()}/api/projects?root=projects`, {
         signal: AbortSignal.timeout(15_000),
@@ -1288,6 +1290,7 @@ function LocalTerminalSidebar() {
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
     if (!options.silent) setShellsLoading(true);
     if (!options.silent) setShellsError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
         signal: options.signal ?? AbortSignal.timeout(10_000),
@@ -1343,6 +1346,7 @@ function LocalTerminalSidebar() {
   const fetchSessions = useCallback(async () => {
     setSessionsLoading(true);
     setSessionsError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
     try {
       const res = await fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
         signal: AbortSignal.timeout(10_000),
@@ -1452,6 +1456,7 @@ function LocalTerminalSidebar() {
     creatingShellRef.current = true;
     setCreatingShell(true);
     setShellsError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async create flow is correct as written
     try {
       const name = await ctx.createShellSessionTab("Zellij", ctx.sidebarSelectedPath ?? DEFAULT_CWD);
       if (name) {
@@ -1473,6 +1478,7 @@ function LocalTerminalSidebar() {
     deletingShellsRef.current!.add(name);
     setDeletingShellNames(Array.from(deletingShellsRef.current!));
     setShellsError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async delete flow is correct as written
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
         method: "DELETE",
@@ -2132,6 +2138,7 @@ function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelec
           opacity: hover || isSelected ? 1 : 0,
           maxHeight: hover || isSelected ? 22 : 0,
           overflow: "hidden",
+          // react-doctor-disable-next-line react-doctor/no-layout-transition-inline -- intentional max-height collapse so the hover action row reclaims its vertical space when not active and the project list stays compact; transform/opacity cannot reclaim layout space, and the transition is a short bounded 120ms micro-reveal
           transition: "opacity 120ms, max-height 120ms",
         }}
       >

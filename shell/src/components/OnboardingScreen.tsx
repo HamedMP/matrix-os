@@ -19,6 +19,7 @@ interface OnboardingScreenProps {
   onOpenManualSetup: () => void;
 }
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose onboarding flow: the choreographed entrance/dimming/reveal phases, mic + mode dialogs, and voice/text panels are one tightly-coupled animation sequence that shares timers and transition state; splitting it would scatter the choreography and add prop-drilling without reducing real complexity.
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the seven states (started, phase, showMicDialog, showModePicker, splitVisible, continueExiting, entranceStage) are independent transition/dialog flags driven from separate timers and event handlers, not one related state machine; collapsing them into a reducer would couple unrelated animation phases and is not a mechanical, behavior-identical change.
 export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingScreenProps) {
   const ob = useOnboarding();
@@ -202,6 +203,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
                 style={{
                   gap: "1.4rem",
                   transform: continueExiting ? "scale(0.82) translateY(-10px)" : "scale(1) translateY(0)",
+                  // react-doctor-disable-next-line react-doctor/no-long-transition-duration -- deliberate page-load hero choreography (the rule explicitly exempts hero animations): this is the onboarding continue/exit transition, tuned to 1.5s to match the cinematic entrance sequence; shortening it to <1s would break the intended slow reveal pacing.
                   transition: "transform 1.5s cubic-bezier(0.16, 1, 0.3, 1)",
                 }}
               >
@@ -221,6 +223,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
                       : phase === "dimming"
                         ? "translateY(-20px) scale(1.05)"
                         : "translateY(0) scale(1)",
+                    // react-doctor-disable-next-line react-doctor/no-long-transition-duration -- deliberate page-load hero choreography (the rule explicitly exempts hero animations): the logo entrance scales and rises into place over 1.6s as the signature onboarding reveal; clamping to <1s would break the intended cinematic pacing.
                     transition: "opacity 1s cubic-bezier(0.16, 1, 0.3, 1), transform 1.6s cubic-bezier(0.16, 1, 0.3, 1)",
                   }}
                 />
@@ -379,6 +382,7 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
 
             {/* Text input (text mode only) */}
             {!ob.isVoiceMode && (
+              // react-doctor-disable-next-line react-doctor/no-prevent-default -- this is a client-only onboarding chat input with no server action; preventDefault stops a full-page GET navigation so ob.sendText() can handle the message in-place. There is no progressive-enhancement path here (onboarding requires JS), so a server action is not applicable.
               <form
                 onSubmit={(e) => {
                   e.preventDefault();

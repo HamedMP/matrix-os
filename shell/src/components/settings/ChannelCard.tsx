@@ -68,6 +68,7 @@ export function ChannelCard({ id, name, icon, status, config, fields, onSave }: 
     setSaving(true);
     setError("");
     setSaved(false);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the save resolves, rejects, or throws.
     try {
       const ok = await onSave(values);
       if (ok) {

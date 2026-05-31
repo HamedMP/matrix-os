@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
+// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: this whole module is code-split via React.lazy() at its only consumer (PreviewTab.tsx imports CodeEditor with `lazy(() => import("./CodeEditor"))`), so the entire @codemirror/* graph is already a separate chunk loaded on demand. CodeMirror is mounted imperatively into a ref in the effect below, so an extra in-effect dynamic import() would only add a redundant code-split layer plus async/unmount race handling with no bundle benefit.
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
+// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: see note on the @codemirror/view import above; this module is loaded via React.lazy() at PreviewTab.tsx, so EditorState ships in that on-demand chunk rather than the initial bundle.
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";

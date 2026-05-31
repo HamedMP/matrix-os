@@ -64,6 +64,7 @@ export function QuickLook() {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- custom overlay modal with backdrop; native <dialog> would change top-layer/focus semantics
+      // react-doctor-disable-next-line react-doctor/prefer-html-dialog -- intentional ARIA dialog, not a native <dialog>: this is a light-dismiss Quick Look overlay rendered in normal flow with a backdrop button. A native <dialog> promotes to the top layer and traps focus, which would change dismiss/focus semantics and conflict with the shell's z-index/overlay model.
       role="dialog"
       aria-modal="true"
     >

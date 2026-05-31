@@ -383,7 +383,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
           height: 64,
           background: "rgba(0,0,0,0.35)",
           borderTop: "1px solid rgba(244,237,224,0.08)",
+          // react-doctor-disable-next-line react-doctor/no-large-animated-blur -- intentional frosted-glass bottom nav: this is a static (non-animated) backdrop-filter on a small fixed 64px-tall bar, so the GPU cost is bounded; the 20px radius is the designed frosted look and clamping it under 10px would visibly thin the frost. Paired with the -webkit- prefix below.
           backdropFilter: "blur(20px)",
+          // react-doctor-disable-next-line react-doctor/no-large-animated-blur -- -webkit- prefixed twin of the static frosted-glass backdrop-filter above; same bounded 64px nav bar, kept in sync with the unprefixed property for Safari/iOS.
           WebkitBackdropFilter: "blur(20px)",
         }}
       >

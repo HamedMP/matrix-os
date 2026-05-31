@@ -28,7 +28,7 @@ export function applyOrder(
     // No user order yet. Sort: never-opened apps first (in original order
     // -- they're brand new, so "most recent" by the user's mental model),
     // then opened apps by launch-time descending.
-    return [...apps].sort((a, b) => {
+    return apps.toSorted((a, b) => {
       const ta = launchTimes[a.path];
       const tb = launchTimes[b.path];
       if (ta === undefined && tb === undefined) return 0;
@@ -39,9 +39,10 @@ export function applyOrder(
   }
 
   const persistedSet = new Set(persisted);
+  const appsByPath = new Map(apps.map((a) => [a.path, a]));
   const known: AppEntry[] = [];
   for (const path of persisted) {
-    const app = apps.find((a) => a.path === path);
+    const app = appsByPath.get(path);
     if (app) known.push(app);
   }
   // New apps the user hasn't seen yet: prepend in recency order so they

@@ -34,6 +34,7 @@ function Alert({
   )
 }
 
+// react-doctor-disable-next-line react-doctor/no-multi-comp -- cohesive shadcn compound primitive: Alert/AlertTitle/AlertDescription are a single conventional unit that share the alertVariants grid layout and ship together as one module.
 function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -47,6 +48,7 @@ function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+// react-doctor-disable-next-line react-doctor/no-multi-comp -- cohesive shadcn compound primitive: see AlertTitle above; these subcomponents are intentionally co-located with Alert.
 function AlertDescription({
   className,
   ...props

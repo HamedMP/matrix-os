@@ -105,7 +105,7 @@ function useVisualViewportKeyboardInset(): number {
     // react-doctor-disable-next-line react-doctor/no-initialize-state -- not an initializer: `inset` is seeded to 0 (SSR-safe, no visualViewport on the server) and this mount call re-syncs it against the live VisualViewport once on the client; it is the same handler subscribed to resize/scroll/orientationchange below, so this is a viewport subscription, not state initialization.
     update();
     viewport.addEventListener("resize", update);
-    viewport.addEventListener("scroll", update);
+    viewport.addEventListener("scroll", update, { passive: true });
     window.addEventListener("orientationchange", update);
     return () => {
       viewport.removeEventListener("resize", update);

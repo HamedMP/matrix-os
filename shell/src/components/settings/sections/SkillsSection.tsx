@@ -38,7 +38,10 @@ function parseSkillFrontmatter(name: string, raw: string): SkillInfo {
       const val = rest.join(":").trim();
       if (key.trim() === "description") skill.description = val;
       if (key.trim() === "triggers") {
-        skill.triggers = val.replace(/[\[\]"]/g, "").split(",").map((t) => t.trim()).filter(Boolean);
+        skill.triggers = val.replace(/[\[\]"]/g, "").split(",").flatMap((t) => {
+          const trimmed = t.trim();
+          return trimmed ? [trimmed] : [];
+        });
       }
     }
   }
@@ -66,20 +69,22 @@ export function SkillsSection() {
       const res = await fetchWithTimeout(`${GATEWAY}/api/settings/skills`);
       if (!res.ok) return;
       const data: Array<{ name: string; file: string; description?: string; enabled: boolean }> = await res.json();
-      const loaded: SkillInfo[] = [];
-      for (const entry of data) {
-        try {
-          const r = await fetchWithTimeout(`${GATEWAY}/files/${entry.file}`);
-          if (r.ok) {
+      const results = await Promise.all(
+        data.map(async (entry): Promise<SkillInfo | null> => {
+          try {
+            const r = await fetchWithTimeout(`${GATEWAY}/files/${entry.file}`);
+            if (!r.ok) return null;
             const content = await r.text();
             const skill = parseSkillFrontmatter(entry.name, content);
             if (!skill.description && entry.description) skill.description = entry.description;
-            loaded.push(skill);
+            return skill;
+          } catch (error) {
+            console.warn("Failed to load skill content", error);
+            return null;
           }
-        } catch (error) {
-          console.warn("Failed to load skill content", error);
-        }
-      }
+        }),
+      );
+      const loaded = results.filter((skill): skill is SkillInfo => skill !== null);
       setSkills(loaded);
     } catch (error) {
       console.warn("Failed to load skills", error);
@@ -97,8 +102,10 @@ export function SkillsSection() {
 
     const triggers = form.triggers
       .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
+      .flatMap((t) => {
+        const trimmed = t.trim();
+        return trimmed ? [trimmed] : [];
+      });
 
     const frontmatter = [
       "---",
@@ -113,6 +120,7 @@ export function SkillsSection() {
     const content = `${frontmatter}\n\n${form.body}`;
 
     setSaving(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the write resolves, rejects, or throws.
     try {
       const res = await fetchWithTimeout(`${GATEWAY}/files/.agents/skills/${slug}/SKILL.md`, {
         method: "PUT",

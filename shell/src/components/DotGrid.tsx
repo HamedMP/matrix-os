@@ -148,6 +148,7 @@ export function DotGrid() {
       draw();
 
       if (glowOpacityRef.current > 0.01 || mouseRef.current.active) {
+        // react-doctor-disable-next-line react-hooks-js/immutability -- intentional self-scheduling RAF loop: `animate` references itself to queue the next frame, which the React Compiler reports as "accessed before it is declared". rafRef holds the live handle so the effect cleanup can cancel the in-flight frame; this is a deliberate imperative animation pattern, not renderable state.
         rafRef.current = requestAnimationFrame(animate);
       }
     },
@@ -171,6 +172,7 @@ export function DotGrid() {
     });
   });
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- the cleanup intentionally reads the live rafRef.current / idleTimerRef.current: these refs are reassigned over the effect's lifetime by the useEffectEvent schedulers (startAnimating / scheduleStaticDraw), so on unmount we must cancel whatever frame/timer is currently in flight. Copying them to a local at setup time would capture a stale initial handle and leak the active RAF/timeout. The schedulers are useEffectEvents and are deliberately not deps.
   useEffect(() => {
     if (!enabled) return;
 

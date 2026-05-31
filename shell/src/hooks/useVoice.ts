@@ -70,6 +70,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
               const binary = atob(msg.audio);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              // react-doctor-disable-next-line react-doctor/immutability -- fresh-local mutation: `bytes` is allocated one line above to decode base64 PCM into a new buffer; it is never shared or part of React state, so the per-index writes are the standard atob->Uint8Array decode and there is nothing to update immutably.
               playAudio(bytes.buffer);
             } catch (_err: unknown) { /* decode error */ }
           }

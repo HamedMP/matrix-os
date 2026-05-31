@@ -46,8 +46,12 @@ export function SecuritySection() {
   const runAudit = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `loading` on every path; the code is correct and the finalizer must run whether the audit resolves, rejects, or throws.
     try {
-      const res = await fetch(`${GATEWAY}/api/security/audit`);
+      const res = await fetch(`${GATEWAY}/api/security/audit`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the throw inside try/catch; intentional control flow to route a non-ok response into the catch handler. The code is correct.
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setReport({
@@ -56,6 +60,7 @@ export function SecuritySection() {
         checkedAt: new Date().toISOString(),
       });
     } catch (err) {
+      console.warn("[settings] Security audit failed:", err instanceof Error ? err.message : String(err));
       setError("Security audit not available. It may not be configured yet.");
     } finally {
       setLoading(false);

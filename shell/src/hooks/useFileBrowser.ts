@@ -313,20 +313,22 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       const { clipboard, currentPath } = get();
       if (!clipboard) return;
 
-      const failed: string[] = [];
-      for (const sourcePath of clipboard.paths) {
-        const name = sourcePath.split("/").pop() ?? sourcePath;
-        const destPath = currentPath ? `${currentPath}/${name}` : name;
+      const endpoint = clipboard.operation === "copy" ? "copy" : "rename";
+      const results = await Promise.all(
+        clipboard.paths.map(async (sourcePath) => {
+          const name = sourcePath.split("/").pop() ?? sourcePath;
+          const destPath = currentPath ? `${currentPath}/${name}` : name;
 
-        const endpoint = clipboard.operation === "copy" ? "copy" : "rename";
-        const res = await fetch(`${GATEWAY_URL}/api/files/${endpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from: sourcePath, to: destPath }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) failed.push(sourcePath);
-      }
+          const res = await fetch(`${GATEWAY_URL}/api/files/${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from: sourcePath, to: destPath }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          return { sourcePath, ok: res.ok };
+        }),
+      );
+      const failed = results.filter((r) => !r.ok).map((r) => r.sourcePath);
 
       if (clipboard.operation === "cut") {
         if (failed.length === 0) {
@@ -351,33 +353,43 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     },
 
     async deleteFiles(paths) {
-      for (const path of paths) {
-        const res = await fetch(`${GATEWAY_URL}/api/files/delete`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) {
-          set({ error: `Failed to delete ${path.split("/").pop()}` });
-        }
-      }
+      const errors = await Promise.all(
+        paths.map(async (path) => {
+          const res = await fetch(`${GATEWAY_URL}/api/files/delete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) {
+            return `Failed to delete ${path.split("/").pop()}`;
+          }
+          return null;
+        }),
+      );
+      const firstError = errors.find((error): error is string => error !== null);
+      if (firstError) set({ error: firstError });
       set({ selectedPaths: new Set() });
       get().refresh();
     },
 
     async duplicate(paths) {
-      for (const path of paths) {
-        const res = await fetch(`${GATEWAY_URL}/api/files/duplicate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) {
-          set({ error: `Failed to duplicate ${path.split("/").pop()}` });
-        }
-      }
+      const errors = await Promise.all(
+        paths.map(async (path) => {
+          const res = await fetch(`${GATEWAY_URL}/api/files/duplicate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) {
+            return `Failed to duplicate ${path.split("/").pop()}`;
+          }
+          return null;
+        }),
+      );
+      const firstError = errors.find((error): error is string => error !== null);
+      if (firstError) set({ error: firstError });
       get().refresh();
     },
 

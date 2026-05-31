@@ -41,6 +41,11 @@ const billingPlanNames: Record<string, string> = {
   matrix_max: "Max",
   internal: "Internal",
 };
+const billingDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
 
 type BillingTelemetryProperties = {
   mode: BillingPanelMode;
@@ -110,6 +115,7 @@ function CheckoutPanel({
     captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear the abort timeout and reset `checkoutLoading` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
       const response = await fetch("/billing/checkout", {
         method: "POST",
@@ -129,6 +135,7 @@ function CheckoutPanel({
         return null;
       })) as { url?: string } | null;
       if (!response.ok || !body?.url) {
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the throw inside try/catch; intentional control flow routing an unusable checkout response into the catch handler. The code is correct.
         throw new Error("checkout_unavailable");
       }
       window.location.assign(body.url);
@@ -227,6 +234,7 @@ function BillingPortalButton({
     setError(null);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear the abort timeout and reset `loading` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
       const response = await fetch("/billing/portal", {
         method: "POST",
@@ -242,6 +250,7 @@ function BillingPortalButton({
         return null;
       })) as { url?: string } | null;
       if (!response.ok || !body?.url) {
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the throw inside try/catch; intentional control flow routing an unusable portal response into the catch handler. The code is correct.
         throw new Error("portal_unavailable");
       }
       window.location.assign(body.url);
@@ -428,11 +437,7 @@ function formatStatus(status: string): string {
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
+  return billingDateFormatter.format(date);
 }
 
 function profileSpec(profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number]): string {

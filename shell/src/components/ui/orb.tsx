@@ -130,6 +130,7 @@ function Scene({
   }, [manualOutput, outputVolumeRef, getOutputVolume])
 
   const random = useMemo(
+    // react-doctor-disable-next-line react-hooks-js/purity -- intentional one-time seed: when no `seed` prop is given we draw a single random seed for the orb's PRNG. It is captured in this useMemo (keyed on `seed`), so it stays stable across re-renders; the impurity is deliberate and does not affect idempotence of the rendered output.
     () => splitmix32(seed ?? Math.floor(Math.random() * 2 ** 32)),
     [seed]
   )
@@ -174,6 +175,7 @@ function Scene({
       if (live[1]) target2.set(live[1])
     }
     const u = mat.uniforms
+    // react-doctor-disable-next-line react-hooks-js/immutability -- intentional R3F imperative animation: useFrame mutates the three.js ShaderMaterial uniforms in place every frame (uTime, volumes, color lerps). These GPU uniforms live outside React's state model; reassigning the material per frame is not an option.
     u.uTime.value += delta * 0.5
 
     if (u.uOpacity.value < 1) {
@@ -235,7 +237,9 @@ function Scene({
   }, [gl])
 
   const uniforms = useMemo(() => {
+    // react-doctor-disable-next-line react-hooks-js/immutability -- required THREE setup: the perlin texture loaded by useTexture must be configured for repeat wrapping before it is sampled by the shader; this mutates the loaded texture object in place, which is the standard r3f/three pattern.
     perlinNoiseTexture.wrapS = THREE.RepeatWrapping
+    // react-doctor-disable-next-line react-hooks-js/immutability -- required THREE setup: see wrapS above; configures the second wrap axis on the same loaded texture.
     perlinNoiseTexture.wrapT = THREE.RepeatWrapping
     const isDark =
       typeof document !== "undefined" &&

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useChatState } from "@/hooks/useChatState";
@@ -30,13 +30,24 @@ function readLaunchPathFromLocation(): string | null {
   return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
 }
 
+// The launch path lives in window.location.search (read once at load). useSyncExternalStore
+// returns null on the server and during hydration (matching the server snapshot) and the real
+// value on the client, so it is applied without a setState-in-effect mount cascade or a
+// hydration mismatch. The URL is not mutated after load, so the subscription is a noop.
+const subscribeLaunchPathNoop = () => () => {};
+const getLaunchPathServerSnapshot = (): string | null => null;
+
 export function ShellHome() {
   useTheme();
   useDesktopConfig();
 
   const chat = useChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [launchAppPath, setLaunchAppPath] = useState<string | null>(null);
+  const launchAppPath = useSyncExternalStore(
+    subscribeLaunchPathNoop,
+    readLaunchPathFromLocation,
+    getLaunchPathServerSnapshot,
+  );
   const isMobile = useMobileViewport();
   const shellLoadedCaptured = useRef(false);
 
@@ -58,11 +69,6 @@ export function ShellHome() {
     ]);
     return () => unregister(["action:new-chat"]);
   }, [register, unregister, chat.newChat]);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- launch path is read from window.location.search, a browser-only API: a lazy initializer would return null during SSR but the real value on the client, causing a hydration mismatch, so it is applied after mount.
-    setLaunchAppPath(readLaunchPathFromLocation());
-  }, []);
 
   useEffect(() => {
     if (shellLoadedCaptured.current) return;
