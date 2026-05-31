@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   addCard,
+  addColumn,
   createBoard,
   delegateCard,
+  deleteColumn,
   hydrateBoard,
   moveCardToAdjacentColumn,
   moveCard,
+  moveColumn,
+  renameColumn,
   resolveColumnId,
   summarizeBoard,
   toggleChecklistItem,
@@ -270,6 +274,44 @@ describe("task board model", () => {
     expect(board.cards[0].id).toMatch(/^card-/);
     expect(board.cards[0].projectId).toBe("");
     expect(moveCard(board, board.cards[0].id, "today", 0).cards[0].id).toBe(board.cards[0].id);
+  });
+
+  it("adds, renames, reorders, and deletes columns", () => {
+    let board = createBoard("Default");
+    const initialCount = board.columns.length;
+
+    board = addColumn(board, "Blocked");
+    expect(board.columns.length).toBe(initialCount + 1);
+    expect(board.columns[board.columns.length - 1].title).toBe("Blocked");
+
+    const blockedId = board.columns[board.columns.length - 1].id;
+    board = renameColumn(board, blockedId, "On hold");
+    expect(board.columns[board.columns.length - 1].title).toBe("On hold");
+
+    board = moveColumn(board, blockedId, 0);
+    expect(board.columns[0].id).toBe(blockedId);
+
+    board = deleteColumn(board, blockedId);
+    expect(board.columns.some((column) => column.id === blockedId)).toBe(false);
+  });
+
+  it("removes cards belonging to a deleted column", () => {
+    let board = createBoard("Default");
+    board = addColumn(board, "Blocked");
+    const blockedId = board.columns[board.columns.length - 1].id;
+    board = addCard(board, { columnId: blockedId, title: "Orphan", projectId: board.projects[0].id });
+    expect(board.cards.length).toBe(1);
+
+    board = deleteColumn(board, blockedId);
+    expect(board.cards.length).toBe(0);
+  });
+
+  it("refuses to delete the last remaining column", () => {
+    let board = createBoard("Default");
+    board = { ...board, columns: [board.columns[0]] };
+    const onlyId = board.columns[0].id;
+    board = deleteColumn(board, onlyId);
+    expect(board.columns.length).toBe(1);
   });
 
   it("hydrates cards with malformed titles into visible card names", () => {
