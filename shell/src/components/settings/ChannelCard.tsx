@@ -76,7 +76,8 @@ export function ChannelCard({ id, name, icon, status, config, fields, onSave }: 
       } else {
         setError("Failed to save");
       }
-    } catch {
+    } catch (error: unknown) {
+      console.warn("Failed to save channel configuration", error);
       setError("Failed to save");
     } finally {
       setSaving(false);

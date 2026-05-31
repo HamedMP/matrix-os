@@ -51,17 +51,21 @@ export function RuntimeIdentityBanner() {
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps) with AbortController + AbortSignal.timeout and an abort in cleanup; this is the correct fetch-on-mount pattern and uses Promise.allSettled so neither request blocks the other.
   useEffect(() => {
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
     const gatewayUrl = getGatewayUrl();
 
     void Promise.allSettled([
-      fetch(`${gatewayUrl}/api/system/info`, { headers: { Accept: "application/json" }, signal })
+      fetch(`${gatewayUrl}/api/system/info`, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      })
         .then(async (res) => {
           if (!res.ok) throw new Error("system info request failed");
           return await res.json() as RuntimeInfo;
         }),
-      fetch(`${gatewayUrl}/api/identity`, { headers: { Accept: "application/json" }, signal })
+      fetch(`${gatewayUrl}/api/identity`, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      })
         .then(async (res) => {
           if (!res.ok) throw new Error("identity request failed");
           return await res.json() as IdentityInfo;
@@ -79,7 +83,7 @@ export function RuntimeIdentityBanner() {
       }
     });
 
-    return () => controller.abort();
+    return undefined;
   }, []);
 
   const summary = useMemo(() => {

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
+const CHANNELS_FETCH_TIMEOUT_MS = 10_000;
 
 const CHANNEL_DEFS = [
   {
@@ -55,17 +56,20 @@ export function ChannelsSection() {
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps): the request carries AbortSignal.timeout, the `cancelled` flag gates the setState, and the controller aborts in cleanup, so this is the correct fetch-on-mount pattern; a data-fetching library would add no safety here.
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
 
-    fetch(`${GATEWAY}/api/settings/channels`, { signal })
+    fetch(`${GATEWAY}/api/settings/channels`, {
+      signal: AbortSignal.timeout(CHANNELS_FETCH_TIMEOUT_MS),
+    })
       .then((r) => r.ok ? r.json() : {})
       .then((data) => { if (!cancelled) setChannels(data); })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.warn("Failed to load channels settings", error);
+        }
+      });
 
     return () => {
       cancelled = true;
-      controller.abort();
     };
   }, []);
 
@@ -73,6 +77,7 @@ export function ChannelsSection() {
     const payload = { ...values, enabled: true };
     const res = await fetch(`${GATEWAY}/api/settings/channels/${channelId}`, {
       method: "PUT",
+      signal: AbortSignal.timeout(CHANNELS_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });

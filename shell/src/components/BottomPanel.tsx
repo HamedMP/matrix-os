@@ -25,8 +25,8 @@ function loadPreference(): { open: boolean; tab: Tab } {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return JSON.parse(stored);
-  } catch {
-    // ignore
+  } catch (error: unknown) {
+    console.warn("Failed to load bottom panel preference", error);
   }
   return { open: false, tab: "terminal" };
 }
@@ -34,8 +34,8 @@ function loadPreference(): { open: boolean; tab: Tab } {
 function savePreference(open: boolean, tab: Tab) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ open, tab }));
-  } catch {
-    // ignore
+  } catch (error: unknown) {
+    console.warn("Failed to save bottom panel preference", error);
   }
 }
 
