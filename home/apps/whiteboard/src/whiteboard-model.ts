@@ -322,6 +322,72 @@ export function serializeScene(scene: Scene): SerializedScene {
   return { version: SCENE_VERSION, elements: scene.elements.map(cloneElement) };
 }
 
+// ---------------------------------------------------------------------------
+// Board index (multi-board: one DB row per board)
+// ---------------------------------------------------------------------------
+
+/** Lightweight metadata for a single board, derived from a `scenes` row. */
+export interface BoardMeta {
+  id: string;
+  name: string;
+  /** epoch ms, best-effort from created_at/updated_at; 0 when unknown. */
+  updatedAt: number;
+}
+
+const DEFAULT_BOARD_NAME = "Untitled board";
+
+/** Sanitize a user/board name to a non-empty trimmed string with a cap. */
+export function normalizeBoardName(raw: unknown): string {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) return DEFAULT_BOARD_NAME;
+  return value.slice(0, 120);
+}
+
+function toEpochMs(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const ms = Date.parse(raw);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return 0;
+}
+
+/**
+ * Turn a raw `scenes` DB row into board metadata. Returns null when the row
+ * has no usable string id (cannot be addressed for load/update/delete).
+ */
+export function rowToBoardMeta(raw: unknown): BoardMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  if (typeof data.id !== "string" || data.id.length === 0) return null;
+  return {
+    id: data.id,
+    name: normalizeBoardName(data.name),
+    updatedAt: toEpochMs(data.updated_at) || toEpochMs(data.created_at),
+  };
+}
+
+/**
+ * Build the sorted board index from raw `scenes` rows (most recently updated
+ * first; name as a stable tiebreaker). Rows without a usable id are dropped.
+ */
+export function boardIndexFromRows(rows: readonly unknown[]): BoardMeta[] {
+  const metas = rows
+    .map(rowToBoardMeta)
+    .filter((m): m is BoardMeta => m !== null);
+  metas.sort((a, b) => {
+    if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
+    return a.name.localeCompare(b.name);
+  });
+  return metas;
+}
+
+/** Find the doc payload (jsonb or string) for a board row by id. */
+export function docFromRow(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return null;
+  return (raw as Record<string, unknown>).doc ?? null;
+}
+
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }

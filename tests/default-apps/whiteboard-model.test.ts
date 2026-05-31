@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addElement,
+  boardIndexFromRows,
   boundsOf,
   canRedo,
   canUndo,
@@ -8,13 +9,16 @@ import {
   createHistory,
   deleteElement,
   deserializeScene,
+  docFromRow,
   elementsInRect,
   emptyScene,
   hitTest,
   hitTestScene,
   makeId,
   moveElement,
+  normalizeBoardName,
   redo,
+  rowToBoardMeta,
   serializeScene,
   undo,
   updateElement,
@@ -204,5 +208,54 @@ describe("whiteboard model — serialization", () => {
   it("generates unique ids", () => {
     const ids = new Set(Array.from({ length: 200 }, () => makeId()));
     expect(ids.size).toBe(200);
+  });
+});
+
+describe("whiteboard model — board index", () => {
+  it("normalizes board names (trims, falls back, caps length)", () => {
+    expect(normalizeBoardName("  Plan  ")).toBe("Plan");
+    expect(normalizeBoardName("")).toBe("Untitled board");
+    expect(normalizeBoardName("   ")).toBe("Untitled board");
+    expect(normalizeBoardName(null)).toBe("Untitled board");
+    expect(normalizeBoardName("x".repeat(300)).length).toBe(120);
+  });
+
+  it("maps a raw row to board metadata", () => {
+    const meta = rowToBoardMeta({
+      id: "row-1",
+      name: "Sketch",
+      doc: { version: 1, elements: [] },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-02-01T00:00:00.000Z",
+    });
+    expect(meta).not.toBeNull();
+    expect(meta?.id).toBe("row-1");
+    expect(meta?.name).toBe("Sketch");
+    expect(meta?.updatedAt).toBe(Date.parse("2026-02-01T00:00:00.000Z"));
+  });
+
+  it("rejects rows without a usable id", () => {
+    expect(rowToBoardMeta({ name: "x" })).toBeNull();
+    expect(rowToBoardMeta({ id: "", name: "x" })).toBeNull();
+    expect(rowToBoardMeta(null)).toBeNull();
+  });
+
+  it("builds a sorted index (most recent first) and drops bad rows", () => {
+    const index = boardIndexFromRows([
+      { id: "a", name: "Old", updated_at: "2026-01-01T00:00:00.000Z" },
+      { id: "b", name: "New", updated_at: "2026-03-01T00:00:00.000Z" },
+      { name: "missing id" },
+    ]);
+    expect(index.map((m) => m.id)).toEqual(["b", "a"]);
+    expect(index).toHaveLength(2);
+  });
+
+  it("extracts the doc payload from a row", () => {
+    expect(docFromRow({ id: "x", doc: { version: 1, elements: [] } })).toEqual({
+      version: 1,
+      elements: [],
+    });
+    expect(docFromRow({ id: "x" })).toBeNull();
+    expect(docFromRow(null)).toBeNull();
   });
 });

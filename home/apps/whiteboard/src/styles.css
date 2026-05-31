@@ -217,10 +217,222 @@ body {
   text-align: right;
 }
 
+.wb-tool--panel {
+  flex: none;
+}
+
+.wb-boardname {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-fg);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ---- Body layout (sidebar + stage) ---- */
+.wb-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- Board sidebar ---- */
+.wb-sidebar {
+  width: 232px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--app-card);
+  border-right: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  overflow: hidden;
+}
+
+.wb-sidebar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 14px 10px;
+}
+
+.wb-sidebar__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--app-muted-fg);
+}
+
+.wb-newboard {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 10px;
+  background: var(--app-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 8px rgba(208, 111, 37, 0.28);
+}
+
+.wb-newboard:hover {
+  background: color-mix(in srgb, var(--app-accent) 88%, #000);
+}
+
+.wb-newboard--cta {
+  margin-top: 10px;
+}
+
+.wb-sidebar__empty {
+  padding: 18px 16px;
+  text-align: center;
+  color: var(--app-muted-fg);
+  font-size: 13px;
+}
+
+.wb-boardlist {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-boarditem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 2px 4px 2px 0;
+  transition: background 0.15s ease;
+}
+
+.wb-boarditem + .wb-boarditem {
+  margin-top: 2px;
+}
+
+.wb-boarditem:hover {
+  background: color-mix(in srgb, var(--app-fg) 5%, transparent);
+}
+
+.wb-boarditem--active {
+  background: color-mix(in srgb, var(--app-accent) 14%, transparent);
+}
+
+.wb-boarditem--active:hover {
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+}
+
+.wb-boarditem__open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--app-fg);
+}
+
+.wb-boarditem__open:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
+
+.wb-boarditem__name {
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-boarditem--active .wb-boarditem__name {
+  color: color-mix(in srgb, var(--app-accent) 70%, var(--app-fg));
+}
+
+.wb-boarditem__time {
+  font-size: 11px;
+  color: var(--app-muted-fg);
+}
+
+.wb-boarditem__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.wb-boarditem:hover .wb-boarditem__actions,
+.wb-boarditem--active .wb-boarditem__actions {
+  opacity: 1;
+}
+
+.wb-boarditem__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--app-muted-fg);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wb-boarditem__action:hover {
+  background: color-mix(in srgb, var(--app-fg) 8%, transparent);
+  color: var(--app-fg);
+}
+
+.wb-boarditem__action--danger:hover {
+  background: color-mix(in srgb, var(--app-danger) 14%, transparent);
+  color: var(--app-danger);
+}
+
+.wb-boarditem__action:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+
+.wb-rename-input {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 4px 4px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--app-accent);
+  border-radius: 8px;
+  background: var(--app-card);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+
 /* ---- Stage / canvas ---- */
 .wb-stage {
   position: relative;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 

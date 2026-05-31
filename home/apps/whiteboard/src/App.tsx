@@ -8,23 +8,30 @@ import {
 } from "react";
 import {
   ArrowUpRight,
+  Check,
   Circle,
   Download,
+  FilePlus2,
   MousePointer2,
   Minus,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pen,
+  Pencil,
   Redo2,
   Square,
   StickyNote,
   Trash2,
   Type,
   Undo2,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import "./styles.css";
 import {
   addElement,
+  boardIndexFromRows,
   boundsOf,
   canRedo,
   canUndo,
@@ -33,15 +40,19 @@ import {
   createHistory,
   deleteElements,
   deserializeScene,
+  docFromRow,
   elementsInRect,
   emptyScene,
   hitTestScene,
   makeId,
   moveElement,
+  normalizeBoardName,
   redo,
+  rowToBoardMeta,
   serializeScene,
   undo,
   updateElement,
+  type BoardMeta,
   type BoxElement,
   type History,
   type LineElement,
@@ -53,8 +64,8 @@ import {
 } from "./whiteboard-model";
 
 const SCENES_TABLE = "scenes";
-const SCENE_NAME = "default";
 const LS_KEY = "matrix-whiteboard-scene-v1";
+const LS_NAME_KEY = "matrix-whiteboard-name-v1";
 const AUTOSAVE_MS = 800;
 
 const PALETTE = ["#32352E", "#C4342D", "#D06F25", "#3A7D44", "#2D6CDF", "#7A4FD0", "#9A8C66"];
@@ -106,7 +117,12 @@ function reduceMotion(): boolean {
   }
 }
 
+const LOCAL_BOARD_ID = "__local__";
+
 // ---- persistence helpers --------------------------------------------------
+// localStorage is a guarded test/no-DB-only fallback. In the sandboxed shell
+// it can throw SecurityError, so every access is wrapped. In the shell the
+// MatrixOS DB bridge is the canonical transport (see agent-brief §2).
 
 function loadLocal(): Scene | null {
   try {
@@ -119,12 +135,40 @@ function loadLocal(): Scene | null {
   }
 }
 
+function loadLocalName(): string {
+  try {
+    const raw = window.localStorage.getItem(LS_NAME_KEY);
+    return normalizeBoardName(raw);
+  } catch {
+    return normalizeBoardName(null);
+  }
+}
+
 function saveLocal(scene: Scene): void {
   try {
     window.localStorage.setItem(LS_KEY, JSON.stringify(serializeScene(scene)));
   } catch (err: unknown) {
     console.warn("[whiteboard] localStorage write failed:", err instanceof Error ? err.message : String(err));
   }
+}
+
+function saveLocalName(name: string): void {
+  try {
+    window.localStorage.setItem(LS_NAME_KEY, name);
+  } catch (err: unknown) {
+    console.warn("[whiteboard] localStorage name write failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function nextUntitledName(boards: readonly BoardMeta[]): string {
+  const base = "Untitled board";
+  const taken = new Set(boards.map((b) => b.name.toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let i = 2; i < 1000; i += 1) {
+    const candidate = `${base} ${i}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base} ${Date.now()}`;
 }
 
 // ---- main component -------------------------------------------------------
@@ -143,79 +187,175 @@ export default function App() {
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
+  // -- multi-board ("files") state -----------------------------------------
+  const [boards, setBoards] = useState<BoardMeta[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loadingBoard, setLoadingBoard] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<BoardMeta | null>(null);
+
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const draftRef = useRef<SceneElement | null>(null);
-  const sceneRowIdRef = useRef<string | null>(null);
+  const activeIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const dirtyRef = useRef(false);
+
+  // Keep a ref of the active board id so debounced/async saves target the
+  // board that was active when the edit happened, not a stale closure value.
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   const scene = history.present;
   const elements = scene.elements;
 
   // Keep draft in a ref so synchronous pointer handlers (down→move→up in one
-  // event batch) see the latest value without waiting for a re-render.
+  // event batch) see the latest value without waiting for a re-render. The ref
+  // is the source of truth and is updated synchronously; setDraft only drives
+  // rendering. (Updating the ref inside the setState updater is unreliable
+  // because React may defer the updater past the next pointer event.)
   const updateDraft = useCallback((next: SceneElement | null | ((c: SceneElement | null) => SceneElement | null)) => {
-    setDraft((curr) => {
-      const value = typeof next === "function" ? next(draftRef.current ?? curr) : next;
-      draftRef.current = value;
-      return value;
-    });
+    const value = typeof next === "function" ? next(draftRef.current) : next;
+    draftRef.current = value;
+    setDraft(value);
   }, []);
 
-  // -- load on mount --------------------------------------------------------
-  const reload = useCallback(async () => {
+  // -- load a single board's doc into the canvas ---------------------------
+  const openBoard = useCallback(async (id: string) => {
     const db = window.MatrixOS?.db;
-    if (!db) {
+    dirtyRef.current = false;
+    setActiveId(id);
+    activeIdRef.current = id;
+    setSelected(new Set());
+    setEditing(null);
+    setDraft(null);
+    setViewport({ x: 0, y: 0, zoom: 1 });
+
+    if (!db || id === LOCAL_BOARD_ID) {
       const local = loadLocal();
-      if (local && local.elements.length > 0) setHistory(createHistory(local));
+      setHistory(createHistory(local ?? emptyScene()));
+      setLoadingBoard(false);
       return;
     }
+    setLoadingBoard(true);
     try {
       setError(null);
-      const rows = await db.find(SCENES_TABLE, { where: { name: SCENE_NAME }, limit: 1 });
-      const row = rows[0];
-      if (row && typeof row.id === "string") {
-        sceneRowIdRef.current = row.id;
-        const next = deserializeScene(row.doc);
-        if (!dirtyRef.current) setHistory(createHistory(next));
-      }
+      const rows = await db.find(SCENES_TABLE, { where: { id }, limit: 1 });
+      const row = rows[0] ?? null;
+      // Ignore the result if the user switched away while we were loading.
+      if (activeIdRef.current !== id) return;
+      setHistory(createHistory(deserializeScene(docFromRow(row))));
     } catch (err: unknown) {
-      console.warn("[whiteboard] scene load failed:", err instanceof Error ? err.message : String(err));
-      setError("Could not load your board.");
+      console.warn("[whiteboard] board load failed:", err instanceof Error ? err.message : String(err));
+      if (activeIdRef.current === id) setError("Could not load that board.");
+    } finally {
+      if (activeIdRef.current === id) setLoadingBoard(false);
     }
   }, []);
 
+  // -- refresh the board index (sidebar list) -------------------------------
+  const refreshIndex = useCallback(async (): Promise<BoardMeta[]> => {
+    const db = window.MatrixOS?.db;
+    if (!db) {
+      const local: BoardMeta = { id: LOCAL_BOARD_ID, name: loadLocalName(), updatedAt: 0 };
+      setBoards([local]);
+      return [local];
+    }
+    try {
+      const rows = await db.find(SCENES_TABLE, { orderBy: { created_at: "desc" } });
+      const index = boardIndexFromRows(rows);
+      setBoards(index);
+      return index;
+    } catch (err: unknown) {
+      console.warn("[whiteboard] board list failed:", err instanceof Error ? err.message : String(err));
+      setError("Could not load your boards.");
+      return [];
+    }
+  }, []);
+
+  // -- create a board -------------------------------------------------------
+  const createBoard = useCallback(
+    async (name?: string): Promise<string | null> => {
+      const db = window.MatrixOS?.db;
+      const boardName = normalizeBoardName(name ?? nextUntitledName(boards));
+      const doc = serializeScene(emptyScene());
+      if (!db) {
+        // No DB: a single local board only.
+        saveLocal(emptyScene());
+        saveLocalName(boardName);
+        await refreshIndex();
+        await openBoard(LOCAL_BOARD_ID);
+        return LOCAL_BOARD_ID;
+      }
+      try {
+        setError(null);
+        const res = await db.insert(SCENES_TABLE, { name: boardName, doc });
+        const id = res && typeof res.id === "string" ? res.id : null;
+        await refreshIndex();
+        if (id) await openBoard(id);
+        return id;
+      } catch (err: unknown) {
+        console.warn("[whiteboard] create board failed:", err instanceof Error ? err.message : String(err));
+        setError("Could not create a board.");
+        return null;
+      }
+    },
+    [boards, openBoard, refreshIndex],
+  );
+
+  // -- initial load: pick most recent board, or create the first one --------
   useEffect(() => {
-    void reload();
+    let cancelled = false;
+    void (async () => {
+      const index = await refreshIndex();
+      if (cancelled) return;
+      if (index.length > 0) {
+        await openBoard(index[0].id);
+      } else if (window.MatrixOS?.db) {
+        await createBoard("Untitled board");
+      } else {
+        await openBoard(LOCAL_BOARD_ID);
+      }
+    })();
     const db = window.MatrixOS?.db;
     const unsubscribe = db?.onChange?.(SCENES_TABLE, () => {
-      if (!dirtyRef.current) void reload();
+      // Reconcile the list; reload the active board only when not mid-edit.
+      void refreshIndex();
+      const id = activeIdRef.current;
+      if (id && !dirtyRef.current) void openBoard(id);
     });
     return () => {
+      cancelled = true;
       if (unsubscribe) unsubscribe();
     };
-  }, [reload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // -- debounced autosave ---------------------------------------------------
-  const persist = useCallback(async (toSave: Scene) => {
+  // -- debounced autosave to the ACTIVE board's row -------------------------
+  const persist = useCallback(async (toSave: Scene, boardId: string | null) => {
     const db = window.MatrixOS?.db;
     const doc = serializeScene(toSave);
-    if (!db) {
+    if (!db || boardId === LOCAL_BOARD_ID) {
       saveLocal(toSave);
       setSaveState("saved");
+      dirtyRef.current = false;
       return;
     }
+    if (!boardId) return;
     setSaveState("saving");
     try {
-      if (sceneRowIdRef.current) {
-        await db.update(SCENES_TABLE, sceneRowIdRef.current, { doc });
-      } else {
-        const res = await db.insert(SCENES_TABLE, { name: SCENE_NAME, doc });
-        if (res && typeof res.id === "string") sceneRowIdRef.current = res.id;
-      }
+      await db.update(SCENES_TABLE, boardId, { doc });
       setSaveState("saved");
       setError(null);
+      dirtyRef.current = false;
+      // Bump this board to the top of the recency-sorted list locally.
+      setBoards((prev) =>
+        [...prev]
+          .map((b) => (b.id === boardId ? { ...b, updatedAt: Date.now() } : b))
+          .sort((a, b) => b.updatedAt - a.updatedAt),
+      );
     } catch (err: unknown) {
       console.warn("[whiteboard] scene save failed:", err instanceof Error ? err.message : String(err));
       setSaveState("error");
@@ -227,10 +367,11 @@ export default function App() {
   const scheduleSave = useCallback(
     (toSave: Scene) => {
       dirtyRef.current = true;
+      const boardId = activeIdRef.current;
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
         saveTimerRef.current = null;
-        void persist(toSave);
+        void persist(toSave, boardId);
       }, AUTOSAVE_MS);
     },
     [persist],
@@ -241,6 +382,67 @@ export default function App() {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     };
   }, []);
+
+  // -- switch boards (flush a pending save first) ---------------------------
+  const switchBoard = useCallback(
+    (id: string) => {
+      if (id === activeIdRef.current) return;
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        if (dirtyRef.current) void persist(history.present, activeIdRef.current);
+      }
+      void openBoard(id);
+    },
+    [history, openBoard, persist],
+  );
+
+  // -- rename a board -------------------------------------------------------
+  const commitRename = useCallback(async () => {
+    const r = renaming;
+    setRenaming(null);
+    if (!r) return;
+    const name = normalizeBoardName(r.value);
+    setBoards((prev) => prev.map((b) => (b.id === r.id ? { ...b, name } : b)));
+    const db = window.MatrixOS?.db;
+    if (!db || r.id === LOCAL_BOARD_ID) {
+      saveLocalName(name);
+      return;
+    }
+    try {
+      await db.update(SCENES_TABLE, r.id, { name });
+    } catch (err: unknown) {
+      console.warn("[whiteboard] rename failed:", err instanceof Error ? err.message : String(err));
+      setError("Could not rename the board.");
+      void refreshIndex();
+    }
+  }, [refreshIndex, renaming]);
+
+  // -- delete a board -------------------------------------------------------
+  const deleteBoard = useCallback(
+    async (board: BoardMeta) => {
+      setConfirmDelete(null);
+      const db = window.MatrixOS?.db;
+      if (!db || board.id === LOCAL_BOARD_ID) {
+        saveLocal(emptyScene());
+        setHistory(createHistory(emptyScene()));
+        return;
+      }
+      try {
+        setError(null);
+        await db.delete(SCENES_TABLE, board.id);
+        const index = await refreshIndex();
+        if (board.id === activeIdRef.current) {
+          if (index.length > 0) await openBoard(index[0].id);
+          else await createBoard("Untitled board");
+        }
+      } catch (err: unknown) {
+        console.warn("[whiteboard] delete board failed:", err instanceof Error ? err.message : String(err));
+        setError("Could not delete the board.");
+      }
+    },
+    [createBoard, openBoard, refreshIndex],
+  );
 
   // -- commit + autosave wrapper -------------------------------------------
   const apply = useCallback(
@@ -642,6 +844,8 @@ export default function App() {
   const motion = reduceMotion();
   const gridUnit = 24 * viewport.zoom;
 
+  const activeName = boards.find((b) => b.id === activeId)?.name ?? "Whiteboard";
+
   return (
     <div className={`wb-app${motion ? " wb-app--reduced" : ""}`}>
       <Toolbar
@@ -660,9 +864,27 @@ export default function App() {
         onExport={exportPng}
         onClear={() => setConfirmClear(true)}
         saveState={saveState}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        boardName={activeName}
       />
 
-      <div className="wb-stage">
+      <div className="wb-body">
+        <BoardSidebar
+          open={sidebarOpen}
+          boards={boards}
+          activeId={activeId}
+          renaming={renaming}
+          onSelect={switchBoard}
+          onNew={() => void createBoard()}
+          onStartRename={(b) => setRenaming({ id: b.id, value: b.name })}
+          onRenameChange={(value) => setRenaming((r) => (r ? { ...r, value } : r))}
+          onCommitRename={() => void commitRename()}
+          onCancelRename={() => setRenaming(null)}
+          onRequestDelete={(b) => setConfirmDelete(b)}
+        />
+
+        <div className="wb-stage">
         <svg
           ref={svgRef}
           className="wb-canvas"
@@ -714,7 +936,7 @@ export default function App() {
           </g>
         </svg>
 
-        {elements.length === 0 && !draft && (
+        {elements.length === 0 && !draft && !loadingBoard && (
           <div className="wb-empty" data-testid="whiteboard-empty">
             <div className="wb-empty__mark" aria-hidden="true">
               <Pen size={26} />
@@ -755,6 +977,7 @@ export default function App() {
             {error}
           </div>
         )}
+        </div>
       </div>
 
       {confirmClear && (
@@ -768,6 +991,27 @@ export default function App() {
               </button>
               <button type="button" className="wb-btn-danger" onClick={clearBoard}>
                 Clear board
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="wb-modal" role="dialog" aria-modal="true" aria-label="Delete board">
+          <div className="wb-modal__card">
+            <h3>Delete “{confirmDelete.name}”?</h3>
+            <p>This permanently removes the board and everything on it. This cannot be undone.</p>
+            <div className="wb-modal__actions">
+              <button type="button" className="wb-btn-ghost" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="wb-btn-danger"
+                onClick={() => void deleteBoard(confirmDelete)}
+              >
+                Delete board
               </button>
             </div>
           </div>
@@ -797,15 +1041,33 @@ interface ToolbarProps {
   onExport: () => void;
   onClear: () => void;
   saveState: SaveState;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  boardName: string;
 }
 
 function Toolbar(props: ToolbarProps) {
   const {
     tool, setTool, color, setColor, strokeWidth, setStrokeWidth,
     canUndo: canU, canRedo: canR, onUndo, onRedo, onDelete, hasSelection, onExport, onClear, saveState,
+    sidebarOpen, onToggleSidebar, boardName,
   } = props;
   return (
     <header className="wb-toolbar">
+      <button
+        type="button"
+        className="wb-tool wb-tool--panel"
+        aria-label={sidebarOpen ? "Hide boards" : "Show boards"}
+        aria-pressed={sidebarOpen}
+        title={sidebarOpen ? "Hide boards" : "Show boards"}
+        onClick={onToggleSidebar}
+      >
+        {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+      </button>
+      <span className="wb-boardname" title={boardName}>{boardName}</span>
+
+      <div className="wb-divider" aria-hidden="true" />
+
       <div className="wb-toolgroup" role="toolbar" aria-label="Tools">
         {TOOLS.map((t) => {
           const Icon = t.icon;
@@ -888,6 +1150,171 @@ function Toolbar(props: ToolbarProps) {
         </button>
       </div>
     </header>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Board sidebar (files / switcher)
+// ---------------------------------------------------------------------------
+
+interface BoardSidebarProps {
+  open: boolean;
+  boards: BoardMeta[];
+  activeId: string | null;
+  renaming: { id: string; value: string } | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onStartRename: (b: BoardMeta) => void;
+  onRenameChange: (value: string) => void;
+  onCommitRename: () => void;
+  onCancelRename: () => void;
+  onRequestDelete: (b: BoardMeta) => void;
+}
+
+function relativeTime(ms: number): string {
+  if (!ms) return "";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ms).toLocaleDateString();
+}
+
+function RenameInput({
+  value,
+  label,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  label: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  // Focus on mount instead of `autoFocus` (which react-doctor flags for a11y).
+  useLayoutEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  return (
+    <input
+      ref={ref}
+      className="wb-rename-input"
+      value={value}
+      aria-label={label}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+    />
+  );
+}
+
+function BoardSidebar(props: BoardSidebarProps) {
+  const {
+    open, boards, activeId, renaming,
+    onSelect, onNew, onStartRename, onRenameChange, onCommitRename, onCancelRename, onRequestDelete,
+  } = props;
+  if (!open) return null;
+  return (
+    <aside className="wb-sidebar" aria-label="Boards">
+      <div className="wb-sidebar__head">
+        <span className="wb-sidebar__title">Boards</span>
+        <button type="button" className="wb-newboard" onClick={onNew} title="New board">
+          <FilePlus2 size={15} /> <span>New board</span>
+        </button>
+      </div>
+
+      {boards.length === 0 ? (
+        <div className="wb-sidebar__empty">
+          <p>No boards yet.</p>
+          <button type="button" className="wb-newboard wb-newboard--cta" onClick={onNew}>
+            <FilePlus2 size={15} /> Create your first board
+          </button>
+        </div>
+      ) : (
+        <ul className="wb-boardlist">
+          {boards.map((b) => {
+            const active = b.id === activeId;
+            const isRenaming = renaming?.id === b.id;
+            return (
+              <li key={b.id} className={active ? "wb-boarditem wb-boarditem--active" : "wb-boarditem"}>
+                {isRenaming ? (
+                  <RenameInput
+                    value={renaming.value}
+                    label={`Rename ${b.name}`}
+                    onChange={onRenameChange}
+                    onCommit={onCommitRename}
+                    onCancel={onCancelRename}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="wb-boarditem__open"
+                    aria-current={active ? "true" : undefined}
+                    onClick={() => onSelect(b.id)}
+                    onDoubleClick={() => onStartRename(b)}
+                  >
+                    <span className="wb-boarditem__name">{b.name}</span>
+                    {b.updatedAt > 0 && (
+                      <span className="wb-boarditem__time">{relativeTime(b.updatedAt)}</span>
+                    )}
+                  </button>
+                )}
+
+                {isRenaming ? (
+                  <button
+                    type="button"
+                    className="wb-boarditem__action"
+                    aria-label="Confirm rename"
+                    title="Save name"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={onCommitRename}
+                  >
+                    <Check size={14} />
+                  </button>
+                ) : (
+                  <div className="wb-boarditem__actions">
+                    <button
+                      type="button"
+                      className="wb-boarditem__action"
+                      aria-label={`Rename board ${b.name}`}
+                      title="Rename"
+                      onClick={() => onStartRename(b)}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wb-boarditem__action wb-boarditem__action--danger"
+                      aria-label={`Delete board ${b.name}`}
+                      title="Delete"
+                      onClick={() => onRequestDelete(b)}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </aside>
   );
 }
 
@@ -1011,6 +1438,7 @@ function TextEditorOverlay({
     <textarea
       ref={ref}
       className="wb-text-editor"
+      aria-label="Edit text"
       value={editing.value}
       style={{ left, top, width, height }}
       onChange={(e) => onChange(e.target.value)}
