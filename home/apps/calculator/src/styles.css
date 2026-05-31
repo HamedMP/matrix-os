@@ -166,7 +166,7 @@ input:focus-visible {
 /* ---- Keypad ---- */
 .keypad {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 9px;
 }
 .keypad--sci {
@@ -211,7 +211,7 @@ input:focus-visible {
   background: color-mix(in srgb, var(--app-primary) 6%, var(--app-card));
 }
 .key--equals {
-  grid-column: span 1;
+  grid-column: 1 / -1;
   background: linear-gradient(150deg, var(--app-accent), color-mix(in srgb, var(--app-accent) 80%, #000));
   color: var(--app-primary-fg);
   border-color: transparent;

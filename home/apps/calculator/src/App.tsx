@@ -68,25 +68,37 @@ interface KeyDef {
   aria?: string;
 }
 
-const BASIC_KEYS: KeyDef[] = [
-  { label: "(", insert: "(", kind: "op" },
-  { label: ")", insert: ")", kind: "op" },
-  { label: "%", insert: "%", kind: "op" },
-  { label: "÷", insert: "/", kind: "op", aria: "divide" },
-  { label: "7", insert: "7" },
-  { label: "8", insert: "8" },
-  { label: "9", insert: "9" },
-  { label: "×", insert: "*", kind: "op", aria: "multiply" },
-  { label: "4", insert: "4" },
-  { label: "5", insert: "5" },
-  { label: "6", insert: "6" },
-  { label: "−", insert: "-", kind: "op", aria: "subtract" },
-  { label: "1", insert: "1" },
-  { label: "2", insert: "2" },
-  { label: "3", insert: "3" },
-  { label: "+", insert: "+", kind: "op", aria: "add" },
-  { label: "0", insert: "0" },
-  { label: ".", insert: "." },
+// Ordered for a 4-column grid. C/⌫ on the top row, "=" spans the full width.
+type PadAction = "clear" | "backspace" | "equals";
+interface PadKey {
+  label: string;
+  kind: "digit" | "op" | "util" | "equals";
+  insert?: string;
+  action?: PadAction;
+  aria?: string;
+}
+const KEYPAD: PadKey[] = [
+  { label: "C", kind: "util", action: "clear", aria: "clear" },
+  { label: "⌫", kind: "util", action: "backspace", aria: "delete" },
+  { label: "(", kind: "op", insert: "(" },
+  { label: ")", kind: "op", insert: ")" },
+  { label: "7", kind: "digit", insert: "7" },
+  { label: "8", kind: "digit", insert: "8" },
+  { label: "9", kind: "digit", insert: "9" },
+  { label: "÷", kind: "op", insert: "/", aria: "divide" },
+  { label: "4", kind: "digit", insert: "4" },
+  { label: "5", kind: "digit", insert: "5" },
+  { label: "6", kind: "digit", insert: "6" },
+  { label: "×", kind: "op", insert: "*", aria: "multiply" },
+  { label: "1", kind: "digit", insert: "1" },
+  { label: "2", kind: "digit", insert: "2" },
+  { label: "3", kind: "digit", insert: "3" },
+  { label: "−", kind: "op", insert: "-", aria: "subtract" },
+  { label: "0", kind: "digit", insert: "0" },
+  { label: ".", kind: "digit", insert: "." },
+  { label: "%", kind: "op", insert: "%", aria: "percent" },
+  { label: "+", kind: "op", insert: "+", aria: "add" },
+  { label: "=", kind: "equals", action: "equals", aria: "equals" },
 ];
 
 const SCIENTIFIC_KEYS: KeyDef[] = [
@@ -398,31 +410,35 @@ export default function App() {
         )}
 
         <div className="keypad" role="group" aria-label="Keypad">
-          <button type="button" className="key key--util" onClick={clearAll} aria-label="Clear">
-            C
-          </button>
-          <button type="button" className="key key--util" onClick={backspace} aria-label="Delete">
-            <Delete size={18} />
-          </button>
-          {BASIC_KEYS.map((k) => (
-            <button
-              key={k.label}
-              type="button"
-              className={`key${k.kind === "op" ? " key--op" : ""}`}
-              aria-label={k.aria ?? k.label}
-              onClick={() => insert(k.insert)}
-            >
-              {k.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="key key--equals"
-            onClick={() => void commit()}
-            aria-label="equals"
-          >
-            <Equal size={20} />
-          </button>
+          {KEYPAD.map((k) => {
+            const cls =
+              k.kind === "op"
+                ? "key key--op"
+                : k.kind === "util"
+                  ? "key key--util"
+                  : k.kind === "equals"
+                    ? "key key--equals"
+                    : "key";
+            const handleClick =
+              k.action === "clear"
+                ? clearAll
+                : k.action === "backspace"
+                  ? backspace
+                  : k.action === "equals"
+                    ? () => void commit()
+                    : () => insert(k.insert ?? "");
+            return (
+              <button
+                key={k.label}
+                type="button"
+                className={cls}
+                aria-label={k.aria ?? k.label}
+                onClick={handleClick}
+              >
+                {k.label === "⌫" ? <Delete size={18} /> : k.label === "=" ? <Equal size={20} /> : k.label}
+              </button>
+            );
+          })}
         </div>
       </section>
 
