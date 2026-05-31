@@ -24,40 +24,34 @@ import {
 
 const APP_ID = "notes";
 const KV_KEY = "notes";
+const LOCAL_KEY = `matrixos.${APP_ID}.${KV_KEY}`;
 const SAVE_DELAY_MS = 500;
-const FETCH_TIMEOUT_MS = 10_000;
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+// Apps run inside a sandboxed, null-origin srcdoc iframe with CSP
+// `connect-src 'self'`, so a direct fetch() to the gateway is always blocked.
+// The only valid persistence transport is window.MatrixOS.db (postMessage).
+// This local fallback is for the no-bridge case (e.g. jsdom tests); in the
+// real shell window.MatrixOS.db is always injected and is used instead.
 async function readKvNotes(): Promise<Note[]> {
-  const params = new URLSearchParams({ app: APP_ID, key: KV_KEY });
-  const response = await fetch(`/api/bridge/data?${params.toString()}`, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) return [];
-  const payload = (await response.json()) as { value?: string | null };
-  if (!payload.value) return [];
   try {
-    const rows = JSON.parse(payload.value) as unknown;
+    const raw = globalThis.localStorage?.getItem(LOCAL_KEY);
+    if (!raw) return [];
+    const rows = JSON.parse(raw) as unknown;
     return Array.isArray(rows) ? rows.map((row) => hydrateNote(row as Record<string, unknown>)) : [];
   } catch (err: unknown) {
-    console.warn("[notes] ignored invalid fallback payload:", err instanceof Error ? err.message : String(err));
+    console.warn("[notes] local fallback read failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
 
 async function writeKvNotes(notes: Note[]): Promise<void> {
-  await fetch("/api/bridge/data", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    body: JSON.stringify({
-      action: "write",
-      app: APP_ID,
-      key: KV_KEY,
-      value: JSON.stringify(notes),
-    }),
-  });
+  try {
+    globalThis.localStorage?.setItem(LOCAL_KEY, JSON.stringify(notes));
+  } catch (err: unknown) {
+    console.warn("[notes] local fallback write failed:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 async function loadNotes(): Promise<Note[]> {
