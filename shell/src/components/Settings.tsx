@@ -157,8 +157,6 @@ export function Settings({
   if (!mounted) return null;
 
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
-  const isBillingSurface = activeSection === "billing";
-
   return (
     <div className="fixed inset-0 z-[45]">
       <div
@@ -174,11 +172,7 @@ export function Settings({
 
       <div className="relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
         <div
-          className={`flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl ${
-            isBillingSurface
-              ? "xl:h-[760px] xl:w-[1180px]"
-              : "lg:h-[680px] lg:w-[880px]"
-          }`}
+          className="flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:h-[760px] xl:w-[1180px]"
           style={{
             opacity: visible ? 1 : 0,
             transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
@@ -208,7 +202,7 @@ export function Settings({
                       aria-label={locked ? `${section.label} Locked until billing is active` : section.label}
                       className={`flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
                         active
-                          ? "bg-foreground/8 text-foreground font-medium"
+                          ? "bg-ember/12 text-deep font-semibold"
                           : locked
                             ? "cursor-not-allowed text-muted-foreground/45"
                             : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
@@ -216,11 +210,7 @@ export function Settings({
                     >
                       <Icon
                         className={`size-4 shrink-0 ${
-                          active
-                            ? section.id === "billing"
-                              ? "text-ember"
-                              : "text-foreground"
-                            : ""
+                          active ? "text-ember" : ""
                         }`}
                       />
                       <span>{section.label}</span>
