@@ -206,6 +206,42 @@ describe("Chess app", () => {
     expect(within(history).getByText("e4")).toBeTruthy();
   });
 
+  it("toggles between two-player and vs-computer modes", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await screen.findByTestId("board");
+
+    // Defaults to two-player; computer options are hidden.
+    expect(screen.queryByTestId("difficulty")).toBeNull();
+    expect(screen.getByTestId("mode-two-player").getAttribute("aria-pressed")).toBe("true");
+
+    // Switch to vs Computer — color + difficulty controls appear.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mode-vs-computer"));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("mode-vs-computer").getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByTestId("difficulty")).toBeTruthy();
+      expect(screen.getByTestId("color-white")).toBeTruthy();
+      expect(screen.getByTestId("color-black")).toBeTruthy();
+    });
+
+    // Difficulty is selectable.
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("difficulty"), { target: { value: "hard" } });
+      await Promise.resolve();
+    });
+    expect((screen.getByTestId("difficulty") as HTMLSelectElement).value).toBe("hard");
+
+    // Back to two-player hides the options again.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mode-two-player"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.queryByTestId("difficulty")).toBeNull());
+  });
+
   it("New game resets the move history", async () => {
     installMatrixDb([]);
     render(<App />);

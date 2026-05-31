@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
-import { FlipVertical2, RotateCcw, Save, Sparkles, Swords, Trophy } from "lucide-react";
+import { Bot, Brain, FlipVertical2, RotateCcw, Save, Sparkles, Swords, Trophy, Users } from "lucide-react";
 import {
   PIECE_GLYPHS,
   capturedFromHistory,
@@ -12,6 +12,7 @@ import {
   type PieceLike,
   type PieceType,
 } from "./chess-model";
+import { DIFFICULTY_DEPTH, findBestMove, type ChessLike, type Difficulty } from "./chess-ai";
 import "./styles.css";
 
 const GAMES_TABLE = "games";
@@ -19,6 +20,13 @@ const LS_KEY = "matrixos.chess.games";
 const PROMOTION_PIECES: PieceType[] = ["q", "r", "b", "n"];
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+type GameMode = "two-player" | "vs-computer";
+
+const DIFFICULTY_LABEL: Record<Difficulty, string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+};
 
 interface VerboseMove {
   from: string;
@@ -98,6 +106,23 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [gamesPlayed, setGamesPlayed] = useState<number>(0);
   const savedResultRef = useRef(false);
+
+  // AI opponent configuration. `humanColor` is the side the user plays in
+  // vs-computer mode; the engine plays the other side. `thinking` disables input
+  // while the AI search runs.
+  const [mode, setMode] = useState<GameMode>("two-player");
+  const [humanColor, setHumanColor] = useState<PieceColor>("w");
+  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
+  const [thinking, setThinking] = useState(false);
+  // Latest settings, read inside the deferred AI callback without re-subscribing.
+  const aiConfigRef = useRef({ mode, humanColor, difficulty });
+  aiConfigRef.current = { mode, humanColor, difficulty };
+  // Guards against double-scheduling and lets New game / Undo cancel a pending move.
+  const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiRunIdRef = useRef(0);
+  // Mirrors whether human input is currently locked, so the move callbacks can
+  // read it without being re-created on every think tick.
+  const inputLockedRef = useRef(false);
 
   const game = gameRef.current;
   const status = deriveStatus(game);
@@ -208,7 +233,7 @@ export default function App() {
 
   const handleSquareClick = useCallback(
     (square: string) => {
-      if (pendingPromotion) return;
+      if (pendingPromotion || inputLockedRef.current) return;
       const piece = gameRef.current.get(square as never) as PieceLike | undefined;
       const turn = gameRef.current.turn() as PieceColor;
 
@@ -241,7 +266,7 @@ export default function App() {
 
   const handleDrop = useCallback(
     (from: string, to: string) => {
-      if (pendingPromotion || from === to) return;
+      if (pendingPromotion || from === to || inputLockedRef.current) return;
       attemptMove(from, to);
     },
     [attemptMove, pendingPromotion],
@@ -256,7 +281,19 @@ export default function App() {
     [applyMove, pendingPromotion],
   );
 
+  // Cancel any scheduled/in-flight AI reply so resets and undos can't be raced
+  // by a stale engine move.
+  const cancelAiMove = useCallback(() => {
+    if (aiTimerRef.current !== null) {
+      clearTimeout(aiTimerRef.current);
+      aiTimerRef.current = null;
+    }
+    aiRunIdRef.current += 1; // invalidate any deferred run already queued
+    setThinking(false);
+  }, []);
+
   const newGame = useCallback(() => {
+    cancelAiMove();
     gameRef.current.reset();
     savedResultRef.current = false;
     setLastMove(null);
@@ -264,17 +301,44 @@ export default function App() {
     setSaveState("idle");
     clearSelection();
     bump();
-  }, [bump, clearSelection]);
+  }, [bump, cancelAiMove, clearSelection]);
+
+  // Switching mode or side starts a fresh game so the engine plays a coherent
+  // game from the new configuration (and never has to "take over" mid-game).
+  const startMode = useCallback(
+    (next: GameMode) => {
+      setMode(next);
+      newGame();
+    },
+    [newGame],
+  );
+
+  const chooseColor = useCallback(
+    (color: PieceColor) => {
+      setHumanColor(color);
+      // Flip the board so the human's pieces sit at the bottom.
+      setFlipped(color === "b");
+      newGame();
+    },
+    [newGame],
+  );
 
   const undo = useCallback(() => {
+    cancelAiMove();
+    // In vs-computer mode an "undo" should take back the full human+AI pair so
+    // the human is the side to move again (unless only one ply exists).
+    const config = aiConfigRef.current;
+    const takeBackPair =
+      config.mode === "vs-computer" && gameRef.current.turn() === config.humanColor;
     const undone = gameRef.current.undo();
     if (!undone) return;
+    if (takeBackPair) gameRef.current.undo();
     savedResultRef.current = false;
     setSaveState("idle");
     setLastMove(null);
     clearSelection();
     bump();
-  }, [bump, clearSelection]);
+  }, [bump, cancelAiMove, clearSelection]);
 
   // Keyboard: Esc clears selection / dismisses promotion, Cmd/Ctrl+Z undoes.
   useEffect(() => {
@@ -290,6 +354,47 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [clearSelection, pendingPromotion, undo]);
+
+  const aiColor: PieceColor = humanColor === "w" ? "b" : "w";
+  const aiToMove =
+    mode === "vs-computer" && !pendingPromotion && game.turn() === aiColor && status.result === null;
+  // Lock human input while the engine is to move or actively searching.
+  const inputLocked = thinking || aiToMove;
+  inputLockedRef.current = inputLocked;
+
+  // Schedule the AI reply whenever it becomes the engine's turn. We defer the
+  // (synchronous, CPU-bound) negamax search behind a setTimeout so the human's
+  // move paints first and the UI never freezes mid-interaction; `thinking`
+  // disables input meanwhile. A run-id guards against stale moves after the user
+  // resets or undoes while a search is queued.
+  useEffect(() => {
+    if (!aiToMove) return undefined;
+    const runId = aiRunIdRef.current;
+    setThinking(true);
+    aiTimerRef.current = setTimeout(() => {
+      aiTimerRef.current = null;
+      // Bail if a reset/undo invalidated this run while it was queued.
+      if (aiRunIdRef.current !== runId) return;
+      const cfg = aiConfigRef.current;
+      try {
+        const best = findBestMove(gameRef.current as unknown as ChessLike, DIFFICULTY_DEPTH[cfg.difficulty]);
+        if (best && aiRunIdRef.current === runId) {
+          applyMove(best.from, best.to, best.promotion);
+        }
+      } catch (err: unknown) {
+        console.warn("[chess] AI search failed:", err instanceof Error ? err.message : String(err));
+        setError("The computer could not find a move.");
+      } finally {
+        if (aiRunIdRef.current === runId) setThinking(false);
+      }
+    }, 220);
+    return () => {
+      if (aiTimerRef.current !== null) {
+        clearTimeout(aiTimerRef.current);
+        aiTimerRef.current = null;
+      }
+    };
+  }, [aiToMove, applyMove]);
 
   const squares = useMemo(() => squaresOfBoard(flipped), [flipped]);
   const ranksForCoords = flipped ? ["1", "2", "3", "4", "5", "6", "7", "8"] : ["8", "7", "6", "5", "4", "3", "2", "1"];
@@ -307,7 +412,7 @@ export default function App() {
           </div>
           <div className="stage-title">
             <span className="eyebrow">Matrix Chess</span>
-            <h1>Local two-player</h1>
+            <h1>{mode === "vs-computer" ? "Play the computer" : "Local two-player"}</h1>
           </div>
           <button
             type="button"
@@ -320,14 +425,87 @@ export default function App() {
           </button>
         </header>
 
+        <div className="setup-bar" data-testid="setup-bar">
+          <div className="seg" role="group" aria-label="Game mode">
+            <button
+              type="button"
+              className={`seg-btn${mode === "two-player" ? " seg-btn--on" : ""}`}
+              aria-pressed={mode === "two-player"}
+              data-testid="mode-two-player"
+              onClick={() => startMode("two-player")}
+            >
+              <Users size={14} /> Two players
+            </button>
+            <button
+              type="button"
+              className={`seg-btn${mode === "vs-computer" ? " seg-btn--on" : ""}`}
+              aria-pressed={mode === "vs-computer"}
+              data-testid="mode-vs-computer"
+              onClick={() => startMode("vs-computer")}
+            >
+              <Bot size={14} /> vs Computer
+            </button>
+          </div>
+
+          {mode === "vs-computer" && (
+            <div className="setup-options">
+              <div className="seg" role="group" aria-label="Your color">
+                <button
+                  type="button"
+                  className={`seg-btn${humanColor === "w" ? " seg-btn--on" : ""}`}
+                  aria-pressed={humanColor === "w"}
+                  data-testid="color-white"
+                  onClick={() => chooseColor("w")}
+                >
+                  White
+                </button>
+                <button
+                  type="button"
+                  className={`seg-btn${humanColor === "b" ? " seg-btn--on" : ""}`}
+                  aria-pressed={humanColor === "b"}
+                  data-testid="color-black"
+                  onClick={() => chooseColor("b")}
+                >
+                  Black
+                </button>
+              </div>
+              <label className="difficulty">
+                <Brain size={14} aria-hidden="true" />
+                <select
+                  aria-label="Difficulty"
+                  data-testid="difficulty"
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value as Difficulty)}
+                >
+                  {(Object.keys(DIFFICULTY_LABEL) as Difficulty[]).map((d) => (
+                    <option key={d} value={d}>
+                      {DIFFICULTY_LABEL[d]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+        </div>
+
         <div
-          className={`status-pill status-pill--${status.tone}`}
+          className={`status-pill status-pill--${thinking ? "thinking" : status.tone}`}
           role="status"
           data-testid="status"
-          data-tone={status.tone}
+          data-tone={thinking ? "thinking" : status.tone}
+          aria-live="polite"
         >
-          {gameOver ? <Trophy size={15} /> : <Sparkles size={15} />}
-          <span>{status.text}</span>
+          {thinking ? (
+            <>
+              <Bot size={15} className="thinking-spin" />
+              <span data-testid="thinking">Computer is thinking…</span>
+            </>
+          ) : (
+            <>
+              {gameOver ? <Trophy size={15} /> : <Sparkles size={15} />}
+              <span>{status.text}</span>
+            </>
+          )}
         </div>
 
         <div className="board-frame">
@@ -361,9 +539,9 @@ export default function App() {
                     .filter(Boolean)
                     .join(" ")}
                   onClick={() => handleSquareClick(sq)}
-                  draggable={Boolean(piece && piece.color === turn && !gameOver)}
+                  draggable={Boolean(piece && piece.color === turn && !gameOver && !inputLocked)}
                   onDragStart={(e) => {
-                    if (!piece || piece.color !== turn) {
+                    if (!piece || piece.color !== turn || inputLocked) {
                       e.preventDefault();
                       return;
                     }
@@ -406,7 +584,7 @@ export default function App() {
             type="button"
             className="secondary-action"
             onClick={undo}
-            disabled={sanHistory.length === 0}
+            disabled={sanHistory.length === 0 || thinking}
           >
             <RotateCcw size={16} /> Undo
           </button>
@@ -429,7 +607,7 @@ export default function App() {
               <div className="empty-history">
                 <Swords size={22} />
                 <strong>No moves yet</strong>
-                <span>White to move — click a piece to see its legal squares, then click a target.</span>
+                <span>White to move. Click a piece to see its legal squares, then click a target.</span>
               </div>
             ) : (
               <ol className="move-list">
@@ -455,7 +633,11 @@ export default function App() {
           </span>
         </div>
 
-        <p className="note">AI opponent is deferred — this is local two-player chess.</p>
+        <p className="note">
+          {mode === "vs-computer"
+            ? `Playing ${colorName(humanColor)} vs the computer (${DIFFICULTY_LABEL[difficulty]}).`
+            : "Two-player mode. Switch to vs Computer to play the engine."}
+        </p>
       </aside>
 
       {pendingPromotion && (
