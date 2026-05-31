@@ -216,7 +216,29 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: host-bundle
-          path: dist/host-bundle
+          path: dist/host-bundle-artifact
+
+      - name: Normalize downloaded bundle artifact
+        run: |
+          set -euo pipefail
+          ARTIFACT_DIR="dist/host-bundle-artifact"
+          TARGET_DIR="dist/host-bundle"
+          BUNDLE_FILE="$(find "$ARTIFACT_DIR" -type f -name matrix-host-bundle.tar.gz -print -quit)"
+          if [ -z "$BUNDLE_FILE" ]; then
+            echo "Downloaded host bundle artifact did not contain matrix-host-bundle.tar.gz" >&2
+            find "$ARTIFACT_DIR" -maxdepth 4 -type f -print >&2
+            exit 1
+          fi
+          SOURCE_DIR="$(dirname "$BUNDLE_FILE")"
+          mkdir -p "$TARGET_DIR"
+          for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 manifest.json release.json; do
+            if [ ! -f "$SOURCE_DIR/$file" ]; then
+              echo "Downloaded host bundle artifact is missing $file" >&2
+              find "$ARTIFACT_DIR" -maxdepth 4 -type f -print >&2
+              exit 1
+            fi
+            cp "$SOURCE_DIR/$file" "$TARGET_DIR/$file"
+          done
 
       - name: Install AWS CLI
         run: |

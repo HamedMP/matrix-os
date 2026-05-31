@@ -203,6 +203,18 @@ describe('customer VPS host bundle', () => {
     expect(workflow).not.toContain('dist/host-bundle/stage');
   });
 
+  it('host bundle release workflow normalizes downloaded artifact layout before publishing', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('path: dist/host-bundle-artifact');
+    expect(workflow).toContain('name: Normalize downloaded bundle artifact');
+    expect(workflow).toContain('BUNDLE_FILE="$(find "$ARTIFACT_DIR" -type f -name matrix-host-bundle.tar.gz -print -quit)"');
+    expect(workflow).toContain('TARGET_DIR="dist/host-bundle"');
+    expect(workflow).toContain('for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 manifest.json release.json; do');
+    expect(workflow).toContain('cp "$SOURCE_DIR/$file" "$TARGET_DIR/$file"');
+  });
+
   it('host bundle release workflow cancels only superseded dev-channel builds', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
