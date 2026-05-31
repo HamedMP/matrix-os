@@ -27,6 +27,7 @@ export function RichContent({ children, onAction }: RichContentProps) {
       {segments.map((seg, i) => {
         switch (seg.type) {
           case "markdown":
+            // react-doctor-disable-next-line react-doctor/no-array-index-key, react-doctor/no-array-index-as-key -- rich-content markdown segments are an ordered parse of one immutable message; duplicate markdown text has no stable id, so position is the collision-free identity.
             return <MessageResponse key={`md:${i}`}>{seg.content}</MessageResponse>;
           case "ui:cards":
             return (

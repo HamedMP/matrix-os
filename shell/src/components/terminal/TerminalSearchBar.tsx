@@ -140,6 +140,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
 
   return (
     <search
+      role="search"
       onKeyDown={handleKeyDown}
       style={{
         ...CONTAINER_BASE_STYLE,
