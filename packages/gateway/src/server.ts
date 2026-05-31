@@ -78,6 +78,8 @@ import { createReadinessService } from "./onboarding/readiness-service.js";
 import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
 import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
 import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRepository } from "./onboarding/tool-packs.js";
+import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
@@ -545,6 +547,7 @@ export async function createGateway(config: GatewayConfig) {
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
+  const toolPackRepository = new InMemoryToolPackRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
   const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
@@ -649,6 +652,10 @@ export async function createGateway(config: GatewayConfig) {
     codingSetup: {
       getCodingSetup: async () => unavailableCodingSetup,
     },
+  });
+  const toolPackService = createToolPackService({
+    repository: toolPackRepository,
+    installer: createHostToolPackInstaller(),
   });
   const adminControlService = createAdminControlService({
     agentCredentials: agentCredentialService,
@@ -1545,6 +1552,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
+  app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,

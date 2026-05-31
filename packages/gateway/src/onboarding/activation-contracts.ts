@@ -285,6 +285,74 @@ export const RetryGateResponseSchema = z.object({
 });
 export type RetryGateResponse = z.infer<typeof RetryGateResponseSchema>;
 
+export const ToolPackIdSchema = z.enum([
+  "coding-agents",
+  "code-server",
+  "hermes",
+  "linux-tools",
+]);
+export type ToolPackId = z.infer<typeof ToolPackIdSchema>;
+
+export const ToolPackCategorySchema = z.enum([
+  "agent",
+  "editor",
+  "system",
+]);
+export type ToolPackCategory = z.infer<typeof ToolPackCategorySchema>;
+
+export const ToolPackInstallStatusSchema = z.enum([
+  "available",
+  "selected",
+  "installing",
+  "installed",
+  "failed",
+  "unavailable",
+]);
+export type ToolPackInstallStatus = z.infer<typeof ToolPackInstallStatusSchema>;
+
+export const ToolPackSummarySchema = z.object({
+  id: ToolPackIdSchema,
+  category: ToolPackCategorySchema,
+  label: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(240),
+  commands: z.array(z.string().trim().min(1).max(40).regex(SAFE_ID)).max(8),
+  selected: z.boolean(),
+  installed: z.boolean(),
+  defaultSelected: z.boolean(),
+  status: ToolPackInstallStatusSchema,
+  installJobId: ReadinessGateIdSchema.nullable(),
+});
+export type ToolPackSummary = z.infer<typeof ToolPackSummarySchema>;
+
+export const ToolPackInstallJobStatusSchema = z.enum([
+  "installing",
+  "installed",
+  "failed",
+]);
+export type ToolPackInstallJobStatus = z.infer<typeof ToolPackInstallJobStatusSchema>;
+
+export const ToolPackInstallJobSummarySchema = z.object({
+  id: ReadinessGateIdSchema,
+  packId: ToolPackIdSchema,
+  status: ToolPackInstallJobStatusSchema,
+  startedAt: ActivationDateSchema,
+  completedAt: ActivationDateSchema.nullable(),
+  message: OptionalSafeDisplayTextSchema,
+});
+export type ToolPackInstallJobSummary = z.infer<typeof ToolPackInstallJobSummarySchema>;
+
+export const ToolPacksResponseSchema = z.object({
+  packs: z.array(ToolPackSummarySchema).min(1).max(8),
+  selectedPackIds: z.array(ToolPackIdSchema).max(8),
+  installJobs: z.array(ToolPackInstallJobSummarySchema).max(64),
+});
+export type ToolPacksResponse = z.infer<typeof ToolPacksResponseSchema>;
+
+export const SelectToolPacksRequestSchema = z.object({
+  packIds: z.array(ToolPackIdSchema).min(1).max(8),
+});
+export type SelectToolPacksRequest = z.infer<typeof SelectToolPacksRequestSchema>;
+
 export const ActivationErrorResponseSchema = z.object({
   error: z.string().min(1).max(80),
   message: z.string().min(1).max(160),
