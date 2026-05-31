@@ -16,10 +16,8 @@ export function parseTask(content: string): TaskData | null {
     ) {
       return parsed as TaskData;
     }
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[ai-elements] Failed to parse task:", error);
-    }
+  } catch (err: unknown) {
+    console.warn("[task] Failed to parse task:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }

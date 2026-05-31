@@ -14,10 +14,8 @@ export function parsePlan(content: string): PlanStep[] | null {
           typeof s === "object" && s !== null && typeof s.title === "string",
       );
     }
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[ai-elements] Failed to parse plan:", error);
-    }
+  } catch (err: unknown) {
+    console.warn("[plan] Failed to parse plan:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }

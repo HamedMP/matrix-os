@@ -16,8 +16,8 @@ export function describeUnknownError(error: unknown): string {
   if (error instanceof globalThis.Error) return `${error.name}: ${error.message}`;
   try {
     return String(error);
-  } catch (stringifyError: unknown) {
-    console.warn("Failed to stringify unknown error", stringifyError);
+  } catch (err: unknown) {
+    console.warn("[error-boundary] Failed to stringify error:", err instanceof Error ? err.message : String(err));
     return typeof error;
   }
 }
