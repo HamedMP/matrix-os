@@ -1,7 +1,7 @@
 {
   "name": "Expense Tracker",
-  "description": "Track daily expenses and budgets",
-  "category": "productivity",
+  "description": "Track spending, budgets, and recurring bills with a monthly dashboard.",
+  "category": "finance",
   "icon": "expense-tracker",
   "author": "system",
   "version": "2.0.0",
@@ -10,12 +10,22 @@
       "expenses": {
         "columns": {
           "amount": "float",
-          "description": "text",
           "category": "text",
-          "date": "timestamptz"
+          "note": "text",
+          "spent_at": "timestamptz",
+          "recurring": "boolean"
         },
         "indexes": [
-          "date",
+          "spent_at",
+          "category"
+        ]
+      },
+      "budgets": {
+        "columns": {
+          "category": "text",
+          "monthly_limit": "float"
+        },
+        "indexes": [
           "category"
         ]
       }
