@@ -24,10 +24,10 @@ export function RichContent({ children, onAction }: RichContentProps) {
 
   return (
     <>
-      {segments.map((seg) => {
+      {segments.map((seg, i) => {
         switch (seg.type) {
           case "markdown":
-            return <MessageResponse key={`md:${seg.content}`}>{seg.content}</MessageResponse>;
+            return <MessageResponse key={`md:${i}`}>{seg.content}</MessageResponse>;
           case "ui:cards":
             return (
               <CardGrid

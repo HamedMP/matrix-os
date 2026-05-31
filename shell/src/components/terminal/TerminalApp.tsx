@@ -1041,6 +1041,8 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
     >
       <div
         className="flex items-stretch overflow-x-auto min-w-0"
+        role="tablist"
+        aria-label="Terminal tabs"
         style={{
           gap: 3,
           scrollbarWidth: "thin",
