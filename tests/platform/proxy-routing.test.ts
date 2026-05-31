@@ -891,7 +891,7 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(503);
     const html = await res.text();
     expect(html).toContain("Preparing Matrix OS");
-    expect(html).toContain('http-equiv="refresh" content="8"');
+    expect(html).not.toContain('http-equiv="refresh"');
     expect(html).not.toContain("Failed to wake container");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(orchestrator.start).not.toHaveBeenCalled();
@@ -1029,10 +1029,19 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(res.headers.get("content-security-policy")).toContain("worker-src 'self' blob:");
+    expect(res.headers.get("content-security-policy")).toContain("script-src 'self'");
+    expect(res.headers.get("content-security-policy")).toContain("https://challenges.cloudflare.com");
+    expect(res.headers.get("content-security-policy")).toContain("frame-src https://challenges.cloudflare.com");
     expect(res.headers.get("set-cookie") ?? "").not.toContain("matrix_runtime_slot=");
     const html = await res.text();
-    expect(html).toContain('afterSignInUrl: redirectTarget');
+    expect(html).toContain('fallbackRedirectUrl: redirectTarget');
+    expect(html).not.toContain('afterSignInUrl');
     expect(html).toContain('var redirectTarget = "/?runtime=staging";');
+    expect(html).toContain('var signOutTarget = "/sign-in";');
+    expect(html).toContain("showSignedInState");
+    expect(html).toContain("[matrix] Clerk.signOut failed");
+    expect(html).not.toContain("window.location.replace(redirectTarget)");
   });
 
   it("shows a switch-computer picker with explicit VM links", async () => {
@@ -1152,9 +1161,30 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("afterSignInUrl: redirectTarget");
+    expect(html).toContain("fallbackRedirectUrl: redirectTarget");
+    expect(html).toContain('var signOutTarget = "/sign-in";');
     expect(html).not.toContain("Choose a Matrix OS machine");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps signed-in sign-out routing on the sign-up page", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-up", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('var signOutTarget = "/sign-up";');
   });
 
   it("sets the current computer route on cold root visits without a runtime cookie", async () => {

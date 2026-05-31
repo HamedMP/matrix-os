@@ -787,7 +787,7 @@ function applyAuthPageHeaders(
   c.header('X-Frame-Options', 'DENY');
   c.header(
     'Content-Security-Policy',
-    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN}; object-src 'none'; base-uri 'none'`,
+    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN} https://challenges.cloudflare.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'`,
   );
 }
 
@@ -1180,6 +1180,7 @@ function getAuthPage(
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
+  const signOutTargetJson = escapeInlineScriptJson(mode === 'sign-up' ? '/sign-up' : '/sign-in');
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
     ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
@@ -1189,6 +1190,7 @@ function getAuthPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>Matrix OS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1319,6 +1321,47 @@ function getAuthPage(
     }
     #auth { width: 100%; min-height: 400px; display: flex; align-items: center; justify-content: center; }
     .loading { color: #7A7768; font-size: 14px; }
+    .session-state {
+      display: grid;
+      gap: 16px;
+      width: 100%;
+      color: #32352E;
+      text-align: left;
+    }
+    .session-state h2 {
+      margin: 0;
+      color: #434E3F;
+      font-size: 24px;
+      line-height: 1.12;
+    }
+    .session-state p {
+      margin: 0;
+      color: #5C5A4F;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .session-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .session-actions button {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #C9C4B8;
+      border-radius: 14px;
+      background: rgba(250,250,245,0.76);
+      color: #32352E;
+      cursor: pointer;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .session-actions button.primary {
+      border-color: #D06F25;
+      background: #D06F25;
+      color: #fffdf6;
+    }
     @media (max-width: 860px) {
       .page { grid-template-columns: 1fr; }
       .story { min-height: 42vh; border-right: 0; border-bottom: 1px solid #D6D3C8; padding: 40px 24px; }
@@ -1359,6 +1402,7 @@ function getAuthPage(
   ></script>
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
+    var signOutTarget = ${signOutTargetJson};
     var appearance = {
       variables: {
         colorPrimary: '#D06F25',
@@ -1382,18 +1426,66 @@ function getAuthPage(
         footerActionLink: 'font-medium'
       }
     };
+    function showSignedInState() {
+      var el = document.getElementById('auth');
+      el.innerHTML = '';
+
+      var state = document.createElement('div');
+      state.className = 'session-state';
+
+      var heading = document.createElement('h2');
+      heading.textContent = 'You are already signed in';
+      state.appendChild(heading);
+
+      var detail = document.createElement('p');
+      detail.textContent = 'Continue to Matrix OS, or sign out first if you are testing a new signup.';
+      state.appendChild(detail);
+
+      var actions = document.createElement('div');
+      actions.className = 'session-actions';
+
+      var continueButton = document.createElement('button');
+      continueButton.type = 'button';
+      continueButton.className = 'primary';
+      continueButton.textContent = 'Continue';
+      continueButton.addEventListener('click', function() {
+        window.location.assign(redirectTarget);
+      });
+      actions.appendChild(continueButton);
+
+      var signOutButton = document.createElement('button');
+      signOutButton.type = 'button';
+      signOutButton.textContent = 'Sign out';
+      signOutButton.addEventListener('click', function() {
+        signOutButton.disabled = true;
+        signOutButton.textContent = 'Signing out...';
+        window.Clerk.signOut()
+          .then(function() {
+            window.location.replace(signOutTarget);
+          })
+          .catch(function(err) {
+            console.error('[matrix] Clerk.signOut failed', err instanceof Error ? err.message : String(err));
+            signOutButton.disabled = false;
+            signOutButton.textContent = 'Sign out';
+          });
+      });
+      actions.appendChild(signOutButton);
+
+      state.appendChild(actions);
+      el.appendChild(state);
+    }
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
-          window.location.replace(redirectTarget);
+          showSignedInState();
           return;
         }
         var el = document.getElementById('auth');
         el.innerHTML = '';
         if ('${mode}' === 'sign-up') {
-          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: redirectTarget, appearance: appearance });
+          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', fallbackRedirectUrl: redirectTarget, appearance: appearance });
         } else {
-          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: redirectTarget, appearance: appearance });
+          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', fallbackRedirectUrl: redirectTarget, appearance: appearance });
         }
       });
     }
@@ -1413,7 +1505,6 @@ function getNoContainerPage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="8">
   <title>Matrix OS</title>
   <style>
     * { box-sizing: border-box; }
