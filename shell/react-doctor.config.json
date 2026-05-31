@@ -3,6 +3,9 @@
     "react-doctor/require-pnpm-hardening": "off"
   },
   "surfaces": {
-    "score": { "excludeCategories": ["Dead Code"] }
+    "score": {
+      "excludeCategories": ["Dead Code"],
+      "excludeRules": ["react-doctor/require-pnpm-hardening"]
+    }
   }
 }
