@@ -1039,7 +1039,8 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain('afterSignInUrl');
     expect(html).toContain('var redirectTarget = "/?runtime=staging";');
     expect(html).toContain('var signOutTarget = "/sign-in";');
-    expect(html).toContain("showSignedInState");
+    expect(html).toContain("continueWithClerkSession");
+    expect(html).toContain("fetch('/api/auth/app-session'");
     expect(html).toContain("[matrix] Clerk.signOut failed");
     expect(html).not.toContain("window.location.replace(redirectTarget)");
   });
@@ -1185,6 +1186,173 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('var signOutTarget = "/sign-up";');
+  });
+
+  it("exchanges a browser Clerk token for an app session cookie before continuing", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff138",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123482,
+      publicIPv4: "203.0.113.33",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff140",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123484,
+      publicIPv4: "203.0.113.35",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:05:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ redirectTo: "/runtime?runtime=staging" }),
+    });
+
+    expect(exchange.status).toBe(200);
+    await expect(exchange.json()).resolves.toEqual({ redirectTo: "/runtime?runtime=staging" });
+    const setCookie = exchange.headers.get("set-cookie");
+    expect(setCookie).toContain("matrix_app_session=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Lax");
+
+    const appSession = setCookie?.split(";", 1)[0] ?? "";
+    const shell = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: appSession,
+      },
+    });
+
+    expect(shell.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.35:443/");
+  });
+
+  it("reports no runtime when a signed-in Clerk user has no Matrix computer", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(exchange.status).toBe(404);
+    await expect(exchange.json()).resolves.toEqual({
+      error: "Matrix computer unavailable",
+      code: "no_runtime",
+    });
+    expect(exchange.headers.get("set-cookie")).toContain("matrix_app_session=;");
+    expect(exchange.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("continues signed-in auth pages through a Clerk token exchange", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-up", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("window.Clerk.session.getToken()");
+    expect(html).toContain("fetch('/api/auth/app-session'");
+    expect(html).toContain("method: 'DELETE'");
+    expect(html).toContain("Loading your Matrix computer");
+    expect(html).not.toContain("You are already signed in");
+  });
+
+  it("does not trust a stale app session cookie over a different Clerk session", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff139",
+      clerkUserId: "user_old",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123483,
+      publicIPv4: "203.0.113.34",
+      imageVersion: "matrix-os-host-2026.05.31-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-05-31T12:00:00.000Z",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_old",
+      handle: "alice",
+      gatewayUrl: "https://alice.matrix-os.com",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}; __session=clerk-new`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("fetch('/api/auth/app-session'");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("sets the current computer route on cold root visits without a runtime cookie", async () => {
