@@ -888,9 +888,10 @@ describe("platform proxy routing", () => {
       },
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     const html = await res.text();
     expect(html).toContain("Preparing Matrix OS");
+    expect(html).toContain('http-equiv="refresh" content="8"');
     expect(html).not.toContain("Failed to wake container");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(orchestrator.start).not.toHaveBeenCalled();

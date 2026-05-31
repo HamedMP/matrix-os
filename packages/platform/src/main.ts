@@ -1413,6 +1413,7 @@ function getNoContainerPage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="8">
   <title>Matrix OS</title>
   <style>
     * { box-sizing: border-box; }
@@ -2938,7 +2939,7 @@ export function createApp(deps: {
       if (isCodeDomain || isGatewayPath) {
         return c.json({ error: 'Matrix computer unavailable' }, 503);
       }
-      return c.html(getNoContainerPage());
+      return c.html(getNoContainerPage(), 503);
     }
 
     const record = await getContainer(db, identity.handle);
