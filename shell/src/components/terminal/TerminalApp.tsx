@@ -2197,19 +2197,42 @@ function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[
 }
 
 function TreeItem({ node, depth, selectedPath, onToggle, onSelect, onOpenTerminal }: { node: TreeNode; depth: number; selectedPath: string | null; onToggle: (n: TreeNode) => void; onSelect: (n: TreeNode) => void; onOpenTerminal: (path: string) => void }) {
+  const rowStyle = {
+    paddingLeft: 8 + depth * 12,
+    background: selectedPath === node.path ? "var(--accent)" : undefined,
+    color: (node.gitStatus && GIT_COLORS[node.gitStatus]) ?? "var(--foreground)",
+  };
+  const rowContent = (
+    <>
+      {node.type === "directory" ? <span className="text-[10px] opacity-60" style={{ width: 10 }}>{node.expanded ? "▾" : "▸"}</span> : <span style={{ width: 10 }} />}
+      <span className="truncate flex-1">{node.name}</span>
+      {node.type === "directory" && (node.changedCount ?? 0) > 0 && <span className="text-[9px] px-1 rounded" style={{ background: "var(--warning)", color: "var(--card)", opacity: 0.8 }}>{node.changedCount}</span>}
+    </>
+  );
+
+  if (node.type !== "directory") {
+    return (
+      <div
+        aria-label={node.name}
+        className="w-full text-left flex items-center gap-1 px-2 py-0.5"
+        style={rowStyle}
+      >
+        {rowContent}
+      </div>
+    );
+  }
+
   return (
     <>
       <button
         type="button"
         aria-label={node.name}
         className="w-full text-left flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-[var(--accent)] transition-colors"
-        style={{ paddingLeft: 8 + depth * 12, background: selectedPath === node.path ? "var(--accent)" : undefined, color: (node.gitStatus && GIT_COLORS[node.gitStatus]) ?? "var(--foreground)" }}
+        style={rowStyle}
         onClick={() => { if (node.type === "directory") { onToggle(node); onSelect(node); } }}
         onDoubleClick={() => { if (node.type === "directory") onOpenTerminal(node.path); }}
       >
-        {node.type === "directory" ? <span className="text-[10px] opacity-60" style={{ width: 10 }}>{node.expanded ? "▾" : "▸"}</span> : <span style={{ width: 10 }} />}
-        <span className="truncate flex-1">{node.name}</span>
-        {node.type === "directory" && (node.changedCount ?? 0) > 0 && <span className="text-[9px] px-1 rounded" style={{ background: "var(--warning)", color: "var(--card)", opacity: 0.8 }}>{node.changedCount}</span>}
+        {rowContent}
       </button>
       {node.expanded && node.children?.map(c => <TreeItem key={c.path} node={c} depth={depth + 1} selectedPath={selectedPath} onToggle={onToggle} onSelect={onSelect} onOpenTerminal={onOpenTerminal} />)}
     </>
