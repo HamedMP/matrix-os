@@ -165,6 +165,7 @@ export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: Ma
 
   useEffect(() => {
     const updateSpatialLayout = () => setSpatial(window.innerWidth >= 1100);
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- not an initializer: `spatial` is already lazily seeded (SSR-safe) at useState; this mount call re-syncs against the real client width to correct any SSR/hydration mismatch and is the same handler registered for `resize`. It is a window-size subscription, not state initialization.
     updateSpatialLayout();
     window.addEventListener("resize", updateSpatialLayout);
     return () => window.removeEventListener("resize", updateSpatialLayout);

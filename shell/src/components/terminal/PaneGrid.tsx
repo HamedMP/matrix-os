@@ -106,6 +106,7 @@ interface SplitContainerProps {
 
 function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- local drag buffer, not a mirror of `ratio`: it is seeded from the prop, then diverges live as the user drags the split divider (setCurrentRatio in onMouseMove). It must NOT stay in sync with `ratio` or the divider would snap back mid-drag; it holds uncommitted pointer-driven layout state.
   const [currentRatio, setCurrentRatio] = useState(ratio);
 
   const isHorizontal = direction === "horizontal";

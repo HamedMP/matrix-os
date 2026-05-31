@@ -23,8 +23,10 @@ export function QuickLook() {
       : quickLookPath
     : null;
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- guarded async preview-load for the selected Quick Look file (fullPath/quickLookPath): the clear -> text transition is one fetch React batches, the fetch carries an AbortController whose signal gates every setState and is aborted in cleanup, and the file text is not derivable in render.
   useEffect(() => {
     if (!fullPath) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- clears stale preview when nothing is selected; the next content value is the async result of the fetch below, not derivable in render.
       setContent(null);
       return;
     }

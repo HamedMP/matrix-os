@@ -18,7 +18,8 @@ export function AmbientClock({ onSwitchMode }: { onSwitchMode: () => void }) {
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
-    const ms = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+    const start = new Date();
+    const ms = (60 - start.getSeconds()) * 1000 - start.getMilliseconds();
     const timeout = setTimeout(() => {
       setNow(new Date());
       const interval = setInterval(() => setNow(new Date()), 60_000);

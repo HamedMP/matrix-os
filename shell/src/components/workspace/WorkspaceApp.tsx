@@ -102,6 +102,7 @@ function worktreePrNumber(worktree?: WorkspaceWorktree): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 22 useState fields are mostly independent (separate form inputs, transient status messages, multiple server lists, and per-action in-flight flags) rather than one related cluster; collapsing them into a single reducer would not be a mechanical, behavior-identical change and would obscure the independent update sites.
 export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState(initialProjectSlug ?? "");
@@ -132,7 +133,38 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   );
   const activeSlug = selectedProject?.slug ?? selectedSlug;
   const activeSlugRef = useRef(activeSlug);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value mirror of `activeSlug`, written in render and read synchronously inside async response guards (loadProjectDetail/createWorktree/startAgent) so stale responses from a previous project are dropped without re-creating those callbacks on every slug change. Moving the write into an effect would lag the mirror by one commit and could mis-attribute a response that resolves during the switch.
   activeSlugRef.current = activeSlug;
+
+  // Reset per-project UI state when the active project changes, during render
+  // (React's documented "adjust state on prop change" pattern) instead of in an
+  // effect, so there is no intermediate stale commit between the two renders.
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- `prevActiveSlug` IS read in render (the `activeSlug !== prevActiveSlug` guard below); the rule only inspects JSX. A ref cannot replace it: this is React's documented prev-prop pattern where the state update must trigger the corrective synchronous re-render that discards the in-progress render. A ref would not re-render and would break the reset.
+  const [prevActiveSlug, setPrevActiveSlug] = useState(activeSlug);
+  if (activeSlug !== prevActiveSlug) {
+    setPrevActiveSlug(activeSlug);
+    setSelectedWorktreeId("");
+    setAgentMessage("");
+    setWorktreeMessage("");
+    setCreatingWorktree(false);
+    setStartingAgent(false);
+  }
+
+  // Default the selected worktree to the first available one (and drop a
+  // selection that no longer exists) whenever the worktree list changes. This
+  // runs during render via a prev-value comparison so the controlled <select>
+  // never commits an out-of-range value first.
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- `prevWorktrees` IS read in render (the `worktrees !== prevWorktrees` guard below); the rule only inspects JSX. A ref cannot replace it: the state update must trigger the corrective synchronous re-render that re-derives `selectedWorktreeId`. A ref would not re-render and would leave a stale selection.
+  const [prevWorktrees, setPrevWorktrees] = useState(worktrees);
+  if (worktrees !== prevWorktrees) {
+    setPrevWorktrees(worktrees);
+    const firstWorktreeId = worktrees.find((worktree) => worktree.id)?.id ?? "";
+    setSelectedWorktreeId((current) => {
+      if (!firstWorktreeId) return "";
+      if (!current || !worktrees.some((worktree) => worktree.id === current)) return firstWorktreeId;
+      return current;
+    });
+  }
 
   const loadProjects = useCallback(async () => {
     try {
@@ -182,23 +214,6 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     const timer = window.setTimeout(() => void loadProjectDetail(activeSlug), 0);
     return () => window.clearTimeout(timer);
   }, [activeSlug, loadProjectDetail]);
-
-  useEffect(() => {
-    setSelectedWorktreeId("");
-    setAgentMessage("");
-    setWorktreeMessage("");
-    setCreatingWorktree(false);
-    setStartingAgent(false);
-  }, [activeSlug]);
-
-  useEffect(() => {
-    const firstWorktreeId = worktrees.find((worktree) => worktree.id)?.id ?? "";
-    setSelectedWorktreeId((current) => {
-      if (!firstWorktreeId) return "";
-      if (!current || !worktrees.some((worktree) => worktree.id === current)) return firstWorktreeId;
-      return current;
-    });
-  }, [worktrees]);
 
   const attachSession = useCallback(async (sessionId: string) => {
     const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/observe`, {

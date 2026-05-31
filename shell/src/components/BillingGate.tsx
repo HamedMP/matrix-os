@@ -170,8 +170,10 @@ export function BillingGate({ children }: { children: ReactNode }) {
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
   const lastTrackedState = useRef<string | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- not a cascade: this is a single post-hydration resolution of the checkout-return state. The two setStates batch in one render pass and only re-run when `checkoutReturnRequested` changes; they cannot be derived in render because hasRecentBillingCheckoutAttempt() reads sessionStorage, which is client-only and would break SSR/hydration.
   useEffect(() => {
     if (!checkoutReturnRequested) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- client-only resolution of checkout-return state: hasRecentBillingCheckoutAttempt() reads sessionStorage and must run after hydration, so it cannot be a render-time initializer.
       setCheckoutJustCompleted(false);
       setCheckoutAttemptChecked(true);
       return;

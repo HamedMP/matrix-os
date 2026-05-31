@@ -46,6 +46,7 @@ interface TerminalSearchBarProps {
   theme: Theme;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five fields are not one related cluster: query and caseSensitive are independent controlled inputs, while resultIndex/resultCount/hasSearched are async addon-driven feedback with a distinct lifecycle; a reducer would not simplify these unrelated lifecycles.
 export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: TerminalSearchBarProps) {
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -60,6 +61,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
     }
   }, [isOpen]);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the three setters apply one logical search-results event delivered by the xterm search addon's onDidChangeResults callback; they are batched into a single render by React and cannot be derived during render because the values arrive asynchronously from an external imperative addon.
   useEffect(() => {
     if (!searchAddon.onDidChangeResults) return;
     const disposable = searchAddon.onDidChangeResults((result) => {
@@ -104,14 +106,27 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
     }
   }, [close, findNext, findPrevious]);
 
+  // This effect synchronizes the controlled query/caseSensitive inputs with the
+  // external xterm search addon (an imperative system). The setState resets are
+  // not derived from props and cannot run during render: setHasSearched(false)
+  // must precede the imperative findNext so the result feedback ("N of M"/"No
+  // results") stays hidden until the addon asynchronously reports fresh results
+  // via onDidChangeResults. searchAddon is a stable imperative handle, not live
+  // parent state.
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- intentional: clearing query resets the three result-feedback fields together, while a non-empty query only hides stale feedback before the async addon search; consolidating would not change the rendered output.
   useEffect(() => {
     if (query) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change, react-doctor/no-chain-state-updates -- hide stale result feedback before the imperative addon search; re-shown only when onDidChangeResults fires.
       setHasSearched(false);
+      // react-doctor-disable-next-line react-doctor/no-pass-live-state-to-parent -- not lifting state: this invokes the imperative search method on the xterm addon handle (the actual search action), not a parent state setter.
       searchAddon.findNext(query, { caseSensitive });
     } else {
       searchAddon.clearDecorations();
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change, react-doctor/no-chain-state-updates -- reset result feedback to its empty-query baseline; values are addon-driven, not derivable during render.
       setResultIndex(-1);
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change, react-doctor/no-chain-state-updates -- reset result feedback to its empty-query baseline; values are addon-driven, not derivable during render.
       setResultCount(0);
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change, react-doctor/no-chain-state-updates -- reset result feedback to its empty-query baseline; values are addon-driven, not derivable during render.
       setHasSearched(false);
     }
   }, [query, caseSensitive, searchAddon]);

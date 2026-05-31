@@ -57,8 +57,10 @@ export function useMatrixBillingAccess(): BillingAccessState {
   const [remoteChecked, setRemoteChecked] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setRemoteState/setRemoteChecked pairs live in mutually-exclusive branches (auth-gate, missing-userId, cache-hit, async fetch then/catch) representing a single load's loading -> result transition; they are not a synchronous render cascade and combining them across branches would obscure the distinct cases
   useEffect(() => {
     if (!isLoaded || !isSignedIn || legacyActive) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async billing-status load hook: it reads Clerk auth + a module-level cache and otherwise fetches /billing/status, setting remoteState/remoteChecked from the (async) result; the value cannot be derived in render
       setRemoteState(null);
       setRemoteChecked(!isLoaded || !isSignedIn || legacyActive);
       return;

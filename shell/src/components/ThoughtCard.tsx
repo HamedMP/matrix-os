@@ -14,6 +14,7 @@ export function ThoughtCard() {
   const [visible, setVisible] = useState(false);
   const { subscribe } = useSocket();
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setThought/setVisible calls fire from the WebSocket subscription callback (event-driven, never a synchronous render cascade) and update two independent concerns (tool payload vs visibility); React batches them and a reducer would not change the async event sequencing.
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
       if (msg.type === "kernel:tool_start") {

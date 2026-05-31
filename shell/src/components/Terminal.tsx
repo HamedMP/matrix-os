@@ -108,6 +108,7 @@ export function Terminal() {
       };
     }
 
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- `ready` reflects the live WebSocket connection state, flipped true asynchronously in ws.onopen (and the terminal/xterm + ws are created here via dynamic import); it cannot be initialized at render time because there is no connection yet.
     const cleanup = init();
 
     return () => {

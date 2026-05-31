@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { saveDesktopConfig, useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -16,11 +16,17 @@ const POSITIONS: { id: DockConfig["position"]; label: string }[] = [
 export function DockEditor() {
   const config = useDesktopConfig();
   const setDock = useDesktopConfigStore((s) => s.setDock);
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- optimistic local copy, not a passive mirror of `config.dock`: `save()` updates it ahead of the store round-trip so sliders/switches feel instant. It is re-seeded from the store on the prev-prop edge below.
   const [dock, setLocalDock] = useState<DockConfig>(config.dock);
+  // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror: `prevConfigDock` IS read in render (the `config.dock !== prevConfigDock` guard below). It must be state, not a ref, so the corrective synchronous re-render re-seeds the optimistic copy when the store config changes.
+  const [prevConfigDock, setPrevConfigDock] = useState(config.dock);
 
-  useEffect(() => {
+  // Keep the local (optimistic) dock copy in sync with the store-backed config
+  // using the render-time prev-prop pattern instead of an effect.
+  if (config.dock !== prevConfigDock) {
+    setPrevConfigDock(config.dock);
     setLocalDock(config.dock);
-  }, [config.dock]);
+  }
 
   const save = useCallback(
     async (next: DockConfig) => {

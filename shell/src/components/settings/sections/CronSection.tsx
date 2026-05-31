@@ -25,6 +25,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { ClockIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
+const CRON_FETCH_TIMEOUT_MS = 10_000;
 
 interface CronJob {
   id: string;
@@ -72,20 +73,30 @@ export function CronSection() {
 
   const loadJobs = useCallback(async () => {
     try {
-      const r = await fetch(`${GATEWAY}/api/cron`);
+      const r = await fetch(`${GATEWAY}/api/cron`, {
+        signal: AbortSignal.timeout(CRON_FETCH_TIMEOUT_MS),
+      });
       if (r.ok) setJobs(await r.json());
-    } catch { /* skip */ }
+    } catch (error: unknown) {
+      console.warn("Failed to load cron jobs", error);
+    }
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount-only load of cron jobs from the gateway (external async read); setJobs lands in the awaited fetch result inside loadJobs, which is the documented allowed pattern.
     loadJobs();
   }, [loadJobs]);
 
   async function handleDelete(id: string) {
     try {
-      const res = await fetch(`${GATEWAY}/api/cron/${id}`, { method: "DELETE" });
+      const res = await fetch(`${GATEWAY}/api/cron/${id}`, {
+        method: "DELETE",
+        signal: AbortSignal.timeout(CRON_FETCH_TIMEOUT_MS),
+      });
       if (res.ok) await loadJobs();
-    } catch { /* skip */ }
+    } catch (error: unknown) {
+      console.warn("Failed to delete cron job", error);
+    }
   }
 
   async function handleCreate() {
@@ -108,6 +119,7 @@ export function CronSection() {
     try {
       const res = await fetch(`${GATEWAY}/api/cron`, {
         method: "POST",
+        signal: AbortSignal.timeout(CRON_FETCH_TIMEOUT_MS),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: form.name, message: form.message, schedule }),
       });

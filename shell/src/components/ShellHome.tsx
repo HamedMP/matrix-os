@@ -60,6 +60,7 @@ export function ShellHome() {
   }, [register, unregister, chat.newChat]);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- launch path is read from window.location.search, a browser-only API: a lazy initializer would return null during SSR but the real value on the client, causing a hydration mismatch, so it is applied after mount.
     setLaunchAppPath(readLaunchPathFromLocation());
   }, []);
 

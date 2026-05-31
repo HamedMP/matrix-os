@@ -64,6 +64,7 @@ interface VocalPanelProps {
   onDismissChat?: () => void;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (enabled, hasEntered, delegation, rememberedFlash, buildProgress) are independent concerns with separate lifecycles and update sources; collapsing them into one reducer would couple unrelated state and is not a mechanical transform.
 export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPanelProps) {
   // Delay WS/mic mount by one tick so React strict-mode's double-mount
   // doesn't open two sessions back-to-back.
@@ -117,6 +118,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
       flashTimerRef.current = null;
     }, 2200);
   }, []);
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must clear whichever timer is pending at teardown, so it must read .current at cleanup time; snapshotting at mount would always capture the initial null and never clear.
   useEffect(() => {
     return () => {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -133,6 +135,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
       progressTimerRef.current = null;
     }, 5000);
   }, []);
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must clear whichever timer is pending at teardown, so it must read .current at cleanup time; snapshotting at mount would always capture the initial null and never clear.
   useEffect(() => {
     return () => {
       if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
@@ -217,18 +220,32 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   }, []);
   useEffect(() => clearPendingTimers, [clearPendingTimers]);
 
+  // This effect is an async state machine, not derived state: it advances the
+  // delegation through pending→running→done as the chat goes busy then idle,
+  // then polls the apps list (over ~2.4s) to detect the newly-built app. The
+  // stage cannot be computed in render because each transition is gated on an
+  // out-of-band chat.busy edge and the running→done branch schedules timers and
+  // a one-shot WS narration. Pending timers are cleared precisely at each stage
+  // entry (and on unmount) rather than via effect cleanup, so an unrelated
+  // chat.busy churn can't drop the in-flight app-detection retry loop.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- timers are tracked in pendingTimersRef and cleared at every stage entry plus the dedicated unmount effect; a blanket cleanup here would cancel the in-flight app-detection retries on any chat.busy churn.
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setState calls live in mutually-exclusive branches and async timer callbacks, never a synchronous cascade; a reducer would not change the async sequencing.
   useEffect(() => {
     const current = delegationRef.current;
     if (!current) return;
 
     if (current.stage === "pending" && chatBusy) {
       clearPendingTimers();
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- async state-machine transition gated on a chat.busy edge, not a render-time derivation; the running stage carries event-captured fields (appsSnapshot, startedAt, messageStartIdx).
+      // react-doctor-disable-next-line react-doctor/no-derived-state -- delegation is genuine state machine state seeded from the create_app event; it cannot be recomputed in render from chatBusy alone.
       setDelegation({ ...current, stage: "running" });
       return;
     }
 
     if (current.stage === "running" && !chatBusy) {
       clearPendingTimers();
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- async state-machine transition gated on a chat.busy edge; the done stage also kicks off timer-driven app detection and a one-shot WS narration.
+      // react-doctor-disable-next-line react-doctor/no-derived-state -- delegation is genuine state machine state, not derivable in render from chatBusy.
       setDelegation({ ...current, stage: "done" });
 
       let reported = false;
@@ -279,6 +296,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
         }
         reportCompletion();
       };
+      // react-doctor-disable-next-line react-doctor/no-pass-live-state-to-parent -- notifyDelegationComplete is not a parent render prop; it is an imperative WS narration to the voice gateway, invoked here from async detection timers (deferred event handlers), never during render. There is no parent rendering this state to lift it into.
       tryFindNewApp(0);
 
       pendingTimersRef.current.push(
@@ -318,6 +336,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
       });
     }
 
+    // react-doctor-disable-next-line react-doctor/no-pass-live-state-to-parent -- pushDelegationStatus is not a parent render prop; it is an imperative throttled WS status push to the voice gateway, invoked from this effect and its interval timer, never during render. There is no parent rendering this state to lift it into.
     pushSnapshot();
     const interval = setInterval(pushSnapshot, 1500);
     return () => clearInterval(interval);

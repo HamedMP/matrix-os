@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useEffectEvent, useRef, useCallback } from "react";
 import { create } from "zustand";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 
@@ -154,12 +154,12 @@ export function DotGrid() {
     [draw],
   );
 
-  const startAnimating = useCallback(() => {
+  const startAnimating = useEffectEvent(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(animate);
-  }, [animate]);
+  });
 
-  const scheduleStaticDraw = useCallback(() => {
+  const scheduleStaticDraw = useEffectEvent(() => {
     if (drawPendingRef.current) return;
     drawPendingRef.current = true;
     cancelAnimationFrame(rafRef.current);
@@ -169,7 +169,7 @@ export function DotGrid() {
         rafRef.current = requestAnimationFrame(animate);
       }
     });
-  }, [draw, animate]);
+  });
 
   useEffect(() => {
     if (!enabled) return;
@@ -213,7 +213,7 @@ export function DotGrid() {
       cancelAnimationFrame(rafRef.current);
       clearTimeout(idleTimerRef.current);
     };
-  }, [enabled, draw, syncSize, startAnimating, scheduleStaticDraw]);
+  }, [enabled, draw, syncSize]);
 
   if (!enabled) return null;
 

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { FolderIcon, FileTextIcon, ChevronRightIcon } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
+const COLUMN_VIEW_FETCH_TIMEOUT_MS = 10_000;
 const MAX_VISIBLE_COLUMNS = 5;
 const MIN_COLUMN_WIDTH = 180;
 
@@ -26,6 +27,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
   const [columns, setColumns] = useState<Column[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded async load of the Miller-column directory listings for the selected path: each fetch carries the controller's signal, the previous load is aborted before a new one starts and again in cleanup, and the resulting columns are not derivable in render.
   useEffect(() => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -41,7 +43,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
         try {
           const res = await fetch(
             `${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(p)}`,
-            { signal: controller.signal },
+            { signal: AbortSignal.timeout(COLUMN_VIEW_FETCH_TIMEOUT_MS) },
           );
           if (res.ok) {
             const data = await res.json();
@@ -49,7 +51,8 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
             const nextSeg = segments[cols.length] ?? null;
             cols.push({ path: p, entries, selected: nextSeg });
           }
-        } catch {
+        } catch (error: unknown) {
+          console.warn("Failed to load column browser entries", error);
           break;
         }
       }

@@ -33,14 +33,17 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
   const markSaved = usePreviewWindow((s) => s.markSaved);
   const setMode = usePreviewWindow((s) => s.setMode);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- guarded async file-load keyed on the selected tab (tab.path/tab.type): the loading -> content transition is one fetch React batches, the fetch carries an AbortController whose signal gates every setState and is aborted in cleanup, and the file body is not derivable in render.
   useEffect(() => {
     if (tab.type === "image" || tab.type === "audio" || tab.type === "video" || tab.type === "pdf") {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- media types render their own viewer and load no text here; clearing the loading gate is a one-shot reaction to the selected tab's type, not derivable in render.
       setLoading(false);
       return;
     }
 
     let active = true;
 
+    // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- raises the loading gate before the awaited fetch for the newly-selected tab; not a render-time derivation because the resolved file body arrives asynchronously below.
     setLoading(true);
     fetch(`${GATEWAY_URL}/files/${tab.path}`, {
       signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),

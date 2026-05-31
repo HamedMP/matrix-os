@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import {
   PaletteIcon,
   UserIcon,
@@ -103,7 +103,14 @@ export function Settings({
   onBillingCheckoutIntent,
 }: SettingsProps) {
   const [activeSection, setActiveSection] = useState<SectionId>(defaultSection);
-  const wasOpenRef = useRef(open);
+  // Tracks the prior `open` value so the render-time section adjustment below
+  // can detect the open transition. Uses the React-documented "store previous
+  // prop in state" pattern (state, not a ref): reading/writing a ref during
+  // render is exactly what React Compiler cannot optimize, whereas a guarded
+  // setState during render is the supported pattern.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- transition tracker, not a mirror of `open`: it stores the previous `open` value so the render-time section adjustment below can detect the open->close edge
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- intentionally state, not a ref: it IS read during render (in `justOpened` below) to drive the adjustment; the rule's "use useRef" advice would force ref reads/writes during render, which React Compiler flags as unoptimizable
+  const [prevOpen, setPrevOpen] = useState(open);
   const matrixBilling = useMatrixBillingAccess();
   const billingActive =
     billingActiveOverride !== undefined
@@ -113,49 +120,51 @@ export function Settings({
   // Delayed unmount so the exit animation has time to play. `visible`
   // flips one frame after mount so the enter transition has a distinct
   // "from" state to animate out of. Same pattern as VocalPanel.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- not a mirror of `open`: `mounted` stays true through the ~320ms exit window after `open` flips to false so the close animation can play, then unmounts via the timer below
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(false);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- delayed-unmount animation primitive: mount immediately on open, defer visible/unmount via timers so the enter/exit transitions can play; these setStates are timer-sequenced, not a cascade
   useEffect(() => {
     if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- delayed mount for enter animation
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount synchronously when opened so the panel exists before the enter transition; cannot be derived because the exit window is timer-driven
       setMounted(true);
       const t = setTimeout(() => setVisible(true), 20);
       return () => clearTimeout(t);
     }
+    // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- delayed-unmount animation primitive: when `open` flips false we start the fade-out by clearing `visible` here, then unmount via the timer below; the visible/mounted split is intentional, not duplicated prop state
     setVisible(false);
     const t = setTimeout(() => setMounted(false), 320);
     return () => clearTimeout(t);
   }, [open]);
 
+  const onEscape = useEffectEvent(() => onOpenChange(false));
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onOpenChange(false);
+        onEscape();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, onOpenChange]);
+  }, [open]);
 
-  useEffect(() => {
-    const justOpened = open && !wasOpenRef.current;
-    wasOpenRef.current = open;
-
-    if (open && lockedSection) {
-      setActiveSection(lockedSection);
-      return;
-    }
-    if (justOpened && billingActive === false) {
-      setActiveSection("billing");
-      return;
-    }
-    if (!open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset section on close
-      setActiveSection(defaultSection);
-    }
-  }, [billingActive, defaultSection, lockedSection, open]);
+  // Adjust the active section during render (not in an effect) when the
+  // relevant props change. Doing this in render avoids the extra commit with
+  // stale UI that an effect would cause. Each branch is guarded by an equality
+  // check so the setState only fires on an actual transition, never looping.
+  // `activeSection` is still genuine interactive state — the nav buttons mutate
+  // it — so it cannot be a pure render-time derivation.
+  const justOpened = open && !prevOpen;
+  if (open !== prevOpen) setPrevOpen(open);
+  if (open && lockedSection) {
+    if (activeSection !== lockedSection) setActiveSection(lockedSection);
+  } else if (justOpened && billingActive === false) {
+    if (activeSection !== "billing") setActiveSection("billing");
+  } else if (!open) {
+    if (activeSection !== defaultSection) setActiveSection(defaultSection);
+  }
 
   if (!mounted) return null;
 

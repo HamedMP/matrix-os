@@ -55,6 +55,7 @@ export function ApprovalDialog() {
     });
   }, [subscribe]);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- countdown timer: setRemaining and the terminal setRequest(null) both fire from the setInterval callback (async, never a synchronous cascade) and are mutually sequenced by the elapsed deadline; a reducer would not change the timer-driven sequencing.
   useEffect(() => {
     if (!request) return;
 

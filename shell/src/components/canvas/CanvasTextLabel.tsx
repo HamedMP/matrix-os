@@ -29,6 +29,7 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
   const deleteLabel = useCanvasLabels((s) => s.deleteLabel);
 
   const [editing, setEditing] = useState(false);
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- editable draft buffer, not a mirror of `label.text`: it is seeded from the prop, then diverges as the user types, is committed on Enter/blur (updateLabel), and reset to `label.text` on Escape. It cannot be computed in render because it holds uncommitted user input.
   const [editText, setEditText] = useState(label.text);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);

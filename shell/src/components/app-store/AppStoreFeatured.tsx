@@ -21,6 +21,7 @@ function darken(hex: string, amount: number): string {
 
 export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeaturedProps) {
   const [current, setCurrent] = useState(0);
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- must stay state, not a ref: `hovering` is a dependency of the autoplay effect below, so toggling it has to re-run that effect to pause/resume the 5s carousel timer. A ref would not re-trigger the effect and would break pause-on-hover. The rule only inspects JSX and misses the effect-dependency read.
   const [hovering, setHovering] = useState(false);
 
   const next = useCallback(() => {

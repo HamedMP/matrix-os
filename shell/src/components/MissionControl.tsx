@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useEffectEvent, useState, useRef, useMemo } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
@@ -50,18 +50,21 @@ export function MissionControl({
   const closingRef = useRef(false);
 
   const prevOpenRef = useRef(open);
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- enter/exit animation orchestration, not derived state: the `open` prop drives requestAnimationFrame double-buffering (mount now, set visible next frame) and a 300ms setTimeout-delayed unmount. These are side effects that must run in an effect, and `mounted`/`visible` cannot be computed in render without dropping the transition.
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = open;
 
     if (open && !wasOpen) {
       closingRef.current = false;
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- mount immediately on the open rising edge, then setVisible on the next frame (rAF double-buffer); deriving in render would skip the enter transition.
       setMounted(true);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setVisible(true));
       });
     } else if (!open && wasOpen) {
       closingRef.current = true;
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- start the exit transition now, then unmount after the 300ms setTimeout below; deriving in render would unmount instantly and skip the exit animation.
       setVisible(false);
       const timer = setTimeout(() => {
         setMounted(false);
@@ -71,14 +74,16 @@ export function MissionControl({
     }
   }, [open]);
 
+  const onCloseEvent = useEffectEvent(() => onClose());
+
   useEffect(() => {
     if (!mounted) return;
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseEvent();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mounted, onClose]);
+  }, [mounted]);
 
   if (!mounted) return null;
 
@@ -253,6 +258,7 @@ function LauncherGrid({
               if (e.target === e.currentTarget) onClose();
             }}
           >
+            {/* react-doctor-disable-next-line react-hooks-js/refs -- closingRef is an intentional non-reactive latch read during render for the stagger timing: it must NOT trigger a re-render when toggled, but its current value selects the per-tile transitionDelay at render time. */}
             {mainApps.map((app, i) => renderTile(app, i))}
           </div>
         </>
@@ -265,6 +271,7 @@ function LauncherGrid({
           style={{
             opacity: visible ? 1 : 0,
             transition: "opacity 300ms ease-out",
+            // react-doctor-disable-next-line react-hooks-js/refs -- closingRef is an intentional non-reactive latch read during render: toggling it must not re-render, but its current value selects the divider's transitionDelay at render time.
             transitionDelay: closingRef.current ? "0ms" : `${50 + mainApps.length * 20}ms`,
           }}
         />
@@ -281,6 +288,7 @@ function LauncherGrid({
               if (e.target === e.currentTarget) onClose();
             }}
           >
+            {/* react-doctor-disable-next-line react-hooks-js/refs -- closingRef is an intentional non-reactive latch read during render for the stagger timing: it must NOT trigger a re-render when toggled, but its current value selects the per-tile transitionDelay at render time. */}
             {generatedApps.map((app, i) => renderTile(app, mainApps.length + i))}
           </div>
         </>

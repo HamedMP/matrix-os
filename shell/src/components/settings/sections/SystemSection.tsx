@@ -94,6 +94,7 @@ function coerceReleaseChannel(value: unknown): ReleaseChannel {
   return RELEASE_CHANNELS.includes(value as ReleaseChannel) ? value as ReleaseChannel : "stable";
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- system info, health, update status, release list, the selected channel, and the several independent upgrade-progress flags are distinct concerns, not a single cohesive state machine; a reducer would not simplify them.
 export function SystemSection({ billingActive = true }: { billingActive?: boolean }) {
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -109,6 +110,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const mountedRef = useRef(true);
   const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown must flip the live mountedRef and clear whichever reload timeout is pending at cleanup time; reloadTimeoutRef is reassigned by waitForInstalledUpdate, so snapshotting it at mount would always capture the initial null and never clear an active timer.
   useEffect(() => {
     return () => {
       mountedRef.current = false;
@@ -149,6 +151,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     }
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-shot mount bootstrap that loads system info + health from the gateway; both fetches carry AbortSignal.timeout and refreshReleaseData gates its own writes via releaseRequestIdRef, so this is an intentional mount-driven load, not render data. A data-fetching library would add no safety here.
   useEffect(() => {
     fetch(`${GATEWAY}/api/system/info`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
       .then((r) => r.ok ? r.json() : {})

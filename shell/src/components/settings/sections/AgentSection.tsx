@@ -8,6 +8,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { UserIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
+const AGENT_FETCH_TIMEOUT_MS = 10_000;
 
 interface Identity {
   handle?: string;
@@ -20,16 +21,35 @@ export function AgentSection() {
   const [soulContent, setSoulContent] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps): both requests carry AbortSignal.timeout, the `cancelled` flag gates every setState, and the controller aborts in cleanup, so this is the correct fetch-on-mount pattern; a data-fetching library would add no safety here.
   useEffect(() => {
-    fetch(`${GATEWAY}/api/identity`)
-      .then((r) => r.ok ? r.json() : {})
-      .then(setIdentity)
-      .catch(() => {});
+    let cancelled = false;
 
-    fetch(`${GATEWAY}/files/system/soul.md`)
+    fetch(`${GATEWAY}/api/identity`, {
+      signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
+    })
+      .then((r) => r.ok ? r.json() : {})
+      .then((data) => { if (!cancelled) setIdentity(data); })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.warn("Failed to load identity settings", error);
+        }
+      });
+
+    fetch(`${GATEWAY}/files/system/soul.md`, {
+      signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
+    })
       .then((r) => r.ok ? r.text() : "")
-      .then(setSoulContent)
-      .catch(() => {});
+      .then((text) => { if (!cancelled) setSoulContent(text); })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.warn("Failed to load soul settings", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSaveSoul = useCallback(async (content: string) => {
@@ -37,6 +57,7 @@ export function AgentSection() {
     try {
       await fetch(`${GATEWAY}/api/bridge/data`, {
         method: "POST",
+        signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "write",

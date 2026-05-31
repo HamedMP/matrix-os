@@ -8,6 +8,7 @@ export type FileChangeHandler = (path: string, event: "add" | "change" | "unlink
 export function useFileWatcher(handler: FileChangeHandler) {
   const { subscribe } = useSocket();
   const handlerRef = useRef(handler);
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of handler, read inside the file:change subscription that is registered once via a stable subscribe; writing it in render keeps the mirror current so the watcher always invokes the newest handler without re-subscribing on every render
   handlerRef.current = handler;
 
   useEffect(() => {

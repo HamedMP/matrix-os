@@ -95,8 +95,10 @@ function Scene({
   const circleRef =
     useRef<THREE.Mesh<THREE.CircleGeometry, THREE.ShaderMaterial>>(null)
   const initialColorsRef = useRef<[string, string]>(colors)
-  const targetColor1Ref = useRef(new THREE.Color(colors[0]))
-  const targetColor2Ref = useRef(new THREE.Color(colors[1]))
+  const targetColor1Ref = useRef<THREE.Color | null>(null)
+  if (targetColor1Ref.current === null) targetColor1Ref.current = new THREE.Color(colors[0])
+  const targetColor2Ref = useRef<THREE.Color | null>(null)
+  if (targetColor2Ref.current === null) targetColor2Ref.current = new THREE.Color(colors[1])
   const animSpeedRef = useRef(0.1)
   const perlinNoiseTexture = useTexture("/textures/perlin-noise.png")
 
@@ -163,9 +165,13 @@ function Scene({
     const mat = circleRef.current?.material
     if (!mat) return
     const live = colorsRef?.current
+    // Non-null assertions are safe: the lazy ref initializers above run during
+    // render, which always precedes any useFrame tick, so .current is set.
+    const target1 = targetColor1Ref.current!
+    const target2 = targetColor2Ref.current!
     if (live) {
-      if (live[0]) targetColor1Ref.current.set(live[0])
-      if (live[1]) targetColor2Ref.current.set(live[1])
+      if (live[0]) target1.set(live[0])
+      if (live[1]) target2.set(live[1])
     }
     const u = mat.uniforms
     u.uTime.value += delta * 0.5
@@ -211,8 +217,8 @@ function Scene({
     u.uAnimation.value += delta * animSpeedRef.current
     u.uInputVolume.value = curInRef.current
     u.uOutputVolume.value = curOutRef.current
-    u.uColor1.value.lerp(targetColor1Ref.current, 0.08)
-    u.uColor2.value.lerp(targetColor2Ref.current, 0.08)
+    u.uColor1.value.lerp(target1, 0.08)
+    u.uColor2.value.lerp(target2, 0.08)
   })
 
   useEffect(() => {
@@ -235,7 +241,9 @@ function Scene({
       typeof document !== "undefined" &&
       document.documentElement.classList.contains("dark")
     return {
+      // react-doctor-disable-next-line react-hooks-js/refs -- intentional read of the mount-captured initial colors to seed the static shader uniforms; the uniforms object must NOT be recreated when `colors` changes (that would rebuild the GPU material). Live color changes are applied imperatively via targetColor*Ref + the useFrame lerp.
       uColor1: new THREE.Uniform(new THREE.Color(initialColorsRef.current[0])),
+      // react-doctor-disable-next-line react-hooks-js/refs -- intentional read of the mount-captured initial colors (see uColor1 above); live updates flow through the useFrame lerp, not this initializer.
       uColor2: new THREE.Uniform(new THREE.Color(initialColorsRef.current[1])),
       uOffsets: { value: offsets },
       uPerlinTexture: new THREE.Uniform(perlinNoiseTexture),

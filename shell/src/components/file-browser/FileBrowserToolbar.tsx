@@ -30,7 +30,9 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  // react-doctor-disable-next-line react-doctor/no-derived-state-effect -- `localQuery` is a debounced input buffer that intentionally diverges from the store's `searchQuery` between keystrokes; it cannot be computed in render. This effect resyncs it only when `searchQuery` changes from outside (e.g. clearSearch elsewhere), an external-system sync, not a render-time derivation.
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- adopts the externally-changed store value into the local input buffer; the buffer is not derivable in render because it holds in-flight user typing between debounce ticks.
     setLocalQuery(searchQuery);
   }, [searchQuery]);
 

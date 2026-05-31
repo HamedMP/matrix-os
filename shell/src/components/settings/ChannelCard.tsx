@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,27 +26,40 @@ const STATUS_STYLES: Record<string, string> = {
   stopped: "bg-muted text-muted-foreground",
 };
 
+function buildValues(
+  fields: ChannelCardProps["fields"],
+  config: Record<string, unknown> | undefined,
+): Record<string, string> {
+  const init: Record<string, string> = {};
+  for (const f of fields) {
+    init[f.key] = (config?.[f.key] as string) ?? "";
+  }
+  return init;
+}
+
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- expanded/saving/saved/error/values are independent UI flags and form values, not a single cohesive state machine; a reducer would not simplify them
 export function ChannelCard({ id, name, icon, status, config, fields, onSave }: ChannelCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
-  const [values, setValues] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
-    for (const f of fields) {
-      init[f.key] = (config?.[f.key] as string) ?? "";
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    buildValues(fields, config),
+  );
+  // Re-seed the editable values from incoming config/fields using the
+  // render-time prev-prop pattern. Matches the original effect, which only
+  // re-seeded when a config object was present.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror: `prevConfig` IS read in render (the guard below). It must be state, not a ref, so the corrective synchronous re-render re-seeds `values` when config changes.
+  const [prevConfig, setPrevConfig] = useState(config);
+  // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror: `prevFields` IS read in render (the guard below). It must be state, not a ref, so the corrective synchronous re-render re-seeds `values` when the field set changes.
+  const [prevFields, setPrevFields] = useState(fields);
+  if (config !== prevConfig || fields !== prevFields) {
+    setPrevConfig(config);
+    setPrevFields(fields);
+    if (config) {
+      setValues(buildValues(fields, config));
     }
-    return init;
-  });
-
-  useEffect(() => {
-    if (!config) return;
-    const updated: Record<string, string> = {};
-    for (const f of fields) {
-      updated[f.key] = (config[f.key] as string) ?? "";
-    }
-    setValues(updated);
-  }, [config, fields]);
+  }
 
   const statusClass = STATUS_STYLES[status] ?? STATUS_STYLES.disabled;
 
@@ -63,7 +76,8 @@ export function ChannelCard({ id, name, icon, status, config, fields, onSave }: 
       } else {
         setError("Failed to save");
       }
-    } catch {
+    } catch (error: unknown) {
+      console.warn("Failed to save channel configuration", error);
       setError("Failed to save");
     } finally {
       setSaving(false);

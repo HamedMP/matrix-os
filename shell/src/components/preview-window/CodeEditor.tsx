@@ -50,6 +50,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
   const viewRef = useRef<EditorView | null>(null);
 
   const onChangeRef = useRef(onChange);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync so the CodeMirror updateListener (registered once per filename in the effect below) always calls the freshest onChange without tearing down and recreating the editor on every render.
   onChangeRef.current = onChange;
 
   useEffect(() => {
@@ -84,6 +85,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
       view.destroy();
       viewRef.current = null;
     };
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- `content` is intentionally omitted: it only seeds the editor's initial `doc` on (re)creation. Ongoing external content changes are applied in-place by the separate effect below; adding `content` here would destroy and rebuild the editor on every keystroke, dropping cursor/scroll/undo state.
   }, [filename]); // Re-create editor when filename changes
 
   // Update content when prop changes (external reload)

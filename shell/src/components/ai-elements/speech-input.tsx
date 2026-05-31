@@ -69,6 +69,7 @@ export function useSpeechInput(opts?: UseSpeechInputOptions): UseSpeechInputRetu
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- client-only browser feature detection: getSpeechRecognition() reads window.(webkit)SpeechRecognition which is unavailable during SSR. Defaulting to false on the server and flipping after mount avoids a hydration mismatch; the value is not derivable in render.
     setIsSupported(getSpeechRecognition() !== null);
   }, []);
 
@@ -138,6 +139,7 @@ export function useSpeechInput(opts?: UseSpeechInputOptions): UseSpeechInputRetu
     }
   }, [state, start, stop]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only cleanup must abort whichever recognition instance is live at teardown, so it must read recognitionRef.current at cleanup time; snapshotting at mount would always capture the initial null and never abort an active session.
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useMemo } from "react";
+import { useEffect, useEffectEvent, useCallback, useMemo } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useAppStore, type AppStoreEntry } from "@/stores/app-store";
 import { AppStoreHeader } from "./AppStoreHeader";
@@ -12,6 +12,7 @@ import { FALLBACK_CATALOG } from "./catalog";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
+const APP_STORE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppStoreProps {
   open: boolean;
@@ -31,9 +32,12 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
   const selectApp = useAppStore((s) => s.selectApp);
   const markInstalled = useAppStore((s) => s.markInstalled);
 
+  // react-doctor-disable-next-line react-doctor/no-effect-event-handler, react-doctor/no-fetch-in-effect -- guarded catalog load that runs when the store opens (`if (!open) return`), merges runtime entries with the bundled fallback catalog, and writes the result to the zustand app-store. It is a render-driven data load, not a user event; moving it into the parent's open handler would scatter store-population logic across components. A data-fetching library is overkill for this single static-JSON read.
   useEffect(() => {
     if (!open) return;
-    fetch(`${GATEWAY_URL}/files/system/app-store.json`)
+    fetch(`${GATEWAY_URL}/files/system/app-store.json`, {
+      signal: AbortSignal.timeout(APP_STORE_FETCH_TIMEOUT_MS),
+    })
       .then((res) => (res.ok ? res.json() : null))
       .then((data: AppStoreEntry[] | null) => {
         if (!data || data.length === 0) return;
@@ -62,23 +66,27 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
         }
         setEntries(Array.from(byId.values()));
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        console.warn("Failed to load app store catalog", error);
+      });
   }, [open, setEntries]);
+
+  const onEscape = useEffectEvent(() => {
+    if (selectedApp) {
+      selectApp(null);
+    } else {
+      onOpenChange(false);
+    }
+  });
 
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        if (selectedApp) {
-          selectApp(null);
-        } else {
-          onOpenChange(false);
-        }
-      }
+      if (e.key === "Escape") onEscape();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, selectedApp, selectApp, onOpenChange]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) {

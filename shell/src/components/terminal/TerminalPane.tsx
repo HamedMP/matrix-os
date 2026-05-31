@@ -339,10 +339,20 @@ export function TerminalPane({
   const isFocusedRef = useRef(isFocused);
   const allowRemoteResizeRef = useRef(allowRemoteResize);
 
+  // Latest-value refs kept in sync during render so the long-lived init effect
+  // (and the cleanup it returns) read current prop values without re-running and
+  // tearing down the WebSocket/xterm session on every prop change. Writing these
+  // during render rather than in an effect is intentional: it guarantees the
+  // values are current before any event handler or the cleanup closure reads them.
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync (see comment above); moving to an effect would expose stale values to synchronous reads.
   onSessionAttachedRef.current = onSessionAttached;
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   shouldDestroyOnUnmountRef.current = shouldDestroyOnUnmount;
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   isFocusedRef.current = isFocused;
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   allowRemoteResizeRef.current = allowRemoteResize;
 
   const handleFocus = useCallback(() => {
@@ -376,6 +386,13 @@ export function TerminalPane({
     return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
   }, [paneId]);
 
+  // This effect owns the terminal's full lifecycle (WebSocket connect, xterm
+  // bootstrap, reconnect timers, heartbeat). init() returns the real cleanup,
+  // which is awaited and invoked in the outer return below — react-doctor's
+  // cleanup heuristic does not see through the async indirection. The heartbeat
+  // is intentionally stopped via the live heartbeatRef.current in cleanup so the
+  // currently-running heartbeat (replaced on each reconnect) is the one stopped.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/exhaustive-deps -- cleanup is returned via init()'s awaited promise (see outer return), and reading the live heartbeatRef.current in cleanup is required to stop the most recent heartbeat instance.
   useEffect(() => {
     let disposed = false;
 
@@ -1144,6 +1161,7 @@ export function TerminalPane({
       disposed = true;
       cleanup.then((fn) => fn?.());
     };
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- theme/font/cursor settings are deliberately excluded: re-running this effect would tear down and rebuild the WebSocket and xterm session. Those settings are applied live by the separate options-sync effect below, and live prop values are read through latest-value refs.
   }, [
     claudeMode,
     cwd,
@@ -1275,8 +1293,14 @@ export function TerminalPane({
           </button>
         </div>
       )}
+      {/* Reading the imperative xterm search-addon handle during render is
+          intentional: the addon is created inside the init effect and is stable
+          thereafter; searchOpen state (not the ref) drives re-render, so these
+          reads only gate whether the overlay mounts and supply its handle. */}
+      {/* react-doctor-disable-next-line react-hooks-js/refs -- intentional stable imperative-handle read during render; see comment above. */}
       {searchOpen && !!searchAddonRef.current && (
         <TerminalSearchBar
+          // react-doctor-disable-next-line react-hooks-js/refs -- intentional stable imperative-handle read during render; see comment above.
           searchAddon={searchAddonRef.current as Parameters<typeof TerminalSearchBar>[0]["searchAddon"]}
           isOpen={searchOpen}
           onClose={() => setSearchOpen(false)}

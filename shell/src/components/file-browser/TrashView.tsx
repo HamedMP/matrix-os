@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Trash2Icon, RotateCcwIcon } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
+const TRASH_FETCH_TIMEOUT_MS = 10_000;
 
 interface TrashEntry {
   name: string;
@@ -24,24 +25,28 @@ export function TrashView() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${GATEWAY_URL}/api/files/trash`);
+      const res = await fetch(`${GATEWAY_URL}/api/files/trash`, {
+        signal: AbortSignal.timeout(TRASH_FETCH_TIMEOUT_MS),
+      });
       if (res.ok) {
         const data = await res.json();
         setEntries(data.entries);
       }
-    } catch {
-      // ignore
+    } catch (error: unknown) {
+      console.warn("Failed to load trash entries", error);
     }
     setLoading(false);
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- on-mount async load of the trash listing from the gateway; `load` toggles the loading gate and stores the fetched entries, none of which is derivable in render.
     load();
   }, [load]);
 
   async function handleRestore(trashPath: string) {
     await fetch(`${GATEWAY_URL}/api/files/trash/restore`, {
       method: "POST",
+      signal: AbortSignal.timeout(TRASH_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trashPath }),
     });
@@ -56,6 +61,7 @@ export function TrashView() {
     setConfirmEmpty(false);
     await fetch(`${GATEWAY_URL}/api/files/trash/empty`, {
       method: "POST",
+      signal: AbortSignal.timeout(TRASH_FETCH_TIMEOUT_MS),
     });
     load();
   }

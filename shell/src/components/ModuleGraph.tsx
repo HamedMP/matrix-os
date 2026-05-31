@@ -9,6 +9,7 @@ import { NetworkIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
+const MODULE_GRAPH_FETCH_TIMEOUT_MS = 10_000;
 
 export function ModuleGraph() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -17,17 +18,20 @@ export function ModuleGraph() {
 
   const fetchModules = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_URL}/files/system/modules.json`);
+      const res = await fetch(`${GATEWAY_URL}/files/system/modules.json`, {
+        signal: AbortSignal.timeout(MODULE_GRAPH_FETCH_TIMEOUT_MS),
+      });
       if (res.ok) {
         const data = await res.json();
         setModules(Array.isArray(data) ? data : []);
       }
-    } catch {
-      // gateway not available
+    } catch (error: unknown) {
+      console.warn("Failed to load module graph", error);
     }
   }, []);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async data load: fetchModules awaits the gateway and only then setModules; the same loader is reused by the file-watcher subscription below, so the state is genuine async-fetched data, not derivable in render.
     fetchModules();
   }, [fetchModules]);
 

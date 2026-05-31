@@ -68,6 +68,11 @@ import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+// Stable fallback so `pinnedApps` keeps a constant reference when the store
+// value is absent — an inline `?? []` would allocate a fresh array each render
+// and destabilize every memo/callback that depends on `pinnedApps`. Treated as
+// read-only by convention; consumers always build new arrays rather than mutate.
+const EMPTY_PINNED_APPS: string[] = [];
 const MATRIX_SHIMMER =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
 
@@ -540,6 +545,7 @@ interface DesktopProps {
   chat?: import("@/hooks/useChatState").ChatState;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the 9 useState values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, showOnboarding, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
@@ -574,7 +580,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
-  const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
+  const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
   const togglePin = useDesktopConfigStore((s) => s.togglePin);
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
@@ -583,18 +589,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
   const dockXOffset = dock.position === "left" ? dock.size + 16 : 20;
 
-  const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
+  if (minimizeTimers.current === null) minimizeTimers.current = new Map();
   const focusedWindow = windows
     .filter((w) => !w.minimized)
     .sort((a, b) => b.zIndex - a.zIndex)[0];
 
   useEffect(() => {
-    const timers = minimizeTimers.current;
+    const timers = minimizeTimers.current!;
     return () => {
       for (const timer of timers.values()) clearTimeout(timer);
     };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- intentional one-shot first-run status load on mount; fully guarded with AbortController, a `cancelled` flag, a timeout, and effect cleanup, so a data-fetching library would add no safety here
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
@@ -647,18 +655,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   }, [dock, dockOrder, pinnedApps]);
 
   const animateMinimize = useCallback((id: string) => {
-    if (minimizeTimers.current.has(id)) return;
+    if (minimizeTimers.current!.has(id)) return;
     setMinimizingIds((prev) => new Set(prev).add(id));
     const timer = setTimeout(() => {
       wmMinimizeWindow(id);
-      minimizeTimers.current.delete(id);
+      minimizeTimers.current!.delete(id);
       setMinimizingIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
     }, 500);
-    minimizeTimers.current.set(id, timer);
+    minimizeTimers.current!.set(id, timer);
   }, [wmMinimizeWindow]);
 
   const dragRef = useRef<{
@@ -677,11 +685,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     origH: number;
   } | null>(null);
 
-  const generatingRef = useRef(new Set<string>());
-  const checkedRef = useRef(new Set<string>());
+  const generatingRef = useRef<Set<string> | null>(null);
+  if (generatingRef.current === null) generatingRef.current = new Set<string>();
+  const checkedRef = useRef<Set<string> | null>(null);
+  if (checkedRef.current === null) checkedRef.current = new Set<string>();
 
   const regenerateIcon = useCallback((slug: string) => {
-    generatingRef.current.add(slug);
+    generatingRef.current!.add(slug);
     fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
       method: "POST",
       signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
@@ -704,12 +714,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         });
       })
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
-      .finally(() => generatingRef.current.delete(slug));
+      .finally(() => generatingRef.current!.delete(slug));
   }, [wmSetApps]);
 
   const checkAndGenerateIcon = useCallback((slug: string) => {
-    if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
-    checkedRef.current.add(slug);
+    if (checkedRef.current!.has(slug) || generatingRef.current!.has(slug)) return;
+    checkedRef.current!.add(slug);
     const iconPath = `/icons/${slug}.png`;
     fetch(`${GATEWAY_URL}${iconPath}`, {
       method: "HEAD",
@@ -1208,9 +1218,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   // legitimate delayed-unmount primitive — effect depends on vocalActive,
   // not on vocalMounted, so there's no cascade loop.
   const [vocalMounted, setVocalMounted] = useState(vocalActive);
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- delayed-unmount animation primitive: mount immediately when active, defer unmount via a timer so the fade-out can play; the effect depends on vocalActive (not vocalMounted), so these setStates are timer-sequenced, not a cascade loop
   useEffect(() => {
     if (vocalActive) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount the overlay synchronously when activated; cannot be derived because the exit window is timer-driven (DOM lingers ~950ms after vocalActive flips false)
       setVocalMounted(true);
       return;
     }
@@ -1232,6 +1243,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     openWindowRef.current = openWindow;
   }, [openWindow]);
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- false positive: the setState calls counted here (setDesktopMode, setSettingsOpen, setTaskBoardOpen) live inside command `execute` handlers that only fire on user invocation; this effect just registers/unregisters command-palette entries and runs no setState synchronously, so there is no render cascade
   useEffect(() => {
     const modeCommands = visibleModes().map((m) => ({
       id: `mode:${m.id}`,
@@ -1413,7 +1425,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       "view:fullscreen",
       ...visibleModes().map((m) => `mode:${m.id}`),
     ]);
-  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, toggleVocal]);
+  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, toggleVocal, wmToggleFullscreen]);
 
   useEffect(() => {
     const appCommands = apps.map((app) => ({

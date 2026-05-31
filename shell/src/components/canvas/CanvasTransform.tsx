@@ -101,6 +101,7 @@ export function CanvasTransform({
     [zoom, zoomAtPoint, panBy, navMode, panEnabled, isCanvasSurfaceEvent],
   );
 
+  // react-doctor-disable-next-line react-hooks-js/advanced-event-handler-refs -- intentional non-passive native wheel listener: React's JSX onWheel is registered passively and cannot call preventDefault() to block page scroll/zoom, so the handler must be attached manually with { passive: false }. It is re-attached whenever the memoized onWheel identity changes.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -170,6 +171,7 @@ export function CanvasTransform({
   }, [panEnabled]);
 
   // Track space (for pan) and ctrl/cmd (for zoom overlay over iframes)
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- run-once mount setup for global window/document key + visibility listeners; the body only touches stable setters (setGrabCursor), refs (spaceDown, scrollTimeoutRef), and the mount-captured overlay element. Re-running would detach/reattach the global listeners on every render with no behavior change.
   useEffect(() => {
     const overlay = zoomOverlayRef.current;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -228,6 +230,7 @@ export function CanvasTransform({
         position: "relative",
         width: "100%",
         height: "100%",
+        // react-doctor-disable-next-line react-hooks-js/refs -- best-effort imperative read of the pan-state ref for the cursor hint; isPanning is mutated many times per pointer-move frame and intentionally is NOT state (it must not trigger re-renders). grabCursor already drives an authoritative re-render on space-key toggle.
         cursor: grabCursor || isPanning.current ? "grabbing" : navMode === "grab" ? "grab" : "default",
       }}
       onPointerDown={onPointerDown}

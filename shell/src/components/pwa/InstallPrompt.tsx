@@ -92,6 +92,7 @@ export function InstallPrompt() {
     return isDismissed();
   });
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- not a synchronous cascade: setDeferred fires from the `beforeinstallprompt` event handler and setIosHint fires from a 4s timer; they run on independent async triggers, never sequentially within one render. A reducer would not change the event/timer sequencing.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (dismissed) return;

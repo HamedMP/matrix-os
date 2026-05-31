@@ -136,6 +136,7 @@ interface MobileShellProps {
   onOpenCommandPalette?: () => void;
 }
 
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
 export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShellProps) {
   const chat = useChatContext();
   useTheme();
@@ -159,6 +160,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     return () => window.clearInterval(id);
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded mount load of the installed-apps registry: it runs once on mount, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. A data-fetching library would be overkill for this single shell-bootstrap read.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -227,6 +229,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     const app = apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
     launchPathConsumedRef.current = launchAppPath;
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
     openApp(app);
   }, [apps, launchAppPath, openApp]);
 
@@ -707,6 +710,7 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
     if (prevSlug.current === slug) return;
     prevSlug.current = slug;
     triedSvg.current = false;
+    // react-doctor-disable-next-line react-doctor/no-derived-state -- `src` is not pure derived state: it is seeded from `slug` but then mutated at runtime by the onError fallback chain (.png -> .svg -> /icon-192.png). Computing it in render would discard the resolved fallback and re-trigger the broken-image flicker on every render. This effect resets the chain only when the slug actually changes.
     setSrc(iconUrl(slug));
   }, [slug]);
 

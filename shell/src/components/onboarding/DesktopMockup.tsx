@@ -19,11 +19,14 @@ export function DesktopMockup({ highlights }: DesktopMockupProps) {
 
   useEffect(() => {
     // Stagger reveal of highlighted elements
-    highlights.forEach((id, i) => {
-      setTimeout(() => {
+    const timers = highlights.map((id, i) =>
+      window.setTimeout(() => {
         setRevealed((prev) => new Set([...prev, id]));
-      }, 300 + i * 400);
-    });
+      }, 300 + i * 400),
+    );
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
   }, [highlights]);
 
   const isActive = (id: string) => revealed.has(id);
