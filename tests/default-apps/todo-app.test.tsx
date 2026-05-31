@@ -1,0 +1,158 @@
+// @vitest-environment jsdom
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "../../home/apps/todo/src/App";
+
+type DbRow = Record<string, unknown>;
+
+function isoDaysFromNow(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
+function installMatrixDb(rows: DbRow[] = []) {
+  const store = [...rows];
+  const db = {
+    find: vi.fn(async () => [...store]),
+    findOne: vi.fn(async (_t: string, id: string) => store.find((r) => r.id === id) ?? null),
+    insert: vi.fn(async (_t: string, data: DbRow) => {
+      const id = `new-${store.length + 1}`;
+      store.push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    }),
+    update: vi.fn(async (_t: string, id: string, data: DbRow) => {
+      const row = store.find((r) => r.id === id);
+      if (row) Object.assign(row, data);
+      return { ok: true };
+    }),
+    delete: vi.fn(async (_t: string, id: string) => {
+      const idx = store.findIndex((r) => r.id === id);
+      if (idx >= 0) store.splice(idx, 1);
+      return { ok: true };
+    }),
+    count: vi.fn(async () => store.length),
+    onChange: vi.fn(() => () => undefined),
+  };
+  Object.defineProperty(window, "MatrixOS", {
+    configurable: true,
+    value: { db },
+  });
+  return db;
+}
+
+describe("Todo app", () => {
+  beforeEach(() => {
+    if (!window.matchMedia) {
+      // jsdom lacks matchMedia; reduced-motion check needs it
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      });
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(window, "MatrixOS");
+  });
+
+  it("renders tasks from the database", async () => {
+    installMatrixDb([
+      { id: "t1", title: "Write the spec", status: "open", priority: 1, due: null },
+      { id: "t2", title: "Review PR", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+    expect(await screen.findByText("Write the spec")).toBeTruthy();
+    expect(screen.getByText("Review PR")).toBeTruthy();
+  });
+
+  it("shows an onboarding empty state when there are no tasks", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    expect(await screen.findByText(/your inbox is clear/i)).toBeTruthy();
+  });
+
+  it("adds a task to the inbox via Enter and persists with db.insert", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+    const input = await screen.findByPlaceholderText(/add a task|new task|capture/i);
+    fireEvent.change(input, { target: { value: "Buy groceries" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(db.insert).toHaveBeenCalledWith(
+        "tasks",
+        expect.objectContaining({ title: "Buy groceries", status: "open" }),
+      );
+    });
+    // optimistic render
+    expect(screen.getByText("Buy groceries")).toBeTruthy();
+  });
+
+  it("completing a task calls db.update with done status", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+    await screen.findByText("Finish report");
+    const checkbox = screen.getByRole("button", { name: /complete .*finish report/i });
+    await act(async () => {
+      fireEvent.click(checkbox);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith(
+        "tasks",
+        "t1",
+        expect.objectContaining({ status: "done" }),
+      );
+    });
+  });
+
+  it("filters tasks into Today and Upcoming views", async () => {
+    installMatrixDb([
+      { id: "td", title: "Due today task", status: "open", priority: 0, due: isoDaysFromNow(0) },
+      { id: "up", title: "Future task", status: "open", priority: 0, due: isoDaysFromNow(5) },
+      { id: "ib", title: "No date task", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+    await screen.findByText("No date task");
+
+    // Today view
+    fireEvent.click(screen.getByRole("button", { name: /^today/i }));
+    const list = screen.getByTestId("task-list");
+    expect(within(list).getByText("Due today task")).toBeTruthy();
+    expect(within(list).queryByText("Future task")).toBeNull();
+
+    // Upcoming view
+    fireEvent.click(screen.getByRole("button", { name: /^upcoming/i }));
+    const list2 = screen.getByTestId("task-list");
+    expect(within(list2).getByText("Future task")).toBeTruthy();
+    expect(within(list2).queryByText("Due today task")).toBeNull();
+  });
+
+  it("deletes a task via db.delete", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Disposable", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+    await screen.findByText("Disposable");
+    const del = screen.getByRole("button", { name: /delete .*disposable/i });
+    await act(async () => {
+      fireEvent.click(del);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("tasks", "t1");
+    });
+  });
+
+  it("survives a missing MatrixOS.db without crashing", async () => {
+    render(<App />);
+    expect(await screen.findByPlaceholderText(/add a task|new task|capture/i)).toBeTruthy();
+  });
+});
