@@ -1,18 +1,44 @@
 // @vitest-environment jsdom
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { Dialog, DialogTitle, DialogFooter } from "../../packages/ui/src/Dialog";
+import { Dialog } from "../../packages/ui/src/Dialog";
+import { DialogTitle } from "../../packages/ui/src/DialogTitle";
+import { DialogFooter } from "../../packages/ui/src/DialogFooter";
+
+// jsdom does not implement the modal <dialog> methods; stub them so they reflect
+// the open state and let us assert the controlled open/close wiring.
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.open = true;
+  });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+    this.open = false;
+  });
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("Dialog", () => {
-  it("renders nothing when closed", () => {
-    const { container } = render(
+  it("opens via showModal() when open", () => {
+    render(
+      <Dialog open={true} onClose={() => {}}>
+        Content
+      </Dialog>
+    );
+    expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open when closed", () => {
+    render(
       <Dialog open={false} onClose={() => {}}>
         Content
       </Dialog>
     );
-    expect(container.innerHTML).toBe("");
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
   });
 
   it("renders content when open", () => {
@@ -24,17 +50,16 @@ describe("Dialog", () => {
     expect(screen.getByText("Dialog content")).toBeTruthy();
   });
 
-  it("has dialog role and aria-modal", () => {
-    render(
+  it("renders a native <dialog> with the overlay class", () => {
+    const { container } = render(
       <Dialog open={true} onClose={() => {}}>
         Content
       </Dialog>
     );
-    const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(container.querySelector("dialog.matrix-dialog-overlay")).toBeTruthy();
   });
 
-  it("calls onClose when clicking overlay backdrop", () => {
+  it("calls onClose when clicking the backdrop (the dialog element itself)", () => {
     const onClose = vi.fn();
     const { container } = render(
       <Dialog open={true} onClose={onClose}>
@@ -57,25 +82,41 @@ describe("Dialog", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("calls onClose on Escape key", () => {
+  it("calls onClose on the native cancel (Escape) event and prevents the default close", () => {
     const onClose = vi.fn();
-    render(
+    const { container } = render(
       <Dialog open={true} onClose={onClose}>
         Content
       </Dialog>
     );
-    fireEvent.keyDown(document, { key: "Escape" });
+    const dialog = container.querySelector("dialog")!;
+    const cancel = new Event("cancel", { cancelable: true });
+    dialog.dispatchEvent(cancel);
     expect(onClose).toHaveBeenCalledOnce();
+    expect(cancel.defaultPrevented).toBe(true);
   });
 
-  it("accepts custom className", () => {
-    render(
+  it("closes the dialog when the open prop flips to false", () => {
+    const { rerender } = render(
+      <Dialog open={true} onClose={() => {}}>
+        Content
+      </Dialog>
+    );
+    rerender(
+      <Dialog open={false} onClose={() => {}}>
+        Content
+      </Dialog>
+    );
+    expect(HTMLDialogElement.prototype.close).toHaveBeenCalled();
+  });
+
+  it("applies a custom className to the content", () => {
+    const { container } = render(
       <Dialog open={true} onClose={() => {}} className="custom-dialog">
         Content
       </Dialog>
     );
-    const dialog = screen.getByRole("dialog").querySelector(".custom-dialog");
-    expect(dialog).toBeTruthy();
+    expect(container.querySelector(".matrix-dialog.custom-dialog")).toBeTruthy();
   });
 });
 
