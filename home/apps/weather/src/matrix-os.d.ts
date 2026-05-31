@@ -18,6 +18,8 @@ interface MatrixOS {
   app?: { name: string };
   readData?(key: string): Promise<unknown>;
   writeData?(key: string, value: unknown): Promise<void>;
+  /** Proxy a GET to an allowlisted external API via the gateway (apps cannot fetch cross-origin). */
+  proxyFetch?(url: string): Promise<unknown>;
 }
 declare global {
   interface Window { MatrixOS?: MatrixOS; }
