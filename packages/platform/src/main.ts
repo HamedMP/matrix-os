@@ -2835,7 +2835,14 @@ export function createApp(deps: {
         ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
         : await getActiveUserMachineByHandle(db, identity.handle));
       if (activeMachine) {
-        if (!entitlement.runtimeProxyAllowed) {
+        if (
+          !entitlement.runtimeProxyAllowed &&
+          !shouldProxyShellForBillingGate({
+            isAppDomain,
+            method: c.req.method,
+            upstreamPath: path,
+          })
+        ) {
           applyNoStoreHeaders(c);
           return c.json({ error: 'Paid beta access required' }, 402);
         }

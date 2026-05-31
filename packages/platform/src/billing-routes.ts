@@ -6,9 +6,9 @@ import {
   getBillingCustomerByStripeCustomerId,
   getBillingEntitlement,
   getBillingEntitlementState,
-  insertBillingCustomerIfAbsent,
   insertBillingWebhookEvent,
   runBillingWebhookTransaction,
+  upsertBillingCustomer,
   upsertBillingEntitlement,
   type PlatformDB,
 } from './db.js';
@@ -186,12 +186,13 @@ export function createBillingRoutes(options: {
     }
 
     try {
+      const webhookProcessedAt = now();
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
         const inserted = await insertBillingWebhookEvent(trx, {
           stripeEventId: event.id,
           eventType: event.type,
           createdAtFromStripe: epochSecondsToIso(event.created),
-          processedAt: now().toISOString(),
+          processedAt: webhookProcessedAt.toISOString(),
           status: 'processed',
           errorCode: null,
         });
@@ -203,13 +204,13 @@ export function createBillingRoutes(options: {
           return { received: true, ignored: true };
         }
 
-        const projection = await projectSubscription(trx, event.data.object);
+        const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
         if (!projection) return { received: true, ignored: true };
 
         const entitlement = deriveStripeEntitlement(projection, {
           priceCatalog: loadStripePriceCatalog(env),
           runtimeCatalog: loadRuntimeCatalog(env),
-          now: now(),
+          now: webhookProcessedAt,
         });
         await persistEntitlement(trx, entitlement);
         return { received: true, processed: true };
@@ -256,7 +257,11 @@ function isSubscriptionEvent(type: string): boolean {
   );
 }
 
-async function projectSubscription(db: PlatformDB, value: unknown): Promise<StripeSubscriptionProjection | null> {
+async function projectSubscription(
+  db: PlatformDB,
+  value: unknown,
+  currentTime: Date,
+): Promise<StripeSubscriptionProjection | null> {
   if (!value || typeof value !== 'object') return null;
   const sub = value as {
     id?: unknown;
@@ -271,8 +276,8 @@ async function projectSubscription(db: PlatformDB, value: unknown): Promise<Stri
   if (!customer) {
     const clerkUserId = readClerkUserIdFromStripeMetadata(sub.metadata);
     if (!clerkUserId) return null;
-    const nowIso = new Date().toISOString();
-    await insertBillingCustomerIfAbsent(db, {
+    const nowIso = currentTime.toISOString();
+    await upsertBillingCustomer(db, {
       clerkUserId,
       stripeCustomerId: sub.customer,
       createdAt: nowIso,

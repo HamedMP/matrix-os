@@ -343,6 +343,39 @@ describe('platform billing routes', () => {
     });
     await expect(getBillingCustomerByClerkUserId(db, 'user_123')).resolves.toMatchObject({
       stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+  });
+
+  it('updates stale customer links when a signed subscription webhook names a newer Stripe customer', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_old',
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:00.000Z',
+    });
+    const event = subscriptionEvent('evt_customer_conflict');
+    (event.data.object as { customer: string }).customer = 'cus_new';
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(event);
+    const app = createApp(null);
+
+    const res = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true, processed: true });
+    await expect(getBillingEntitlement(db, 'user_123')).resolves.toMatchObject({
+      planSlug: 'matrix_max',
+      stripeSubscriptionId: 'sub_123',
+    });
+    await expect(getBillingCustomerByClerkUserId(db, 'user_123')).resolves.toMatchObject({
+      stripeCustomerId: 'cus_new',
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
     });
   });
 
