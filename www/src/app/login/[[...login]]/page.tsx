@@ -1,7 +1,13 @@
+import type { Metadata } from "next";
 import { SignIn } from "@clerk/nextjs";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
 import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
+
+export const metadata: Metadata = {
+  title: "Log in",
+  description: "Sign in to your Matrix OS account and continue to your cloud computer.",
+};
 
 export default function LoginPage() {
   return (

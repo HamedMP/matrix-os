@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 
 export const metadata: Metadata = {
   title: "Matrix OS - QR Code",
@@ -7,9 +8,11 @@ export const metadata: Metadata = {
 export default function QRPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white px-6 py-12">
-      <img
+      <Image
         src="/rabbit.svg"
         alt="Matrix OS"
+        width={48}
+        height={48}
         className="size-12 rounded-xl mb-6"
       />
       <h1 className="text-lg font-bold tracking-tight text-[#111] mb-1">
@@ -19,6 +22,7 @@ export default function QRPage() {
         Scan to learn more
       </p>
       {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- external api.qrserver.com SVG; host not in next.config remotePatterns, next/image would fail at runtime */}
       <img
         src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https%3A%2F%2Fmatrix-os.com%2Fparty&format=svg&margin=0"
         alt="QR code to matrix-os.com/party"

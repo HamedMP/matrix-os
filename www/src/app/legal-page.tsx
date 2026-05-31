@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { ArrowLeftIcon } from "lucide-react";
 
 type LegalSection = {
@@ -18,10 +20,10 @@ export function LegalPage({ title, description, lastUpdated, sections }: LegalPa
     <div className="min-h-screen bg-[#E2E2CF] text-[#32352E]">
       <nav className="border-b border-[#D6D3C8]/80 bg-[#E2E2CF]/90 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between px-6 md:px-8">
-          <a href="/" className="flex items-center gap-3 text-sm font-semibold">
-            <img src="/rabbit.svg" alt="Matrix OS" className="size-7 rounded-md" />
+          <Link href="/" className="flex items-center gap-3 text-sm font-semibold">
+            <Image src="/rabbit.svg" alt="Matrix OS" width={28} height={28} className="size-7 rounded-md" />
             <span>Matrix OS</span>
-          </a>
+          </Link>
           <a href="mailto:support@matrix-os.com" className="text-sm text-[#5C5A4F] transition-colors hover:text-[#32352E]">
             support@matrix-os.com
           </a>
@@ -29,10 +31,10 @@ export function LegalPage({ title, description, lastUpdated, sections }: LegalPa
       </nav>
 
       <main className="mx-auto max-w-[1120px] px-6 py-14 md:px-8 md:py-20">
-        <a href="/" className="mb-10 inline-flex items-center gap-2 text-sm text-[#5C5A4F] transition-colors hover:text-[#32352E]">
+        <Link href="/" className="mb-10 inline-flex items-center gap-2 text-sm text-[#5C5A4F] transition-colors hover:text-[#32352E]">
           <ArrowLeftIcon className="size-4" />
           Back to home
-        </a>
+        </Link>
 
         <div className="grid gap-12 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] md:gap-16">
           <aside>

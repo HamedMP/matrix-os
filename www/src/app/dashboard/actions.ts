@@ -2,6 +2,7 @@
 
 import { currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
@@ -18,45 +19,66 @@ export async function provisionInstance(): Promise<{ error?: string }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
 
-  const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ handle, clerkUserId: user.id }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ handle, clerkUserId: user.id }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err: unknown) {
+    console.error(
+      "[dashboard] provision request failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return { error: "Provisioning is temporarily unavailable. Please try again." };
+  }
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
+    const errorMessage = data.error ?? "Provisioning failed";
+    after(async () => {
+      // react-doctor-disable-next-line react-doctor/server-after-nonblocking -- already deferred via after(); rule cannot detect the enclosing after() wrapper
+      posthog.capture({
+        distinctId: user.id,
+        event: "provision_failed",
+        properties: {
+          handle,
+          error: errorMessage,
+          source: "server_action",
+        },
+      });
+      await shutdownPostHog();
+    });
+    return { error: errorMessage };
+  }
+
+  const email = user.emailAddresses?.[0]?.emailAddress;
+  after(async () => {
+    // react-doctor-disable-next-line react-doctor/server-after-nonblocking -- already deferred via after(); rule cannot detect the enclosing after() wrapper
     posthog.capture({
       distinctId: user.id,
-      event: "provision_failed",
+      event: "provision_completed",
       properties: {
         handle,
-        error: data.error ?? "Provisioning failed",
         source: "server_action",
       },
     });
-    return { error: data.error ?? "Provisioning failed" };
-  }
 
-  posthog.capture({
-    distinctId: user.id,
-    event: "provision_completed",
-    properties: {
-      handle,
-      source: "server_action",
-    },
+    // react-doctor-disable-next-line react-doctor/server-after-nonblocking -- already deferred via after(); rule cannot detect the enclosing after() wrapper
+    posthog.identify({
+      distinctId: user.id,
+      properties: {
+        handle,
+        email,
+        has_instance: true,
+      },
+    });
+
+    await shutdownPostHog();
   });
 
-  posthog.identify({
-    distinctId: user.id,
-    properties: {
-      handle,
-      email: user.emailAddresses?.[0]?.emailAddress,
-      has_instance: true,
-    },
-  });
-
-  await shutdownPostHog();
   revalidatePath("/dashboard");
   return {};
 }
@@ -70,10 +92,20 @@ export async function upgradeContainer(): Promise<{ error?: string }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
 
-  const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}/upgrade`, {
-    method: "POST",
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${PLATFORM_API_URL}/containers/${handle}/upgrade`, {
+      method: "POST",
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err: unknown) {
+    console.error(
+      "[dashboard] upgrade request failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return { error: "Upgrade is temporarily unavailable. Please try again." };
+  }
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

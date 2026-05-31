@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Image from "next/image";
+import Link from "next/link";
 
 const TALLY_FORM_ID = "2ED9lb";
 const DISCORD_URL = "https://discord.gg/cSBBQWtPwV";
@@ -33,10 +35,10 @@ export default async function EarlyAccessPage({ searchParams }: { searchParams: 
       <div className="mx-auto grid min-h-screen w-full max-w-6xl grid-cols-1 gap-10 px-5 py-6 md:grid-cols-[0.82fr_1.18fr] md:px-8 md:py-10">
         <section className="flex flex-col justify-between gap-10 border-b border-[var(--pebble)] pb-8 md:border-b-0 md:border-r md:pb-0 md:pr-10">
           <div>
-            <a href="/" className="inline-flex items-center gap-3 text-sm font-medium tracking-[0.12em] uppercase">
-              <img src="/rabbit.svg" alt="Matrix OS" className="size-7 rounded-md" />
+            <Link href="/" className="inline-flex items-center gap-3 text-sm font-medium tracking-[0.12em] uppercase">
+              <Image src="/rabbit.svg" alt="Matrix OS" width={28} height={28} className="size-7 rounded-md" />
               Matrix OS
-            </a>
+            </Link>
 
             <div className="mt-16 max-w-xl md:mt-24">
               <p className="text-sm font-medium uppercase tracking-[0.18em] text-[var(--moss)]">
@@ -68,6 +70,7 @@ export default async function EarlyAccessPage({ searchParams }: { searchParams: 
         </section>
 
         <section className="flex h-[min(820px,calc(100vh-3rem))] min-h-[680px] flex-col overflow-hidden md:sticky md:top-10 md:h-[calc(100vh-5rem)] md:min-h-[760px]">
+          {/* react-doctor-disable-next-line react-doctor/iframe-missing-sandbox -- trusted Tally embed needs both allow-scripts and allow-same-origin to run the hosted form */}
           <iframe
             src={tallyUrl}
             loading="lazy"

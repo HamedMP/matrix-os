@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import Image from "next/image";
 import { ArrowRightIcon, GithubIcon, ArrowLeftIcon } from "lucide-react";
 
 export const metadata: Metadata = {
@@ -38,23 +40,23 @@ function Nav() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-[var(--stone)]/90 backdrop-blur-sm border-b border-[var(--pebble)]/50">
       <div className="mx-auto max-w-[1200px] px-6 h-14 flex items-center justify-between">
-        <a href="/" className="flex items-center gap-2.5">
-          <img src="/rabbit.svg" alt="Matrix OS" className="size-6 rounded-md" />
+        <Link href="/" className="flex items-center gap-2.5">
+          <Image src="/rabbit.svg" alt="Matrix OS" width={24} height={24} className="size-6 rounded-md" />
           <span className="tracking-[0.12em] text-[14px] font-medium text-[var(--ink)] uppercase">
             Matrix OS
           </span>
-        </a>
+        </Link>
 
         <div className="hidden md:flex items-center gap-8">
-          <a href="/#how" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
+          <Link href="/#how" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
             How it works
-          </a>
-          <a href="/whitepaper" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
+          </Link>
+          <Link href="/whitepaper" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
             Whitepaper
-          </a>
-          <a href="/docs" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
+          </Link>
+          <Link href="/docs" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
             Docs
-          </a>
+          </Link>
           <a
             href="https://github.com/HamedMP/matrix-os"
             target="_blank"
@@ -65,12 +67,12 @@ function Nav() {
           </a>
         </div>
 
-        <a
+        <Link
           href="/signup"
           className="inline-flex items-center gap-1.5 bg-[var(--forest)] text-[var(--stone)] text-sm px-4 py-2 rounded-full hover:bg-[var(--ink)] transition-colors"
         >
           Join the waitlist
-        </a>
+        </Link>
       </div>
     </nav>
   );
@@ -82,13 +84,13 @@ function TechHero() {
   return (
     <section className="pt-32 md:pt-44 pb-16 px-6">
       <div className="mx-auto max-w-[900px]">
-        <a
+        <Link
           href="/"
           className="inline-flex items-center gap-1.5 text-sm text-[var(--ink)]/40 hover:text-[var(--ink)]/70 transition-colors mb-8"
         >
           <ArrowLeftIcon className="size-3.5" />
           Back to home
-        </a>
+        </Link>
         <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-6 font-medium">
           Technical Details
         </p>
@@ -123,19 +125,21 @@ function TechHero() {
 
 /* ────────────────────────── OS Metaphor ─────────────────────────── */
 
+const osMetaphorRows = [
+  { traditional: "CPU", matrix: "Claude Opus 4.6", note: "Reasoning engine that executes all instructions" },
+  { traditional: "RAM", matrix: "Context window (1M tokens)", note: "Working memory for the current task" },
+  { traditional: "Kernel", matrix: "Agent SDK + system prompt", note: "Core loop that dispatches tools and sub-agents" },
+  { traditional: "Processes", matrix: "Sub-agents", note: "Isolated workers with their own context windows" },
+  { traditional: "Disk", matrix: "File system (~/)", note: "Persistent storage -- apps, data, config, identity" },
+  { traditional: "System calls", matrix: "MCP tools", note: "Typed interfaces the kernel exposes to user space" },
+  { traditional: "Device drivers", matrix: "Channel adapters", note: "Telegram, WhatsApp, Discord, Slack, Voice, Web" },
+  { traditional: "IPC", matrix: "Tool results + file watches", note: "How the kernel and shells communicate" },
+  { traditional: "BIOS / Firmware", matrix: "SOUL (soul.md)", note: "Identity, personality, behavioral constraints" },
+  { traditional: "Shell", matrix: "Web desktop / chat / CLI", note: "Multiple renderers, same kernel underneath" },
+];
+
 function OSMetaphor() {
-  const rows = [
-    { traditional: "CPU", matrix: "Claude Opus 4.6", note: "Reasoning engine that executes all instructions" },
-    { traditional: "RAM", matrix: "Context window (1M tokens)", note: "Working memory for the current task" },
-    { traditional: "Kernel", matrix: "Agent SDK + system prompt", note: "Core loop that dispatches tools and sub-agents" },
-    { traditional: "Processes", matrix: "Sub-agents", note: "Isolated workers with their own context windows" },
-    { traditional: "Disk", matrix: "File system (~/)", note: "Persistent storage -- apps, data, config, identity" },
-    { traditional: "System calls", matrix: "MCP tools", note: "Typed interfaces the kernel exposes to user space" },
-    { traditional: "Device drivers", matrix: "Channel adapters", note: "Telegram, WhatsApp, Discord, Slack, Voice, Web" },
-    { traditional: "IPC", matrix: "Tool results + file watches", note: "How the kernel and shells communicate" },
-    { traditional: "BIOS / Firmware", matrix: "SOUL (soul.md)", note: "Identity, personality, behavioral constraints" },
-    { traditional: "Shell", matrix: "Web desktop / chat / CLI", note: "Multiple renderers, same kernel underneath" },
-  ];
+  const rows = osMetaphorRows;
 
   return (
     <section className="py-20 px-6">
@@ -270,47 +274,49 @@ REST API ──┘                                     Shell watches ~/
 
 /* ────────────────────────── Principles ──────────────────────────── */
 
+const designPrinciples = [
+  {
+    num: "I",
+    title: "Everything Is a File",
+    tag: "NON-NEGOTIABLE",
+    desc: "Every piece of state is a file on disk. Apps, config, identity, agent definitions, user data. Backup = copy a folder. Share = send a file. No opaque databases for core state.",
+  },
+  {
+    num: "II",
+    title: "Agent Is the Kernel",
+    desc: "The Claude Agent SDK is not bolted on -- it IS the kernel. Full machine control: file system, shell, processes, network. Every user interaction flows through the agent.",
+  },
+  {
+    num: "III",
+    title: "Headless Core, Multi-Shell",
+    desc: "The core works without any UI. The web desktop is one renderer. Telegram, WhatsApp, Discord, Slack are additional shells. CLI, mobile, voice-only, API -- all read the same files.",
+  },
+  {
+    num: "IV",
+    title: "Self-Healing & Self-Expanding",
+    desc: "The OS detects failures, diagnoses root causes, and patches itself. It creates new capabilities by writing new agent files and tools. Git snapshots before every mutation.",
+  },
+  {
+    num: "V",
+    title: "Simplicity Over Sophistication",
+    desc: "Single-process async before worker threads. File-based IPC before message queues. Owner-local Postgres before external data services. HTML apps before full-stack frameworks. Escalate only when the simpler approach fails.",
+  },
+  {
+    num: "VI",
+    title: "Defense in Depth",
+    tag: "NON-NEGOTIABLE",
+    desc: "Auth matrix, input validation, resource limits, timeouts on every external call, constant-time secret comparison, atomic file writes. Security is part of the spec, not a follow-up.",
+  },
+  {
+    num: "VII",
+    title: "Test-Driven Development",
+    tag: "NON-NEGOTIABLE",
+    desc: "Failing tests first, then implement. 99-100% coverage target. Spike before spec. Integration tests against real SDK behavior, not just docs. 2,800+ tests and counting.",
+  },
+];
+
 function Principles() {
-  const principles = [
-    {
-      num: "I",
-      title: "Everything Is a File",
-      tag: "NON-NEGOTIABLE",
-      desc: "Every piece of state is a file on disk. Apps, config, identity, agent definitions, user data. Backup = copy a folder. Share = send a file. No opaque databases for core state.",
-    },
-    {
-      num: "II",
-      title: "Agent Is the Kernel",
-      desc: "The Claude Agent SDK is not bolted on -- it IS the kernel. Full machine control: file system, shell, processes, network. Every user interaction flows through the agent.",
-    },
-    {
-      num: "III",
-      title: "Headless Core, Multi-Shell",
-      desc: "The core works without any UI. The web desktop is one renderer. Telegram, WhatsApp, Discord, Slack are additional shells. CLI, mobile, voice-only, API -- all read the same files.",
-    },
-    {
-      num: "IV",
-      title: "Self-Healing & Self-Expanding",
-      desc: "The OS detects failures, diagnoses root causes, and patches itself. It creates new capabilities by writing new agent files and tools. Git snapshots before every mutation.",
-    },
-    {
-      num: "V",
-      title: "Simplicity Over Sophistication",
-      desc: "Single-process async before worker threads. File-based IPC before message queues. Owner-local Postgres before external data services. HTML apps before full-stack frameworks. Escalate only when the simpler approach fails.",
-    },
-    {
-      num: "VI",
-      title: "Defense in Depth",
-      tag: "NON-NEGOTIABLE",
-      desc: "Auth matrix, input validation, resource limits, timeouts on every external call, constant-time secret comparison, atomic file writes. Security is part of the spec, not a follow-up.",
-    },
-    {
-      num: "VII",
-      title: "Test-Driven Development",
-      tag: "NON-NEGOTIABLE",
-      desc: "Failing tests first, then implement. 99-100% coverage target. Spike before spec. Integration tests against real SDK behavior, not just docs. 2,800+ tests and counting.",
-    },
-  ];
+  const principles = designPrinciples;
 
   return (
     <section className="py-20 px-6">
@@ -357,39 +363,41 @@ function Principles() {
 
 /* ─────────────────────────── Heritage ───────────────────────────── */
 
+const heritageComparisons = [
+  {
+    pattern: "Gateway",
+    openclaw: "Routes chat messages from channels to agent, response back to channel",
+    matrixos: "Routes input to kernel, output is file mutations. Shell watches filesystem for changes.",
+  },
+  {
+    pattern: "Skills",
+    openclaw: "YAML + Markdown files compiled into system prompt. Guide the agent, don't execute.",
+    matrixos: "Same pattern, but skills can also trigger sub-agents and file generation.",
+  },
+  {
+    pattern: "Sessions",
+    openclaw: "In-memory conversation state per channel/user",
+    matrixos: "Agent SDK resume tokens + file-based session state. Survives restarts.",
+  },
+  {
+    pattern: "Output",
+    openclaw: "Send message back to originating channel",
+    matrixos: "Write files to disk. Every action = file created, modified, or deleted.",
+  },
+  {
+    pattern: "Channels",
+    openclaw: "Telegram, Discord, Slack, iMessage, Web -- all first-class",
+    matrixos: "Same channels, plus Voice as primary gateway. Matrix protocol for federation.",
+  },
+  {
+    pattern: "Extensibility",
+    openclaw: "Plugin SDK with hooks, tool registration, config injection",
+    matrixos: "Two-tier: file-based (write a markdown skill) + code-based (MCP tools).",
+  },
+];
+
 function Heritage() {
-  const comparisons = [
-    {
-      pattern: "Gateway",
-      openclaw: "Routes chat messages from channels to agent, response back to channel",
-      matrixos: "Routes input to kernel, output is file mutations. Shell watches filesystem for changes.",
-    },
-    {
-      pattern: "Skills",
-      openclaw: "YAML + Markdown files compiled into system prompt. Guide the agent, don't execute.",
-      matrixos: "Same pattern, but skills can also trigger sub-agents and file generation.",
-    },
-    {
-      pattern: "Sessions",
-      openclaw: "In-memory conversation state per channel/user",
-      matrixos: "Agent SDK resume tokens + file-based session state. Survives restarts.",
-    },
-    {
-      pattern: "Output",
-      openclaw: "Send message back to originating channel",
-      matrixos: "Write files to disk. Every action = file created, modified, or deleted.",
-    },
-    {
-      pattern: "Channels",
-      openclaw: "Telegram, Discord, Slack, iMessage, Web -- all first-class",
-      matrixos: "Same channels, plus Voice as primary gateway. Matrix protocol for federation.",
-    },
-    {
-      pattern: "Extensibility",
-      openclaw: "Plugin SDK with hooks, tool registration, config injection",
-      matrixos: "Two-tier: file-based (write a markdown skill) + code-based (MCP tools).",
-    },
-  ];
+  const comparisons = heritageComparisons;
 
   return (
     <section className="py-20 px-6">
@@ -579,19 +587,21 @@ function Web4Vision() {
 
 /* ────────────────────────── Tech Stack ──────────────────────────── */
 
+const techStack = [
+  { category: "Runtime", items: "Node.js 24+, TypeScript 5.5+ (strict), ES modules" },
+  { category: "AI", items: "Claude Agent SDK V1 query() + resume, Opus 4.6, 1M context" },
+  { category: "Frontend", items: "Next.js 16, React 19, Turbopack, React Compiler" },
+  { category: "Backend", items: "Hono (HTTP, WebSocket, channel adapters)" },
+  { category: "Database", items: "Postgres / Kysely for platform, kernel, social, and app data" },
+  { category: "Validation", items: "Zod 4 (schemas, tool params, API contracts)" },
+  { category: "Testing", items: "Vitest, @vitest/coverage-v8, TDD workflow" },
+  { category: "Protocol", items: "Matrix (federation, E2E encryption, identity)" },
+  { category: "Channels", items: "Telegram, WhatsApp (Baileys), Discord.js, Slack Bolt, Voice" },
+  { category: "Infra", items: "Docker, OrbStack, Hetzner VPS, pnpm + bun" },
+];
+
 function TechStack() {
-  const stack = [
-    { category: "Runtime", items: "Node.js 24+, TypeScript 5.5+ (strict), ES modules" },
-    { category: "AI", items: "Claude Agent SDK V1 query() + resume, Opus 4.6, 1M context" },
-    { category: "Frontend", items: "Next.js 16, React 19, Turbopack, React Compiler" },
-    { category: "Backend", items: "Hono (HTTP, WebSocket, channel adapters)" },
-    { category: "Database", items: "Postgres / Kysely for platform, kernel, social, and app data" },
-    { category: "Validation", items: "Zod 4 (schemas, tool params, API contracts)" },
-    { category: "Testing", items: "Vitest, @vitest/coverage-v8, TDD workflow" },
-    { category: "Protocol", items: "Matrix (federation, E2E encryption, identity)" },
-    { category: "Channels", items: "Telegram, WhatsApp (Baileys), Discord.js, Slack Bolt, Voice" },
-    { category: "Infra", items: "Docker, OrbStack, Hetzner VPS, pnpm + bun" },
-  ];
+  const stack = techStack;
 
   return (
     <section className="py-20 px-6">
@@ -623,15 +633,17 @@ function TechStack() {
 
 /* ─────────────────────────── Numbers ────────────────────────────── */
 
+const numberStats = [
+  { value: "2,800+", label: "Tests passing" },
+  { value: "100K+", label: "Lines of TypeScript" },
+  { value: "214", label: "Test files" },
+  { value: "8", label: "Packages" },
+  { value: "46+", label: "Completed phases" },
+  { value: "6+", label: "Channels" },
+];
+
 function Numbers() {
-  const stats = [
-    { value: "2,800+", label: "Tests passing" },
-    { value: "100K+", label: "Lines of TypeScript" },
-    { value: "214", label: "Test files" },
-    { value: "8", label: "Packages" },
-    { value: "46+", label: "Completed phases" },
-    { value: "6+", label: "Channels" },
-  ];
+  const stats = numberStats;
 
   return (
     <section className="py-20 px-6">
@@ -677,13 +689,13 @@ function TechFooter() {
           Want to go deeper?
         </h2>
         <div className="flex items-center justify-center gap-4 flex-wrap">
-          <a
+          <Link
             href="/whitepaper"
             className="inline-flex items-center gap-2 bg-[var(--forest)] text-[var(--stone)] text-sm px-6 py-2.5 rounded-full hover:bg-[var(--ink)] transition-colors font-medium"
           >
             Read the whitepaper
             <ArrowRightIcon className="size-3.5" />
-          </a>
+          </Link>
           <a
             href="https://github.com/HamedMP/matrix-os"
             target="_blank"
@@ -693,27 +705,27 @@ function TechFooter() {
             <GithubIcon className="size-3.5" />
             View source
           </a>
-          <a
+          <Link
             href="/docs"
             className="inline-flex items-center gap-2 text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors"
           >
             Documentation
             <ArrowRightIcon className="size-3.5" />
-          </a>
+          </Link>
         </div>
       </div>
 
       <footer className="py-8 border-t border-[var(--pebble)]">
         <div className="mx-auto max-w-[1200px] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="flex items-center gap-2.5">
-            <img src="/rabbit.svg" alt="Matrix OS" className="size-5 rounded" />
+            <Image src="/rabbit.svg" alt="Matrix OS" width={20} height={20} className="size-5 rounded" />
             <span className="text-sm text-[var(--ink)]/50 font-mono">matrix-os.com</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-sm text-[var(--ink)]/50">
             <a href="https://discord.gg/cSBBQWtPwV" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--ink)] transition-colors">Discord</a>
             <a href="https://x.com/joinmatrixos" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--ink)] transition-colors">X / Twitter</a>
             <a href="https://github.com/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--ink)] transition-colors">GitHub</a>
-            <a href="/docs" className="hover:text-[var(--ink)] transition-colors">Docs</a>
+            <Link href="/docs" className="hover:text-[var(--ink)] transition-colors">Docs</Link>
           </div>
         </div>
       </footer>

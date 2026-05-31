@@ -20,29 +20,41 @@ async function requireAdmin() {
   if (metadata?.role !== "admin") throw new Error("Not authorized");
 }
 
+// react-doctor-disable-next-line react-doctor/server-auth-actions -- authorized via requireAdmin() (currentUser + admin-role check) on the first line
 export async function fetchContainers() {
   await requireAdmin();
   try {
     const res = await fetch(`${PLATFORM_API_URL}/containers`, {
       cache: "no-store",
       headers: authHeaders(),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return [];
     return await res.json();
-  } catch {
+  } catch (err: unknown) {
+    console.error(
+      "[admin] fetchContainers request failed:",
+      err instanceof Error ? err.message : err,
+    );
     return [];
   }
 }
 
+// react-doctor-disable-next-line react-doctor/server-auth-actions -- authorized via requireAdmin() (currentUser + admin-role check) on the first line
 export async function containerAction(method: string, path: string) {
   await requireAdmin();
   try {
     const res = await fetch(`${PLATFORM_API_URL}${path}`, {
       method,
       headers: authHeaders(),
+      signal: AbortSignal.timeout(10000),
     });
     return { ok: res.ok, status: res.status };
-  } catch {
+  } catch (err: unknown) {
+    console.error(
+      "[admin] containerAction request failed:",
+      err instanceof Error ? err.message : err,
+    );
     return { ok: false, status: 500 };
   }
 }

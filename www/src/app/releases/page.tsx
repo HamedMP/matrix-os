@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -65,10 +66,10 @@ export default async function ReleasesPage() {
 
   return (
     <main className="min-h-screen bg-[#E2E2CF] text-[#32352E]">
-      <nav className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
-        <a href="/" className="text-sm font-semibold tracking-[0.18em] uppercase">Matrix OS</a>
+      <nav className="mx-auto flex max-w-5xl items-center justify-between p-6">
+        <Link href="/" className="text-sm font-semibold tracking-[0.18em] uppercase">Matrix OS</Link>
         <div className="flex items-center gap-5 text-xs uppercase tracking-[0.16em] text-[#5C5A4F]">
-          <a href="/docs">Docs</a>
+          <Link href="/docs">Docs</Link>
           <a href="https://github.com/HamedMP/matrix-os">GitHub</a>
           <a href="https://app.matrix-os.com">Open app</a>
         </div>

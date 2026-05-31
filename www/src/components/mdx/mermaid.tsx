@@ -1,33 +1,56 @@
 'use client';
 
-import { use, useEffect, useId, useState } from 'react';
+import { use, useId, useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 
+// Client-only mount gate: mermaid renders via a dynamic import + theme read that have no
+// server equivalent. useSyncExternalStore returns false during SSR/hydration (matching the
+// server) and true on the client afterward, so the chart only renders client-side without a
+// setState-in-effect cascade or hydration flicker.
+const subscribeNoop = () => () => {};
+const getMountedSnapshot = () => true;
+const getMountedServerSnapshot = () => false;
+
 export function Mermaid({ chart }: { chart: string }) {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    subscribeNoop,
+    getMountedSnapshot,
+    getMountedServerSnapshot,
+  );
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return;
+  if (!mounted) return null;
   return <MermaidContent chart={chart} />;
 }
 
+// Bounded LRU cache (insertion-order Map): caps memory so a page with many
+// distinct charts/themes can't grow the cache without bound.
+const CACHE_MAX_ENTRIES = 100;
 const cache = new Map<string, Promise<unknown>>();
 
 function cachePromise<T>(key: string, setPromise: () => Promise<T>): Promise<T> {
   const cached = cache.get(key);
-  if (cached) return cached as Promise<T>;
+  if (cached) {
+    // Refresh recency: re-insert so the most-recently used key is last.
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached as Promise<T>;
+  }
 
   const promise = setPromise();
   cache.set(key, promise);
+  // Evict least-recently-used entries beyond the cap.
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
   return promise;
 }
 
 function MermaidContent({ chart }: { chart: string }) {
   const id = useId();
   const { resolvedTheme } = useTheme();
+  // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading mermaid this way is intentional code-splitting, not a defect.
   const { default: mermaid } = use(cachePromise('mermaid', () => import('mermaid')));
 
   mermaid.initialize({
@@ -51,6 +74,7 @@ function MermaidContent({ chart }: { chart: string }) {
       ref={(container) => {
         if (container) bindFunctions?.(container);
       }}
+      // react-doctor-disable-next-line react-doctor/no-danger -- svg is produced by the mermaid library from static MDX chart definitions (not user input); rendering it requires raw HTML injection and there is no React-children equivalent.
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

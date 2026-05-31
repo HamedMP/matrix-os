@@ -21,6 +21,7 @@ export function AdminDashboard({
 }: {
   containers: Container[];
 }) {
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- seeded once from server-provided prop, then mutated locally by refresh()/action(); not kept in sync with the prop, so it must persist as state
   const [containers, setContainers] = useState(initial);
   const [loading, setLoading] = useState<string | null>(null);
 

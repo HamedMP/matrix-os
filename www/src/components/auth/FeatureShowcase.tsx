@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import Image from "next/image";
 import {
   CheckCircle2Icon,
   TerminalIcon,
@@ -62,7 +63,7 @@ const features = [
           <span className="text-destructive">error</span> notes.html corrupted
         </div>
         <div>
-          <span className="text-primary">healer</span> diagnosing...
+          <span className="text-primary">healer</span> diagnosing…
         </div>
         <div>
           <span className="text-success">restored</span> from git snapshot
@@ -118,15 +119,13 @@ export function FeatureShowcase({
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
 
-  const next = useCallback(() => {
-    setActive((prev) => (prev + 1) % features.length);
-  }, []);
-
   useEffect(() => {
     if (paused) return;
-    const timer = setInterval(next, 5000);
+    const timer = setInterval(() => {
+      setActive((prev) => (prev + 1) % features.length);
+    }, 5000);
     return () => clearInterval(timer);
-  }, [paused, next]);
+  }, [paused]);
 
   const current = features[active];
   const Icon = current.icon;
@@ -135,9 +134,11 @@ export function FeatureShowcase({
     <div className="flex flex-col text-center lg:text-left">
       <div className="mx-auto mb-6 max-w-xl lg:mx-0 lg:mb-9">
         <div className="mb-6 flex items-center justify-center gap-3 lg:justify-start">
-          <img
+          <Image
             src="/rabbit.svg"
             alt="Matrix OS"
+            width={36}
+            height={36}
             className="size-9 rounded-xl border border-forest/10 bg-white/72 p-1.5 shadow-sm"
           />
           <span className="font-mono text-sm font-semibold tracking-[-0.03em] text-forest">

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Image from "next/image";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GithubIcon } from "lucide-react";
@@ -37,16 +39,18 @@ export default function PartyPage() {
       {/* Minimal top bar */}
       <nav className="px-6 pt-5 pb-2">
         <div className="mx-auto max-w-4xl flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 group">
-            <img
+          <Link href="/" className="flex items-center gap-2.5 group">
+            <Image
               src="/rabbit.svg"
               alt="Matrix OS"
+              width={28}
+              height={28}
               className="size-7 rounded-lg shadow-sm"
             />
             <span className="text-sm font-semibold tracking-tight">
               Matrix OS
             </span>
-          </a>
+          </Link>
           <Badge
             variant="outline"
             className="border-primary/30 bg-card/80 text-primary font-mono text-[10px] tracking-[0.2em] uppercase backdrop-blur-sm py-1 px-3"
@@ -78,11 +82,13 @@ export default function PartyPage() {
 
               {/* Video */}
               <div className="rounded-2xl overflow-hidden border border-border bg-card shadow-lg aspect-video mb-5">
+                {/* react-doctor-disable-next-line react-doctor/iframe-missing-sandbox -- trusted YouTube embed needs both allow-scripts and allow-same-origin to load the player */}
                 <iframe
                   src={`https://www.youtube.com/embed/${VIDEO_ID}?rel=0&modestbranding=1`}
                   title="Matrix OS Demo"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
+                  sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
                   className="w-full h-full"
                 />
               </div>
@@ -125,7 +131,7 @@ export default function PartyPage() {
                   className="h-10 px-5 text-sm rounded-xl bg-card/60 backdrop-blur-sm"
                   asChild
                 >
-                  <a href="/whitepaper">Whitepaper</a>
+                  <Link href="/whitepaper">Whitepaper</Link>
                 </Button>
               </div>
             </div>
@@ -138,6 +144,7 @@ export default function PartyPage() {
                   Website
                 </p>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
+                {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- external api.qrserver.com SVG; host not in next.config remotePatterns, next/image would fail at runtime */}
                 <img
                   src={QR_SITE}
                   alt="QR: matrix-os.com"
@@ -157,6 +164,7 @@ export default function PartyPage() {
                   Follow / DM
                 </p>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
+                {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- external api.qrserver.com SVG; host not in next.config remotePatterns, next/image would fail at runtime */}
                 <img
                   src={QR_X}
                   alt="QR: x.com/hamedmp"
