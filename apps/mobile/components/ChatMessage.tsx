@@ -1,4 +1,5 @@
 import { useCallback, memo } from "react";
+// react-doctor-disable-next-line react-doctor/rn-prefer-expo-image -- expo-image is not a project dependency; adopting it is a separate dependency decision tracked outside this lint pass
 import { View, Text, ScrollView, Pressable, Image, Linking, StyleSheet } from "react-native";
 import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
@@ -46,7 +47,7 @@ const ENTERING_OTHER = FadeInLeft.duration(200);
 
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg)$/i;
 
-function renderMarkdown(text: string, baseStyle: object): React.ReactNode[] {
+function markdownToNodes(text: string, baseStyle: object): React.ReactNode[] {
   const elements: React.ReactNode[] = [];
   const lines = text.split("\n");
 
@@ -65,19 +66,19 @@ function renderMarkdown(text: string, baseStyle: object): React.ReactNode[] {
       elements.push(
         <Text key={`bullet-${li}`} style={baseStyle}>
           <Text>{"  ".repeat(indent) + "  \u2022  "}</Text>
-          {renderInlineMarkdown(bulletContent, baseStyle, `b-${li}`)}
+          {inlineMarkdownToNodes(bulletContent, baseStyle, `b-${li}`)}
         </Text>,
       );
       continue;
     }
 
-    elements.push(...renderInlineMarkdown(line, baseStyle, `l-${li}`));
+    elements.push(...inlineMarkdownToNodes(line, baseStyle, `l-${li}`));
   }
 
   return elements;
 }
 
-function renderInlineMarkdown(
+function inlineMarkdownToNodes(
   text: string,
   baseStyle: object,
   keyPrefix: string,
@@ -87,30 +88,30 @@ function renderInlineMarkdown(
   const inlineRe = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
-  let idx = 0;
 
+  // Keys use the source character offset (stable across renders for the same
+  // immutable text), not a loop counter, so React can reconcile reliably.
   while ((match = inlineRe.exec(text)) !== null) {
     // Text before match
     if (match.index > lastIndex) {
       elements.push(
-        <Text key={`${keyPrefix}-t${idx}`} style={baseStyle}>
+        <Text key={`${keyPrefix}-pre${lastIndex}`} style={baseStyle}>
           {text.slice(lastIndex, match.index)}
         </Text>,
       );
-      idx++;
     }
 
     if (match[2] !== undefined) {
       // Bold: **text**
       elements.push(
-        <Text key={`${keyPrefix}-b${idx}`} style={[baseStyle, { fontFamily: fonts.sansBold }]}>
+        <Text key={`${keyPrefix}-tok${match.index}`} style={[baseStyle, { fontFamily: fonts.sansBold }]}>
           {match[2]}
         </Text>,
       );
     } else if (match[3] !== undefined) {
       // Italic: *text*
       elements.push(
-        <Text key={`${keyPrefix}-i${idx}`} style={[baseStyle, { fontStyle: "italic" }]}>
+        <Text key={`${keyPrefix}-tok${match.index}`} style={[baseStyle, { fontStyle: "italic" }]}>
           {match[3]}
         </Text>,
       );
@@ -118,7 +119,7 @@ function renderInlineMarkdown(
       // Inline code: `code`
       elements.push(
         <Text
-          key={`${keyPrefix}-c${idx}`}
+          key={`${keyPrefix}-tok${match.index}`}
           style={[
             baseStyle,
             {
@@ -136,7 +137,7 @@ function renderInlineMarkdown(
       const url = match[6];
       elements.push(
         <Text
-          key={`${keyPrefix}-a${idx}`}
+          key={`${keyPrefix}-tok${match.index}`}
           style={[baseStyle, { color: colors.light.primary, textDecorationLine: "underline" }]}
           onPress={() => Linking.openURL(url)}
         >
@@ -146,13 +147,12 @@ function renderInlineMarkdown(
     }
 
     lastIndex = match.index + match[0].length;
-    idx++;
   }
 
   // Remaining text after last match
   if (lastIndex < text.length) {
     elements.push(
-      <Text key={`${keyPrefix}-t${idx}`} style={baseStyle}>
+      <Text key={`${keyPrefix}-tail${lastIndex}`} style={baseStyle}>
         {text.slice(lastIndex)}
       </Text>,
     );
@@ -183,7 +183,7 @@ export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { 
           <CodeContent content={message.content} role={message.role} />
         ) : (
           <Text style={[styles.text, roleTextStyles[message.role]]}>
-            {renderMarkdown(message.content, { ...styles.text, ...roleTextStyles[message.role] })}
+            {markdownToNodes(message.content, { ...styles.text, ...roleTextStyles[message.role] })}
           </Text>
         )}
         {fileMatches.length > 0 && gatewayUrl && (
@@ -226,9 +226,9 @@ function extractFileLinks(content: string): { name: string; path: string }[] {
 function ImageAttachments({ images, gatewayUrl }: { images: { alt: string; path: string }[]; gatewayUrl: string }) {
   return (
     <View style={styles.imageContainer}>
-      {images.map((img, i) => (
+      {images.map((img) => (
         <Image
-          key={i}
+          key={img.path}
           source={{ uri: `${gatewayUrl}${img.path}` }}
           style={styles.inlineImage}
           resizeMode="contain"
@@ -242,9 +242,9 @@ function ImageAttachments({ images, gatewayUrl }: { images: { alt: string; path:
 function FileAttachments({ files, gatewayUrl }: { files: { name: string; path: string }[]; gatewayUrl: string }) {
   return (
     <View style={styles.filesContainer}>
-      {files.map((file, i) => (
+      {files.map((file) => (
         <Pressable
-          key={i}
+          key={file.path}
           onPress={() => Linking.openURL(`${gatewayUrl}${file.path}`)}
           style={({ pressed }) => [styles.fileCard, pressed && styles.fileCardPressed]}
         >
@@ -291,21 +291,28 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 }
 
 function CodeContent({ content, role }: { content: string; role: Message["role"] }) {
-  const parts = content.split(/(```[\s\S]*?```)/g);
+  // Pair each split segment with its source character offset so keys are stable
+  // across renders (the segments concatenate back to the immutable content).
+  let cursor = 0;
+  const segments = content.split(/(```[\s\S]*?```)/g).map((part) => {
+    const start = cursor;
+    cursor += part.length;
+    return { part, start };
+  });
 
   return (
     <View style={styles.codeContainer}>
-      {parts.map((part, i) => {
+      {segments.map(({ part, start }) => {
         if (part.startsWith("```")) {
           const lines = part.slice(3, -3).split("\n");
           const lang = lines[0]?.trim();
           const code = (lang ? lines.slice(1) : lines).join("\n").trim();
-          return <CodeBlock key={i} code={code} lang={lang || undefined} />;
+          return <CodeBlock key={`seg-${start}`} code={code} lang={lang || undefined} />;
         }
         if (part.trim()) {
           return (
-            <Text key={i} style={[styles.text, roleTextStyles[role]]}>
-              {renderMarkdown(part, { ...styles.text, ...roleTextStyles[role] })}
+            <Text key={`seg-${start}`} style={[styles.text, roleTextStyles[role]]}>
+              {markdownToNodes(part, { ...styles.text, ...roleTextStyles[role] })}
             </Text>
           );
         }

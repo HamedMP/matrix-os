@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useReducer, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -70,28 +70,70 @@ function SettingsRow({
   );
 }
 
+interface SettingsState {
+  settings: AppSettings | null;
+  channels: Record<string, { status: string }>;
+  systemInfo: Record<string, unknown> | null;
+  aiProfile: string | null;
+  biometricLabel: string;
+  biometricAvailable: boolean;
+  refreshing: boolean;
+}
+
+type SettingsAction =
+  | { type: "localLoaded"; settings: AppSettings; biometricAvailable: boolean; biometricLabel: string }
+  | { type: "remoteLoaded"; channels: Record<string, { status: string }>; systemInfo: Record<string, unknown>; aiProfile: string | null }
+  | { type: "settingsPatched"; patch: Partial<AppSettings> }
+  | { type: "refreshing"; value: boolean };
+
+const INITIAL_SETTINGS_STATE: SettingsState = {
+  settings: null,
+  channels: {},
+  systemInfo: null,
+  aiProfile: null,
+  biometricLabel: "Biometric",
+  biometricAvailable: false,
+  refreshing: false,
+};
+
+function settingsReducer(state: SettingsState, action: SettingsAction): SettingsState {
+  switch (action.type) {
+    case "localLoaded":
+      return {
+        ...state,
+        settings: action.settings,
+        biometricAvailable: action.biometricAvailable,
+        biometricLabel: action.biometricLabel,
+      };
+    case "remoteLoaded":
+      return {
+        ...state,
+        channels: action.channels,
+        systemInfo: action.systemInfo,
+        aiProfile: action.aiProfile,
+      };
+    case "settingsPatched":
+      return {
+        ...state,
+        settings: state.settings ? { ...state.settings, ...action.patch } : null,
+      };
+    case "refreshing":
+      return { ...state, refreshing: action.value };
+    default:
+      return state;
+  }
+}
+
 export default function SettingsScreen() {
   const { client, connectionState, gateway } = useGateway();
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [channels, setChannels] = useState<Record<string, { status: string }>>({});
-  const [systemInfo, setSystemInfo] = useState<Record<string, unknown> | null>(null);
-  const [aiProfile, setAiProfile] = useState<string | null>(null);
-  const [biometricLabel, setBiometricLabel] = useState("Biometric");
-  const [biometricAvailable, setBiometricAvailable] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [state, dispatch] = useReducer(settingsReducer, INITIAL_SETTINGS_STATE);
+  const { settings, channels, systemInfo, aiProfile, biometricLabel, biometricAvailable, refreshing } = state;
 
   useEffect(() => {
     async function init() {
-      const s = await getSettings();
-      setSettings(s);
-
-      const available = await isBiometricAvailable();
-      setBiometricAvailable(available);
-
-      if (available) {
-        const types = await getSupportedBiometricTypes();
-        setBiometricLabel(getBiometricLabel(types));
-      }
+      const [s, available] = await Promise.all([getSettings(), isBiometricAvailable()]);
+      const label = available ? getBiometricLabel(await getSupportedBiometricTypes()) : "Biometric";
+      dispatch({ type: "localLoaded", settings: s, biometricAvailable: available, biometricLabel: label });
     }
     init();
   }, []);
@@ -104,9 +146,12 @@ export default function SettingsScreen() {
         client.getSystemInfo(),
         client.getAiProfile(),
       ]);
-      setChannels(chStatus as Record<string, { status: string }>);
-      setSystemInfo(sysInfo as Record<string, unknown>);
-      setAiProfile(profile);
+      dispatch({
+        type: "remoteLoaded",
+        channels: chStatus as Record<string, { status: string }>,
+        systemInfo: sysInfo as Record<string, unknown>,
+        aiProfile: profile,
+      });
     } catch {
       // silently handle
     }
@@ -117,16 +162,16 @@ export default function SettingsScreen() {
   }, [fetchRemote]);
 
   const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
+    dispatch({ type: "refreshing", value: true });
     await fetchRemote();
-    setRefreshing(false);
+    dispatch({ type: "refreshing", value: false });
   }, [fetchRemote]);
 
   const updateSetting = useCallback(
     async (key: keyof AppSettings, value: boolean | string) => {
-      const updated = { [key]: value };
-      await saveSettings(updated);
-      setSettings((prev) => prev ? { ...prev, ...updated } : null);
+      const patch = { [key]: value };
+      await saveSettings(patch);
+      dispatch({ type: "settingsPatched", patch });
     },
     [],
   );
@@ -134,17 +179,66 @@ export default function SettingsScreen() {
   if (!settings) return null;
 
   return (
+    <SettingsContent
+      settings={settings}
+      channels={channels}
+      systemInfo={systemInfo}
+      aiProfile={aiProfile}
+      biometricLabel={biometricLabel}
+      biometricAvailable={biometricAvailable}
+      refreshing={refreshing}
+      connectionState={connectionState}
+      gatewayName={gateway?.name ?? null}
+      onRefresh={handleRefresh}
+      updateSetting={updateSetting}
+    />
+  );
+}
+
+interface SettingsContentProps {
+  settings: AppSettings;
+  channels: Record<string, { status: string }>;
+  systemInfo: Record<string, unknown> | null;
+  aiProfile: string | null;
+  biometricLabel: string;
+  biometricAvailable: boolean;
+  refreshing: boolean;
+  connectionState: string;
+  gatewayName: string | null;
+  onRefresh: () => void;
+  updateSetting: (key: keyof AppSettings, value: boolean | string) => void;
+}
+
+function SettingsContent({
+  settings,
+  channels,
+  systemInfo,
+  aiProfile,
+  biometricLabel,
+  biometricAvailable,
+  refreshing,
+  connectionState,
+  gatewayName,
+  onRefresh,
+  updateSetting,
+}: SettingsContentProps) {
+  const refreshControl = useMemo(
+    () => (
+      <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.primary} />
+    ),
+    [refreshing, onRefresh],
+  );
+
+  return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
       contentInsetAdjustmentBehavior="automatic"
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
-      }
+      refreshControl={refreshControl}
     >
       <SettingsSection title="Gateway">
         <SettingsRow
-          label={gateway?.name ?? "Not connected"}
+          label={gatewayName ?? "Not connected"}
           icon="server-outline"
           value={connectionState === "connected" ? "app.matrix-os.com" : connectionState}
         />

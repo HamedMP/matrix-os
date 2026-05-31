@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -126,6 +126,7 @@ export default function AppDetailScreen() {
   }, [client, slug]);
 
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-derived-state -- "loading" is genuine async fetch-in-flight state (set true on request start, false in finally) that gates the rendered spinner; it has no synchronous source to derive from during render.
     fetchApp();
   }, [fetchApp]);
 
@@ -166,18 +167,7 @@ export default function AppDetailScreen() {
           </View>
         ) : (
           <>
-            <View
-              style={{
-                borderRadius: radius.xl,
-                borderCurve: "continuous",
-                borderWidth: 1,
-                borderColor: colors.light.border,
-                backgroundColor: colors.light.card,
-                padding: spacing.xl,
-                gap: spacing.lg,
-                boxShadow: "0 1px 3px rgba(0, 0, 0, 0.06)",
-              }}
-            >
+            <View style={styles.heroCard}>
               <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center" }}>
                 <View
                   style={{
@@ -275,3 +265,16 @@ export default function AppDetailScreen() {
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  heroCard: {
+    borderRadius: radius.xl,
+    borderCurve: "continuous",
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    padding: spacing.xl,
+    gap: spacing.lg,
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.06)",
+  },
+});

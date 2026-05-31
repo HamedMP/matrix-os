@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useEffectEvent } from "react";
 import {
   View,
   Text,
@@ -54,7 +54,7 @@ function TypingIndicator() {
   useEffect(() => {
     opacity.value = withRepeat(withTiming(1, { duration: 600 }), -1, true);
     return () => cancelAnimation(opacity);
-  }, []);
+  }, [opacity]);
 
   const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
@@ -91,17 +91,22 @@ const typingStyles = StyleSheet.create({
   },
 });
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- mobile chat is an intentionally integrated screen; splitting it is deferred outside the React Doctor score cleanup stack.
 export default function ChatScreen() {
   const { client, connectionState, gateway, clearUnread, incrementUnread } = useGateway();
   const { isSignedIn } = useAuth();
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
-  const [sessionId, setSessionId] = useState<string>();
+  const sessionIdRef = useRef<string | undefined>(undefined);
   const [queueCount, setQueueCount] = useState(0);
   const flatListRef = useRef<FlatList<Message>>(null);
   const prevConnectionState = useRef(connectionState);
   const isFocusedRef = useRef(true);
+  // Mirrors whether the head message is a streaming (non-tool) assistant message,
+  // so we can decide synchronously whether an incoming kernel:text starts a NEW
+  // assistant message — the setMessages updater runs deferred and can't drive that.
+  const headIsStreamingAssistantRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -160,6 +165,7 @@ export default function ChatScreen() {
 
         await clearOutboundQueue();
         for (const msg of failed) {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- addToOutboundQueue does read-modify-write on a single AsyncStorage key; concurrent writes would lose updates and scramble FIFO order
           await addToOutboundQueue(msg);
         }
         setQueueCount(failed.length);
@@ -168,31 +174,43 @@ export default function ChatScreen() {
     prevConnectionState.current = connectionState;
   }, [connectionState, client]);
 
+  const onMissedAssistantMessage = useEffectEvent(() => {
+    if (!isFocusedRef.current) {
+      incrementUnread();
+    }
+  });
+
   useEffect(() => {
     if (!client) return;
 
     const unsub = client.onMessage((msg: ServerMessage) => {
       switch (msg.type) {
         case "kernel:init":
-          setSessionId(msg.sessionId);
+          sessionIdRef.current = msg.sessionId;
           setBusy(true);
           break;
-        case "kernel:text":
+        case "kernel:text": {
+          // Decide synchronously (the updater below runs deferred, so a flag set
+          // inside it would still be false here).
+          const startedNewMessage = !headIsStreamingAssistantRef.current;
+          headIsStreamingAssistantRef.current = true;
           setMessages((prev) => {
             const last = prev[0];
             if (last?.role === "assistant" && !last.tool) {
               return [{ ...last, content: last.content + msg.text }, ...prev.slice(1)];
-            }
-            if (!isFocusedRef.current) {
-              incrementUnread();
             }
             return [
               { id: nextId(), role: "assistant", content: msg.text, timestamp: Date.now() },
               ...prev,
             ];
           });
+          if (startedNewMessage) {
+            onMissedAssistantMessage();
+          }
           break;
+        }
         case "kernel:tool_start":
+          headIsStreamingAssistantRef.current = false;
           setMessages((prev) => [
             {
               id: nextId(),
@@ -219,6 +237,7 @@ export default function ChatScreen() {
           break;
         case "kernel:error":
           setBusy(false);
+          headIsStreamingAssistantRef.current = false;
           setMessages((prev) => [
             {
               id: nextId(),
@@ -245,16 +264,19 @@ export default function ChatScreen() {
         content: trimmed,
         timestamp: Date.now(),
       };
+      // A user message becomes the new head, so the next assistant token starts
+      // a fresh assistant message.
+      headIsStreamingAssistantRef.current = false;
       setMessages((prev) => [userMsg, ...prev]);
 
-      const sent = client.sendMessage(trimmed, sessionId);
+      const sent = client.sendMessage(trimmed, sessionIdRef.current);
       if (sent) {
         setBusy(true);
       } else {
         const queued: QueuedMessage = {
           id: userMsg.id,
           text: trimmed,
-          sessionId,
+          sessionId: sessionIdRef.current,
           retries: 0,
           createdAt: Date.now(),
         };
@@ -262,20 +284,20 @@ export default function ChatScreen() {
         setQueueCount((c) => c + 1);
       }
     },
-    [client, sessionId],
+    [client],
   );
 
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const hasMoreRef = useRef(true);
 
   const handleLoadOlder = useCallback(async () => {
-    if (!client || loadingOlder || !hasMore || messages.length === 0) return;
+    if (!client || loadingOlder || !hasMoreRef.current || messages.length === 0) return;
     setLoadingOlder(true);
     try {
       const oldest = messages[messages.length - 1];
-      const older = (await client.getMessages(sessionId, oldest.timestamp)) as Message[];
+      const older = (await client.getMessages(sessionIdRef.current, oldest.timestamp)) as Message[];
       if (older.length === 0) {
-        setHasMore(false);
+        hasMoreRef.current = false;
       } else {
         setMessages((prev) => [...prev, ...older]);
       }
@@ -284,7 +306,7 @@ export default function ChatScreen() {
     } finally {
       setLoadingOlder(false);
     }
-  }, [client, loadingOlder, hasMore, messages, sessionId]);
+  }, [client, loadingOlder, messages]);
 
   const gatewayHttpUrl = client?.httpUrl;
 
@@ -324,7 +346,7 @@ export default function ChatScreen() {
         ListFooterComponent={
           loadingOlder ? (
             <View style={styles.loadingOlder}>
-              <Text style={styles.loadingOlderText}>Loading older messages...</Text>
+              <Text style={styles.loadingOlderText}>Loading older messages…</Text>
             </View>
           ) : null
         }

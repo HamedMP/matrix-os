@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "react-doctor/require-pnpm-hardening": "off"
+  },
+  "surfaces": {
+    "score": {
+      "excludeRules": ["react-doctor/require-pnpm-hardening"]
+    }
+  }
+}

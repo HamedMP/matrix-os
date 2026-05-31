@@ -1,7 +1,5 @@
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
 import type { Router } from "expo-router";
-import type { GatewayClient } from "./gateway-client";
 
 export type NotificationCategory = "message" | "task" | "cron" | "security";
 
@@ -21,36 +19,6 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
-
-export async function registerPushNotifications(client: GatewayClient): Promise<string | null> {
-  const existingPermission = await Notifications.getPermissionsAsync();
-  let granted = existingPermission.granted;
-
-  if (!granted) {
-    const requestedPermission = await Notifications.requestPermissionsAsync();
-    granted = requestedPermission.granted;
-  }
-
-  if (!granted) {
-    return null;
-  }
-
-  const tokenData = await Notifications.getExpoPushTokenAsync();
-  const token = tokenData.data;
-
-  await client.registerPushToken(token, Platform.OS);
-
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "Matrix OS",
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#8CC7BE",
-    });
-  }
-
-  return token;
-}
 
 export function getRouteForNotification(data: NotificationData): string {
   switch (data.category) {
@@ -80,10 +48,4 @@ export function addNotificationResponseListener(
   handler: (response: Notifications.NotificationResponse) => void,
 ): Notifications.Subscription {
   return Notifications.addNotificationResponseReceivedListener(handler);
-}
-
-export function addNotificationReceivedListener(
-  handler: (notification: Notifications.Notification) => void,
-): Notifications.Subscription {
-  return Notifications.addNotificationReceivedListener(handler);
 }

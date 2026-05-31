@@ -1,10 +1,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  buildTerminalControlSequence,
-  type TerminalControlKey,
-} from "@/lib/terminal-state";
+import { buildTerminalControlSequence } from "@/lib/terminal-state";
+import { TERMINAL_CONTROL_KEYS, sendTerminalClipboardPaste } from "@/lib/terminal-controls";
 import { colors, fonts } from "@/lib/theme";
 
 interface TerminalControlBarProps {
@@ -12,15 +9,6 @@ interface TerminalControlBarProps {
   onFontScale: (delta: number) => void;
   onClear: () => void;
 }
-
-export const TERMINAL_CONTROL_KEYS: Array<{ label: string; key: TerminalControlKey }> = [
-  { label: "Esc", key: "escape" },
-  { label: "Tab", key: "tab" },
-  { label: "Enter", key: "enter" },
-  { label: "Ctrl-C", key: "ctrl-c" },
-  { label: "Ctrl-D", key: "ctrl-d" },
-  { label: "Ctrl-L", key: "ctrl-l" },
-];
 
 export function TerminalControlBar({ onSend, onFontScale, onClear }: TerminalControlBarProps) {
   return (
@@ -36,6 +24,7 @@ export function TerminalControlBar({ onSend, onFontScale, onClear }: TerminalCon
         contentContainerStyle={styles.keyRow}
         keyboardShouldPersistTaps="handled"
       >
+        {/* react-doctor-disable-next-line react-doctor/rn-no-scrollview-mapped-list -- fixed, short control bar (8 buttons); FlatList virtualization would add overhead with no benefit */}
         {TERMINAL_CONTROL_KEYS.map((entry) => (
           <KeyButton
             key={entry.key}
@@ -48,11 +37,6 @@ export function TerminalControlBar({ onSend, onFontScale, onClear }: TerminalCon
       </ScrollView>
     </View>
   );
-}
-
-export async function sendTerminalClipboardPaste(onSend: (data: string) => void): Promise<void> {
-  const text = await Clipboard.getStringAsync();
-  if (text) onSend(text);
 }
 
 function ArrowPad({ onSend }: { onSend: (data: string) => void }) {
