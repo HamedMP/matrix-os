@@ -89,6 +89,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('failed=0');
     expect(installer).toContain('if ! wait "$pid"; then');
     expect(installer).toContain('exit "$failed"');
+    expect(installer).not.toMatch(/wait "\$pid_coding_agents" "\$pid_code_server"/);
   });
 
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {

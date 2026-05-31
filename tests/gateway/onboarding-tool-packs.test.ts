@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   SelectToolPacksRequestSchema,
   ToolPacksResponseSchema,
@@ -8,6 +8,8 @@ import {
   InMemoryToolPackRepository,
   createToolPackService,
   type ToolPackInstaller,
+  type ToolPackRecord,
+  type ToolPackRepository,
 } from "../../packages/gateway/src/onboarding/tool-packs.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
@@ -17,6 +19,37 @@ function jsonRequest(path: string, body: unknown): Request {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+class FailingSettlementRepository implements ToolPackRepository {
+  private record: ToolPackRecord | null = null;
+  private shouldFailSettlement = true;
+
+  async get(): Promise<ToolPackRecord | null> {
+    return this.record ? structuredClone(this.record) : null;
+  }
+
+  async save(record: ToolPackRecord): Promise<ToolPackRecord> {
+    this.record = structuredClone(record);
+    return structuredClone(record);
+  }
+
+  async update(ownerId: string, updater: (record: ToolPackRecord | null) => ToolPackRecord): Promise<ToolPackRecord> {
+    const current = this.record ? structuredClone(this.record) : null;
+    const next = updater(current);
+    const settlingJob = current?.installJobs.some((job) => job.status === "installing")
+      && next.installJobs.some((job) => job.status !== "installing");
+
+    if (this.shouldFailSettlement && settlingJob) {
+      this.shouldFailSettlement = false;
+      throw new Error("settlement write failed");
+    }
+
+    if (next.ownerId !== ownerId) {
+      throw new Error("owner mismatch");
+    }
+    return this.save(next);
+  }
 }
 
 describe("onboarding tool packs", () => {
@@ -106,6 +139,46 @@ describe("onboarding tool packs", () => {
       installed: true,
       status: "installed",
     });
+  });
+
+  it("expires installing jobs if the async settlement write fails", async () => {
+    let currentTime = new Date("2026-05-31T00:00:00.000Z");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createToolPackService({
+      repository: new FailingSettlementRepository(),
+      installer: { install: async () => {} },
+      installTimeoutMs: 1_000,
+      now: () => currentTime,
+    });
+
+    try {
+      const response = await service.installToolPacks(testPrincipal.userId, ["coding-agents"]);
+
+      expect(response.installJobs).toEqual([
+        expect.objectContaining({ packId: "coding-agents", status: "installing" }),
+      ]);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      currentTime = new Date("2026-05-31T00:00:02.000Z");
+      const expired = await service.listToolPacks(testPrincipal.userId);
+
+      expect(expired.installJobs).toEqual([
+        expect.objectContaining({
+          packId: "coding-agents",
+          status: "failed",
+          message: "Install status unavailable",
+        }),
+      ]);
+      expect(expired.packs.find((pack) => pack.id === "coding-agents")).toMatchObject({
+        status: "failed",
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[onboarding] tool pack job status update failed:",
+        "settlement write failed",
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("routes selection and install requests through owner-scoped onboarding APIs", async () => {

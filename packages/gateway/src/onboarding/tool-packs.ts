@@ -131,9 +131,11 @@ export function createHostToolPackInstaller(options: {
 export function createToolPackService(options: {
   repository: ToolPackRepository;
   installer?: ToolPackInstaller;
+  installTimeoutMs?: number;
   now?: () => Date;
 }): ToolPackService {
   const now = options.now ?? (() => new Date());
+  const installTimeoutMs = options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
   let jobCounter = 0;
 
   function createEmptyRecord(ownerId: string): ToolPackRecord {
@@ -153,9 +155,24 @@ export function createToolPackService(options: {
     return Array.from(new Set(packIds));
   }
 
-  function latestJobForPack(record: ToolPackRecord, packId: ToolPackId): ToolPackInstallJobSummary | null {
-    for (let index = record.installJobs.length - 1; index >= 0; index -= 1) {
-      const job = record.installJobs[index];
+  function normalizeJob(job: ToolPackInstallJobSummary): ToolPackInstallJobSummary {
+    if (job.status !== "installing") return job;
+    const startedAtMs = Date.parse(job.startedAt);
+    if (!Number.isFinite(startedAtMs) || now().getTime() - startedAtMs <= installTimeoutMs) return job;
+    return {
+      ...job,
+      status: "failed",
+      completedAt: now().toISOString(),
+      message: "Install status unavailable",
+    };
+  }
+
+  function latestJobForPack(
+    installJobs: ToolPackInstallJobSummary[],
+    packId: ToolPackId,
+  ): ToolPackInstallJobSummary | null {
+    for (let index = installJobs.length - 1; index >= 0; index -= 1) {
+      const job = installJobs[index];
       if (job.packId === packId) return job;
     }
     return null;
@@ -163,8 +180,9 @@ export function createToolPackService(options: {
 
   function responseFor(record: ToolPackRecord): ToolPacksResponse {
     const selected = new Set(record.selectedPackIds);
+    const installJobs = record.installJobs.map(normalizeJob);
     const packs = TOOL_PACKS.map<ToolPackSummary>((pack) => {
-      const latestJob = latestJobForPack(record, pack.id);
+      const latestJob = latestJobForPack(installJobs, pack.id);
       const installed = latestJob?.status === "installed";
       const selectedPack = selected.has(pack.id);
       return {
@@ -178,7 +196,7 @@ export function createToolPackService(options: {
     return {
       packs,
       selectedPackIds: [...record.selectedPackIds],
-      installJobs: [...record.installJobs],
+      installJobs,
     };
   }
 
@@ -214,6 +232,19 @@ export function createToolPackService(options: {
     });
   }
 
+  async function safelyMarkJob(
+    ownerId: string,
+    jobId: string,
+    status: ToolPackInstallJobSummary["status"],
+    message: string | null,
+  ): Promise<void> {
+    try {
+      await markJob(ownerId, jobId, status, message);
+    } catch (err: unknown) {
+      console.warn("[onboarding] tool pack job status update failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
   function runInstall(ownerId: string, job: ToolPackInstallJobSummary): void {
     void (async () => {
       try {
@@ -221,10 +252,10 @@ export function createToolPackService(options: {
           throw new Error("Tool pack installer is unavailable");
         }
         await options.installer.install(ownerId, job.packId);
-        await markJob(ownerId, job.id, "installed", "Installed");
+        await safelyMarkJob(ownerId, job.id, "installed", "Installed");
       } catch (err: unknown) {
         console.warn("[onboarding] tool pack install failed:", err instanceof Error ? err.message : String(err));
-        await markJob(ownerId, job.id, "failed", "Install failed");
+        await safelyMarkJob(ownerId, job.id, "failed", "Install failed");
       }
     })();
   }
