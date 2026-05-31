@@ -353,7 +353,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     },
 
     async deleteFiles(paths) {
-      await Promise.all(
+      const errors = await Promise.all(
         paths.map(async (path) => {
           const res = await fetch(`${GATEWAY_URL}/api/files/delete`, {
             method: "POST",
@@ -362,16 +362,19 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
             signal: AbortSignal.timeout(10_000),
           });
           if (!res.ok) {
-            set({ error: `Failed to delete ${path.split("/").pop()}` });
+            return `Failed to delete ${path.split("/").pop()}`;
           }
+          return null;
         }),
       );
+      const firstError = errors.find((error): error is string => error !== null);
+      if (firstError) set({ error: firstError });
       set({ selectedPaths: new Set() });
       get().refresh();
     },
 
     async duplicate(paths) {
-      await Promise.all(
+      const errors = await Promise.all(
         paths.map(async (path) => {
           const res = await fetch(`${GATEWAY_URL}/api/files/duplicate`, {
             method: "POST",
@@ -380,10 +383,13 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
             signal: AbortSignal.timeout(10_000),
           });
           if (!res.ok) {
-            set({ error: `Failed to duplicate ${path.split("/").pop()}` });
+            return `Failed to duplicate ${path.split("/").pop()}`;
           }
+          return null;
         }),
       );
+      const firstError = errors.find((error): error is string => error !== null);
+      if (firstError) set({ error: firstError });
       get().refresh();
     },
 
