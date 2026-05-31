@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties } from "react";
+import { createContext, useContext, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   BotIcon,
   FilesIcon,
@@ -1051,11 +1051,35 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
       >
         {ctx.tabs.map((tab, i) => {
           const active = tab.id === ctx.activeTabId;
+          const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              ctx.setActiveTab(tab.id);
+              return;
+            }
+
+            const keyToIndex: Record<string, number> = {
+              ArrowLeft: i === 0 ? ctx.tabs.length - 1 : i - 1,
+              ArrowRight: i === ctx.tabs.length - 1 ? 0 : i + 1,
+              Home: 0,
+              End: ctx.tabs.length - 1,
+            };
+            const nextIndex = keyToIndex[e.key];
+            const nextTab = ctx.tabs[nextIndex];
+            if (!nextTab) return;
+
+            e.preventDefault();
+            ctx.setActiveTab(nextTab.id);
+            const tabs = Array.from(
+              e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+            );
+            tabs[nextIndex]?.focus();
+          };
           return (
             <div
               key={tab.id}
               role="tab"
-              tabIndex={0}
+              tabIndex={active ? 0 : -1}
               aria-selected={active}
               className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               style={{
@@ -1070,7 +1094,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               }}
               draggable
               onClick={() => ctx.setActiveTab(tab.id)}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ctx.setActiveTab(tab.id); } }}
+              onKeyDown={handleTabKeyDown}
               onDragStart={() => { dragIndexRef.current = i; }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); if (dragIndexRef.current !== null && dragIndexRef.current !== i) ctx.reorderTabs(dragIndexRef.current, i); dragIndexRef.current = null; }}

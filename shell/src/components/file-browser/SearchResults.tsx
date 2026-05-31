@@ -72,9 +72,12 @@ export function SearchResults({ onOpenFile }: SearchResultsProps) {
           onClick={() => handleClick(result)}
           onDoubleClick={() => handleDoubleClick(result)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
+            if (e.altKey && e.key === "Enter") {
               e.preventDefault();
               handleDoubleClick(result);
+            } else if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleClick(result);
             }
           }}
         >
