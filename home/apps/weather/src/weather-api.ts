@@ -21,7 +21,21 @@ async function proxyJson<T>(url: string): Promise<T> {
     if (!res.ok) throw new Error(`request failed: ${res.status}`);
     return (await res.json()) as T;
   }
-  return (await proxy(url)) as T;
+  return (await withTimeout(proxy(url), 12_000)) as T;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = window.setTimeout(() => reject(new Error("proxy request timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) window.clearTimeout(timeout);
+  }
 }
 
 export async function geocode(query: string): Promise<GeoResult[]> {

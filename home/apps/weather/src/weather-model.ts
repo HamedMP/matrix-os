@@ -162,6 +162,12 @@ export function formatHour(iso: string, isNow = false): string {
 
 /** Short weekday label, e.g. "Mon", or "Today" for the current day. */
 export function formatDay(iso: string, todayIso?: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const todayKey = todayIso?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+    if (iso === todayKey) return "Today";
+    const [year, month, day] = iso.split("-").map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString("en-US", { weekday: "short" });
+  }
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "--";
   const ref = todayIso ? new Date(todayIso) : new Date();
@@ -349,7 +355,7 @@ export function demoForecast(baseIso?: string): OpenMeteoForecast {
   };
 }
 
-/** Normalize a possibly-untrusted DB/localStorage row into a SavedLocation. */
+/** Normalize a possibly-untrusted DB or bridge-KV row into a SavedLocation. */
 export function coerceLocation(row: unknown): SavedLocation | null {
   if (!row || typeof row !== "object") return null;
   const r = row as Record<string, unknown>;

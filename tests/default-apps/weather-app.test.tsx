@@ -6,18 +6,46 @@ import App from "../../home/apps/weather/src/App";
 
 type DbRow = Record<string, unknown>;
 
-function installMatrixDb(rows: DbRow[] = []) {
+function installMatrixDb(initialRows: DbRow[] = []) {
+  const rows = [...initialRows];
+  let changeHandler: (() => void) | null = null;
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
-    insert: vi.fn(async () => ({ id: "loc-new" })),
+    insert: vi.fn(async (_table: string, data: DbRow) => {
+      const id = "loc-new";
+      rows.push({ id, created_at: new Date().toISOString(), ...data });
+      changeHandler?.();
+      return { id };
+    }),
     update: vi.fn(async () => ({ ok: true })),
-    delete: vi.fn(async () => ({ ok: true })),
+    delete: vi.fn(async (_table: string, id: string) => {
+      const index = rows.findIndex((row) => row.id === id);
+      if (index >= 0) rows.splice(index, 1);
+      changeHandler?.();
+      return { ok: true };
+    }),
     count: vi.fn(async () => rows.length),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, callback: () => void) => {
+      changeHandler = callback;
+      return () => {
+        changeHandler = null;
+      };
+    }),
   };
   Object.defineProperty(window, "MatrixOS", { configurable: true, value: { db } });
   return db;
+}
+
+function installMatrixDataBridge(data = new Map<string, unknown>()) {
+  const bridge = {
+    readData: vi.fn(async (key: string) => data.get(key) ?? null),
+    writeData: vi.fn(async (key: string, value: unknown) => {
+      data.set(key, value);
+    }),
+  };
+  Object.defineProperty(window, "MatrixOS", { configurable: true, value: bridge });
+  return bridge;
 }
 
 const FORECAST_JSON = {
@@ -152,5 +180,74 @@ describe("Weather app", () => {
     const [table, payload] = db.insert.mock.calls[0];
     expect(table).toBe("locations");
     expect(payload).toMatchObject({ name: "Berlin", latitude: 52.52, longitude: 13.405 });
+  });
+
+  it("rolls back optimistic add when DB insert fails", async () => {
+    const db = installMatrixDb([]);
+    db.insert.mockRejectedValueOnce(new Error("insert failed"));
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/location could not be saved/i)).toBeTruthy();
+    });
+    expect(screen.getByTestId("empty-state")).toBeTruthy();
+  });
+
+  it("rolls back optimistic remove when DB delete fails", async () => {
+    const db = installMatrixDb([
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+    ]);
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByText("Berlin")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText(/remove berlin/i));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/location could not be removed/i)).toBeTruthy();
+    });
+    expect(screen.getByText("Berlin")).toBeTruthy();
+  });
+
+  it("stores fallback locations through MatrixOS data bridge", async () => {
+    const bridge = installMatrixDataBridge();
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith(
+        "matrix-weather-locations",
+        expect.arrayContaining([expect.objectContaining({ name: "Berlin" })]),
+      );
+    });
   });
 });

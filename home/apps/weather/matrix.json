@@ -16,10 +16,12 @@
           "name": "text",
           "latitude": "float",
           "longitude": "float",
-          "is_default": "boolean"
+          "is_default": "boolean",
+          "created_at": "timestamptz"
         },
         "indexes": [
-          "is_default"
+          "is_default",
+          "created_at"
         ]
       }
     }

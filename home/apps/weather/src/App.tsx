@@ -29,8 +29,8 @@ import { WeatherIcon } from "./WeatherIcon";
 import "./styles.css";
 
 const LOCATIONS_TABLE = "locations";
-const LS_KEY = "matrix-weather-locations";
-const LS_UNIT = "matrix-weather-unit";
+const LOCATIONS_KEY = "matrix-weather-locations";
+const UNIT_KEY = "matrix-weather-unit";
 
 type LoadStatus = "loading" | "live" | "demo";
 
@@ -38,25 +38,55 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function readLocalLocations(): SavedLocation[] {
+const fallbackData: Record<string, unknown> = {};
+
+async function readAppData<T>(key: string, fallback: T): Promise<T> {
   try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map(coerceLocation).filter((l): l is SavedLocation => l !== null);
+    if (window.MatrixOS?.readData) {
+      const value = await window.MatrixOS.readData(key);
+      return value === undefined || value === null ? fallback : (value as T);
+    }
   } catch (err: unknown) {
-    console.warn("[weather] local locations read failed:", errMsg(err));
-    return [];
+    console.warn("[weather] app data read failed:", errMsg(err));
   }
+  return Object.prototype.hasOwnProperty.call(fallbackData, key) ? (fallbackData[key] as T) : fallback;
 }
 
-function writeLocalLocations(locations: SavedLocation[]): void {
+async function writeAppData<T>(key: string, value: T): Promise<void> {
   try {
-    window.localStorage.setItem(LS_KEY, JSON.stringify(locations));
+    if (window.MatrixOS?.writeData) {
+      await window.MatrixOS.writeData(key, value);
+      return;
+    }
   } catch (err: unknown) {
-    console.warn("[weather] local locations write failed:", errMsg(err));
+    console.warn("[weather] app data write failed:", errMsg(err));
   }
+  fallbackData[key] = value;
+}
+
+async function readStoredLocations(): Promise<SavedLocation[]> {
+  const parsed = await readAppData<unknown>(LOCATIONS_KEY, []);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map(coerceLocation).filter((l): l is SavedLocation => l !== null);
+}
+
+function locationKey(loc: SavedLocation): string {
+  return loc.id ?? `${loc.name}:${loc.latitude}:${loc.longitude}`;
+}
+
+function sameLocations(a: SavedLocation[], b: SavedLocation[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((loc, index) => {
+    const other = b[index];
+    return (
+      !!other &&
+      locationKey(loc) === locationKey(other) &&
+      loc.name === other.name &&
+      loc.latitude === other.latitude &&
+      loc.longitude === other.longitude &&
+      loc.is_default === other.is_default
+    );
+  });
 }
 
 export default function App() {
@@ -65,13 +95,8 @@ export default function App() {
   const [forecast, setForecast] = useState<OpenMeteoForecast | null>(null);
   const [status, setStatus] = useState<LoadStatus>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [unit, setUnit] = useState<Unit>(() => {
-    try {
-      return window.localStorage.getItem(LS_UNIT) === "f" ? "f" : "c";
-    } catch {
-      return "c";
-    }
-  });
+  const [unit, setUnit] = useState<Unit>("c");
+  const [unitReady, setUnitReady] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -79,21 +104,28 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchSeq = useRef(0);
+  const pendingRemovalKeys = useRef<string[]>([]);
 
   const reloadLocations = useCallback(async () => {
     const db = window.MatrixOS?.db;
     if (!db) {
-      setLocations(readLocalLocations());
+      const stored = await readStoredLocations();
+      setLocations((current) => (sameLocations(current, stored) ? current : stored));
       return;
     }
     try {
       const rows = await db.find(LOCATIONS_TABLE, { orderBy: { created_at: "asc" } });
-      const parsed = rows.map(coerceLocation).filter((l): l is SavedLocation => l !== null);
-      setLocations(parsed);
+      const pending = pendingRemovalKeys.current;
+      const parsed = rows
+        .map(coerceLocation)
+        .filter((l): l is SavedLocation => l !== null)
+        .filter((l) => !pending.includes(locationKey(l)));
+      setLocations((current) => (sameLocations(current, parsed) ? current : parsed));
     } catch (err: unknown) {
       console.warn("[weather] location load failed:", errMsg(err));
       setError("Saved locations could not be loaded.");
-      setLocations(readLocalLocations());
+      const stored = await readStoredLocations();
+      setLocations((current) => (sameLocations(current, stored) ? current : stored));
     }
   }, []);
 
@@ -110,12 +142,21 @@ export default function App() {
   }, [reloadLocations]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(LS_UNIT, unit);
-    } catch (err: unknown) {
-      console.warn("[weather] unit persist failed:", errMsg(err));
-    }
-  }, [unit]);
+    let cancelled = false;
+    void readAppData<Unit>(UNIT_KEY, "c").then((stored) => {
+      if (cancelled) return;
+      setUnit(stored === "f" ? "f" : "c");
+      setUnitReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!unitReady) return;
+    void writeAppData(UNIT_KEY, unit);
+  }, [unit, unitReady]);
 
   // Keep an active selection in sync with the available locations.
   useEffect(() => {
@@ -135,9 +176,20 @@ export default function App() {
     return locations.find((l) => (l.id ?? l.name) === activeId) ?? locations[0];
   }, [locations, activeId]);
 
+  const activeForecastLocation = useMemo<SavedLocation | null>(() => {
+    if (!active) return null;
+    return {
+      id: active.id,
+      name: active.name,
+      latitude: active.latitude,
+      longitude: active.longitude,
+      is_default: active.is_default,
+    };
+  }, [active?.id, active?.name, active?.latitude, active?.longitude, active?.is_default]);
+
   // Load forecast for the active location with graceful demo fallback.
   useEffect(() => {
-    if (!active) {
+    if (!activeForecastLocation) {
       setForecast(null);
       setStatus("loading");
       return;
@@ -147,7 +199,7 @@ export default function App() {
     setError(null);
     (async () => {
       try {
-        const data = await fetchForecast(active);
+        const data = await fetchForecast(activeForecastLocation);
         if (cancelled) return;
         setForecast(data);
         setStatus("live");
@@ -161,7 +213,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [active]);
+  }, [activeForecastLocation]);
 
   // Debounced geocode search.
   useEffect(() => {
@@ -195,6 +247,7 @@ export default function App() {
 
   const addLocation = useCallback(
     async (geo: GeoResult) => {
+      const previousActiveId = activeId;
       const label = geo.admin1 && geo.admin1 !== geo.name ? `${geo.name}` : geo.name;
       const candidate: SavedLocation = {
         name: label,
@@ -212,7 +265,7 @@ export default function App() {
 
       const db = window.MatrixOS?.db;
       if (!db) {
-        writeLocalLocations([...locations, candidate]);
+        await writeAppData(LOCATIONS_KEY, [...locations, optimistic]);
         return;
       }
       try {
@@ -222,34 +275,53 @@ export default function App() {
           longitude: candidate.longitude,
           is_default: candidate.is_default ?? false,
         });
+        const saved: SavedLocation = { ...candidate, id };
+        setLocations((curr) =>
+          curr.map((loc) => (locationKey(loc) === optimistic.id ? saved : loc)),
+        );
         setActiveId(id);
         await reloadLocations();
       } catch (err: unknown) {
         console.warn("[weather] location save failed:", errMsg(err));
         setError("Location could not be saved.");
+        setLocations((curr) => curr.filter((loc) => locationKey(loc) !== optimistic.id));
+        setActiveId(previousActiveId);
       }
     },
-    [locations, reloadLocations],
+    [activeId, locations, reloadLocations],
   );
 
   const removeLocation = useCallback(
     async (loc: SavedLocation) => {
-      setLocations((curr) => curr.filter((l) => (l.id ?? l.name) !== (loc.id ?? loc.name)));
+      const previousLocations = locations;
+      const previousActiveId = activeId;
+      const key = locationKey(loc);
+      pendingRemovalKeys.current = [...pendingRemovalKeys.current, key].slice(-50);
+      const remaining = locations.filter((l) => locationKey(l) !== key);
+      setLocations(remaining);
       const db = window.MatrixOS?.db;
       if (!db) {
-        writeLocalLocations(locations.filter((l) => (l.id ?? l.name) !== (loc.id ?? loc.name)));
+        await writeAppData(LOCATIONS_KEY, remaining);
+        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         return;
       }
-      if (!loc.id || loc.id.startsWith("local-")) return;
+      if (!loc.id || loc.id.startsWith("local-")) {
+        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+        return;
+      }
       try {
         await db.delete(LOCATIONS_TABLE, loc.id);
+        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         await reloadLocations();
       } catch (err: unknown) {
+        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         console.warn("[weather] location delete failed:", errMsg(err));
         setError("Location could not be removed.");
+        setLocations(previousLocations);
+        setActiveId(previousActiveId);
       }
     },
-    [locations, reloadLocations],
+    [activeId, locations, reloadLocations],
   );
 
   const nowIso = forecast?.current?.time;

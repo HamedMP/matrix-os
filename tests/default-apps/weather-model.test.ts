@@ -70,6 +70,10 @@ describe("hour and day labels", () => {
     expect(formatDay("2026-05-31", today)).toBe("Today");
     expect(formatDay("2026-06-01", today)).toBe("Mon");
   });
+
+  it("compares Open-Meteo date-only days without timezone rollover", () => {
+    expect(formatDay("2026-06-01", "2026-06-01T00:30:00-07:00")).toBe("Today");
+  });
 });
 
 describe("isDaytime", () => {
