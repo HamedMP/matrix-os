@@ -14,7 +14,9 @@
       "scenes": {
         "columns": {
           "name": "text",
-          "doc": "jsonb"
+          "doc": "jsonb",
+          "created_at": "text",
+          "updated_at": "text"
         }
       }
     }

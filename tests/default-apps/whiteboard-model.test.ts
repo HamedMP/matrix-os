@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   addElement,
@@ -236,6 +238,18 @@ describe("whiteboard model — serialization", () => {
 });
 
 describe("whiteboard model — board index", () => {
+  it("declares timestamp columns needed for recency sorting", () => {
+    const repoRoot = join(__dirname, "..", "..");
+    const manifest = JSON.parse(
+      readFileSync(join(repoRoot, "home/apps/whiteboard/matrix.json"), "utf-8"),
+    ) as { storage?: { tables?: { scenes?: { columns?: Record<string, string> } } } };
+
+    expect(manifest.storage?.tables?.scenes?.columns).toMatchObject({
+      created_at: "text",
+      updated_at: "text",
+    });
+  });
+
   it("normalizes board names (trims, falls back, caps length)", () => {
     expect(normalizeBoardName("  Plan  ")).toBe("Plan");
     expect(normalizeBoardName("")).toBe("Untitled board");
