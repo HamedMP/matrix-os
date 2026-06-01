@@ -350,12 +350,17 @@ export default function App() {
         if (existing && db) operations.push(db.delete(BUDGETS_TABLE, existing.id));
         continue;
       }
-      next.push({ id: existing?.id ?? `local-${category}`, category, monthly_limit: limit });
+      const localId = existing?.id ?? `local-${category}`;
+      next.push({ id: localId, category, monthly_limit: limit });
       if (db) {
         operations.push(
           existing
             ? db.update(BUDGETS_TABLE, existing.id, { monthly_limit: limit })
-            : db.insert(BUDGETS_TABLE, { category, monthly_limit: limit }),
+            : db.insert(BUDGETS_TABLE, { category, monthly_limit: limit }).then(({ id }) => {
+                setBudgets((current) =>
+                  current.map((budget) => (budget.id === localId ? { ...budget, id } : budget)),
+                );
+              }),
         );
       }
     }

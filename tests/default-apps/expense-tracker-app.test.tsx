@@ -289,6 +289,42 @@ describe("Expense Tracker app", () => {
     expect(screen.queryByText("Could not save your budgets.")).toBeNull();
   });
 
+  it("uses the real budget id when a new budget is edited before reload finishes", async () => {
+    const db = installMatrixDb([], []);
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      const id = table === "budgets" ? "budget-real" : `${table}-real`;
+      (table === "budgets" ? db.budgets : db.expenses).push({
+        id,
+        created_at: new Date().toISOString(),
+        ...data,
+      });
+      return { id };
+    });
+
+    render(<App />);
+    await screen.findByTestId("empty-state");
+    db.find.mockImplementation(async () => new Promise<DbRow[]>(() => undefined));
+
+    fireEvent.click(screen.getByRole("button", { name: /edit budgets/i }));
+    fireEvent.change(screen.getByLabelText("Groceries monthly budget"), { target: { value: "100" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /edit budgets/i }));
+    fireEvent.change(screen.getByLabelText("Groceries monthly budget"), { target: { value: "125" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith("budgets", "budget-real", { monthly_limit: 125 });
+    expect(db.update).not.toHaveBeenCalledWith("budgets", "local-Groceries", expect.anything());
+  });
+
   it("renders an empty state with onboarding when there are no transactions", async () => {
     installMatrixDb([], []);
 
