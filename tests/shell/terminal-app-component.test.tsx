@@ -336,6 +336,54 @@ describe("TerminalApp", () => {
     expect(props.paneTree.sessionId).toBe("main");
   });
 
+  it("recreates saved canonical shell sessions before restoring a layout", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "bench-tab",
+              label: "bench",
+              paneTree: {
+                type: "pane",
+                id: "bench-pane",
+                cwd: "projects",
+                sessionId: "bench",
+              },
+            }],
+            activeTabId: "bench-tab",
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "bench", cwd: "projects" }),
+      }),
+    );
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree.sessionId).toBe("bench");
+  });
+
   it("does not replace a legacy layout after unmount while ensuring the canonical session", async () => {
     let resolveSessions: ((value: { ok: boolean; json: () => Promise<{ sessions: Array<{ name: string }> }> }) => void) | null = null;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -918,7 +966,7 @@ describe("TerminalApp", () => {
     expect(deleteCalls).toHaveLength(1);
   });
 
-  it("keeps the Shells sidebar synchronized with newly adopted zellij sessions", async () => {
+  it("keeps the Shells sidebar synchronized after manual refresh", async () => {
     let revealBench = false;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -960,7 +1008,7 @@ describe("TerminalApp", () => {
 
     await act(async () => {
       revealBench = true;
-      vi.advanceTimersByTime(5_000);
+      fireEvent.click(screen.getByTitle("Refresh"));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1013,7 +1061,7 @@ describe("TerminalApp", () => {
     shellListMode = "fail";
 
     await act(async () => {
-      vi.advanceTimersByTime(5_001);
+      fireEvent.click(screen.getByTitle("Refresh"));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1022,7 +1070,7 @@ describe("TerminalApp", () => {
     expect(screen.getByText("Failed to load shells")).toBeTruthy();
 
     await act(async () => {
-      vi.advanceTimersByTime(5_000);
+      fireEvent.click(screen.getByTitle("Refresh"));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1031,9 +1079,7 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("Failed to load shells")).toBeNull();
   });
 
-  it("aborts an in-flight silent Shells refresh before starting the next poll", async () => {
-    let blockNextShellList = false;
-    let firstSilentSignal: AbortSignal | undefined;
+  it("does not poll shell sessions while the Shells sidebar is open", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/files/tree")) {
@@ -1046,21 +1092,9 @@ describe("TerminalApp", () => {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
       if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
-        if (blockNextShellList && !firstSilentSignal) {
-          firstSilentSignal = init?.signal ?? undefined;
-          return new Promise((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => {
-              reject(new DOMException("aborted", "AbortError"));
-            }, { once: true });
-          });
-        }
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            sessions: firstSilentSignal
-              ? [{ name: "main", status: "active" }, { name: "bench", status: "active" }]
-              : [{ name: "main", status: "active" }],
-          }),
+          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
         });
       }
       return Promise.resolve({ ok: true, json: async () => ({}) });
@@ -1077,23 +1111,20 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
     expect(screen.getAllByText("main").length).toBeGreaterThan(0);
-    blockNextShellList = true;
+    const shellListCallsBeforeWait = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
+    )).length;
 
     await act(async () => {
-      vi.advanceTimersByTime(5_000);
-      await Promise.resolve();
-    });
-
-    expect(firstSilentSignal?.aborted).toBe(false);
-
-    await act(async () => {
-      vi.advanceTimersByTime(5_000);
+      vi.advanceTimersByTime(20_000);
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(firstSilentSignal?.aborted).toBe(true);
-    expect(screen.getByText("bench")).toBeTruthy();
+    const shellListCallsAfterWait = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
+    )).length;
+    expect(shellListCallsAfterWait).toBe(shellListCallsBeforeWait);
   });
 
   it("surfaces shell creation failures in the Shells sidebar", async () => {
