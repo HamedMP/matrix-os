@@ -9,7 +9,10 @@ type DbRow = Record<string, unknown>;
 function installMatrixDb(rows: DbRow[] = []) {
   const store = [...rows];
   const db = {
-    find: vi.fn(async () => [...store].reverse()),
+    find: vi.fn(async (_table: string, opts?: { limit?: number }) => {
+      const ordered = [...store].reverse();
+      return typeof opts?.limit === "number" ? ordered.slice(0, opts.limit) : ordered;
+    }),
     findOne: vi.fn(async (_t: string, id: string) => store.find((r) => r.id === id) ?? null),
     insert: vi.fn(async (_t: string, data: DbRow) => {
       const id = `new-${store.length + 1}`;
@@ -92,6 +95,30 @@ describe("Calculator app", () => {
     expect(rail.textContent).toContain("2");
   });
 
+  it("clears every persisted history row, not just the loaded page", async () => {
+    const rows = Array.from({ length: 150 }, (_, index) => ({
+      id: `h${index}`,
+      expression: `${index} + 1`,
+      result: String(index + 1),
+      created_at: `2026-05-31T10:${String(index % 60).padStart(2, "0")}:00.000Z`,
+    }));
+    const db = installMatrixDb(rows);
+    localStorage.setItem("matrixos.calculator.history.v1", JSON.stringify(rows.slice(0, 2)));
+    render(<App />);
+
+    await screen.findByText("Clear");
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+    fireEvent.click(clearHistory!);
+
+    await waitFor(() => {
+      expect(db.delete).toHaveBeenCalledTimes(150);
+    });
+    expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe("[]");
+  });
+
   it("shows an onboarding empty state when history is empty", async () => {
     installMatrixDb([]);
     render(<App />);
@@ -146,5 +173,16 @@ describe("Calculator app", () => {
     await screen.findByTestId("calc-input");
     fireEvent.click(screen.getByRole("button", { name: /scientific/i }));
     expect(screen.getByRole("button", { name: /sin/i })).toBeTruthy();
+  });
+
+  it("marks the degree/radian toggle as pressed for assistive tech", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    const rad = await screen.findByRole("button", { name: "RAD" });
+    expect(rad.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(rad);
+
+    expect(screen.getByRole("button", { name: "DEG" }).getAttribute("aria-pressed")).toBe("true");
   });
 });

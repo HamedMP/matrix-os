@@ -14,6 +14,7 @@ import "./styles.css";
 const HISTORY_TABLE = "history";
 const LS_KEY = "matrixos.calculator.history.v1";
 const MAX_HISTORY = 100;
+const MAX_CLEAR_PAGES = 100;
 
 interface HistoryRow {
   id: string;
@@ -304,21 +305,32 @@ export default function App() {
   const clearHistory = useCallback(async () => {
     const rows = history;
     setHistory([]);
+    writeLocal([]);
     const db = window.MatrixOS?.db;
     if (!db) {
-      writeLocal([]);
       return;
     }
     try {
-      await Promise.all(
-        rows
-          .filter((r) => !r.id.startsWith("local-"))
-          .map((r) => db.delete(HISTORY_TABLE, r.id)),
-      );
+      const seen = new Set<string>();
+      for (let page = 0; page < MAX_CLEAR_PAGES; page += 1) {
+        const pageRows = await db.find(HISTORY_TABLE, {
+          orderBy: { created_at: "desc" },
+          limit: MAX_HISTORY,
+        });
+        const ids = pageRows
+          .map(coerceRow)
+          .filter((r): r is HistoryRow => r !== null)
+          .map((row) => row.id)
+          .filter((id) => !id.startsWith("local-") && !seen.has(id));
+        if (ids.length === 0) break;
+        ids.forEach((id) => seen.add(id));
+        await Promise.all(ids.map((id) => db.delete(HISTORY_TABLE, id)));
+      }
       await reload();
     } catch (err: unknown) {
       console.warn("[calculator] history clear failed:", err instanceof Error ? err.message : String(err));
       setError("History could not be cleared.");
+      setHistory(rows);
       await reload();
     }
   }, [history, reload]);
@@ -344,6 +356,7 @@ export default function App() {
               className={degrees ? "toggle toggle--on" : "toggle"}
               onClick={() => setDegrees((v) => !v)}
               title="Toggle angle unit"
+              aria-pressed={degrees}
             >
               {degrees ? "DEG" : "RAD"}
             </button>

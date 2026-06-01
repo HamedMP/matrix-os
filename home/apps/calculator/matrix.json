@@ -15,7 +15,8 @@
       "history": {
         "columns": {
           "expression": "text",
-          "result": "text"
+          "result": "text",
+          "created_at": "timestamptz"
         },
         "indexes": ["created_at"]
       }

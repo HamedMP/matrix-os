@@ -122,6 +122,10 @@ const CONSTANTS: Record<string, number> = {
   phi: (1 + Math.sqrt(5)) / 2,
 };
 
+function hasOwn<T extends object>(record: T, key: string): key is keyof T & string {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 interface FnDef {
   arity: number | "variadic";
   fn: (args: number[], opts: Required<EvalOptions>) => number;
@@ -265,7 +269,7 @@ class Parser {
   private isConstantOrFunc(t: Token): boolean {
     if (t.type !== "ident") return false;
     if (t.value === "mod") return false;
-    return t.value in CONSTANTS || t.value in FUNCTIONS;
+    return hasOwn(CONSTANTS, t.value) || hasOwn(FUNCTIONS, t.value);
   }
 
   private parseUnary(): number {
@@ -332,11 +336,11 @@ class Parser {
     if (t.type === "ident") {
       this.next();
       // Constant?
-      if (t.value in CONSTANTS) {
+      if (hasOwn(CONSTANTS, t.value)) {
         return CONSTANTS[t.value];
       }
       // Function call?
-      const fn = FUNCTIONS[t.value];
+      const fn = hasOwn(FUNCTIONS, t.value) ? FUNCTIONS[t.value] : undefined;
       if (!fn) throw new CalcError(`Unknown function or constant "${t.value}"`);
       const open = this.peek();
       if (!open || open.type !== "lparen") {
