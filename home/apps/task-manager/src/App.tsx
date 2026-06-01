@@ -40,6 +40,7 @@ import {
   cardToRow,
   columnToRow,
   emptyBoard,
+  loadBridgeBoard,
   loadLocalBoard,
   saveLocalBoard,
 } from "./persistence";
@@ -64,6 +65,8 @@ function labelColor(label: string): string {
 function db(): NonNullable<Window["MatrixOS"]>["db"] | undefined {
   return typeof window !== "undefined" ? window.MatrixOS?.db : undefined;
 }
+
+type MatrixDb = NonNullable<NonNullable<Window["MatrixOS"]>["db"]>;
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -91,6 +94,26 @@ function formatDue(due: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+async function persistBoardToBridge(bridge: MatrixDb, source: Board): Promise<Board> {
+  const columnIdMap = new Map<string, string>();
+  for (let i = 0; i < source.columns.length; i += 1) {
+    const column = source.columns[i];
+    const result = await bridge.insert(COLUMNS_TABLE, columnToRow(column, i));
+    columnIdMap.set(column.id, result.id);
+  }
+  for (const card of source.cards) {
+    await bridge.insert(CARDS_TABLE, {
+      ...cardToRow(card, card.order),
+      column_id: columnIdMap.get(card.columnId) ?? card.columnId,
+    });
+  }
+  const [columnRows, cardRows] = await Promise.all([
+    bridge.find(COLUMNS_TABLE, { orderBy: { position: "asc" } }),
+    bridge.find(CARDS_TABLE, { orderBy: { position: "asc" } }),
+  ]);
+  return boardFromRows(columnRows, cardRows);
+}
+
 function App() {
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +131,7 @@ function App() {
   const boardRef = useRef<Board | null>(null);
   boardRef.current = board;
   const usingDbRef = useRef(false);
+  const suppressReloadRef = useRef(false);
 
   const reload = useCallback(async () => {
     const bridge = db();
@@ -126,13 +150,15 @@ function App() {
         bridge.find(CARDS_TABLE, { orderBy: { position: "asc" } }),
       ]);
       if (columnRows.length === 0) {
+        const legacy = await loadBridgeBoard();
+        if (legacy) {
+          setBoard(await persistBoardToBridge(bridge, legacy));
+          setError(null);
+          return;
+        }
         // First run: seed the default workflow columns into Postgres.
         const seed = emptyBoard();
-        for (let i = 0; i < seed.columns.length; i += 1) {
-          await bridge.insert(COLUMNS_TABLE, columnToRow(seed.columns[i], i));
-        }
-        const seeded = await bridge.find(COLUMNS_TABLE, { orderBy: { position: "asc" } });
-        setBoard(boardFromRows(seeded, []));
+        setBoard(await persistBoardToBridge(bridge, seed));
         setError(null);
         return;
       }
@@ -148,8 +174,11 @@ function App() {
     void reload();
     const bridge = db();
     if (!bridge) return undefined;
-    const offColumns = bridge.onChange(COLUMNS_TABLE, () => void reload());
-    const offCards = bridge.onChange(CARDS_TABLE, () => void reload());
+    const guardedReload = () => {
+      if (!suppressReloadRef.current) void reload();
+    };
+    const offColumns = bridge.onChange(COLUMNS_TABLE, guardedReload);
+    const offCards = bridge.onChange(CARDS_TABLE, guardedReload);
     return () => {
       offColumns?.();
       offCards?.();
@@ -195,7 +224,12 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.insert(CARDS_TABLE, cardToRow(created, created.order));
+      const result = await bridge.insert(CARDS_TABLE, cardToRow(created, created.order));
+      setSelectedCardId((id) => (id === created.id ? result.id : id));
+      setBoard((current) => current ? {
+        ...current,
+        cards: current.cards.map((card) => card.id === created.id ? { ...card, id: result.id } : card),
+      } : current);
     }, "Card could not be saved");
   }, [persist]);
 
@@ -287,7 +321,12 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.insert(COLUMNS_TABLE, columnToRow(created, position));
+      const result = await bridge.insert(COLUMNS_TABLE, columnToRow(created, position));
+      setBoard((current) => current ? {
+        ...current,
+        columns: current.columns.map((column) => column.id === created.id ? { ...column, id: result.id } : column),
+        cards: current.cards.map((card) => card.columnId === created.id ? { ...card, columnId: result.id } : card),
+      } : current);
     }, "Column could not be created");
   }, [persist]);
 
@@ -306,14 +345,27 @@ function App() {
     const current = boardRef.current;
     if (!current || current.columns.length <= 1) return;
     const removedCards = current.cards.filter((card) => card.columnId === columnId).map((card) => card.id);
-    setBoard(deleteColumn(current, columnId));
-    void persist(async () => {
-      const bridge = db();
-      if (!bridge) return;
-      for (const cardId of removedCards) await bridge.delete(CARDS_TABLE, cardId);
-      await bridge.delete(COLUMNS_TABLE, columnId);
-    }, "Column could not be deleted");
-  }, [persist]);
+    const bridge = db();
+    if (!usingDbRef.current || !bridge) {
+      setBoard(deleteColumn(current, columnId));
+      return;
+    }
+    suppressReloadRef.current = true;
+    void (async () => {
+      try {
+        for (const cardId of removedCards) await bridge.delete(CARDS_TABLE, cardId);
+        await bridge.delete(COLUMNS_TABLE, columnId);
+        setError(null);
+        setBoard(deleteColumn(current, columnId));
+      } catch (err: unknown) {
+        console.warn("[task-manager] Column could not be deleted:", errMessage(err));
+        setError("Column could not be deleted. Reopen the board to refresh.");
+        await reload();
+      } finally {
+        suppressReloadRef.current = false;
+      }
+    })();
+  }, [reload]);
 
   const dropColumn = useCallback((columnId: string, targetIndex: number) => {
     const current = boardRef.current;

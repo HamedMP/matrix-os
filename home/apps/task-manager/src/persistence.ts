@@ -1,6 +1,7 @@
 import {
   DEFAULT_COLUMNS,
   createBoard,
+  hydrateBoard,
   type Board,
   type BoardColumn,
   type Card,
@@ -15,6 +16,7 @@ import {
 export const COLUMNS_TABLE = "columns";
 export const CARDS_TABLE = "cards";
 const LOCAL_KEY = "task-manager:board";
+const LEGACY_BRIDGE_KEYS = ["project-board", LOCAL_KEY] as const;
 const DEFAULT_PROJECT_ID = "project-default";
 
 function asString(value: unknown, fallback = ""): string {
@@ -104,7 +106,7 @@ export function boardFromRows(columnRows: Record<string, unknown>[], cardRows: R
         delegation: null,
         order: asNumber(row.position),
         createdAt: asString(row.created_at, new Date().toISOString()),
-        updatedAt: asString(row.created_at, new Date().toISOString()),
+        updatedAt: asString(row.updated_at, asString(row.created_at, new Date().toISOString())),
       };
     })
     .filter((card) => card.id && card.columnId);
@@ -116,6 +118,37 @@ export function boardFromRows(columnRows: Record<string, unknown>[], cardRows: R
     cards,
     updatedAt: new Date().toISOString(),
   };
+}
+
+function parseStoredBoard(value: unknown): Board | null {
+  let raw = value;
+  if (typeof raw === "string") {
+    if (!raw.trim()) return null;
+    try {
+      raw = JSON.parse(raw);
+    } catch (err: unknown) {
+      console.warn("[task-manager] stored board parse failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Partial<Board>;
+  if (!Array.isArray(candidate.columns) || !Array.isArray(candidate.cards)) return null;
+  return hydrateBoard(candidate);
+}
+
+export async function loadBridgeBoard(): Promise<Board | null> {
+  const readData = window.MatrixOS?.readData;
+  if (!readData) return null;
+  for (const key of LEGACY_BRIDGE_KEYS) {
+    try {
+      const board = parseStoredBoard(await readData(key));
+      if (board && board.columns.length > 0) return board;
+    } catch (err: unknown) {
+      console.warn("[task-manager] legacy board load failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+  return null;
 }
 
 /** Serialize a card's app-shaped fields into DB column values. */
@@ -142,8 +175,7 @@ export function columnToRow(column: BoardColumn, position: number): Record<strin
 export function loadLocalBoard(): Board | null {
   try {
     const raw = localStorage.getItem(LOCAL_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as Board;
+    return parseStoredBoard(raw);
   } catch (err: unknown) {
     console.warn("[task-manager] local board parse failed:", err instanceof Error ? err.message : String(err));
     return null;

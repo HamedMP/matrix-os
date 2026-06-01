@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/task-manager/src/App";
+import { boardFromRows } from "../../home/apps/task-manager/src/persistence";
 
 type DbRow = Record<string, unknown>;
 
@@ -11,7 +12,7 @@ interface FakeDb {
   cards: DbRow[];
 }
 
-function installMatrixDb(initial?: Partial<FakeDb>) {
+function installMatrixDb(initial?: Partial<FakeDb>, legacyBoard?: unknown) {
   const store: FakeDb = {
     columns: initial?.columns ? [...initial.columns] : [],
     cards: initial?.cards ? [...initial.cards] : [],
@@ -70,7 +71,10 @@ function installMatrixDb(initial?: Partial<FakeDb>) {
 
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
-    value: { db },
+    value: {
+      db,
+      readData: vi.fn(async (key: string) => key === "project-board" ? legacyBoard : null),
+    },
   });
   return { db, store };
 }
@@ -83,6 +87,22 @@ describe("Task Manager app", () => {
     localStorage.clear();
   });
 
+  it("hydrates card updatedAt from the updated_at DB column", () => {
+    const board = boardFromRows(
+      [{ id: "col-1", title: "To do", color: "#7A7768", position: 0 }],
+      [{
+        id: "card-1",
+        column_id: "col-1",
+        title: "Fresh edit",
+        position: 0,
+        created_at: "2026-05-01T00:00:00.000Z",
+        updated_at: "2026-05-02T00:00:00.000Z",
+      }],
+    );
+
+    expect(board.cards[0].updatedAt).toBe("2026-05-02T00:00:00.000Z");
+  });
+
   it("seeds default columns into Postgres on first run", async () => {
     const { db } = installMatrixDb();
     render(<App />);
@@ -91,6 +111,43 @@ describe("Task Manager app", () => {
     await waitFor(() => expect(db.insert).toHaveBeenCalledWith("columns", expect.objectContaining({ title: "Backlog" })));
     expect(await screen.findByRole("heading", { name: "Backlog" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Done" })).toBeTruthy();
+  });
+
+  it("migrates the legacy project-board bridge data before seeding defaults", async () => {
+    const legacyBoard = {
+      version: 1,
+      projects: [{ id: "project-default", name: "Legacy", color: "#434E3F", description: "" }],
+      columns: [{ id: "legacy-col", title: "Legacy Queue", color: "#7A7768" }],
+      cards: [{
+        id: "legacy-card",
+        projectId: "project-default",
+        columnId: "legacy-col",
+        title: "Migrated card",
+        description: "",
+        priority: "medium",
+        labels: [],
+        assignee: "",
+        dueDate: "",
+        checklist: [],
+        delegation: null,
+        order: 0,
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const { db } = installMatrixDb(undefined, legacyBoard);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.MatrixOS?.readData).toHaveBeenCalledWith("project-board");
+      expect(db.insert).toHaveBeenCalledWith("columns", expect.objectContaining({ title: "Legacy Queue" }));
+      expect(db.insert).toHaveBeenCalledWith("cards", expect.objectContaining({
+        title: "Migrated card",
+        column_id: "columns-1",
+      }));
+    });
   });
 
   it("loads existing columns + cards from Postgres", async () => {
@@ -124,6 +181,16 @@ describe("Task Manager app", () => {
       expect(db.insert).toHaveBeenCalledWith("cards", expect.objectContaining({ title: "Ship the board", column_id: "col-1" })),
     );
     expect(await screen.findByText("Ship the board")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Ship the board"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Ship the board");
+    fireEvent.change(titleInput, { target: { value: "Real DB id" } });
+    fireEvent.blur(titleInput);
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith("cards", "cards-1", expect.objectContaining({ title: "Real DB id" })),
+    );
   });
 
   it("filters cards by text query", async () => {
@@ -178,6 +245,26 @@ describe("Task Manager app", () => {
     await waitFor(() =>
       expect(db.update).toHaveBeenCalledWith("cards", "card-1", expect.objectContaining({ title: "Edited title" })),
     );
+  });
+
+  it("keeps a column visible when a DB column delete fails", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Keep me", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle("Delete column")[0]);
+
+    expect(await screen.findByText(/column could not be deleted/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
   it("shows a friendly error when the bridge fails to load", async () => {
