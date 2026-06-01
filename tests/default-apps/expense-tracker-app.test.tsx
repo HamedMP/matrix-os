@@ -179,6 +179,16 @@ describe("Expense Tracker app", () => {
     expect(await screen.findByTestId("over-budget-warning")).toBeTruthy();
   });
 
+  it("does not mark spending as over budget when no budget is configured", async () => {
+    installMatrixDb([expense(2, 300, "Groceries")]);
+
+    render(<App />);
+
+    expect(await screen.findByText("Budget not set")).toBeTruthy();
+    expect(screen.queryByText("Over budget")).toBeNull();
+    expect(screen.queryByTestId("over-budget-warning")).toBeNull();
+  });
+
   it("deduplicates existing budgets when saving the budget sheet", async () => {
     const db = installMatrixDb(
       [expense(2, 30, "Groceries")],

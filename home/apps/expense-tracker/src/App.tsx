@@ -192,6 +192,8 @@ export default function App() {
     () => summarizeMonth(expenses, budgets, selectedMonth),
     [expenses, budgets, selectedMonth],
   );
+  const hasBudget = summary.totalBudget > 0;
+  const isOverBudget = hasBudget && summary.remaining < 0;
 
   const monthExpenses = useMemo(
     () =>
@@ -436,13 +438,15 @@ export default function App() {
         </article>
         <article
           className={
-            summary.remaining < 0 ? "exp-kpi exp-kpi--over" : "exp-kpi exp-kpi--remaining"
+            isOverBudget ? "exp-kpi exp-kpi--over" : "exp-kpi exp-kpi--remaining"
           }
         >
           <span className="exp-kpi__label">
-            <PiggyBank size={15} /> {summary.remaining < 0 ? "Over budget" : "Remaining budget"}
+            <PiggyBank size={15} /> {isOverBudget ? "Over budget" : hasBudget ? "Remaining budget" : "Budget not set"}
           </span>
-          <strong data-testid="kpi-remaining">{formatMoney(Math.abs(summary.remaining), currency)}</strong>
+          <strong data-testid="kpi-remaining">
+            {formatMoney(hasBudget ? Math.abs(summary.remaining) : 0, currency)}
+          </strong>
           <em>{summary.totalBudget > 0 ? `of ${formatMoney(summary.totalBudget, currency)}` : "No budgets set"}</em>
         </article>
         <article className="exp-kpi exp-kpi--top">
