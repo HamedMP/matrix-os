@@ -13,7 +13,7 @@ const ICONS_DIR = join(REPO_ROOT, "home", "system", "icons");
 // Apps whose current runtime already depends on durable structured data living
 // in owner-controlled Postgres (per spec 083). Newly migrated apps should add
 // themselves here in the same PR that declares storage.tables.
-const DURABLE_DATA_APPS = new Set(["notes", "todo", "expense-tracker"]);
+const DURABLE_DATA_APPS = new Set(["notes", "task-manager", "todo", "expense-tracker"]);
 
 interface Manifest {
   slug?: string;
