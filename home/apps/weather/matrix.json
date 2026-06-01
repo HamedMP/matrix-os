@@ -9,6 +9,21 @@
   "slug": "weather",
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "locations": {
+        "columns": {
+          "name": "text",
+          "latitude": "float",
+          "longitude": "float",
+          "is_default": "boolean"
+        },
+        "indexes": [
+          "is_default"
+        ]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",
