@@ -333,7 +333,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
           </span>
         </div>
         {/* Right: Win98 window buttons */}
-        <div className="flex items-center gap-0.5 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0" onDoubleClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
