@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildNotePreview,
@@ -8,6 +10,8 @@ import {
   tiptapDocToText,
   type Note,
 } from "../../home/apps/notes/src/notes-model";
+
+const REPO_ROOT = join(__dirname, "..", "..");
 
 describe("notes model", () => {
   it("creates searchable notes with tags extracted from markdown content", () => {
@@ -67,5 +71,13 @@ describe("notes model", () => {
     expect(note.content_json.type).toBe("doc");
     expect(tiptapDocToText(note.content_json)).toBe("Research #AI");
     expect(note.tags).toEqual(["ai"]);
+  });
+
+  it("declares an index for stored tag strings", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(REPO_ROOT, "home", "apps", "notes", "matrix.json"), "utf-8"),
+    ) as { storage?: { tables?: { notes?: { indexes?: string[] } } } };
+
+    expect(manifest.storage?.tables?.notes?.indexes).toContain("tags");
   });
 });

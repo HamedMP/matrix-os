@@ -16,7 +16,8 @@
           "tags": "text"
         },
         "indexes": [
-          "pinned"
+          "pinned",
+          "tags"
         ]
       }
     }

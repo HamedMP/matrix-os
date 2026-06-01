@@ -313,12 +313,13 @@ function App() {
         setActiveId((current) => (current === note.id ? saved.id : current));
         return savedLatest;
       }
-      resolvedCreatesRef.current.delete(note.id);
       const latest = notesRef.current.find((candidate) => candidate.id === resolvedId) ?? {
         ...note,
         id: resolvedId,
       };
-      return persistNote(latest, false);
+      return persistNote(latest, false).finally(() => {
+        resolvedCreatesRef.current.delete(note.id);
+      });
     }
     const saved = await pendingCreate;
     const latest = notesRef.current.find((candidate) => candidate.id === saved.id)
