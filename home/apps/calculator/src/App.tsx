@@ -211,7 +211,11 @@ export default function App() {
       return;
     }
     try {
-      await db.insert(HISTORY_TABLE, { expression: trimmed, result: formatted });
+      await db.insert(HISTORY_TABLE, {
+        expression: trimmed,
+        result: formatted,
+        created_at: optimistic.created_at,
+      });
       await reload();
     } catch (err: unknown) {
       console.warn("[calculator] history save failed:", err instanceof Error ? err.message : String(err));

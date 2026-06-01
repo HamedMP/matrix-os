@@ -84,7 +84,11 @@ describe("Calculator app", () => {
     await waitFor(() => {
       expect(db.insert).toHaveBeenCalledWith(
         "history",
-        expect.objectContaining({ expression: "6 * 7", result: "42" }),
+        expect.objectContaining({
+          expression: "6 * 7",
+          result: "42",
+          created_at: expect.any(String),
+        }),
       );
     });
     const historyRail = await screen.findByTestId("history-rail");
