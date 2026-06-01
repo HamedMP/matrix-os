@@ -1,3 +1,12 @@
-import { renderDefaultApp } from "../../../_shared/default-apps";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
 
-renderDefaultApp("solitaire" as const);
+const root = document.getElementById("root");
+if (root) {
+  createRoot(root).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
