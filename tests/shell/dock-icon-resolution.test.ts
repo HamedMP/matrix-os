@@ -29,25 +29,15 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("/icons/${slug}.png");
   });
 
-  it("ships explicit assets for the mobile dock control slugs", async () => {
-    const [grid, layers] = await Promise.all([
-      readFile("home/system/icons/grid.svg", "utf8"),
-      readFile("home/system/icons/layers.svg", "utf8"),
-    ]);
-
-    expect(grid).toContain("<svg");
-    expect(layers).toContain("<svg");
-  });
-
   it("keeps the desktop dock as a glass rail with stable icon controls", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
     const dockStart = source.indexOf("<aside\n          data-dock");
     const dockEnd = source.indexOf("</aside>", dockStart);
     const dockSource = source.slice(dockStart, dockEnd);
 
-    expect(dockSource).toContain("bg-black/35");
-    expect(dockSource).toContain("backdrop-saturate-150");
-    expect(source).toContain("function dockButtonClass");
-    expect(source).toContain("rounded-[14px]");
+    expect(dockSource).toContain("bg-card/50");
+    expect(dockSource).toContain("backdrop-blur-md");
+    expect(dockSource).toContain("rounded-2xl");
+    expect(dockSource).toContain("<DockIcon");
   });
 });

@@ -263,7 +263,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
         }`}
       >
         <TrafficLights
-          className="shrink-0 relative z-10"
+          className="mr-2 shrink-0 relative z-10"
           onClose={() => closeWindow(win.id)}
           onMinimize={() => minimizeWindow(win.id)}
           onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}

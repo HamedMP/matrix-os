@@ -14,7 +14,10 @@ export function TrafficLights({
   onFullscreen,
 }: TrafficLightsProps) {
   return (
-    <div className={`group/traffic flex items-center gap-1.5 mr-2 ${className ?? ""}`}>
+    <div
+      className={`group/traffic flex items-center gap-1.5 ${className ?? ""}`}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         onClick={(e) => {

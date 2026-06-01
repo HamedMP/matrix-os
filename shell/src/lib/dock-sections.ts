@@ -16,7 +16,7 @@ export function isSystemApp(path: string): boolean {
  * apps, so the grid reads as Main · Apps · Games.
  */
 export function isGameApp(path: string): boolean {
-  return path.includes("apps/games/");
+  return path.startsWith("apps/games/");
 }
 
 /**
