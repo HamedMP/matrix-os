@@ -8,8 +8,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // It is exercised in the build + manually; here we mock the local RichEditor
 // module so we can assert the app's list, persistence, and filtering behavior.
 vi.mock("../../home/apps/notes/src/RichEditor", () => ({
-  default: ({ note }: { note: { content: string } }) =>
-    React.createElement("div", { "data-testid": "rich-editor-mock" }, note.content),
+  default: ({
+    note,
+    onChange,
+  }: {
+    note: { content: string };
+    onChange: (patch: { content: string; content_json: { type: "doc"; content: [] } }) => void;
+  }) =>
+    React.createElement(
+      "div",
+      null,
+      React.createElement("div", { "data-testid": "rich-editor-mock" }, note.content),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => onChange({ content: "No tags left", content_json: { type: "doc", content: [] } }),
+        },
+        "Clear inline tag",
+      ),
+    ),
 }));
 
 const { default: App } = await import("../../home/apps/notes/src/App");
@@ -155,6 +173,119 @@ describe("Notes app", () => {
     expect(updateCall[0]).toBe("notes");
     expect(updateCall[1]).toBe("n-1");
     expect((updateCall[2] as DbRow).title).toBe("Renamed plan");
+  });
+
+  it("saves edits made before a newly inserted note receives its database id", async () => {
+    vi.useFakeTimers();
+    const db = installMatrixDb([]);
+    let resolveInsert: ((value: { id: string }) => void) | null = null;
+    db.insert.mockImplementationOnce(
+      async (_table: string, data: DbRow) =>
+        new Promise<{ id: string }>((resolve) => {
+          db.rows.unshift({ id: "db-new", created_at: new Date().toISOString(), ...data });
+          resolveInsert = resolve;
+        }),
+    );
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    const titleInput = screen.getByLabelText("Note title") as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "Fast draft" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveInsert?.({ id: "db-new" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith(
+      "notes",
+      "db-new",
+      expect.objectContaining({ title: "Fast draft" }),
+    );
+  });
+
+  it("does not steal selection when a new note insert resolves", async () => {
+    const db = installMatrixDb([
+      {
+        id: "n-1",
+        title: "First note",
+        content: "One",
+        content_json: { type: "doc", content: [] },
+        pinned: false,
+        tags: "",
+        updated_at: "2026-05-31T10:00:00.000Z",
+      },
+      {
+        id: "n-2",
+        title: "Second note",
+        content: "Two",
+        content_json: { type: "doc", content: [] },
+        pinned: false,
+        tags: "",
+        updated_at: "2026-05-30T10:00:00.000Z",
+      },
+    ]);
+    let resolveInsert: ((value: { id: string }) => void) | null = null;
+    db.insert.mockImplementationOnce(
+      async (_table: string, data: DbRow) =>
+        new Promise<{ id: string }>((resolve) => {
+          db.rows.unshift({ id: "db-new", created_at: new Date().toISOString(), ...data });
+          resolveInsert = resolve;
+        }),
+    );
+
+    render(<App />);
+    await screen.findByText("First note");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    fireEvent.click(screen.getByText("Second note"));
+
+    await act(async () => {
+      resolveInsert?.({ id: "db-new" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect((screen.getByLabelText("Note title") as HTMLInputElement).value).toBe("Second note");
+  });
+
+  it("clears stored inline tags when the editor content removes them", async () => {
+    const db = installMatrixDb([
+      {
+        id: "n-1",
+        title: "Tagged",
+        content: "Draft #old",
+        content_json: { type: "doc", content: [] },
+        pinned: false,
+        tags: "old",
+        updated_at: "2026-05-31T10:00:00.000Z",
+      },
+    ]);
+
+    render(<App />);
+    await screen.findByText("Tagged");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear inline tag" }));
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith(
+        "notes",
+        "n-1",
+        expect.objectContaining({ content: "No tags left", tags: "" }),
+      );
+    });
   });
 
   it("filters notes by the search query", async () => {

@@ -134,7 +134,8 @@ export function createNote(input: NoteInput = {}): Note {
     ? input.content_json
     : emptyTiptapDoc();
   const searchableText = [content, tiptapDocToText(contentJson)].join(" ");
-  const tags = normalizeTags([...normalizeTags(input.tags), ...extractTags(searchableText)]);
+  const extractedTags = extractTags(searchableText);
+  const tags = extractedTags.length > 0 ? extractedTags : normalizeTags(input.tags);
   return {
     id: input.id ?? globalThis.crypto?.randomUUID?.() ?? fallbackId(),
     title: (input.title ?? "").trim() || "Untitled",

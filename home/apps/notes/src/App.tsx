@@ -76,9 +76,12 @@ async function persistNote(note: Note, isNew: boolean): Promise<Note> {
   const db = window.MatrixOS?.db;
   if (!db) return note;
   const data = noteRowData(note);
-  if (isNew || note.id.startsWith("note-")) {
+  if (isNew) {
     const result = await db.insert("notes", data);
     return { ...note, id: result.id };
+  }
+  if (note.id.startsWith("note-")) {
+    throw new Error("Cannot update a note before it has a database id.");
   }
   await db.update("notes", note.id, data);
   return note;
@@ -159,6 +162,12 @@ function App() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const notesRef = useRef<Note[]>([]);
+  const pendingCreatesRef = useRef<Map<string, Promise<Note>>>(new Map());
+
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
 
   const reload = useCallback(() => {
     setError(null);
@@ -208,6 +217,7 @@ function App() {
 
   const createNewNote = useCallback(() => {
     const draft = createNote({
+      id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       title: "Untitled",
       content: "",
       content_json: {
@@ -223,27 +233,50 @@ function App() {
     setNotes(nextNotes);
     setActiveId(draft.id);
     setSaveState("saving");
-    persistNote(draft, true)
+    const createPromise = persistNote(draft, true);
+    pendingCreatesRef.current.set(draft.id, createPromise);
+    createPromise
       .then((saved) => {
-        const savedNotes = nextNotes.map((note) => (note.id === draft.id ? saved : note));
-        setNotes(savedNotes);
-        setActiveId(saved.id);
-        persistAllIfFallback(savedNotes);
+        setNotes((currentNotes) => {
+          const savedNotes = currentNotes.map((note) =>
+            note.id === draft.id ? { ...note, id: saved.id, created_at: saved.created_at } : note,
+          );
+          persistAllIfFallback(savedNotes);
+          return savedNotes;
+        });
+        setActiveId((current) => (current === draft.id ? saved.id : current));
         setSaveState("saved");
       })
       .catch((err: unknown) => {
         console.warn("[notes] create failed:", err instanceof Error ? err.message : String(err));
         setError("Note could not be created.");
         setSaveState("error");
+      })
+      .finally(() => {
+        pendingCreatesRef.current.delete(draft.id);
       });
   }, [notes, persistAllIfFallback]);
+
+  const persistWhenReady = useCallback(async (note: Note): Promise<Note> => {
+    if (!note.id.startsWith("note-")) return persistNote(note, false);
+    const pendingCreate = pendingCreatesRef.current.get(note.id);
+    if (!pendingCreate) return persistNote(note, false);
+    const saved = await pendingCreate;
+    const latest = notesRef.current.find((candidate) => candidate.id === saved.id)
+      ?? notesRef.current.find((candidate) => candidate.id === note.id)
+      ?? note;
+    return persistNote({ ...latest, id: saved.id, created_at: saved.created_at }, false);
+  }, []);
 
   const updateActiveNote = useCallback(
     (patch: Partial<Pick<Note, "title" | "content" | "content_json" | "pinned" | "tags">>) => {
       if (!activeNote) return;
+      const shouldRecomputeTags =
+        !("tags" in patch) && ("content" in patch || "content_json" in patch);
       const nextNote = createNote({
         ...activeNote,
         ...patch,
+        tags: shouldRecomputeTags ? null : (patch.tags ?? activeNote.tags),
         updated_at: new Date().toISOString(),
       });
       const nextNotes = notes.map((note) => (note.id === activeNote.id ? nextNote : note));
@@ -251,9 +284,9 @@ function App() {
       setSaveState("saving");
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
-        persistNote(nextNote, false)
+        persistWhenReady(nextNote)
           .then((saved) => {
-            const savedNotes = nextNotes.map((note) => (note.id === saved.id ? saved : note));
+            const savedNotes = notesRef.current.map((note) => (note.id === saved.id ? saved : note));
             persistAllIfFallback(savedNotes);
             setSaveState("saved");
           })
@@ -264,7 +297,7 @@ function App() {
           });
       }, SAVE_DELAY_MS);
     },
-    [activeNote, notes, persistAllIfFallback],
+    [activeNote, notes, persistAllIfFallback, persistWhenReady],
   );
 
   const deleteActiveNote = useCallback(() => {
