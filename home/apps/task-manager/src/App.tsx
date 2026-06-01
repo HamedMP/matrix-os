@@ -401,7 +401,8 @@ function App() {
         for (const cardId of removedCards) {
           await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
         }
-        await bridge.delete(COLUMNS_TABLE, columnId);
+        const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
+        await bridge.delete(COLUMNS_TABLE, persistedColumnId);
         setError(null);
         setBoard(deleteColumn(current, columnId));
       } catch (err: unknown) {
@@ -423,7 +424,8 @@ function App() {
       const bridge = db();
       if (!bridge) return;
       for (let i = 0; i < next.columns.length; i += 1) {
-        await bridge.update(COLUMNS_TABLE, next.columns[i].id, { position: i });
+        const persistedColumnId = await (pendingColumnIdsRef.current[next.columns[i].id] ?? Promise.resolve(next.columns[i].id));
+        await bridge.update(COLUMNS_TABLE, persistedColumnId, { position: i });
       }
     }, "Column order could not be saved");
   }, [persist]);

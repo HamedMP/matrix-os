@@ -467,6 +467,100 @@ describe("Task Manager app", () => {
     });
   });
 
+  it("waits for a pending column insert before deleting the column row", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveColumnInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<void>((resolve) => {
+          resolveColumnInsert = resolve;
+        });
+        const id = "columns-sprint";
+        store.columns.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    const sprintColumn = await screen.findByLabelText("Sprint");
+    fireEvent.click(within(sprintColumn).getByTitle("Delete column"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.delete).not.toHaveBeenCalledWith("columns", expect.stringMatching(/^column-/));
+
+    await act(async () => {
+      resolveColumnInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.delete).toHaveBeenCalledWith("columns", "columns-sprint"));
+  });
+
+  it("waits for a pending column insert before persisting reordered positions", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveColumnInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<void>((resolve) => {
+          resolveColumnInsert = resolve;
+        });
+        const id = "columns-sprint";
+        store.columns.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    const sprintColumn = await screen.findByLabelText("Sprint");
+    const todoColumn = screen.getByLabelText("To do");
+    fireEvent.dragStart(within(sprintColumn).getByTitle("Reorder column"));
+    fireEvent.drop(todoColumn);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalledWith("columns", expect.stringMatching(/^column-/), expect.anything());
+
+    await act(async () => {
+      resolveColumnInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("columns", "columns-sprint", { position: 0 }));
+  });
+
   it("keeps an existing error visible after unrelated card saves", async () => {
     const { db, store } = installMatrixDb({
       columns: [
