@@ -4,6 +4,7 @@ import {
   filterTasks,
   nextRecurrence,
   normalizeTask,
+  projectNames,
   sortTasks,
   type Task,
   type View,
@@ -118,6 +119,17 @@ describe("countByView", () => {
     expect(counts.inbox).toBe(3);
     expect(counts.today).toBe(1);
     expect(counts.upcoming).toBe(1);
+  });
+});
+
+describe("projectNames", () => {
+  it("only includes projects with open tasks", () => {
+    const tasks = [
+      makeTask({ id: "open", project: "Work", status: "open" }),
+      makeTask({ id: "done", project: "Archive", status: "done" }),
+    ];
+
+    expect(projectNames(tasks)).toEqual(["Work"]);
   });
 });
 

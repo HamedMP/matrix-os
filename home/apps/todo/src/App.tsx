@@ -177,6 +177,10 @@ export default function App() {
   }, [tasks]);
 
   const visible = useMemo(() => sortTasks(filterTasks(tasks, view, now)), [tasks, view, now]);
+  const selectedTask = useMemo(
+    () => (selectedId ? visible.find((t) => t.id === selectedId) ?? null : null),
+    [selectedId, visible],
+  );
 
   const activeSmart: SmartViewMeta | null =
     typeof view === "string" ? SMART_VIEWS.find((v) => v.id === view) ?? null : null;
@@ -235,6 +239,13 @@ export default function App() {
       }
     },
     [reload],
+  );
+
+  const patchSelectedTask = useCallback(
+    (patch: Partial<Task>) => {
+      if (selectedId) void persistUpdate(selectedId, patch);
+    },
+    [persistUpdate, selectedId],
   );
 
   const completeTask = useCallback(
@@ -566,9 +577,9 @@ export default function App() {
 
         {selectedId && (
           <Inspector
-            task={visible.find((t) => t.id === selectedId) ?? null}
+            task={selectedTask}
             onClose={() => setSelectedId(null)}
-            onPatch={(patch) => selectedId && void persistUpdate(selectedId, patch)}
+            onPatch={patchSelectedTask}
           />
         )}
       </main>
@@ -603,18 +614,28 @@ function Inspector({
   onPatch: (patch: Partial<Task>) => void;
 }) {
   const [notesDraft, setNotesDraft] = useState(task?.notes ?? "");
+  const [projectDraft, setProjectDraft] = useState(task?.project ?? "");
 
   useEffect(() => {
     setNotesDraft(task?.notes ?? "");
+    setProjectDraft(task?.project ?? "");
   }, [task?.id]);
 
   useEffect(() => {
-    if (!task || notesDraft === task.notes) return undefined;
+    if (!task?.id || notesDraft === task.notes) return undefined;
     const timer = window.setTimeout(() => {
       onPatch({ notes: notesDraft });
     }, NOTES_SAVE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [notesDraft, onPatch, task]);
+  }, [notesDraft, onPatch, task?.id, task?.notes]);
+
+  useEffect(() => {
+    if (!task?.id || projectDraft === (task.project ?? "")) return undefined;
+    const timer = window.setTimeout(() => {
+      onPatch({ project: projectDraft.trim() || null });
+    }, NOTES_SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [onPatch, projectDraft, task?.id, task?.project]);
 
   if (!task) return null;
   return (
@@ -648,9 +669,9 @@ function Inspector({
         <span>Project</span>
         <input
           type="text"
-          value={task.project ?? ""}
+          value={projectDraft}
           placeholder="No project"
-          onChange={(e) => onPatch({ project: e.target.value.trim() || null })}
+          onChange={(e) => setProjectDraft(e.target.value)}
         />
       </label>
 

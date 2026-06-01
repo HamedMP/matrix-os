@@ -141,7 +141,7 @@ export function countByView(tasks: Task[], now: Date): ViewCounts {
 export function projectNames(tasks: Task[]): string[] {
   const names = new Set<string>();
   for (const t of tasks) {
-    if (t.project) names.add(t.project);
+    if (t.status === "open" && t.project) names.add(t.project);
   }
   return [...names].sort((a, b) => a.localeCompare(b));
 }

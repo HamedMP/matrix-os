@@ -205,6 +205,34 @@ describe("Todo app", () => {
     vi.useRealTimers();
   });
 
+  it("debounces project edits from the inspector", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Organize", status: "open", priority: 0, due: null, notes: "", project: null },
+    ]);
+    render(<App />);
+    await screen.findByText("Organize");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("listitem"));
+    const project = screen.getByPlaceholderText("No project");
+    fireEvent.change(project, { target: { value: "W" } });
+    fireEvent.change(project, { target: { value: "Work" } });
+
+    expect(db.update).not.toHaveBeenCalledWith(
+      "tasks",
+      "t1",
+      expect.objectContaining({ project: "Work" }),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith("tasks", "t1", { project: "Work" });
+    vi.useRealTimers();
+  });
+
   it("survives a missing MatrixOS.db without crashing", async () => {
     render(<App />);
     expect(await screen.findByPlaceholderText(/add a task|new task|capture/i)).toBeTruthy();
