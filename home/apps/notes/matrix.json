@@ -12,7 +12,8 @@
           "title": "text",
           "content": "text",
           "content_json": "jsonb",
-          "pinned": "boolean"
+          "pinned": "boolean",
+          "tags": "text"
         },
         "indexes": [
           "pinned"
