@@ -118,4 +118,33 @@ describe("Tetris app", () => {
 
     vi.useRealTimers();
   });
+
+  it("resumes from the pause overlay without restarting the board", async () => {
+    installMatrixDb([]);
+    render(<App />);
+
+    const startBtn = within(screen.getByRole("dialog")).getByRole("button", { name: /play|start/i });
+    act(() => {
+      fireEvent.click(startBtn);
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "p" });
+    });
+
+    function activeCols(): number[] {
+      return screen
+        .getAllByTestId("tetris-cell")
+        .map((el, i) => ({ i, active: el.getAttribute("data-active") === "true" }))
+        .filter((c) => c.active)
+        .map((c) => c.i % 10);
+    }
+
+    const pausedCols = activeCols();
+    const resumeBtn = within(screen.getByRole("dialog", { name: /paused/i })).getByRole("button", { name: /resume/i });
+    act(() => {
+      fireEvent.click(resumeBtn);
+    });
+
+    expect(screen.queryByRole("dialog", { name: /paused/i })).toBeNull();
+    expect(activeCols()).toEqual(pausedCols);
+  });
 });

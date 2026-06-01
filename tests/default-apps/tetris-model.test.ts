@@ -268,6 +268,34 @@ describe("hold piece", () => {
     const twice = holdPiece(once, rng());
     expect(twice).toBe(once); // unchanged because canHold is false
   });
+
+  it("sets game over when first hold spawns into blocked top rows", () => {
+    const game = createGame(rng());
+    const board = emptyBoard();
+    for (let r = 0; r < 4; r++) {
+      fillRowExcept(board, r, 0, "Z");
+    }
+
+    const after = holdPiece({ ...game, board }, rng());
+
+    expect(after.over).toBe(true);
+    expect(after.active).toBeNull();
+    expect(after.hold).toBe(game.active!.type);
+  });
+
+  it("sets game over when swapping hold into blocked top rows", () => {
+    const game = createGame(rng());
+    const board = emptyBoard();
+    for (let r = 0; r < 4; r++) {
+      fillRowExcept(board, r, 0, "Z");
+    }
+
+    const after = holdPiece({ ...game, board, hold: "I", canHold: true }, rng());
+
+    expect(after.over).toBe(true);
+    expect(after.active).toBeNull();
+    expect(after.hold).toBe(game.active!.type);
+  });
 });
 
 describe("ghost & top-out", () => {

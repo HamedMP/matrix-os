@@ -288,8 +288,9 @@ export default function App() {
               title: "Game over",
               body: `You cleared ${game.lines} lines and scored ${game.score.toLocaleString()}.`,
               cta: "Play again",
-            }
+          }
           : null;
+  const overlayAction = phase === "paused" ? togglePause : startGame;
 
   return (
     <main className={reduced ? "tetris-app tetris-app--reduced" : "tetris-app"}>
@@ -325,7 +326,7 @@ export default function App() {
                     <Trophy size={16} /> Best {best.toLocaleString()}
                   </div>
                 )}
-                <button type="button" className="primary-action" onClick={startGame}>
+                <button type="button" className="primary-action" onClick={overlayAction}>
                   <Play size={18} /> {overlay.cta}
                 </button>
                 {saveNote && phase === "over" && <span className="overlay__note">{saveNote}</span>}

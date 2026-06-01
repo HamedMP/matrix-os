@@ -389,9 +389,21 @@ export function holdPiece(state: GameState, rng: Rng = Math.random): GameState {
   if (state.hold === null) {
     const { type, queue, bag } = pullNext(state, rng);
     const next = spawnPiece(type);
+    if (!isValid(state.board, next)) {
+      return {
+        ...state,
+        active: null,
+        hold: current,
+        queue,
+        bag,
+        canHold: false,
+        over: true,
+        lastCleared: [],
+      };
+    }
     return {
       ...state,
-      active: isValid(state.board, next) ? next : next,
+      active: next,
       hold: current,
       queue,
       bag,
@@ -399,6 +411,16 @@ export function holdPiece(state: GameState, rng: Rng = Math.random): GameState {
     };
   }
   const swapped = spawnPiece(state.hold);
+  if (!isValid(state.board, swapped)) {
+    return {
+      ...state,
+      active: null,
+      hold: current,
+      canHold: false,
+      over: true,
+      lastCleared: [],
+    };
+  }
   return {
     ...state,
     active: swapped,
