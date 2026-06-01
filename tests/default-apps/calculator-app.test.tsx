@@ -119,6 +119,28 @@ describe("Calculator app", () => {
     expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe("[]");
   });
 
+  it("ignores a concurrent clear while deletion is already in flight", async () => {
+    const rows = [
+      { id: "h1", expression: "1 + 1", result: "2", created_at: "2026-05-31T10:00:00.000Z" },
+      { id: "h2", expression: "2 + 2", result: "4", created_at: "2026-05-31T10:01:00.000Z" },
+    ];
+    const db = installMatrixDb(rows);
+    render(<App />);
+
+    await screen.findByText("Clear");
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+
+    fireEvent.click(clearHistory!);
+    fireEvent.click(clearHistory!);
+
+    await waitFor(() => {
+      expect(db.delete).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("shows an onboarding empty state when history is empty", async () => {
     installMatrixDb([]);
     render(<App />);

@@ -127,6 +127,7 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const usingDbRef = useRef(false);
   const committingRef = useRef(false);
+  const clearingRef = useRef(false);
 
   // --- Persistence ---------------------------------------------------------
   const reload = useCallback(async (): Promise<LoadState> => {
@@ -303,11 +304,14 @@ export default function App() {
   }, []);
 
   const clearHistory = useCallback(async () => {
+    if (clearingRef.current) return;
+    clearingRef.current = true;
     const rows = history;
     setHistory([]);
     writeLocal([]);
     const db = window.MatrixOS?.db;
     if (!db) {
+      clearingRef.current = false;
       return;
     }
     try {
@@ -332,6 +336,8 @@ export default function App() {
       setError("History could not be cleared.");
       setHistory(rows);
       await reload();
+    } finally {
+      clearingRef.current = false;
     }
   }, [history, reload]);
 

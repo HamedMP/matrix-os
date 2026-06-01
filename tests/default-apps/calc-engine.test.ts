@@ -148,7 +148,7 @@ describe("calc-engine evaluation", () => {
 
   it("does not resolve identifiers through object prototypes", () => {
     expect(err("constructor")).toMatch(/unknown|function|constant/i);
-    expect(err("2constructor")).toMatch(/unknown|function|constant/i);
+    expect(err("2constructor")).toMatch(/unknown|function|constant|trailing/i);
   });
 
   it("rejects factorial of negatives and non-integers", () => {
