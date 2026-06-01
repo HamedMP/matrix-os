@@ -35,8 +35,11 @@ final human review.
   PR is `5/5`, unless the requester explicitly overrides this gate.
 - If the `ready-for-ci` label is missing from the repository, stop and report
   the blocker instead of creating a label silently.
-- Never force-push over remote work unless the requester explicitly approves
-  that exact risk.
+- Never force-push over remote work outside Graphite-managed stack branches
+  unless the requester explicitly approves that exact risk. Graphite restacks
+  necessarily rewrite stack branch SHAs; they are permitted only after verifying
+  the branch is part of the requested stack and the remote head still matches
+  the head observed before editing/submitting.
 - Keep fixes in the relevant stack layer. If a finding belongs to a lower PR,
   check out that branch, patch there, amend or commit with Graphite, then
   restack descendants.
@@ -75,7 +78,16 @@ final human review.
    - For each actionable finding, edit the owning branch, add/adjust focused
      tests where practical, and rerun the narrow relevant tests.
    - Use Graphite to modify/restack and submit updates:
-     `gt modify --all`, `gt restack`, and `gt submit --stack --no-edit --no-ai`.
+     `gt modify --all` or `gt modify --commit --all --message "<conventional commit>"`,
+     `gt restack` when needed, and `gt submit --stack --no-edit --no-ai`.
+   - Before staging, inspect `git status --short --branch` and stage only files
+     belonging to the owning branch's fix. Before submitting, verify the
+     current remote head for every branch that will be rewritten still matches
+     the head recorded before edits; if it changed unexpectedly, stop and
+     report the remote-work conflict.
+   - Run `git diff --check` and the narrow relevant tests before submitting.
+     For backend, shell, or shared behavior, also run the relevant typecheck or
+     pattern scanner when practical and report any skipped broad gate.
    - If a finding is ambiguous or conflicts with the product intent, draft a
      concise response and ask before changing behavior.
 
