@@ -101,13 +101,13 @@ describe("alarm helpers", () => {
     expect(shouldAlarmFire(alarm, at)).toBe(false);
   });
 
-  it("fires a one-shot at exactly its time at second 0", () => {
+  it("fires a one-shot throughout its matching minute", () => {
     const alarm: AlarmModel = { id: "a", time: "07:00", label: "", repeat: [], enabled: true };
     const at = new Date(2026, 5, 1, 7, 0, 0); // local Mon 07:00:00
-    const off = new Date(2026, 5, 1, 7, 0, 30); // 07:00:30
+    const withinMinute = new Date(2026, 5, 1, 7, 0, 30); // 07:00:30
     const wrong = new Date(2026, 5, 1, 7, 1, 0);
     expect(shouldAlarmFire(alarm, at)).toBe(true);
-    expect(shouldAlarmFire(alarm, off)).toBe(false);
+    expect(shouldAlarmFire(alarm, withinMinute)).toBe(true);
     expect(shouldAlarmFire(alarm, wrong)).toBe(false);
   });
 

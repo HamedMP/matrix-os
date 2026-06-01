@@ -161,6 +161,16 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       parseSafeName(table, "table");
       if (updates.length === 0) return;
       if (updates.length > 200) throw new Error("bulkUpdate: too many rows");
+      const seenIds = new Set<string>();
+      for (const update of updates) {
+        if (typeof update.id !== "string" || update.id.length === 0) {
+          throw new Error("bulkUpdate: id is required");
+        }
+        if (seenIds.has(update.id)) {
+          throw new Error("bulkUpdate: duplicate id");
+        }
+        seenIds.add(update.id);
+      }
 
       const cols = Array.from(new Set(updates.flatMap((update) => Object.keys(update.data)))).filter((col) => {
         parseSafeName(col, "column");
@@ -172,9 +182,6 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       const setClauses = cols.map((col) => {
         const cases: string[] = [];
         for (const update of updates) {
-          if (typeof update.id !== "string" || update.id.length === 0) {
-            throw new Error("bulkUpdate: id is required");
-          }
           if (Object.prototype.hasOwnProperty.call(update.data, col)) {
             params.push(update.id, update.data[col]);
             cases.push(`WHEN $${params.length - 1} THEN $${params.length}`);

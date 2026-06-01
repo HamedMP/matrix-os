@@ -86,6 +86,17 @@ function allTimeZones(): string[] {
 // --- audio (WebAudio beep, gracefully degrades) --------------------------------
 
 let sharedCtx: AudioContext | null = null;
+let audioCleanupRegistered = false;
+
+function closeSharedCtx(): void {
+  const ctx = sharedCtx;
+  sharedCtx = null;
+  if (!ctx || ctx.state === "closed") return;
+  void ctx.close().catch((err: unknown) => {
+    console.warn("[clock] audio cleanup failed:", err instanceof Error ? err.message : String(err));
+  });
+}
+
 function getCtx(): AudioContext | null {
   try {
     const Ctor =
@@ -93,7 +104,13 @@ function getCtx(): AudioContext | null {
         .AudioContext ||
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return null;
-    if (!sharedCtx) sharedCtx = new Ctor();
+    if (!sharedCtx) {
+      sharedCtx = new Ctor();
+      if (!audioCleanupRegistered) {
+        audioCleanupRegistered = true;
+        window.addEventListener("pagehide", closeSharedCtx);
+      }
+    }
     return sharedCtx;
   } catch (err) {
     console.warn("[clock] audio unavailable:", err instanceof Error ? err.message : String(err));
@@ -628,7 +645,6 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
       snoozedRef.current = snoozedRef.current.filter((entry) => entry !== dueSnooze);
       setRinging(dueSnooze.alarm);
       beep(3);
-      return;
     }
 
     const key = alarmMinuteKey(now);
@@ -893,6 +909,7 @@ function Timers() {
   const [timers, setTimers] = useState<TimerInstance[]>([]);
   const [draft, setDraft] = useState("5:00");
   const [label, setLabel] = useState("");
+  const [draftError, setDraftError] = useState<string | null>(null);
   const beepedTimersRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -947,6 +964,11 @@ function Timers() {
 
   const startCustom = useCallback(() => {
     const seconds = parseDuration(draft);
+    if (seconds <= 0) {
+      setDraftError("Enter a duration greater than zero.");
+      return;
+    }
+    setDraftError(null);
     addTimer(seconds, label);
     setLabel("");
   }, [addTimer, draft, label]);
@@ -982,9 +1004,13 @@ function Timers() {
           <input
             className="duration-input"
             aria-label="Timer duration"
+            aria-invalid={draftError ? "true" : "false"}
             placeholder="MM:SS"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (draftError) setDraftError(null);
+            }}
             onKeyDown={(e) => e.key === "Enter" && startCustom()}
           />
           <input
@@ -999,6 +1025,7 @@ function Timers() {
             <Plus size={16} /> Start
           </button>
         </div>
+        {draftError ? <div className="banner banner--error">{draftError}</div> : null}
       </div>
 
       {timers.length === 0 ? (

@@ -317,12 +317,12 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 		      },
 
 		      delete: function(table, id) {
-	        return parentFetch("/api/bridge/query", {
-	          method: "POST",
-	          headers: { "Content-Type": "application/json" },
-	          body: JSON.stringify({ app: app, action: "delete", table: table, id: id })
-	        }, 10000).then(function(r) { return r.json(); });
-	      },
+		        return parentFetch("/api/bridge/query", {
+		          method: "POST",
+		          headers: { "Content-Type": "application/json" },
+		          body: JSON.stringify({ app: app, action: "delete", table: table, id: id })
+		        }, 10000).then(function(r) { return r.json(); });
+		      },
 
 	      count: function(table, filter) {
 	        return parentFetch("/api/bridge/query", {

@@ -236,7 +236,6 @@ export function shouldAlarmFire(alarm: AlarmModel, now: Date = new Date()): bool
   const m = Number(mStr);
   if (!Number.isInteger(h) || !Number.isInteger(m)) return false;
   if (now.getHours() !== h || now.getMinutes() !== m) return false;
-  if (now.getSeconds() !== 0) return false;
   const repeat = normalizeDays(alarm.repeat);
   if (repeat.length === 0) return true; // one-shot fires whenever the clock hits the time
   return repeat.includes(now.getDay() as WeekDay);

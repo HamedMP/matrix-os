@@ -208,7 +208,7 @@ describe("Clock app", () => {
 
   it("rings alarms while another tab is active, disables one-shot alarms, and snoozes", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-01T06:59:59.000Z"));
+    vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
     const db = installMatrixDb({
       zones: [],
       alarms: [{ id: "alarm-1", time: "07:00", label: "Morning", repeat: "", enabled: true }],
@@ -235,6 +235,18 @@ describe("Clock app", () => {
     });
 
     expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
+  });
+
+  it("shows feedback for invalid custom timer input", async () => {
+    installMatrixDb({ zones: [], alarms: [] });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /timers?/i }));
+    fireEvent.change(screen.getByLabelText("Timer duration"), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: /^start$/i }));
+
+    expect(await screen.findByText(/duration greater than zero/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /start or pause/i })).toBeNull();
   });
 
   it("marks a timer done when it reaches zero", async () => {

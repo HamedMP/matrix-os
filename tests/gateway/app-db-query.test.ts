@@ -166,6 +166,17 @@ describe("QueryEngine", () => {
     expect(rows.map((row) => row.title)).toEqual(["B", "A"]);
   });
 
+  it("rejects duplicate ids in bulk updates", async () => {
+    const { id } = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+
+    await expect(
+      engine.bulkUpdate("todo", "tasks", [
+        { id, data: { priority: 2 } },
+        { id, data: { priority: 3 } },
+      ]),
+    ).rejects.toThrow(/duplicate id/i);
+  });
+
   it("deletes a row by id", async () => {
     const { id } = await engine.insert("todo", "tasks", { title: "Delete me", done: false });
     await engine.delete("todo", "tasks", id);
