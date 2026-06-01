@@ -182,10 +182,11 @@ Match this shape (copy from pomodoro/notes and adapt). `slug` and `icon` are req
 
 - `icon` must be a slug that has (or will have, created by you) a matching shipped icon asset under
   `home/system/icons/<icon>.png` or `.svg`. The current preferred generated raster direction is light
-  iOS/macOS skeuomorphic source artwork: full square image with the background continuing into all
-  four square corners, no rounded canvas corners, no rounded-square tile, no black/dark/transparent
-  corner mask, glossy ceramic/glass object, no text, no logos. Do not reuse an unrelated icon. Games
-  must not share `game-center`; every game gets a concrete icon.
+  iOS/macOS skeuomorphic app icon artwork: refined Apple-like product rendering, bright light
+  background, glossy ceramic/glass object, no text, no logos, no transparent background, and no
+  separate visible icon frame baked into the artwork. Do not reuse an unrelated icon. Built-ins use
+  their own concrete icons (`terminal`, `workspace`, `files`, `chat`); games must not share
+  `game-center`; every game gets a concrete icon.
 - Omit `storage` entirely if the app has no durable structured data.
 
 ## 5. TDD (non-negotiable — this repo enforces it)

@@ -25,11 +25,25 @@ describe("app launch helpers", () => {
     })).toBe("apps/legacy.html");
   });
 
-  it("uses shipped SVG icon URLs when no PNG is shipped", () => {
-    expect(iconUrlForSlug("terminal")).toBe("/icons/terminal.svg");
+  it("uses shipped PNG app icon URLs and SVG URLs for system chrome", () => {
+    expect(iconUrlForSlug("2048")).toBe("/icons/2048.png");
+    expect(iconUrlForSlug("backgammon")).toBe("/icons/backgammon.png");
+    expect(iconUrlForSlug("chess")).toBe("/icons/chess.png");
+    expect(iconUrlForSlug("calculator")).toBe("/icons/calculator.png");
+    expect(iconUrlForSlug("calorie-tracker")).toBe("/icons/calorie-tracker.png");
+    expect(iconUrlForSlug("terminal")).toBe("/icons/terminal.png");
+    expect(iconUrlForSlug("workspace")).toBe("/icons/workspace.png");
+    expect(iconUrlForSlug("files")).toBe("/icons/files.png");
+    expect(iconUrlForSlug("chat")).toBe("/icons/chat.png");
     expect(iconUrlForSlug("folder")).toBe("/icons/folder.svg");
-    expect(iconUrlForSlug("chat")).toBe("/icons/chat.svg");
     expect(iconUrlForSlug("game-center")).toBe("/icons/game-center.png");
+    expect(iconUrlForSlug("grid")).toBe("/icons/grid.svg");
+    expect(iconUrlForSlug("layers")).toBe("/icons/layers.svg");
+    expect(iconUrlForSlug("minesweeper")).toBe("/icons/minesweeper.png");
+    expect(iconUrlForSlug("pomodoro-timer")).toBe("/icons/pomodoro-timer.png");
+    expect(iconUrlForSlug("snake")).toBe("/icons/snake.png");
+    expect(iconUrlForSlug("solitaire")).toBe("/icons/solitaire.png");
+    expect(iconUrlForSlug("tetris")).toBe("/icons/tetris.png");
   });
 
   it("keeps project context for valid project slugs that are not icon slugs", () => {

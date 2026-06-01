@@ -55,6 +55,7 @@ import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
+import { iconUrlForSlug } from "@/lib/app-launch";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
@@ -89,11 +90,6 @@ const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
   backgroundSize: "300% 100%",
   animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
 };
-
-function iconUrlForSlug(slug: string | undefined): string | undefined {
-  if (!slug) return undefined;
-  return `/icons/${encodeURIComponent(slug)}.png`;
-}
 
 function MatrixFirstRunLoading() {
   return (
@@ -727,7 +723,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const checkAndGenerateIcon = useCallback((slug: string) => {
     if (checkedRef.current!.has(slug) || generatingRef.current!.has(slug)) return;
     checkedRef.current!.add(slug);
-    const iconPath = `/icons/${slug}.png`;
+    const iconPath = iconUrlForSlug(slug);
+    if (!iconPath) return;
     fetch(`${GATEWAY_URL}${iconPath}`, {
       method: "HEAD",
       signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
@@ -735,7 +732,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       if (res.ok) {
         const etag = res.headers.get("etag");
         if (etag) {
-          const versionedUrl = versionedIconUrl(`/icons/${slug}.png`, etag);
+          const versionedUrl = versionedIconUrl(iconPath, etag);
           wmSetApps((prev) =>
             prev.map((a) =>
               nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
@@ -779,7 +776,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     ...a,
                     name: newName,
                     path: newPath,
-                    iconUrl: `/icons/${ns}.png`,
+                    iconUrl: iconUrlForSlug(ns),
                   };
                 }
                 return a;
@@ -812,7 +809,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const addApp = useCallback((name: string, path: string, iconSlug?: string) => {
     const iconUrl = iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
-      if (prev.find((a) => a.path === path)) return prev;
+      const existing = prev.find((a) => a.path === path);
+      if (existing) {
+        if (existing.name === name && existing.iconUrl === iconUrl) return prev;
+        return prev.map((app) => app.path === path ? { ...app, name, iconUrl } : app);
+      }
       return [...prev, { name, path, iconUrl }];
     });
     if (iconSlug) checkAndGenerateIcon(iconSlug);
@@ -972,8 +973,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
       // Register built-in apps
       addApp("Terminal", "__terminal__", "terminal");
-      addApp("Workspace", "__workspace__", "code");
-      addApp("Files", "__file-browser__", "folder");
+      addApp("Workspace", "__workspace__", "workspace");
+      addApp("Files", "__file-browser__", "files");
       addApp("Hermes", "__chat__", "chat");
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {

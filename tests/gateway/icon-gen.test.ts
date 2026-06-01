@@ -42,7 +42,7 @@ function createIconApp(homePath: string) {
       } catch { /* ignore */ }
     }
     if (!iconStyle) {
-      iconStyle = "Light premium iOS/macOS skeuomorphic source artwork for an app icon. Render a complete full-square 1:1 image with four visible 90-degree square corners; the bright warm off-white or pale pastel background must continue uninterrupted all the way into every corner. Absolutely no rounded canvas corners, no rounded-square tile, no app-icon frame, no corner mask, no black/dark/transparent corners, no vignette hiding the corners, and no border radius baked into the image.";
+      iconStyle = "Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering. Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly represents the app.";
     }
 
     const client = createImageClient("test-key");
@@ -112,9 +112,8 @@ describe("POST /api/apps/:slug/icon", () => {
   it("uses default light skeuomorphic icon style when no desktop.json", async () => {
     const res = await app.request("/api/apps/timer/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
-    expect(body.prompt).toContain("Light premium iOS/macOS skeuomorphic source artwork");
-    expect(body.prompt).toContain("no rounded canvas corners");
-    expect(body.prompt).toContain("no black/dark/transparent corners");
+    expect(body.prompt).toContain("Light premium iOS/macOS skeuomorphic app icon artwork");
+    expect(body.prompt).toContain("refined Apple-like product rendering");
     expect(body.prompt).toContain("timer");
   });
 

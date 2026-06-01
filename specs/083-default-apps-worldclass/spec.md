@@ -90,18 +90,14 @@ This replaces the earlier flat sage/clay prompt.
 
 Canonical generation prompt:
 
-> Light premium iOS/macOS skeuomorphic source artwork for an app icon. Render a complete full-square
-> 1:1 image with four visible 90-degree square corners; the bright warm off-white or pale pastel
-> background must continue uninterrupted all the way into every corner. This is source artwork that
-> Matrix clips later, not the final masked icon. Absolutely no rounded canvas corners, no rounded-square
-> tile, no app-icon frame, no corner mask, no black/dark/transparent corners, no vignette hiding the
-> corners, and no border radius baked into the image. Use subtle ceramic/glass depth, soft bevels,
-> glossy highlights, realistic studio shadows, and one large tactile 3D object or symbol that clearly
-> represents the app. Use refined Apple-like product rendering, light neumorphism, dimensional
+> Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering.
+> Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background,
+> subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single
+> large tactile 3D object or symbol that clearly represents the app. Use dimensional
 > glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent
-> lighting across the icon family. Do not include text, letters, numbers unless the app identity truly
-> requires it, logos, watermarks, transparent background, black/dark dock backgrounds, visible
-> rounded-square frame, or empty padding.
+> lighting across the icon family. Do not include text, logos, watermarks, transparent background,
+> black/dark dock backgrounds, or empty padding. The Matrix shell owns the final corner radius, so do
+> not bake a separate visible icon frame into the artwork.
 
 Per-app subject guidance:
 
