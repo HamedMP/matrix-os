@@ -668,7 +668,7 @@ function Inspector({
           value={toDateInputValue(task.due)}
           onChange={(e) => {
             const due = fromDateInputValue(e.target.value);
-            onPatch(due ? { due } : { due: null });
+            onPatch(due ? { due } : { due: null, recur: null });
           }}
         />
       </label>

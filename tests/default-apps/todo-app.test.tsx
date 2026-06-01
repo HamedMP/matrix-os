@@ -148,6 +148,9 @@ describe("Todo app", () => {
     await waitFor(() => {
       expect(db.update).toHaveBeenCalledWith("tasks", "t1", { status: "open" });
     });
+    expect(await screen.findByText("Standup")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /complete .*standup/i })).toBeTruthy();
+    expect(screen.queryByText(/tomorrow/i)).toBeNull();
   });
 
   it("requires a due date before completing a repeating task", async () => {
@@ -181,7 +184,7 @@ describe("Todo app", () => {
     expect(db.update).not.toHaveBeenCalledWith("tasks", "t1", { status: "done" });
   });
 
-  it("preserves recurrence when clearing a due date", async () => {
+  it("clears recurrence when clearing a due date", async () => {
     const db = installMatrixDb([
       {
         id: "t1",
@@ -203,13 +206,8 @@ describe("Todo app", () => {
     fireEvent.change(dueInput, { target: { value: "" } });
 
     await waitFor(() => {
-      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { due: null });
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { due: null, recur: null });
     });
-    expect(db.update).not.toHaveBeenCalledWith(
-      "tasks",
-      "t1",
-      expect.objectContaining({ recur: null }),
-    );
   });
 
   it("filters tasks into Today and Upcoming views", async () => {
