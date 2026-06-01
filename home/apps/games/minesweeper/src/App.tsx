@@ -226,7 +226,7 @@ export default function App(): React.ReactElement {
             });
             await Promise.all(
               rows
-                .filter((row) => typeof row.id === "string" && row.id !== inserted.id && Number(row.seconds) >= secs)
+                .filter((row) => typeof row.id === "string" && row.id !== inserted.id && Number(row.seconds) > secs)
                 .map((row) => db.delete("times", row.id as string)),
             );
           } catch (err) {
@@ -547,7 +547,9 @@ export default function App(): React.ReactElement {
           </div>
           <output className="ms-status" aria-live="polite">
             {board.status === "won"
-              ? "Cleared! 🎉"
+              ? statusMsg
+                ? `Cleared! ${statusMsg}`
+                : "Cleared! 🎉"
               : board.status === "lost"
                 ? "Boom — try again"
                 : statusMsg}
