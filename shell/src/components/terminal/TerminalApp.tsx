@@ -142,7 +142,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
 
 const DEFAULT_CWD = "projects";
 const DEFAULT_SHELL_SESSION_NAME = "main";
-const SHELL_SESSION_REFRESH_MS = 5_000;
 
 interface Tab {
   id: string;
@@ -245,6 +244,21 @@ function layoutUsesOnlyCanonicalShellSessions(layout: TerminalLayout): boolean {
   return sessionIds.length > 0 && sessionIds.every((sessionId) => isCanonicalShellSessionId(sessionId));
 }
 
+function getCanonicalShellSessionIds(layout: TerminalLayout): string[] {
+  if (!Array.isArray(layout.tabs)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  for (const tab of layout.tabs) {
+    for (const sessionId of getSessionIds(tab.paneTree)) {
+      if (isCanonicalShellSessionId(sessionId)) {
+        seen.add(sessionId);
+      }
+    }
+  }
+  return Array.from(seen);
+}
+
 function destroyTerminalSessions(sessionIds: string[]) {
   const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
   for (const sessionId of uniqueIds) {
@@ -273,29 +287,55 @@ function destroyTerminalSessions(sessionIds: string[]) {
   }
 }
 
-async function ensureDefaultShellSession(): Promise<boolean> {
+async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
+  const requestedNames = Array.from(new Set(
+    sessionNames.filter((name) => isCanonicalShellSessionId(name)),
+  ));
+  if (requestedNames.length === 0) {
+    return true;
+  }
+
   try {
     const listRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
       signal: AbortSignal.timeout(10_000),
     });
+    const existingNames = new Set<string>();
     if (listRes.ok) {
       const data = await listRes.json() as { sessions?: Array<{ name?: unknown }> };
-      if (Array.isArray(data.sessions) && data.sessions.some((session) => session.name === DEFAULT_SHELL_SESSION_NAME)) {
-        return true;
+      if (Array.isArray(data.sessions)) {
+        for (const session of data.sessions) {
+          if (typeof session.name === "string") {
+            existingNames.add(session.name);
+          }
+        }
       }
     }
 
-    const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: DEFAULT_SHELL_SESSION_NAME, cwd: DEFAULT_CWD }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    return createRes.ok || createRes.status === 409;
+    for (const name of requestedNames) {
+      if (existingNames.has(name)) {
+        continue;
+      }
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered repair: each missing saved zellij session is recreated once before layout restore; these are user-visible session names, not a fan-out workload.
+      const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, cwd: DEFAULT_CWD }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!createRes.ok && createRes.status !== 409) {
+        return false;
+      }
+    }
+
+    return true;
   } catch (err: unknown) {
-    console.warn("Failed to ensure default terminal session:", err instanceof Error ? err.message : err);
+    console.warn("Failed to ensure terminal sessions:", err instanceof Error ? err.message : err);
     return false;
   }
+}
+
+async function ensureDefaultShellSession(): Promise<boolean> {
+  return ensureShellSessions([DEFAULT_SHELL_SESSION_NAME]);
 }
 
 function getSafePreferencesSessionName(value: string | null): string | null {
@@ -528,14 +568,17 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-              const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-              setTabs(data.tabs);
-              setActiveTabId(nextActiveTabId);
-              setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-              setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
-              setInitialized(true);
-              return;
+              const sessionReady = await ensureShellSessions(getCanonicalShellSessionIds(data));
+              if (!cancelled && sessionReady) {
+                const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+                const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+                setTabs(data.tabs);
+                setActiveTabId(nextActiveTabId);
+                setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+                setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+                setInitialized(true);
+                return;
+              }
             }
 
             const sessionReady = await ensureDefaultShellSession();
@@ -1227,6 +1270,55 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
+function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((session, index) => {
+    const next = right[index];
+    if (!next) return false;
+    if (
+      session.name !== next.name ||
+      session.status !== next.status ||
+      session.updatedAt !== next.updatedAt ||
+      session.attachedClients !== next.attachedClients
+    ) {
+      return false;
+    }
+    const tabs = session.tabs ?? [];
+    const nextTabs = next.tabs ?? [];
+    if (tabs.length !== nextTabs.length) return false;
+    return tabs.every((tab, tabIndex) => {
+      const nextTab = nextTabs[tabIndex];
+      if (!nextTab) return false;
+      return (
+        tab.idx === nextTab.idx &&
+        tab.name === nextTab.name &&
+        tab.focused === nextTab.focused
+      );
+    });
+  });
+}
+
+function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((session, index) => {
+    const next = right[index];
+    return (
+      next !== undefined &&
+      session.id === next.id &&
+      session.kind === next.kind &&
+      session.projectSlug === next.projectSlug &&
+      session.taskId === next.taskId &&
+      session.worktreeId === next.worktreeId &&
+      session.pr === next.pr &&
+      session.agent === next.agent &&
+      session.runtime?.status === next.runtime?.status &&
+      session.status === next.status &&
+      session.transcriptPath === next.transcriptPath &&
+      (session.nativeAttachCommand ?? []).join("\u0000") === (next.nativeAttachCommand ?? []).join("\u0000")
+    );
+  });
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
@@ -1248,7 +1340,6 @@ function LocalTerminalSidebar() {
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
-  const shellPollAbortRef = useRef<AbortController | null>(null);
 
   const selectSidebarTab = (nextTab: SidebarTab) => {
     setTab(nextTab);
@@ -1286,7 +1377,7 @@ function LocalTerminalSidebar() {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load and shells-poll useEffects below.
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
     if (!options.silent) setShellsLoading(true);
     if (!options.silent) setShellsError(null);
@@ -1301,7 +1392,8 @@ function LocalTerminalSidebar() {
         return;
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
-      setShells(Array.isArray(data.sessions) ? data.sessions : []);
+      const nextShells = Array.isArray(data.sessions) ? data.sessions : [];
+      setShells((prev) => shellSessionsEqual(prev, nextShells) ? prev : nextShells);
       setShellsError(null);
     } catch (err: unknown) {
       if (options.silent && err instanceof DOMException && err.name === "AbortError") return;
@@ -1316,31 +1408,6 @@ function LocalTerminalSidebar() {
   useEffect(() => {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the shell-session list when the Shells tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "shells") void fetchShells();
-  }, [fetchShells, tab]);
-
-  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- teardown must abort the LIVE in-flight poll controller: shellPollAbortRef.current is reassigned by each refresh(), so snapshotting it at effect setup would capture null and never cancel the request that is actually outstanding at unmount/tab-switch
-  useEffect(() => {
-    if (tab !== "shells") return;
-    const refresh = () => {
-      shellPollAbortRef.current?.abort();
-      const controller = new AbortController();
-      shellPollAbortRef.current = controller;
-      const timeout = setTimeout(() => controller.abort(), 10_000);
-      void fetchShells({ silent: true, signal: controller.signal }).finally(() => {
-        clearTimeout(timeout);
-        if (shellPollAbortRef.current === controller) {
-          shellPollAbortRef.current = null;
-        }
-      });
-    };
-    const timer = setInterval(() => {
-      refresh();
-    }, SHELL_SESSION_REFRESH_MS);
-    return () => {
-      clearInterval(timer);
-      shellPollAbortRef.current?.abort();
-      shellPollAbortRef.current = null;
-    };
   }, [fetchShells, tab]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchSessions` is in the dependency array of the sessions-tab useEffect below.
@@ -1358,9 +1425,10 @@ function LocalTerminalSidebar() {
         return;
       }
       const data = (await res.json()) as { sessions?: WorkspaceSessionSummary[] };
-      setSessions(Array.isArray(data.sessions)
+      const nextSessions = Array.isArray(data.sessions)
         ? data.sessions.filter((session) => typeof session.id === "string" && session.id.length > 0)
-        : []);
+        : [];
+      setSessions((prev) => workspaceSessionsEqual(prev, nextSessions) ? prev : nextSessions);
     } catch (err: unknown) {
       console.warn("Failed to load workspace sessions:", err instanceof Error ? err.message : err);
       setSessionsError("Could not reach gateway");

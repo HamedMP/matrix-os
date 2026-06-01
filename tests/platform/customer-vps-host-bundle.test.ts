@@ -343,6 +343,17 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
   });
 
+  it('sync agent periodically cleans stale local bundle artifacts', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('readonly STAGING_ARTIFACT_TTL_SECONDS="${MATRIX_STAGING_ARTIFACT_TTL_SECONDS:-86400}"');
+    expect(syncAgent).toContain('readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SECONDS:-3600}"');
+    expect(syncAgent).toContain("find \"$STAGING_DIR\" -mindepth 1 -maxdepth 1 \\( -name 'failed-*' -o -name 'bundle-*' \\) -print0");
+    expect(syncAgent).toContain('maybe_clean_staging');
+    expect(syncAgent).toContain('clean_staging || true');
+  });
+
   it('sync agent replaces the app tree with root permissions', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
