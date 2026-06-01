@@ -261,8 +261,6 @@ describe("backgammon-model — must use both dice / larger die rule", () => {
     place(s, 13, "white", 1);
     place(s, 1, "white", 14);
     place(s, 12, "black", 2); // blocks 13->12 (small die) destination directly
-    place(s, 7, "white", 0);
-    // also block the follow-up of the small die so the engine can't chain
     const st = startTurn(s, rollFromValues(6, 1));
     const moves = generateLegalMoves(st);
     // small die (1) destination 12 is blocked, so only the 6 (->7) is available.

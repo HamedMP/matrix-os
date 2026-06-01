@@ -315,16 +315,32 @@ export function hasAnyMove(state: GameState): boolean {
 }
 
 // Max number of die-plays the player could make from this position (search).
-function maxPlayable(state: GameState): number {
+function maxPlayableKey(state: GameState): string {
+  const points = state.points
+    .slice(1)
+    .map((point) => `${point.player?.[0] ?? "-"}${point.count}`)
+    .join(",");
+  return `${state.turn}|${state.movesLeft.join(",")}|${state.bar.white},${state.bar.black}|${state.off.white},${state.off.black}|${points}`;
+}
+
+function maxPlayable(state: GameState, memo = new Map<string, number>()): number {
   if (state.movesLeft.length === 0) return 0;
+  const key = maxPlayableKey(state);
+  const cached = memo.get(key);
+  if (cached !== undefined) return cached;
   const moves = rawLegalMoves(state);
-  if (moves.length === 0) return 0;
+  if (moves.length === 0) {
+    memo.set(key, 0);
+    return 0;
+  }
   let best = 0;
   for (const m of moves) {
     const after = applyMove(state, m);
-    const sub = 1 + maxPlayable(after);
+    const sub = 1 + maxPlayable(after, memo);
     if (sub > best) best = sub;
+    if (best >= state.movesLeft.length) break;
   }
+  memo.set(key, best);
   return best;
 }
 
@@ -334,12 +350,13 @@ export function generateLegalMoves(state: GameState): Move[] {
   if (raw.length === 0) return [];
 
   // Doubles or already-partial turns: still enforce maximal usage.
-  const maxUse = maxPlayable(state);
+  const maxPlayableMemo = new Map<string, number>();
+  const maxUse = maxPlayable(state, maxPlayableMemo);
 
   // Keep only moves that allow the player to reach the maximum number of die-plays.
   let filtered = raw.filter((m) => {
     const after = applyMove(state, m);
-    return 1 + maxPlayable(after) >= maxUse;
+    return 1 + maxPlayable(after, maxPlayableMemo) >= maxUse;
   });
 
   // Special rule: when only ONE die can be played (maxUse === 1) and the two dice differ,

@@ -324,9 +324,10 @@ export default function App() {
   );
 
   const handleUndo = useCallback(() => {
+    if (result) return;
     setState((prev) => undoMove(prev));
     setSelected(null);
-  }, []);
+  }, [result]);
 
   const handleNewGame = useCallback(() => {
     setState(createInitialState());
@@ -503,7 +504,7 @@ export default function App() {
             type="button"
             className="bg-btn icon"
             onClick={handleUndo}
-            disabled={state.history.length === 0}
+            disabled={!!result || state.history.length === 0}
             title="Undo (U)"
             aria-label="Undo"
           >
