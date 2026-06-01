@@ -71,7 +71,9 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
 
   useEffect(() => {
     if (!editor || lastAppliedNoteIdRef.current === note.id) return;
+    const previousNoteId = lastAppliedNoteIdRef.current;
     lastAppliedNoteIdRef.current = note.id;
+    if (previousNoteId?.startsWith("note-") && !note.id.startsWith("note-")) return;
     closeSlash();
     editor.commands.setContent(
       note.content_json.content?.length ? note.content_json : markdownToHtml(note.content),

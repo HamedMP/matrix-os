@@ -60,4 +60,14 @@ describe("RichEditor", () => {
     expect(event).toBe(false);
     expect(screen.getByRole("menu", { name: "Insert block" })).toBeTruthy();
   });
+
+  it("does not reset content when a temporary note id is promoted", () => {
+    const tempNote = { ...note, id: "note-temp" };
+    const { rerender } = render(<RichEditor note={tempNote} onChange={vi.fn()} />);
+    fakeEditor.commands.setContent.mockClear();
+
+    rerender(<RichEditor note={{ ...tempNote, id: "db-note" }} onChange={vi.fn()} />);
+
+    expect(fakeEditor.commands.setContent).not.toHaveBeenCalled();
+  });
 });
