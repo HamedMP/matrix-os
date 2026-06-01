@@ -105,15 +105,7 @@ function buildThemeStyleBlock(themeVars: ThemeVars): string {
   return `:root {\n${entries}\n  }`;
 }
 
-function escapeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function withCredentialedAssets(html: string): string {
+export function withCredentialedAssets(html: string): string {
   const credentialScript = (tag: string) => {
     if (!/\bsrc\s*=/i.test(tag)) return tag;
     return /\bcrossorigin\b/i.test(tag)
@@ -130,32 +122,6 @@ function withCredentialedAssets(html: string): string {
   return html
     .replace(/<script\b[^>]*>/gi, credentialScript)
     .replace(/<link\b[^>]*>/gi, credentialStylesheet);
-}
-
-export function injectBridgeIntoAppHtml(
-  html: string,
-  appName: string,
-  themeVars?: ThemeVars,
-  baseHref?: string,
-): string {
-  const bridge = `<script>${buildBridgeScript(appName, themeVars)}</script>`;
-  const base = baseHref ? `<base href="${escapeHtmlAttribute(baseHref)}">` : "";
-  const csp = [
-    "default-src 'self' data: blob:",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-  ].join("; ");
-  const injection = `${base}<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">${bridge}`;
-  const rewritten = withCredentialedAssets(html);
-
-  if (/<head(\s[^>]*)?>/i.test(rewritten)) {
-    return rewritten.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${injection}`);
-  }
-
-  return `<!doctype html><html><head>${injection}</head><body>${rewritten}</body></html>`;
 }
 
 export function buildBridgeScript(appName: string, themeVars?: ThemeVars): string {

@@ -3241,6 +3241,8 @@ export async function createGateway(config: GatewayConfig) {
   // with CSP connect-src 'self', so they cannot call third-party APIs directly.
   // This proxies GET requests to a small, fixed allowlist of public, keyless data
   // APIs. Allowlist-only (no user-supplied host) keeps the SSRF surface closed.
+  // The fetch remains hostname-based after allowlist validation, so it accepts
+  // the residual DNS-rebinding risk for these stable public API hosts.
   const BRIDGE_PROXY_ALLOWED_HOSTS = new Set([
     "api.open-meteo.com",
     "geocoding-api.open-meteo.com",
@@ -3700,7 +3702,7 @@ export async function createGateway(config: GatewayConfig) {
   const serveBundledSystemIcon = async (c: Context) => {
     const file = c.req.param("file");
     if (!file) return c.text("Icon not found", 404);
-    const target = await resolveBundledSystemIconPath(file);
+    const target = await resolveBundledSystemIconPath(homePath, file);
     if (!target) return c.text("Icon not found", 404);
     const stat = await statAsync(target);
     const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;

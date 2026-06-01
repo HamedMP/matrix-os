@@ -35,7 +35,17 @@ describe("default app icons", () => {
   });
 
   it("resolves bundled system icons by safe filename", async () => {
-    await expect(resolveBundledSystemIconPath("game-center.png")).resolves.toMatch(/home\/system\/icons\/game-center\.png$/);
-    await expect(resolveBundledSystemIconPath("../game-center.png")).resolves.toBeNull();
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-icons-"));
+    try {
+      await mkdir(join(homePath, "system/icons"), { recursive: true });
+      await writeFile(join(homePath, "system/icons/game-center.png"), "png");
+
+      await expect(resolveBundledSystemIconPath(homePath, "game-center.png")).resolves.toBe(
+        join(homePath, "system/icons/game-center.png"),
+      );
+      await expect(resolveBundledSystemIconPath(homePath, "../game-center.png")).resolves.toBeNull();
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 });
