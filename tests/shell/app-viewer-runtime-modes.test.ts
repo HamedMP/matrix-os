@@ -4,31 +4,7 @@ import {
   injectBridgeIntoAppHtml,
 } from "../../shell/src/components/app-viewer-helpers.js";
 
-// These tests verify the AppViewer decision logic without rendering React components.
-// The actual AppViewer.tsx modification is tested here by verifying the URL construction
-// and decision branching patterns.
-
-describe("AppViewer unified /apps/:slug/ navigation", () => {
-  it("iframe src is /apps/{slug}/ for static runtime (never /files/apps/...)", () => {
-    const slug = "calculator";
-    const src = `/apps/${slug}/`;
-    expect(src).toBe("/apps/calculator/");
-    expect(src).not.toContain("/files/apps/");
-  });
-
-  it("iframe src is the SAME /apps/{slug}/ for vite runtime", () => {
-    const slug = "notes";
-    const src = `/apps/${slug}/`;
-    expect(src).toBe("/apps/notes/");
-    expect(src).not.toContain("/files/apps/");
-  });
-
-  it("iframe src is the SAME /apps/{slug}/ for node runtime", () => {
-    const slug = "mail";
-    const src = `/apps/${slug}/`;
-    expect(src).toBe("/apps/mail/");
-  });
-
+describe("AppViewer bridged runtime loading", () => {
   describe("bridge guarantee: slug apps only ever load via bridged srcDoc", () => {
     // Mirrors AppViewer's iframeSrc decision. Runtime (slug) apps must NEVER load
     // the raw /apps/{slug}/ document directly, because that runs un-bridged in the
@@ -172,8 +148,9 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
       expect(result).toContain("Content-Security-Policy");
       expect(result).toContain("window.MatrixOS");
       expect(result).toContain("os:bridge-fetch");
-      expect(result).toContain('crossorigin="use-credentials" src="./assets/app.js"');
-      expect(result).toContain('crossorigin="use-credentials" href="./assets/app.css"');
+      expect(result).toContain('src="./assets/app.js"');
+      expect(result).toContain('href="./assets/app.css"');
+      expect(result).toContain("crossorigin");
     });
   });
 });

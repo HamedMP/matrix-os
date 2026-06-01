@@ -3705,7 +3705,7 @@ export async function createGateway(config: GatewayConfig) {
     const stat = await statAsync(target);
     const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
     const headers = {
-      "Content-Type": getMimeType(extname(file)),
+      "Content-Type": getMimeType(extname(target)),
       "Cache-Control": "public, max-age=86400, immutable",
       "CDN-Cache-Control": "public, max-age=86400",
       "ETag": etag,
