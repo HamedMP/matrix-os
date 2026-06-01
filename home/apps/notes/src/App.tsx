@@ -285,6 +285,10 @@ function App() {
         }
         pendingCreatesRef.current.set(note.id, retryPromise);
         const saved = await retryPromise;
+        if (resolvedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
+          evictOldestMapEntry(resolvedCreatesRef.current);
+        }
+        resolvedCreatesRef.current.set(note.id, saved.id);
         const latest = notesRef.current.find((candidate) => candidate.id === note.id) ?? note;
         const savedLatest = { ...latest, id: saved.id, created_at: saved.created_at };
         setNotes((currentNotes) => {
@@ -327,8 +331,13 @@ function App() {
       saveTimerRef.current = setTimeout(() => {
         persistWhenReady(nextNote)
           .then((saved) => {
-            const savedNotes = notesRef.current.map((note) => (note.id === saved.id ? saved : note));
-            persistAllIfFallback(savedNotes);
+            setNotes((currentNotes) => {
+              const savedNotes = currentNotes.map((note) =>
+                note.id === saved.id || note.id === nextNote.id ? saved : note,
+              );
+              persistAllIfFallback(savedNotes);
+              return savedNotes;
+            });
             setSaveState("saved");
           })
           .catch((err: unknown) => {
