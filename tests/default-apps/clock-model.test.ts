@@ -111,6 +111,12 @@ describe("alarm helpers", () => {
     expect(shouldAlarmFire(alarm, wrong)).toBe(false);
   });
 
+  it("does not treat malformed time strings as midnight", () => {
+    const alarm: AlarmModel = { id: "a", time: ":", label: "", repeat: [], enabled: true };
+    const midnight = new Date(2026, 5, 1, 0, 0, 0);
+    expect(shouldAlarmFire(alarm, midnight)).toBe(false);
+  });
+
   it("respects repeat weekdays", () => {
     // 2026-06-01 is a Monday (getDay() === 1).
     const monday = new Date(2026, 5, 1, 8, 0, 0);
