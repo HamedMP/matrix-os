@@ -1,24 +1,27 @@
 {
   "name": "Todo",
-  "description": "Task list with categories and due dates",
+  "description": "Fast personal task manager with inbox capture, smart lists, and recurring tasks.",
   "category": "productivity",
   "icon": "todo",
   "author": "system",
   "version": "2.0.0",
+  "scope": "personal",
   "storage": {
     "tables": {
       "tasks": {
         "columns": {
-          "text": "text",
-          "done": "boolean",
+          "title": "text",
+          "notes": "text",
           "due": "timestamptz",
-          "category": "text",
-          "priority": "text"
+          "priority": "integer",
+          "project": "text",
+          "status": "text",
+          "recur": "text"
         },
         "indexes": [
           "due",
-          "category",
-          "done"
+          "project",
+          "status"
         ]
       }
     }
