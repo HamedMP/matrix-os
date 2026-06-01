@@ -1,7 +1,7 @@
 {
   "name": "Whiteboard",
   "slug": "whiteboard",
-  "description": "Excalidraw sketching and diagramming canvas",
+  "description": "Infinite sketching and diagramming canvas with shapes, sticky notes, and export.",
   "category": "productivity",
   "icon": "whiteboard",
   "author": "system",
@@ -9,11 +9,28 @@
   "runtime": "vite",
   "runtimeVersion": "^1.0.0",
   "scope": "personal",
+  "storage": {
+    "tables": {
+      "scenes": {
+        "columns": {
+          "name": "text",
+          "doc": "jsonb"
+        }
+      }
+    }
+  },
   "build": {
-    "install": "pnpm install --ignore-workspace --prefer-offline",
-    "command": "pnpm build",
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
     "output": "dist",
-    "timeout": 180
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
   },
   "listingTrust": "first_party"
 }
