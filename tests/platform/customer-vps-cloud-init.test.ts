@@ -239,7 +239,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2');
     expect(cloudInit).not.toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
     expect(cloudInit).toContain('test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"');
-    expect(gateway).toContain('export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(gateway).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
@@ -262,7 +262,6 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('loginctl enable-linger matrix');
     expect(cloudInit).toContain('systemctl start "user@$(id -u matrix).service"');
     expect(cloudInit).toContain('ensure_owner_link .config 0755');
-    expect(cloudInit).toContain('systemctl start "user@$(id -u matrix).service"');
   });
 
   it('installs Homebrew, Graphite CLI, and GitHub CLI on customer Linux hosts', () => {

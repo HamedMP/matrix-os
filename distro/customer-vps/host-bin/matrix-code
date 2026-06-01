@@ -13,10 +13,9 @@ if declare -F matrix_export_owner_env >/dev/null 2>&1; then
   matrix_export_owner_env
 else
   export HOME="$MATRIX_HOME"
+  export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 fi
 CODE_SERVER_ROOT="$MATRIX_HOME/system/code-server"
-
-export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 
 if ! command -v code-server >/dev/null 2>&1; then
   echo "matrix-code: code-server is not installed" >&2

@@ -23,7 +23,11 @@ export SYMPHONY_HOST="${SYMPHONY_HOST:-127.0.0.1}"
 export SYMPHONY_PORT="${SYMPHONY_PORT:-4766}"
 export SYMPHONY_WORKSPACE_ROOT="${SYMPHONY_WORKSPACE_ROOT:-$MATRIX_HOME/projects/matrix-os/symphony-workspaces}"
 export SYMPHONY_CODEX_COMMAND="${SYMPHONY_CODEX_COMMAND:-codex app-server}"
-export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
+if declare -F matrix_prepend_path_once >/dev/null 2>&1; then
+  matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"
+else
+  export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
+fi
 
 mkdir -p "$SYMPHONY_WORKSPACE_ROOT"
 mkdir -p "$MATRIX_HOME/system/symphony/logs"

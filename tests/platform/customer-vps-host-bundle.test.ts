@@ -101,8 +101,11 @@ describe('customer VPS host bundle', () => {
     expect(ownerEnv).toContain('matrix_export_owner_env()');
     expect(ownerEnv).toContain('export HOME="$MATRIX_HOME"');
     expect(ownerEnv).toContain('export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"');
-    expect(ownerEnv).toContain('export PATH="$HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"');
+    expect(ownerEnv).toContain('matrix_prepend_path_once()');
+    expect(ownerEnv).toContain('matrix_prepend_path_once "$HOME/.local/bin"');
+    expect(ownerEnv).toContain('failed to copy %s to %s; leaving legacy directory in place');
     expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
+    expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');
     expect(hermesInstaller).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700');
     expect(hermesInstaller).toContain('HOME="$MATRIX_RUNTIME_HOME"');
     expect(hermesInstaller).toContain('XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config"');
@@ -398,7 +401,7 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
-    expect(launcher).toContain('export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
     expect(launcher).toContain('sync_bundled_home_assets');
     expect(launcher).toContain('sync-matrix-agent-skills.sh');

@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 
+matrix_prepend_path_once() {
+  local entry="$1"
+  [ -n "$entry" ] || return 0
+  case ":${PATH:-}:" in
+    *":$entry:"*) ;;
+    *) PATH="$entry${PATH:+:$PATH}" ;;
+  esac
+  export PATH
+}
+
 matrix_export_owner_env() {
   export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
   export HOME="$MATRIX_HOME"
   export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
   export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
   export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
-  export PATH="$HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+  export PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"
+  matrix_prepend_path_once "/opt/matrix/runtime/node/bin"
+  matrix_prepend_path_once "/opt/matrix/bin"
+  matrix_prepend_path_once "$HOME/.local/bin"
 }
 
 matrix_install_owner_dirs() {
@@ -33,7 +46,10 @@ matrix_migrate_legacy_dotdir() {
 
   install -d -o "$owner" -g "$group" -m "$mode" "$target"
   if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
-    cp -an "$legacy/." "$target/" || return 1
+    if ! cp -an "$legacy/." "$target/"; then
+      printf 'matrix-owner-env: failed to copy %s to %s; leaving legacy directory in place\n' "$legacy" "$target" >&2
+      return 0
+    fi
     rm -rf "$legacy"
   fi
   if [ ! -e "$legacy" ] || [ -L "$legacy" ]; then
