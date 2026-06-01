@@ -152,7 +152,7 @@ function NoteCard({
         {note.title}
       </span>
       <span className="note-card__preview">{note.preview}</span>
-      <span className="note-card__meta">{relativeTime(note.updated_at, nowMs)}</span>
+      <span className="note-card__meta">{relativeTime(note.updated_at ?? "", nowMs)}</span>
     </button>
   );
 }
@@ -442,7 +442,7 @@ function App() {
             {saveState === "error" ? "Save failed" : saveState === "saving" ? "Saving" : "Saved"}
             {activeNote ? (
               <span className="toolbar__meta">
-                <Clock3 size={12} /> Updated {relativeTime(activeNote.updated_at, nowMs)}
+                <Clock3 size={12} /> Updated {relativeTime(activeNote.updated_at ?? "", nowMs)}
               </span>
             ) : null}
           </div>
