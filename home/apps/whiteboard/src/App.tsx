@@ -1465,12 +1465,24 @@ function TextEditorOverlay({
 function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
   ctx.strokeStyle = el.stroke;
   ctx.lineWidth = el.strokeWidth;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   if (el.kind === "pen") {
     const pen = el as PenElement;
     if (pen.points.length === 0) return;
     ctx.beginPath();
-    ctx.moveTo(pen.points[0].x, pen.points[0].y);
-    for (let i = 1; i < pen.points.length; i += 1) ctx.lineTo(pen.points[i].x, pen.points[i].y);
+    if (pen.points.length === 1) {
+      const p = pen.points[0];
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + 0.1, p.y + 0.1);
+    } else {
+      ctx.moveTo(pen.points[0].x, pen.points[0].y);
+      for (let i = 1; i < pen.points.length; i += 1) {
+        const prev = pen.points[i - 1];
+        const curr = pen.points[i];
+        ctx.quadraticCurveTo(prev.x, prev.y, (prev.x + curr.x) / 2, (prev.y + curr.y) / 2);
+      }
+    }
     ctx.stroke();
     return;
   }
@@ -1505,7 +1517,8 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
   }
   if (el.kind === "sticky") {
     ctx.fillStyle = b.fill;
-    ctx.fillRect(x, y, w, h);
+    roundedRectPath(ctx, x, y, w, h, 6);
+    ctx.fill();
     if (b.text) {
       ctx.fillStyle = "#32352E";
       ctx.font = "16px Inter, system-ui, sans-serif";
@@ -1521,7 +1534,38 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
     }
     return;
   }
-  ctx.strokeRect(x, y, w, h);
+  roundedRectPath(ctx, x, y, w, h, 8);
+  if (el.fill !== "transparent") {
+    ctx.fillStyle = el.fill;
+    ctx.fill();
+  }
+  ctx.stroke();
+}
+
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+): void {
+  const r = Math.min(radius, Math.abs(w) / 2, Math.abs(h) / 2);
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
 }
 
 function wrapText(
