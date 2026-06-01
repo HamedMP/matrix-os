@@ -171,6 +171,7 @@ function App() {
   const notesRef = useRef<Note[]>([]);
   const pendingCreatesRef = useRef<Map<string, Promise<Note>>>(new Map());
   const resolvedCreatesRef = useRef<Map<string, string>>(new Map());
+  const deletedCreatesRef = useRef<Map<string, true>>(new Map());
 
   useEffect(() => {
     notesRef.current = notes;
@@ -247,6 +248,15 @@ function App() {
     pendingCreatesRef.current.set(draft.id, createPromise);
     createPromise
       .then((saved) => {
+        if (deletedCreatesRef.current.delete(draft.id)) {
+          resolvedCreatesRef.current.delete(draft.id);
+          deletePersistedNote(saved).catch((err: unknown) => {
+            console.warn("[notes] pending create cleanup failed:", err instanceof Error ? err.message : String(err));
+            setError("Note could not be deleted.");
+          });
+          setSaveState("saved");
+          return;
+        }
         if (resolvedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
           evictOldestMapEntry(resolvedCreatesRef.current);
         }
@@ -352,18 +362,26 @@ function App() {
 
   const deleteActiveNote = useCallback(() => {
     if (!activeNote) return;
-    const remaining = notes.filter((note) => note.id !== activeNote.id);
+    if (activeNote.id.startsWith("note-")) {
+      if (deletedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
+        evictOldestMapEntry(deletedCreatesRef.current);
+      }
+      deletedCreatesRef.current.set(activeNote.id, true);
+    }
     deletePersistedNote(activeNote)
       .then(() => {
-        setNotes(remaining);
-        setActiveId(remaining[0]?.id ?? null);
-        persistAllIfFallback(remaining);
+        setNotes((currentNotes) => {
+          const remaining = currentNotes.filter((note) => note.id !== activeNote.id);
+          setActiveId(remaining[0]?.id ?? null);
+          persistAllIfFallback(remaining);
+          return remaining;
+        });
       })
       .catch((err: unknown) => {
         console.warn("[notes] delete failed:", err instanceof Error ? err.message : String(err));
         setError("Note could not be deleted.");
       });
-  }, [activeNote, notes, persistAllIfFallback]);
+  }, [activeNote, persistAllIfFallback]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {

@@ -388,6 +388,36 @@ describe("Notes app", () => {
     expect((screen.getByLabelText("Note title") as HTMLInputElement).value).toBe("Second note");
   });
 
+  it("deletes a pending create when its insert resolves after removal", async () => {
+    const db = installMatrixDb([]);
+    let resolveInsert: ((value: { id: string }) => void) | null = null;
+    db.insert.mockImplementationOnce(
+      async (_table: string, data: DbRow) =>
+        new Promise<{ id: string }>((resolve) => {
+          db.rows.unshift({ id: "db-new", created_at: new Date().toISOString(), ...data });
+          resolveInsert = resolve;
+        }),
+    );
+
+    render(<App />);
+    await screen.findByText("No notes yet");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    await screen.findByLabelText("Note title");
+    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
+
+    await act(async () => {
+      resolveInsert?.({ id: "db-new" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("notes", "db-new");
+    });
+    expect(db.rows.some((row) => row.id === "db-new")).toBe(false);
+  });
+
   it("clears stored inline tags when the editor content removes them", async () => {
     const db = installMatrixDb([
       {
