@@ -3,7 +3,7 @@
   "description": "Local two-player backgammon with a full legal-move engine, dice, hitting and bearing off.",
   "runtime": "vite",
   "category": "games",
-  "icon": "backgammon",
+  "icon": "game-center",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -17,7 +17,8 @@
       "matches": {
         "columns": {
           "winner": "text",
-          "points": "integer"
+          "points": "integer",
+          "created_at": "timestamptz"
         }
       }
     }

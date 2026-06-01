@@ -20,7 +20,6 @@ import {
 } from "./backgammon-model";
 
 const MATCHES_TABLE = "matches";
-const LS_KEY = "matrixos.backgammon.matches";
 
 interface MatchRecord {
   winner: string;
@@ -41,22 +40,9 @@ async function loadMatches(setError: (s: string | null) => void): Promise<MatchR
     } catch (err) {
       console.warn("[backgammon] failed to load matches from DB", err);
       setError("Could not load match history.");
-      // fall through to localStorage as a best-effort fallback
     }
   }
-  try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((r) => ({
-      winner: String((r as MatchRecord).winner ?? ""),
-      points: Number((r as MatchRecord).points ?? 0),
-    }));
-  } catch (err) {
-    console.warn("[backgammon] failed to read localStorage matches", err);
-    return [];
-  }
+  return [];
 }
 
 async function saveMatch(record: MatchRecord, setError: (s: string | null) => void): Promise<boolean> {
@@ -71,17 +57,8 @@ async function saveMatch(record: MatchRecord, setError: (s: string | null) => vo
       return false;
     }
   }
-  try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    const list: MatchRecord[] = raw ? (JSON.parse(raw) as MatchRecord[]) : [];
-    list.unshift(record);
-    window.localStorage.setItem(LS_KEY, JSON.stringify(list.slice(0, 50)));
-    return true;
-  } catch (err) {
-    console.warn("[backgammon] failed to persist match to localStorage", err);
-    setError("Could not save the result.");
-    return false;
-  }
+  setError("Match history sync is unavailable.");
+  return false;
 }
 
 // ---- board geometry --------------------------------------------------------
@@ -270,9 +247,10 @@ export default function App() {
     if (res && !savedRef.current) {
       savedRef.current = true;
       const record: MatchRecord = { winner: res.winner, points: res.points };
+      const usedDb = Boolean(window.MatrixOS?.db);
       saveMatch(record, setError).then((ok) => {
         if (ok) {
-          setStatus("Saved to Matrix Postgres");
+          setStatus(usedDb ? "Saved to Matrix Postgres" : "Saved");
           setMatches((prev) => [record, ...prev]);
         }
       });

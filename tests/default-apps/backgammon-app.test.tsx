@@ -25,7 +25,6 @@ function installMatrixDb(rows: DbRow[] = []) {
 
 describe("Backgammon app", () => {
   beforeEach(() => {
-    window.localStorage.clear();
     // deterministic dice
     vi.spyOn(Math, "random").mockReturnValue(0); // floor(0*6)+1 = 1 for every die
   });
@@ -33,7 +32,6 @@ describe("Backgammon app", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
-    window.localStorage.clear();
   });
 
   it("renders the board with 24 points and turn/pip indicators", async () => {
@@ -74,14 +72,9 @@ describe("Backgammon app", () => {
     );
   });
 
-  it("falls back to localStorage match record when MatrixOS.db is undefined", async () => {
-    window.localStorage.setItem(
-      "matrixos.backgammon.matches",
-      JSON.stringify([{ winner: "white", points: 2 }]),
-    );
+  it("renders without a DB bridge and leaves match history empty", async () => {
     render(<App />);
     await screen.findByTestId("board");
-    // the stored match should surface somewhere (records readout)
-    await waitFor(() => expect(screen.getByTestId("match-count").textContent).toContain("1"));
+    expect(screen.getByTestId("match-count").textContent).toContain("0");
   });
 });
