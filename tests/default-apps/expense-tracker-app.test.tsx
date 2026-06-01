@@ -86,6 +86,20 @@ function expense(day: number, amount: number, category: string, extra: DbRow = {
   };
 }
 
+function dateInputMonthsFromCurrent(monthOffset: number, day = 2): string {
+  const [year, month] = YM.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + monthOffset, day));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function monthLabelForInput(value: string): string {
+  return new Date(`${value.slice(0, 7)}-01T00:00:00.000Z`).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 describe("Expense Tracker app", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -298,6 +312,53 @@ describe("Expense Tracker app", () => {
     expect(screen.queryByText("Bad write")).toBeNull();
   });
 
+  it("keeps an edited transaction visible when its date moves to another month", async () => {
+    const db = installMatrixDb([expense(2, 12, "Groceries", { note: "Coffee beans" })], []);
+    const nextDate = dateInputMonthsFromCurrent(1);
+
+    render(<App />);
+    expect(await screen.findByText("Coffee beans")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /edit coffee beans/i }));
+    fireEvent.change(screen.getByLabelText(/date/i), { target: { value: nextDate } });
+
+    await act(async () => {
+      fireEvent.submit(screen.getByTestId("expense-form"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith(
+        "expenses",
+        "e-2-12-Groceries",
+        expect.objectContaining({ spent_at: `${nextDate}T00:00:00.000Z` }),
+      );
+    });
+    expect(screen.getByTestId("selected-month").textContent).toBe(monthLabelForInput(nextDate));
+    expect(screen.getByText("Coffee beans")).toBeTruthy();
+  });
+
+  it("restores the selected month after a failed transaction edit", async () => {
+    const db = installMatrixDb([expense(2, 12, "Groceries", { note: "Coffee beans" })], []);
+    const originalMonthLabel = monthLabelForInput(`${YM}-01`);
+    db.update.mockRejectedValueOnce(new Error("write failed"));
+
+    render(<App />);
+    expect(await screen.findByText("Coffee beans")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /edit coffee beans/i }));
+    fireEvent.change(screen.getByLabelText(/date/i), { target: { value: dateInputMonthsFromCurrent(1) } });
+
+    await act(async () => {
+      fireEvent.submit(screen.getByTestId("expense-form"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Could not save that change.")).toBeTruthy();
+    expect(screen.getByTestId("selected-month").textContent).toBe(originalMonthLabel);
+    expect(screen.getByText("Coffee beans")).toBeTruthy();
+  });
+
   it("keeps a deleted transaction hidden when the follow-up reload fails", async () => {
     const db = installMatrixDb([expense(2, 12, "Groceries", { note: "Coffee beans" })], []);
 
@@ -435,6 +496,49 @@ describe("Expense Tracker app", () => {
 
     expect(db.insert.mock.calls.filter((call) => call[0] === "budgets")).toHaveLength(1);
     expect(db.update).toHaveBeenCalledWith("budgets", "budget-rent", { monthly_limit: 200 });
+  });
+
+  it("does not restore successfully deleted budgets after a mixed save failure", async () => {
+    const db = installMatrixDb(
+      [expense(2, 30, "Groceries"), expense(3, 45, "Rent")],
+      [
+        { id: "b1", category: "Groceries", monthly_limit: 100 },
+        { id: "b2", category: "Rent", monthly_limit: 200 },
+      ],
+    );
+    let rentUpdateAttempts = 0;
+    db.update.mockImplementation(async (table: string, id: string, data: DbRow) => {
+      if (table === "budgets" && id === "b2" && rentUpdateAttempts === 0) {
+        rentUpdateAttempts += 1;
+        throw new Error("update failed");
+      }
+      const rows = table === "budgets" ? db.budgets : db.expenses;
+      const row = rows.find((item) => item.id === id);
+      if (row) Object.assign(row, data);
+      return { ok: true };
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
+    fireEvent.change(screen.getByLabelText("Groceries monthly budget"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Rent monthly budget"), { target: { value: "250" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Could not save your budgets.")).toBeTruthy();
+    expect(db.delete.mock.calls.filter((call) => call[0] === "budgets" && call[1] === "b1")).toHaveLength(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.delete.mock.calls.filter((call) => call[0] === "budgets" && call[1] === "b1")).toHaveLength(1);
+    expect(db.update).toHaveBeenCalledWith("budgets", "b2", { monthly_limit: 250 });
   });
 
   it("renders an empty state with onboarding when there are no transactions", async () => {

@@ -110,7 +110,8 @@ interface DraftExpense {
 
 type BudgetOperationResult =
   | { type: "insert"; budget: BudgetRow }
-  | { type: "update" | "delete" };
+  | { type: "delete"; id: string }
+  | { type: "update" };
 
 function emptyDraft(): DraftExpense {
   return {
@@ -251,9 +252,11 @@ export default function App() {
 
       if (editingId) {
         const previous = expenses;
+        const previousMonth = selectedMonth;
         setExpenses((current) =>
           current.map((e) => (e.id === editingId ? { ...e, ...payload } : e)),
         );
+        setSelectedMonth(monthKey(payload.spent_at));
         resetDraft();
         try {
           if (db) await db.update(EXPENSES_TABLE, editingId, payload);
@@ -263,6 +266,7 @@ export default function App() {
             err instanceof Error ? err.message : String(err),
           );
           setExpenses(previous);
+          setSelectedMonth(previousMonth);
           setError("Could not save that change.");
           return;
         } finally {
@@ -361,10 +365,10 @@ export default function App() {
       const existingRows = existingByCategory.get(category) ?? [];
       const existing = existingRows[0];
       for (const duplicate of existingRows.slice(1)) {
-        if (db) operations.push(db.delete(BUDGETS_TABLE, duplicate.id).then(() => ({ type: "delete" })));
+        if (db) operations.push(db.delete(BUDGETS_TABLE, duplicate.id).then(() => ({ type: "delete", id: duplicate.id })));
       }
       if (!value || !Number.isFinite(limit) || limit <= 0) {
-        if (existing && db) operations.push(db.delete(BUDGETS_TABLE, existing.id).then(() => ({ type: "delete" })));
+        if (existing && db) operations.push(db.delete(BUDGETS_TABLE, existing.id).then(() => ({ type: "delete", id: existing.id })));
         continue;
       }
       const localId = existing?.id ?? `local-${category}`;
@@ -389,12 +393,25 @@ export default function App() {
           result.status === "fulfilled" && result.value.type === "insert",
       )
       .map((result) => (result.value as { type: "insert"; budget: BudgetRow }).budget);
+    const deletedBudgetIds = new Set(
+      results
+        .filter(
+          (result): result is PromiseFulfilledResult<BudgetOperationResult> =>
+            result.status === "fulfilled" && result.value.type === "delete",
+        )
+        .map((result) => (result.value as { type: "delete"; id: string }).id),
+    );
     if (failed) {
       console.warn(
         "[expense-tracker] budget save failed:",
         failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
       );
-      setBudgets(insertedBudgets.length > 0 ? dedupeBudgets([...previous, ...insertedBudgets]) : previous);
+      const rollbackBase = previous.filter((budget) => !deletedBudgetIds.has(budget.id));
+      setBudgets(
+        insertedBudgets.length > 0
+          ? dedupeBudgets([...rollbackBase, ...insertedBudgets])
+          : rollbackBase,
+      );
       setBudgetEditor(true);
       setError("Could not save your budgets.");
       return;
