@@ -20,8 +20,8 @@
     }
   },
   "build": {
-    "install": "true",
-    "command": "vite build --base ./ --outDir dist",
+    "install": "pnpm install --frozen-lockfile",
+    "command": "pnpm build",
     "output": "dist",
     "timeout": 180,
     "sourceGlobs": [

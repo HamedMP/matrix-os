@@ -66,6 +66,19 @@ describe("whiteboard model — CRUD", () => {
     expect([moved.x1, moved.y1, moved.x2, moved.y2]).toEqual([5, 5, 15, 15]);
   });
 
+  it("moves a pen element by translating every point", () => {
+    const pen: PenElement = {
+      id: "p", kind: "pen",
+      points: [{ x: 0, y: 0 }, { x: 10, y: 5 }, { x: 20, y: 0 }],
+      stroke: "#000", fill: "transparent", strokeWidth: 2,
+    };
+    const s = moveElement(addElement(emptyScene(), pen), "p", 3, -4);
+    const moved = s.elements[0] as PenElement;
+
+    expect(moved.points).toEqual([{ x: 3, y: -4 }, { x: 13, y: 1 }, { x: 23, y: -4 }]);
+    expect(pen.points).toEqual([{ x: 0, y: 0 }, { x: 10, y: 5 }, { x: 20, y: 0 }]);
+  });
+
   it("deletes an element by id", () => {
     const s1 = addElement(addElement(emptyScene(), rect("a", 0, 0, 1, 1)), rect("b", 5, 5, 1, 1));
     const s2 = deleteElement(s1, "a");
@@ -87,6 +100,17 @@ describe("whiteboard model — hit testing", () => {
     };
     expect(hitTest(line, 50, 2)).toBe(true);
     expect(hitTest(line, 50, 40)).toBe(false);
+  });
+
+  it("hits inside an ellipse using normalized coordinates", () => {
+    const ellipse: BoxElement = {
+      id: "e", kind: "ellipse", x: 10, y: 20, width: 80, height: 40,
+      stroke: "#000", fill: "transparent", strokeWidth: 2,
+    };
+
+    expect(hitTest(ellipse, 50, 40, 0)).toBe(true);
+    expect(hitTest(ellipse, 85, 40, 0)).toBe(true);
+    expect(hitTest(ellipse, 95, 40, 0)).toBe(false);
   });
 
   it("hits a pen stroke near its path", () => {
