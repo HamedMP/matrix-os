@@ -102,7 +102,7 @@ export function normalizeTags(input: string[] | string | null | undefined): stri
   for (const item of raw) {
     const tag = item.replace(/^#/, "").trim().toLowerCase();
     if (!tag) continue;
-    if (!/^[a-z][a-z0-9-]{0,40}$/.test(tag)) continue;
+    if (!/^[a-z][a-z0-9-]{1,40}$/.test(tag)) continue;
     if (!out.includes(tag)) out.push(tag);
   }
   return out;

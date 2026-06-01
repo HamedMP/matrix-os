@@ -277,14 +277,23 @@ function App() {
     if (!pendingCreate) {
       const resolvedId = resolvedCreatesRef.current.get(note.id);
       if (!resolvedId) {
-        const saved = await persistNote(note, true);
+        const retryPromise = persistNote(note, true).finally(() => {
+          pendingCreatesRef.current.delete(note.id);
+        });
+        if (pendingCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
+          evictOldestMapEntry(pendingCreatesRef.current);
+        }
+        pendingCreatesRef.current.set(note.id, retryPromise);
+        const saved = await retryPromise;
+        const latest = notesRef.current.find((candidate) => candidate.id === note.id) ?? note;
+        const savedLatest = { ...latest, id: saved.id, created_at: saved.created_at };
         setNotes((currentNotes) => {
-          const savedNotes = currentNotes.map((candidate) => (candidate.id === note.id ? saved : candidate));
+          const savedNotes = currentNotes.map((candidate) => (candidate.id === note.id ? savedLatest : candidate));
           persistAllIfFallback(savedNotes);
           return savedNotes;
         });
         setActiveId((current) => (current === note.id ? saved.id : current));
-        return saved;
+        return savedLatest;
       }
       resolvedCreatesRef.current.delete(note.id);
       const latest = notesRef.current.find((candidate) => candidate.id === resolvedId) ?? {

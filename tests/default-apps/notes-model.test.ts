@@ -4,6 +4,7 @@ import {
   createNote,
   extractTags,
   filterNotes,
+  normalizeTags,
   tiptapDocToText,
   type Note,
 } from "../../home/apps/notes/src/notes-model";
@@ -39,6 +40,7 @@ describe("notes model", () => {
       "team",
       "research-ops",
     ]);
+    expect(normalizeTags(["a", "ai", "#b", "board"])).toEqual(["ai", "board"]);
     expect(buildNotePreview("- [ ] Review **spec**\n```ts\nconst x = 1\n```")).toBe(
       "Review spec",
     );

@@ -286,6 +286,63 @@ describe("Notes app", () => {
     );
   });
 
+  it("tracks a retry insert so concurrent debounces do not create duplicate rows", async () => {
+    vi.useFakeTimers();
+    const db = installMatrixDb([]);
+    let resolveRetry: ((value: { id: string }) => void) | null = null;
+    db.insert
+      .mockRejectedValueOnce(new Error("temporary insert failure"))
+      .mockImplementationOnce(
+        async (_table: string, data: DbRow) =>
+          new Promise<{ id: string }>((resolve) => {
+            db.rows.unshift({ id: "db-retry", created_at: new Date().toISOString(), ...data });
+            resolveRetry = resolve;
+          }),
+      );
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const titleInput = screen.getByLabelText("Note title") as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "Retry draft" } });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.change(titleInput, { target: { value: "Retry draft updated" } });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveRetry?.({ id: "db-retry" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalledTimes(2);
+    expect(db.update).toHaveBeenCalledWith(
+      "notes",
+      "db-retry",
+      expect.objectContaining({ title: "Retry draft updated" }),
+    );
+  });
+
   it("does not steal selection when a new note insert resolves", async () => {
     const db = installMatrixDb([
       {
