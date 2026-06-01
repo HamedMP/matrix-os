@@ -278,42 +278,45 @@ export default function App() {
       setTasks((cur) => cur.map((t) => (t.id === task.id ? { ...t, status: "done" } : t)));
       const db = getDb();
       try {
-        if (db) await db.update(TASKS_TABLE, task.id, { status: "done" });
-        // Recurring task: schedule the next occurrence.
-        const nextDue = task.due ? nextRecurrence(task.recur, new Date(task.due)) : null;
-        if (task.recur && nextDue) {
-          const followUp: Task = {
-            ...task,
-            id: `local-${Date.now()}`,
-            due: nextDue,
-            status: "open",
-            created_at: new Date().toISOString(),
-          };
-          setTasks((cur) => [followUp, ...cur]);
-          if (db) {
-            await db.insert(TASKS_TABLE, {
-              title: task.title,
-              notes: task.notes,
+        try {
+          if (db) await db.update(TASKS_TABLE, task.id, { status: "done" });
+          // Recurring task: schedule the next occurrence.
+          const nextDue = task.due ? nextRecurrence(task.recur, new Date(task.due)) : null;
+          if (task.recur && nextDue) {
+            const followUp: Task = {
+              ...task,
+              id: `local-${Date.now()}`,
               due: nextDue,
-              priority: task.priority,
-              project: task.project,
               status: "open",
-              recur: task.recur,
-            });
+              created_at: new Date().toISOString(),
+            };
+            setTasks((cur) => [followUp, ...cur]);
+            if (db) {
+              await db.insert(TASKS_TABLE, {
+                title: task.title,
+                notes: task.notes,
+                due: nextDue,
+                priority: task.priority,
+                project: task.project,
+                status: "open",
+                recur: task.recur,
+              });
+            }
           }
-        }
-        if (db) await reload();
-      } catch (err: unknown) {
-        console.warn("[todo] task complete failed:", errMessage(err));
-        if (db) {
-          try {
-            await db.update(TASKS_TABLE, task.id, { status: "open" });
-          } catch (rollbackErr: unknown) {
-            console.warn("[todo] task completion rollback failed:", errMessage(rollbackErr));
+        } catch (err: unknown) {
+          console.warn("[todo] task complete failed:", errMessage(err));
+          if (db) {
+            try {
+              await db.update(TASKS_TABLE, task.id, { status: "open" });
+            } catch (rollbackErr: unknown) {
+              console.warn("[todo] task completion rollback failed:", errMessage(rollbackErr));
+            }
           }
+          await reload();
+          setError("Could not complete task.");
+          return;
         }
         await reload();
-        setError("Could not complete task.");
       } finally {
         inFlightComplete.current.delete(task.id);
       }

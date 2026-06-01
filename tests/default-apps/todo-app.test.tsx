@@ -173,6 +173,33 @@ describe("Todo app", () => {
     });
   });
 
+  it("does not roll back a completed task when the follow-up reload fails", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
+    ]);
+
+    render(<App />);
+    await screen.findByText("Finish report");
+    db.find.mockRejectedValueOnce(new Error("reload failed"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /complete .*finish report/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { status: "done" });
+    });
+    expect(
+      db.update.mock.calls.some(
+        (call) => call[0] === "tasks" && call[1] === "t1" && call[2]?.status === "open",
+      ),
+    ).toBe(false);
+    expect(screen.queryByText("Finish report")).toBeNull();
+    expect((await screen.findByRole("alert")).textContent).toBe("Tasks could not be loaded. They may be out of date.");
+  });
+
   it("keeps update failure errors visible after reloading", async () => {
     const db = installMatrixDb([
       { id: "t1", title: "Prioritize", status: "open", priority: 0, due: null },
