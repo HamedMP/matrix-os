@@ -72,8 +72,8 @@ final human review.
      rating per PR, especially whether it is `5/5`.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
-   - Before editing any branch, snapshot the current remote head for every PR
-     that could be rewritten by the next Graphite submit:
+   - Before each edit/submit iteration, snapshot the current remote head for
+     every PR that could be rewritten by the next Graphite submit:
      `gh pr view <number> --json headRefOid,headRefName`. Keep this baseline
      with the branch list for the Step 4 conflict check.
 
@@ -87,8 +87,13 @@ final human review.
    - Before staging, inspect `git status --short --branch` and stage only files
      belonging to the owning branch's fix. Before submitting, verify the
      current remote head for every branch that will be rewritten still matches
-     the head recorded before edits; if it changed unexpectedly, stop and
-     report the remote-work conflict.
+     the head recorded for this edit iteration; if it changed unexpectedly,
+     stop and report the remote-work conflict.
+   - After every successful `gt submit --stack`, discard the pre-submit
+     baseline and immediately refresh the remote-head snapshot for every
+     monitored PR before entering another fix loop. Graphite's successful
+     submit intentionally rewrites stack branch SHAs; those new SHAs become the
+     next iteration's conflict baseline.
    - Run `git diff --check` and the narrow relevant tests before submitting.
      For backend, shell, or shared behavior, also run the relevant typecheck or
      pattern scanner when practical and report any skipped broad gate.
@@ -106,6 +111,9 @@ final human review.
      `gh pr edit <number> --add-label "ready-for-ci"`.
    - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
      until checks pass, fail with actionable output, or are blocked.
+   - If actionable CI failure fixes require a new push after `ready-for-ci` was
+     applied, remove the label before editing. Re-add it only after a fresh
+     current-head Greptile review returns `5/5` for the new commit.
    - Completion requires every monitored PR to be either:
      - latest trusted Greptile `5/5`, or
      - explicitly deferred with the reason and follow-up.
