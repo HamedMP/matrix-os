@@ -252,6 +252,24 @@ describe("Expense Tracker app", () => {
     expect(screen.queryByText("Could not save that transaction.")).toBeNull();
   });
 
+  it("keeps a deleted transaction hidden when the follow-up reload fails", async () => {
+    const db = installMatrixDb([expense(2, 12, "Groceries", { note: "Coffee beans" })], []);
+
+    render(<App />);
+    expect(await screen.findByText("Coffee beans")).toBeTruthy();
+    db.find.mockRejectedValueOnce(new Error("read failed"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /delete coffee beans/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.delete).toHaveBeenCalled();
+    expect(screen.queryByText("Coffee beans")).toBeNull();
+    expect(screen.queryByText("Could not delete that transaction.")).toBeNull();
+  });
+
   it("does not reopen budget editing when the follow-up reload fails after a save", async () => {
     const db = installMatrixDb([], [{ id: "b1", category: "Groceries", monthly_limit: 100 }]);
 

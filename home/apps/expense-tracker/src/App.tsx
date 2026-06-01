@@ -303,7 +303,6 @@ export default function App() {
       const db = window.MatrixOS?.db;
       try {
         if (db) await db.delete(EXPENSES_TABLE, id);
-        await reload();
       } catch (err: unknown) {
         console.warn(
           "[expense-tracker] delete failed:",
@@ -311,7 +310,9 @@ export default function App() {
         );
         setExpenses(previous);
         setError("Could not delete that transaction.");
+        return;
       }
+      void reload();
     },
     [editingId, expenses, reload, resetDraft],
   );
