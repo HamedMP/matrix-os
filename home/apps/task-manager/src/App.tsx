@@ -270,7 +270,11 @@ function App() {
       const bridge = db();
       if (!bridge) return;
       const persistedCardId = await resolveCardId(cardId);
-      await bridge.update(CARDS_TABLE, persistedCardId, cardToRow({ ...updated, id: persistedCardId }, updated.order));
+      const liveCard = boardRef.current?.cards.find((card) => card.id === cardId);
+      const rowCard = liveCard
+        ? { ...updated, columnId: liveCard.columnId, order: liveCard.order }
+        : updated;
+      await bridge.update(CARDS_TABLE, persistedCardId, cardToRow({ ...rowCard, id: persistedCardId }, rowCard.order));
     }, "Card could not be updated");
   }, [persist, resolveCardId]);
 

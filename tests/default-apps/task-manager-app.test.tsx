@@ -248,6 +248,69 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("persists pending card edits with the latest live column and order", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveCardInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "cards") {
+        await new Promise<void>((resolve) => {
+          resolveCardInsert = resolve;
+        });
+        const id = "cards-created";
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    const input = await screen.findByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Race card" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    fireEvent.click(await screen.findByText("Race card"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Race card");
+    fireEvent.change(titleInput, { target: { value: "Moved card" } });
+    fireEvent.blur(titleInput);
+    fireEvent.change(within(dialog).getByLabelText("Column"), { target: { value: "col-2" } });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalledWith(
+      "cards",
+      expect.stringMatching(/^card-/),
+      expect.anything(),
+    );
+
+    await act(async () => {
+      resolveCardInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith(
+        "cards",
+        "cards-created",
+        expect.objectContaining({
+          title: "Moved card",
+          column_id: "col-2",
+          position: 0,
+        }),
+      ),
+    );
+  });
+
   it("persists a card created in a new column with the resolved DB column id", async () => {
     const { db, store } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],

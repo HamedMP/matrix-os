@@ -27,7 +27,7 @@
           "labels": "text",
           "assignee": "text",
           "priority": "text",
-          "due": "timestamptz",
+          "due": "date",
           "checklist": "jsonb",
           "position": "integer"
         },

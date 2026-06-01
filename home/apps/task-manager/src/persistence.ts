@@ -68,7 +68,7 @@ function parseChecklist(value: unknown): ChecklistItem[] {
 
 function parseDue(value: unknown): string {
   if (typeof value !== "string" || !value) return "";
-  // Detail panel uses yyyy-mm-dd; timestamptz round-trips include time.
+  // Detail panel uses yyyy-mm-dd; tolerate older timestamp rows by truncating.
   return value.slice(0, 10);
 }
 

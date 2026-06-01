@@ -53,6 +53,14 @@ describe("default app manifest quality (spec 083)", () => {
     expect(dirs.length).toBeGreaterThan(5);
   });
 
+  it("keeps task-manager due dates as date-only storage", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(APPS_DIR, "task-manager", "matrix.json"), "utf-8"),
+    ) as { storage?: { tables?: { cards?: { columns?: Record<string, string> } } } };
+
+    expect(manifest.storage?.tables?.cards?.columns?.due).toBe("date");
+  });
+
   for (const dir of dirs) {
     const appId = appIdForDir(dir);
     describe(appId, () => {
