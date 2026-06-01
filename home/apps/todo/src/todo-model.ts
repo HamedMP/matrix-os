@@ -22,6 +22,12 @@ export type View = SmartView | ProjectView;
 const RECURRENCES: ReadonlySet<string> = new Set(["daily", "weekly", "weekdays"]);
 
 function clampPriority(value: unknown): 0 | 1 | 2 | 3 {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "high") return 3;
+    if (normalized === "medium") return 2;
+    if (normalized === "low") return 1;
+  }
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return 0;
   const rounded = Math.round(n);
@@ -40,18 +46,21 @@ function toStringOrNull(value: unknown): string | null {
 export function normalizeTask(row: unknown): Task | null {
   if (!row || typeof row !== "object") return null;
   const data = row as Record<string, unknown>;
-  const title = typeof data.title === "string" ? data.title.trim() : "";
+  const titleRaw = typeof data.title === "string" ? data.title : data.text;
+  const title = typeof titleRaw === "string" ? titleRaw.trim() : "";
   if (title.length === 0) return null;
   const recurRaw = toStringOrNull(data.recur);
   const recur = recurRaw && RECURRENCES.has(recurRaw) ? (recurRaw as Recurrence) : null;
+  const status: TaskStatus =
+    data.status === "done" || data.done === true ? "done" : "open";
   return {
     id: typeof data.id === "string" ? data.id : crypto.randomUUID(),
     title,
     notes: typeof data.notes === "string" ? data.notes : "",
     due: toStringOrNull(data.due),
     priority: clampPriority(data.priority),
-    project: toStringOrNull(data.project),
-    status: data.status === "done" ? "done" : "open",
+    project: toStringOrNull(data.project) ?? toStringOrNull(data.category),
+    status,
     recur,
     created_at: typeof data.created_at === "string" ? data.created_at : new Date().toISOString(),
   };

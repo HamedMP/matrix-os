@@ -31,6 +31,7 @@ import {
 } from "./todo-model";
 
 const TASKS_TABLE = "tasks";
+const NOTES_SAVE_DELAY_MS = 500;
 
 type SmartViewId = "inbox" | "today" | "upcoming";
 
@@ -138,7 +139,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [now] = useState(() => new Date());
+  const [now, setNow] = useState(() => new Date());
   const inFlightComplete = useRef<Set<string>>(new Set());
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -158,6 +159,11 @@ export default function App() {
     if (!db?.onChange) return undefined;
     return db.onChange(TASKS_TABLE, () => void reload());
   }, [reload]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const counts = useMemo(() => countByView(tasks, now), [tasks, now]);
   const projects = useMemo(() => projectNames(tasks), [tasks]);
@@ -267,6 +273,13 @@ export default function App() {
       } catch (err: unknown) {
         console.warn("[todo] task complete failed:", errMessage(err));
         setError("Could not complete task.");
+        if (db) {
+          try {
+            await db.update(TASKS_TABLE, task.id, { status: "open" });
+          } catch (rollbackErr: unknown) {
+            console.warn("[todo] task completion rollback failed:", errMessage(rollbackErr));
+          }
+        }
         await reload();
       } finally {
         inFlightComplete.current.delete(task.id);
@@ -554,7 +567,6 @@ export default function App() {
         {selectedId && (
           <Inspector
             task={visible.find((t) => t.id === selectedId) ?? null}
-            now={now}
             onClose={() => setSelectedId(null)}
             onPatch={(patch) => selectedId && void persistUpdate(selectedId, patch)}
           />
@@ -583,17 +595,28 @@ function EmptyState({ view, smart }: { view: View; smart: SmartViewMeta | null }
 
 function Inspector({
   task,
-  now,
   onClose,
   onPatch,
 }: {
   task: Task | null;
-  now: Date;
   onClose: () => void;
   onPatch: (patch: Partial<Task>) => void;
 }) {
+  const [notesDraft, setNotesDraft] = useState(task?.notes ?? "");
+
+  useEffect(() => {
+    setNotesDraft(task?.notes ?? "");
+  }, [task?.id, task?.notes]);
+
+  useEffect(() => {
+    if (!task || notesDraft === task.notes) return undefined;
+    const timer = window.setTimeout(() => {
+      onPatch({ notes: notesDraft });
+    }, NOTES_SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [notesDraft, onPatch, task]);
+
   if (!task) return null;
-  void now;
   return (
     <div className="inspector" role="dialog" aria-label={`Details for ${task.title}`}>
       <div className="inspector-head">
@@ -606,9 +629,9 @@ function Inspector({
       <label className="field">
         <span>Notes</span>
         <textarea
-          value={task.notes}
+          value={notesDraft}
           placeholder="Add notes…"
-          onChange={(e) => onPatch({ notes: e.target.value })}
+          onChange={(e) => setNotesDraft(e.target.value)}
         />
       </label>
 

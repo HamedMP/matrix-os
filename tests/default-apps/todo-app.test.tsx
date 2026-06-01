@@ -54,6 +54,7 @@ describe("Todo app", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
   });
@@ -113,6 +114,32 @@ describe("Todo app", () => {
     });
   });
 
+  it("rolls a recurring task back open when scheduling the next occurrence fails", async () => {
+    const db = installMatrixDb([
+      {
+        id: "t1",
+        title: "Standup",
+        status: "open",
+        priority: 0,
+        due: "2026-06-01T09:00:00.000Z",
+        recur: "daily",
+      },
+    ]);
+    db.insert.mockRejectedValueOnce(new Error("insert failed"));
+
+    render(<App />);
+    await screen.findByText("Standup");
+    const checkbox = screen.getByRole("button", { name: /complete .*standup/i });
+    await act(async () => {
+      fireEvent.click(checkbox);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { status: "open" });
+    });
+  });
+
   it("filters tasks into Today and Upcoming views", async () => {
     installMatrixDb([
       { id: "td", title: "Due today task", status: "open", priority: 0, due: isoDaysFromNow(0) },
@@ -149,6 +176,33 @@ describe("Todo app", () => {
     await waitFor(() => {
       expect(db.delete).toHaveBeenCalledWith("tasks", "t1");
     });
+  });
+
+  it("debounces note edits from the inspector", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Annotate", status: "open", priority: 0, due: null, notes: "" },
+    ]);
+    render(<App />);
+    await screen.findByText("Annotate");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("listitem"));
+    const notes = screen.getByPlaceholderText("Add notes…");
+    fireEvent.change(notes, { target: { value: "Draft note" } });
+
+    expect(db.update).not.toHaveBeenCalledWith(
+      "tasks",
+      "t1",
+      expect.objectContaining({ notes: "Draft note" }),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith("tasks", "t1", { notes: "Draft note" });
+    vi.useRealTimers();
   });
 
   it("survives a missing MatrixOS.db without crashing", async () => {

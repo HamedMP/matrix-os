@@ -46,6 +46,26 @@ describe("normalizeTask", () => {
     expect(normalizeTask({ id: "x", title: "ok", priority: 99 })!.priority).toBe(3);
     expect(normalizeTask({ id: "x", title: "ok", priority: -5 })!.priority).toBe(0);
   });
+
+  it("hydrates legacy task rows from the previous default app schema", () => {
+    const task = normalizeTask({
+      id: "legacy",
+      text: "Ship migration",
+      done: true,
+      category: "Launch",
+      priority: "high",
+      due: "2026-06-02T09:00:00.000Z",
+    });
+
+    expect(task).toMatchObject({
+      id: "legacy",
+      title: "Ship migration",
+      status: "done",
+      project: "Launch",
+      priority: 3,
+      due: "2026-06-02T09:00:00.000Z",
+    });
+  });
 });
 
 describe("filterTasks", () => {
