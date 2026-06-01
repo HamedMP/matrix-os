@@ -16,7 +16,7 @@ permissions:
 jobs:
   screenshots:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
         with:
@@ -103,7 +103,7 @@ jobs:
 
       - name: Install Playwright Chromium
         if: steps.screenshots.outputs.should_run == 'true'
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: cd shell && pnpm exec playwright install --only-shell chromium
 
       - name: Run Playwright tests
