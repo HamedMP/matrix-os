@@ -134,13 +134,15 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('base_services="matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service"');
+    expect(cloudInit).toContain('optional_services="$optional_services matrix-symphony.service"');
+    expect(cloudInit).toContain('systemctl enable $base_services $optional_services matrix-linux-tools.service matrix-db-backup.timer nginx');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
     expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
-    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
+    expect(cloudInit).toContain('for optional_bin in matrix-symphony matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
@@ -375,7 +377,9 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('base_services="matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service"');
+    expect(cloudInit).toContain('optional_services="$optional_services matrix-symphony.service"');
+    expect(cloudInit).toContain('systemctl enable $base_services $optional_services matrix-linux-tools.service matrix-db-backup.timer nginx');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

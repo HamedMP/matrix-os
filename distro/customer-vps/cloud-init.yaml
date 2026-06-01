@@ -801,10 +801,10 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-install-hermes; do
+    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
-    for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
+    for optional_bin in matrix-symphony matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
       fi
@@ -843,8 +843,15 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-linux-tools.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service
+    base_services="matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service"
+    optional_services=""
+    if [ -x /opt/matrix/bin/matrix-symphony ] && [ -f /etc/systemd/system/matrix-symphony.service ]; then
+      optional_services="$optional_services matrix-symphony.service"
+    else
+      echo "matrix-host: Symphony runtime not installed in this bundle; skipping service enablement" >&2
+    fi
+    systemctl enable $base_services $optional_services matrix-linux-tools.service matrix-db-backup.timer nginx
+    systemctl start $base_services $optional_services
     systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
