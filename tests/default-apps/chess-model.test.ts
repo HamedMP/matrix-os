@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PIECE_GLYPHS,
+  capturedFromHistory,
   groupMovesIntoPairs,
   materialDelta,
   squareColor,
@@ -78,5 +79,27 @@ describe("chess-model pure helpers", () => {
     );
     expect(delta.advantage).toBe("even");
     expect(delta.amount).toBe(0);
+  });
+
+  it("reports black material advantage using the absolute difference", () => {
+    const delta = materialDelta(
+      [{ color: "b", type: "p" }],
+      [{ color: "w", type: "r" }],
+    );
+    expect(delta.white).toBe(1);
+    expect(delta.black).toBe(5);
+    expect(delta.advantage).toBe("black");
+    expect(delta.amount).toBe(4);
+  });
+
+  it("derives captured trays from verbose move history", () => {
+    const tray = capturedFromHistory([
+      { color: "w", captured: "p" },
+      { color: "b", captured: "n" },
+      { color: "w" },
+    ]);
+
+    expect(tray.byWhite).toEqual([{ color: "b", type: "p" }]);
+    expect(tray.byBlack).toEqual([{ color: "w", type: "n" }]);
   });
 });
