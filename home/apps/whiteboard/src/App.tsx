@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -196,6 +197,9 @@ export default function App() {
   const [confirmDelete, setConfirmDelete] = useState<BoardMeta | null>(null);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const svgIdPrefix = useId().replace(/:/g, "");
+  const gridId = `${svgIdPrefix}-wb-grid`;
+  const arrowId = `${svgIdPrefix}-wb-arrow`;
   const dragRef = useRef<DragState | null>(null);
   const draftRef = useRef<SceneElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -400,17 +404,18 @@ export default function App() {
   // -- rename a board -------------------------------------------------------
   const commitRename = useCallback(async () => {
     const r = renaming;
-    setRenaming(null);
     if (!r) return;
     const name = normalizeBoardName(r.value);
     setBoards((prev) => prev.map((b) => (b.id === r.id ? { ...b, name } : b)));
     const db = window.MatrixOS?.db;
     if (!db || r.id === LOCAL_BOARD_ID) {
       saveLocalName(name);
+      setRenaming(null);
       return;
     }
     try {
       await db.update(SCENES_TABLE, r.id, { name });
+      setRenaming(null);
     } catch (err: unknown) {
       console.warn("[whiteboard] rename failed:", err instanceof Error ? err.message : String(err));
       setError("Could not rename the board.");
@@ -838,9 +843,9 @@ export default function App() {
   const renderElements = useMemo(() => {
     const list = draft ? [...elements, draft] : elements;
     return list.map((el) => (
-      <ElementView key={el.id} el={el} selected={selected.has(el.id)} editing={editing?.id === el.id} />
+      <ElementView key={el.id} el={el} selected={selected.has(el.id)} editing={editing?.id === el.id} arrowId={arrowId} />
     ));
-  }, [draft, editing, elements, selected]);
+  }, [arrowId, draft, editing, elements, selected]);
 
   const motion = reduceMotion();
   const gridUnit = 24 * viewport.zoom;
@@ -901,7 +906,7 @@ export default function App() {
         >
           <defs>
             <pattern
-              id="wb-grid"
+              id={gridId}
               width={gridUnit || 24}
               height={gridUnit || 24}
               patternUnits="userSpaceOnUse"
@@ -909,11 +914,11 @@ export default function App() {
             >
               <circle cx="1" cy="1" r="1" className="wb-grid-dot" />
             </pattern>
-            <marker id="wb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id={arrowId} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
             </marker>
           </defs>
-          <rect className="wb-grid-bg" x="0" y="0" width="100%" height="100%" fill="url(#wb-grid)" />
+          <rect className="wb-grid-bg" x="0" y="0" width="100%" height="100%" fill={`url(#${gridId})`} />
           <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.zoom})`}>
             {renderElements}
             {selected.size > 0 &&
@@ -1340,7 +1345,7 @@ function penPath(points: Point[]): string {
   return d;
 }
 
-function ElementView({ el, selected, editing }: { el: SceneElement; selected: boolean; editing: boolean }) {
+function ElementView({ el, selected, editing, arrowId }: { el: SceneElement; selected: boolean; editing: boolean; arrowId: string }) {
   const className = selected ? "wb-el wb-el--selected" : "wb-el";
   if (el.kind === "pen") {
     return (
@@ -1367,7 +1372,7 @@ function ElementView({ el, selected, editing }: { el: SceneElement; selected: bo
         strokeWidth={l.strokeWidth}
         strokeLinecap="round"
         className={className}
-        markerEnd={el.kind === "arrow" ? "url(#wb-arrow)" : undefined}
+        markerEnd={el.kind === "arrow" ? `url(#${arrowId})` : undefined}
       />
     );
   }

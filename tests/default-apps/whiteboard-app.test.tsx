@@ -103,6 +103,29 @@ describe("Whiteboard app", () => {
     expect(screen.getByTestId("whiteboard-empty")).toBeTruthy();
   });
 
+  it("uses unique svg definition ids for multiple instances", async () => {
+    installMatrixDb([]);
+    const { container } = render(
+      <>
+        <App />
+        <App />
+      </>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const gridIds = [...container.querySelectorAll("pattern")].map((node) => node.id);
+    const markerIds = [...container.querySelectorAll("marker")].map((node) => node.id);
+    expect(gridIds).toHaveLength(2);
+    expect(markerIds).toHaveLength(2);
+    expect(new Set(gridIds).size).toBe(2);
+    expect(new Set(markerIds).size).toBe(2);
+    expect(gridIds).not.toContain("wb-grid");
+    expect(markerIds).not.toContain("wb-arrow");
+  });
+
   it("prevents native autoscroll when starting a middle-button pan", async () => {
     installMatrixDb([]);
     render(<App />);
@@ -207,6 +230,29 @@ describe("Whiteboard app — multi-board files", () => {
     expect(db.insert.mock.calls[0][0]).toBe("scenes");
     const inserted = db.insert.mock.calls[0][1] as Record<string, unknown>;
     expect(typeof inserted.name).toBe("string");
+  });
+
+  it("keeps rename editing open when the db update fails", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    db.update.mockRejectedValueOnce(new Error("rename failed"));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
+    const input = screen.getByLabelText(/rename sprint plan/i);
+    fireEvent.change(input, { target: { value: "Launch plan" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /confirm rename/i }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not rename the board.")).toBeTruthy();
+    expect(screen.getByDisplayValue("Launch plan")).toBeTruthy();
   });
 
   it("loads the active board's doc when switching boards", async () => {
