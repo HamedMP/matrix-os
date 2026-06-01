@@ -85,6 +85,17 @@ describe("2048 app", () => {
     expect(screen.getByTestId("score").textContent).toBe("0");
   });
 
+  it("persists a zero live score when starting a new game", async () => {
+    const db = installMatrixDb([{ id: "s1", score: 1234, best: 5000, created_at: "2026-05-31T00:00:00.000Z" }]);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("5000"));
+    db.update.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+  });
+
   it("falls back to localStorage best score when MatrixOS.db is undefined", async () => {
     window.localStorage.setItem("matrixos.2048.best", "7777");
     render(<App />);

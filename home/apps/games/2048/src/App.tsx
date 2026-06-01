@@ -143,7 +143,20 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [keepPlaying, setKeepPlaying] = useState(false);
   const dbRowId = useRef<string | null>(null);
+  const dbRowInsertRef = useRef<Promise<string> | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
+
+  const persistScore = useCallback((score: number) => {
+    const db = window.MatrixOS?.db;
+    if (!db || !dbRowId.current) return;
+    (async () => {
+      try {
+        await db.update(SCORES_TABLE, dbRowId.current as string, { score });
+      } catch (err) {
+        console.warn("[2048] failed to update current score", err);
+      }
+    })();
+  }, []);
 
   // ---- Load best score: DB first, localStorage fallback -------------------
   useEffect(() => {
@@ -233,8 +246,18 @@ export default function App() {
         if (dbRowId.current) {
           await db.update(SCORES_TABLE, dbRowId.current, { best: newBest });
         } else {
-          const res = await db.insert(SCORES_TABLE, { score: 0, best: newBest });
-          dbRowId.current = res.id;
+          if (!dbRowInsertRef.current) {
+            dbRowInsertRef.current = db.insert(SCORES_TABLE, { score: 0, best: newBest })
+              .then((res) => {
+                dbRowId.current = res.id;
+                return res.id;
+              })
+              .finally(() => {
+                dbRowInsertRef.current = null;
+              });
+          }
+          const id = await dbRowInsertRef.current;
+          await db.update(SCORES_TABLE, id, { best: newBest });
         }
       } catch (err) {
         console.warn("[2048] failed to persist best score", err);
@@ -253,16 +276,8 @@ export default function App() {
 
   // Persist the current score onto the score row too (so DB.score is live).
   useEffect(() => {
-    const db = window.MatrixOS?.db;
-    if (!db || !dbRowId.current || state.score === 0) return;
-    (async () => {
-      try {
-        await db.update(SCORES_TABLE, dbRowId.current as string, { score: state.score });
-      } catch (err) {
-        console.warn("[2048] failed to update current score", err);
-      }
-    })();
-  }, [state.score]);
+    persistScore(state.score);
+  }, [persistScore, state.score]);
 
   // ---- Keyboard input ------------------------------------------------------
   useEffect(() => {
@@ -322,12 +337,13 @@ export default function App() {
   }, []);
 
   const showWin = state.won && !keepPlaying;
-  const showOver = state.over && !state.won;
+  const showOver = state.over && (!state.won || keepPlaying);
 
   const newGameClick = useCallback(() => {
     setKeepPlaying(false);
+    persistScore(0);
     dispatch({ type: "reset" });
-  }, []);
+  }, [persistScore]);
 
   return (
     <div className="app">

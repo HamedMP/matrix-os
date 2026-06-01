@@ -17,7 +17,8 @@
       "scores": {
         "columns": {
           "score": "integer",
-          "best": "integer"
+          "best": "integer",
+          "created_at": "timestamptz"
         }
       }
     }
