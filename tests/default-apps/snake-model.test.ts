@@ -156,6 +156,8 @@ describe("snake-model: spawnFood", () => {
   it("returns a free cell within the grid bounds", () => {
     const snake = [{ x: 0, y: 0 }];
     const food = spawnFood(snake, seededRng([0.5, 0.5]));
+    expect(food).not.toBeNull();
+    if (!food) throw new Error("expected food to spawn");
     expect(food.x).toBeGreaterThanOrEqual(0);
     expect(food.x).toBeLessThan(GRID_COLS);
     expect(food.y).toBeGreaterThanOrEqual(0);

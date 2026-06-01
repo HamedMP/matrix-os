@@ -14,6 +14,7 @@ import {
 
 const SCORES_TABLE = "scores";
 const LS_BEST_KEY = "matrix-snake-best";
+const DATA_BEST_KEY = "matrix-snake-best";
 
 type Difficulty = "chill" | "classic" | "fast";
 
@@ -49,17 +50,38 @@ function coerceBest(row: unknown): number {
   return Number.isFinite(score) && score > 0 ? score : 0;
 }
 
-function readLocalBest(): number {
+function coercePositiveNumber(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+async function readFallbackBest(): Promise<number> {
+  if (window.MatrixOS?.readData) {
+    try {
+      return coercePositiveNumber(await window.MatrixOS.readData(DATA_BEST_KEY));
+    } catch (err: unknown) {
+      console.warn("[snake] app data best read failed:", err instanceof Error ? err.message : String(err));
+      return 0;
+    }
+  }
   try {
     const raw = localStorage.getItem(LS_BEST_KEY);
-    const n = raw ? Number(raw) : 0;
-    return Number.isFinite(n) && n > 0 ? n : 0;
+    return coercePositiveNumber(raw);
   } catch {
     return 0;
   }
 }
 
-function writeLocalBest(value: number): void {
+async function writeFallbackBest(value: number): Promise<void> {
+  if (window.MatrixOS?.writeData) {
+    try {
+      await window.MatrixOS.writeData(DATA_BEST_KEY, value);
+      return;
+    } catch (err: unknown) {
+      console.warn("[snake] app data best save failed:", err instanceof Error ? err.message : String(err));
+      return;
+    }
+  }
   try {
     localStorage.setItem(LS_BEST_KEY, String(value));
   } catch (err: unknown) {
@@ -68,7 +90,7 @@ function writeLocalBest(value: number): void {
 }
 
 async function loadBest(): Promise<number> {
-  const local = readLocalBest();
+  const local = await readFallbackBest();
   const db = window.MatrixOS?.db;
   if (!db) return local;
   const rows = await db.find(SCORES_TABLE, { orderBy: { best: "desc" }, limit: 1 });
@@ -111,7 +133,7 @@ export default function App() {
       setBest(await loadBest());
     } catch (err: unknown) {
       console.warn("[snake] best load failed:", err instanceof Error ? err.message : String(err));
-      setBest(readLocalBest());
+      setBest(await readFallbackBest());
       setError("High score could not be loaded.");
     }
   }, []);
@@ -130,13 +152,13 @@ export default function App() {
     setLastGameWasBest(wasNewBest);
     if (wasNewBest) {
       setBest(newBest);
-      writeLocalBest(newBest);
+      await writeFallbackBest(newBest);
     }
     try {
       await persistScore(finalScore, newBest);
     } catch (err: unknown) {
       console.warn("[snake] score save failed:", err instanceof Error ? err.message : String(err));
-      if (wasNewBest) writeLocalBest(newBest);
+      if (wasNewBest) await writeFallbackBest(newBest);
       setError("Score could not be synced.");
     }
   }, []);
