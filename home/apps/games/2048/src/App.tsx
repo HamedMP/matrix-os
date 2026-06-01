@@ -44,12 +44,29 @@ type Action =
   | { type: "undo" }
   | { type: "load-best"; best: number };
 
-function tilesFromBoard(board: Board): Tile[] {
+function tilesFromBoard(
+  board: Board,
+  previous: Tile[] = [],
+  spawned: { row: number; col: number; value: number } | null = null,
+): Tile[] {
   const tiles: Tile[] = [];
+  const used = new Set<number>();
   for (let r = 0; r < board.length; r += 1) {
     for (let c = 0; c < board[r].length; c += 1) {
       if (board[r][c] !== 0) {
-        tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: true });
+        if (spawned && spawned.row === r && spawned.col === c && spawned.value === board[r][c]) {
+          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: true });
+          continue;
+        }
+        const match = previous
+          .filter((tile) => tile.value === board[r][c] && !used.has(tile.id))
+          .sort((a, b) => Math.abs(a.row - r) + Math.abs(a.col - c) - (Math.abs(b.row - r) + Math.abs(b.col - c)))[0];
+        if (match) {
+          used.add(match.id);
+          tiles.push({ ...match, row: r, col: c, spawned: false, merged: false });
+        } else {
+          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: true });
+        }
       }
     }
   }
@@ -92,13 +109,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const spawn = addRandomTile(result.board, Math.random);
       const nextBoard = spawn.board;
       const nextScore = state.score + result.gained;
-      const tiles = tilesFromBoard(nextBoard).map((t) => {
-        // Mark the freshly spawned tile so only it pops in.
-        if (spawn.spawned && t.row === spawn.spawned.row && t.col === spawn.spawned.col) {
-          return { ...t, spawned: true, merged: false };
-        }
-        return { ...t, spawned: false };
-      });
+      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned);
 
       return {
         board: nextBoard,
@@ -144,6 +155,7 @@ export default function App() {
   const [keepPlaying, setKeepPlaying] = useState(false);
   const dbRowId = useRef<string | null>(null);
   const dbRowInsertRef = useRef<Promise<string> | null>(null);
+  const pendingBestRef = useRef(0);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
   const persistScore = useCallback((score: number) => {
@@ -241,13 +253,18 @@ export default function App() {
     }
     const db = window.MatrixOS?.db;
     if (!db) return;
+    pendingBestRef.current = Math.max(pendingBestRef.current, newBest);
     (async () => {
       try {
         if (dbRowId.current) {
-          await db.update(SCORES_TABLE, dbRowId.current, { best: newBest });
+          await db.update(SCORES_TABLE, dbRowId.current, { best: Math.max(newBest, pendingBestRef.current) });
         } else {
           if (!dbRowInsertRef.current) {
-            dbRowInsertRef.current = db.insert(SCORES_TABLE, { score: 0, best: newBest })
+            dbRowInsertRef.current = db.insert(SCORES_TABLE, {
+              score: newBest,
+              best: pendingBestRef.current,
+              created_at: new Date().toISOString(),
+            })
               .then((res) => {
                 dbRowId.current = res.id;
                 return res.id;
@@ -257,7 +274,7 @@ export default function App() {
               });
           }
           const id = await dbRowInsertRef.current;
-          await db.update(SCORES_TABLE, id, { best: newBest });
+          await db.update(SCORES_TABLE, id, { best: Math.max(newBest, pendingBestRef.current) });
         }
       } catch (err) {
         console.warn("[2048] failed to persist best score", err);
@@ -279,6 +296,9 @@ export default function App() {
     persistScore(state.score);
   }, [persistScore, state.score]);
 
+  const showWin = state.won && !keepPlaying;
+  const showOver = state.over && (!state.won || keepPlaying);
+
   // ---- Keyboard input ------------------------------------------------------
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -292,12 +312,13 @@ export default function App() {
       const dir = KEY_TO_DIR[e.key];
       if (dir) {
         e.preventDefault();
+        if (showWin) return;
         dispatch({ type: "move", direction: dir });
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [state.history]);
+  }, [showWin, state.history]);
 
   // ---- Touch swipe ---------------------------------------------------------
   useEffect(() => {
@@ -325,6 +346,7 @@ export default function App() {
       let dir: Direction;
       if (absX > absY) dir = dx > 0 ? "right" : "left";
       else dir = dy > 0 ? "down" : "up";
+      if (showWin) return;
       dispatch({ type: "move", direction: dir });
     };
 
@@ -334,10 +356,7 @@ export default function App() {
       el.removeEventListener("touchstart", onStart);
       el.removeEventListener("touchend", onEnd);
     };
-  }, []);
-
-  const showWin = state.won && !keepPlaying;
-  const showOver = state.over && (!state.won || keepPlaying);
+  }, [showWin]);
 
   const newGameClick = useCallback(() => {
     setKeepPlaying(false);
