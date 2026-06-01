@@ -140,6 +140,37 @@ describe("Todo app", () => {
     });
   });
 
+  it("requires a due date before completing a repeating task", async () => {
+    const db = installMatrixDb([
+      {
+        id: "t1",
+        title: "Standup",
+        status: "open",
+        priority: 0,
+        due: null,
+        recur: "daily",
+      },
+    ]);
+
+    render(<App />);
+    await screen.findByText("Standup");
+    fireEvent.click(screen.getByRole("listitem"));
+
+    const repeat = screen.getByText("Repeat").closest("label")?.querySelector("select") as HTMLSelectElement | null;
+    expect(repeat).toBeInstanceOf(HTMLSelectElement);
+    if (!repeat) throw new Error("Repeat select was not rendered");
+    expect(repeat.disabled).toBe(true);
+    expect(screen.getByText("Add a due date to repeat this task.")).toBeTruthy();
+
+    const checkbox = screen.getByRole("button", { name: /complete .*standup/i });
+    fireEvent.click(checkbox);
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Add a due date before completing a repeating task.",
+    );
+    expect(db.update).not.toHaveBeenCalledWith("tasks", "t1", { status: "done" });
+  });
+
   it("filters tasks into Today and Upcoming views", async () => {
     installMatrixDb([
       { id: "td", title: "Due today task", status: "open", priority: 0, due: isoDaysFromNow(0) },

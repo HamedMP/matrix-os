@@ -499,6 +499,17 @@ body {
   border-color: color-mix(in srgb, var(--app-accent) 55%, transparent);
   background: var(--app-bg);
 }
+.field select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.field-hint {
+  color: var(--app-muted-fg);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {

@@ -251,6 +251,11 @@ export default function App() {
   const completeTask = useCallback(
     async (task: Task) => {
       if (inFlightComplete.current.has(task.id)) return;
+      if (task.recur && !task.due) {
+        setError("Add a due date before completing a repeating task.");
+        setSelectedId(task.id);
+        return;
+      }
       inFlightComplete.current.add(task.id);
       // Optimistically mark done.
       setTasks((cur) => cur.map((t) => (t.id === task.id ? { ...t, status: "done" } : t)));
@@ -661,7 +666,10 @@ function Inspector({
         <input
           type="date"
           value={toDateInputValue(task.due)}
-          onChange={(e) => onPatch({ due: fromDateInputValue(e.target.value) })}
+          onChange={(e) => {
+            const due = fromDateInputValue(e.target.value);
+            onPatch(due ? { due } : { due: null, recur: null });
+          }}
         />
       </label>
 
@@ -678,7 +686,8 @@ function Inspector({
       <label className="field">
         <span>Repeat</span>
         <select
-          value={task.recur ?? ""}
+          value={task.due ? (task.recur ?? "") : ""}
+          disabled={!task.due}
           onChange={(e) => onPatch({ recur: (e.target.value || null) as Recurrence | null })}
         >
           {RECUR_OPTIONS.map((opt) => (
@@ -687,6 +696,7 @@ function Inspector({
             </option>
           ))}
         </select>
+        {!task.due && <span className="field-hint">Add a due date to repeat this task.</span>}
       </label>
     </div>
   );
