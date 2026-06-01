@@ -167,6 +167,7 @@ describe("Whiteboard app — multi-board files", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    db.insert.mockClear();
 
     const newBtn = screen.getByRole("button", { name: /new board/i });
     await act(async () => {
