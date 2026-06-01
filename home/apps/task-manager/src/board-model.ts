@@ -135,7 +135,7 @@ export function createSeedBoard(): Board {
     description: "Capture what a professional Matrix OS app should feel like.",
     priority: "high",
     labels: ["product", "design"],
-    assignee: "Hamed",
+    assignee: "Product",
     checklist: [
       { id: "seed-1", text: "Notes upgrade", done: true },
       { id: "seed-2", text: "Task board upgrade", done: false },

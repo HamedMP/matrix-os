@@ -3,6 +3,7 @@ import {
   addCard,
   addColumn,
   createBoard,
+  createSeedBoard,
   delegateCard,
   deleteColumn,
   hydrateBoard,
@@ -27,6 +28,13 @@ describe("task board model", () => {
       "Review",
       "Done",
     ]);
+  });
+
+  it("keeps fallback seed board assignees generic", () => {
+    const board = createSeedBoard();
+
+    expect(board.cards.map((card) => card.assignee)).not.toContain("Hamed");
+    expect(board.cards.some((card) => card.assignee === "Product")).toBe(true);
   });
 
   it("adds and moves cards across columns without losing ordering", () => {
