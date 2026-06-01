@@ -104,6 +104,15 @@ describe("foundation legality", () => {
     expect(canMoveToFoundation(card("hearts", 2), [card("spades", 1)])).toBe(false);
     expect(canMoveToFoundation(card("spades", 3), [card("spades", 1)])).toBe(false);
   });
+
+  it("rejects foundation-to-foundation moves", () => {
+    const s = emptyState();
+    s.foundations[0] = [card("spades", 1)];
+
+    expect(isLegalMove(s, { type: "foundation", pile: 0 }, { type: "foundation", pile: 1 })).toBe(false);
+    expect(applyMove(s, { type: "foundation", pile: 0 }, { type: "foundation", pile: 1 })).toBeNull();
+    expect(findAutoDestination(s, { type: "foundation", pile: 0 })).toBeNull();
+  });
 });
 
 describe("movable runs", () => {

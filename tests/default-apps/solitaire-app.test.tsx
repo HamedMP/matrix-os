@@ -72,6 +72,21 @@ describe("Solitaire app", () => {
     expect(inFoundation).toBe(true);
   });
 
+  it("does not add undo history when drawing from empty stock and waste", async () => {
+    installMatrixDb();
+    render(<App initialState={{ ...seededState(), waste: [] }} />);
+
+    const undoButton = await screen.findByRole("button", { name: /undo/i }) as HTMLButtonElement;
+    expect(undoButton.disabled).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("stock"));
+      await Promise.resolve();
+    });
+
+    expect(undoButton.disabled).toBe(true);
+  });
+
   it("persists stats to the bridge when a game is won", async () => {
     const db = installMatrixDb([]);
     // a state one move from a win: 51 cards on foundations, last Ace... build full minus one

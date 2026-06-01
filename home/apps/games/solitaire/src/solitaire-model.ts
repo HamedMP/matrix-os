@@ -232,9 +232,9 @@ function scoreFor(src: Source, dest: Destination): number {
 export function isLegalMove(state: GameState, src: Source, dest: Destination): boolean {
   // Foundations only accept single cards.
   if (dest.type === "foundation") {
+    if (src.type === "foundation") return false;
     let moving: Card | undefined;
     if (src.type === "waste") moving = topOf(state.waste);
-    else if (src.type === "foundation") moving = topOf(state.foundations[src.pile]);
     else {
       const pile = state.tableau[src.pile];
       // a foundation move from tableau must be the single bottom-most face-up card

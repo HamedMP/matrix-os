@@ -249,6 +249,7 @@ export default function App({ initialState }: AppProps) {
 
   const handleDraw = useCallback(() => {
     setSelected(null);
+    if (game.stock.length === 0 && game.waste.length === 0) return;
     commit(drawFromStock(game));
   }, [commit, game]);
 
