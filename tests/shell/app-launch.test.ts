@@ -40,6 +40,7 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("grid")).toBe("/icons/grid.svg");
     expect(iconUrlForSlug("layers")).toBe("/icons/layers.svg");
     expect(iconUrlForSlug("minesweeper")).toBe("/icons/minesweeper.png");
+    expect(iconUrlForSlug("pomodoro")).toBe("/icons/pomodoro-timer.png");
     expect(iconUrlForSlug("pomodoro-timer")).toBe("/icons/pomodoro-timer.png");
     expect(iconUrlForSlug("snake")).toBe("/icons/snake.png");
     expect(iconUrlForSlug("solitaire")).toBe("/icons/solitaire.png");

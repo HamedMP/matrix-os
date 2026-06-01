@@ -45,6 +45,10 @@ const SHIPPED_SVG_ICON_SLUGS = new Set([
   "settings",
 ]);
 
+const ICON_SLUG_ALIASES = new Map<string, string>([
+  ["pomodoro", "pomodoro-timer"],
+]);
+
 export interface GatewayAppEntryLike {
   path?: string;
   slug?: string;
@@ -53,8 +57,9 @@ export interface GatewayAppEntryLike {
 
 export function iconUrlForSlug(slug: string | undefined): string | undefined {
   if (!slug || !SAFE_ICON_SLUG.test(slug)) return undefined;
-  const extension = APP_RASTER_ICON_SLUGS.has(slug) || !SHIPPED_SVG_ICON_SLUGS.has(slug) ? "png" : "svg";
-  return `/icons/${encodeURIComponent(slug)}.${extension}`;
+  const iconSlug = ICON_SLUG_ALIASES.get(slug) ?? slug;
+  const extension = APP_RASTER_ICON_SLUGS.has(iconSlug) || !SHIPPED_SVG_ICON_SLUGS.has(iconSlug) ? "png" : "svg";
+  return `/icons/${encodeURIComponent(iconSlug)}.${extension}`;
 }
 
 function slugFromLaunchUrl(launchUrl: string | undefined): string | null {
