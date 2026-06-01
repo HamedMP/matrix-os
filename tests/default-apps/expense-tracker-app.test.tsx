@@ -88,6 +88,7 @@ function expense(day: number, amount: number, category: string, extra: DbRow = {
 
 describe("Expense Tracker app", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
   });
@@ -238,6 +239,20 @@ describe("Expense Tracker app", () => {
     expect(call?.[1]).toMatchObject({ amount: 25.5, note: "Coffee beans" });
     expect(typeof (call?.[1] as Record<string, unknown>).category).toBe("string");
     expect(typeof (call?.[1] as Record<string, unknown>).spent_at).toBe("string");
+  });
+
+  it("defaults the expense date to the UTC day used by month selection", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-01T01:00:00.000Z"));
+    installMatrixDb([], []);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const dateInput = screen.getByLabelText(/date/i) as HTMLInputElement;
+    expect(dateInput.value).toBe("2026-05-01");
   });
 
   it("keeps an inserted transaction visible when the follow-up reload fails", async () => {
