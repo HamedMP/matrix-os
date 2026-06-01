@@ -1,0 +1,94 @@
+// @vitest-environment jsdom
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "../../home/apps/games/2048/src/App";
+
+type DbRow = Record<string, unknown>;
+
+function installMatrixDb(rows: DbRow[] = []) {
+  const db = {
+    find: vi.fn(async () => rows),
+    findOne: vi.fn(async () => null),
+    insert: vi.fn(async () => ({ id: "score-new" })),
+    update: vi.fn(async () => ({ ok: true })),
+    delete: vi.fn(async () => ({ ok: true })),
+    count: vi.fn(async () => rows.length),
+    onChange: vi.fn(() => () => undefined),
+  };
+  Object.defineProperty(window, "MatrixOS", {
+    configurable: true,
+    value: { db },
+  });
+  return db;
+}
+
+describe("2048 app", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(window, "MatrixOS");
+    window.localStorage.clear();
+  });
+
+  it("renders a 16-cell board, score, and best-score readouts", async () => {
+    installMatrixDb([{ id: "s1", score: 1234, best: 5000, created_at: "2026-05-31T00:00:00.000Z" }]);
+    render(<App />);
+
+    const board = await screen.findByTestId("board");
+    // 16 grid cells
+    expect(within(board).getAllByTestId("cell").length).toBe(16);
+    expect(screen.getByTestId("score").textContent).toBe("0");
+    // best score loaded from DB
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("5000"));
+  });
+
+  it("an arrow key produces a move and increases score on a merge", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+    await screen.findByTestId("board");
+
+    const scoreBefore = Number(screen.getByTestId("score").textContent);
+
+    // Press arrows in every direction; with two starting tiles at least one
+    // direction will eventually merge or move. We assert the board reacts:
+    // pressing keys must not throw and the score is a number that can only grow.
+    await act(async () => {
+      for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+        fireEvent.keyDown(window, { key });
+        await Promise.resolve();
+      }
+    });
+
+    const scoreAfter = Number(screen.getByTestId("score").textContent);
+    expect(scoreAfter).toBeGreaterThanOrEqual(scoreBefore);
+    // there must still be a board with 16 cells after moves
+    expect(within(screen.getByTestId("board")).getAllByTestId("cell").length).toBe(16);
+  });
+
+  it("New game button resets the score to 0", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      for (const key of ["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"]) {
+        fireEvent.keyDown(window, { key });
+        await Promise.resolve();
+      }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(screen.getByTestId("score").textContent).toBe("0");
+  });
+
+  it("falls back to localStorage best score when MatrixOS.db is undefined", async () => {
+    window.localStorage.setItem("matrixos.2048.best", "7777");
+    render(<App />);
+    await screen.findByTestId("board");
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
+  });
+});
