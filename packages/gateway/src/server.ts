@@ -3236,7 +3236,10 @@ export async function createGateway(config: GatewayConfig) {
     let parsed: URL;
     try {
       parsed = new URL(target);
-    } catch {
+    } catch (err) {
+      if (!(err instanceof TypeError)) {
+        console.warn("[bridge/proxy] URL parse failed:", err instanceof Error ? err.message : String(err));
+      }
       return c.json({ error: "invalid url" }, 400);
     }
     if (parsed.protocol !== "https:" || !BRIDGE_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
@@ -3254,7 +3257,12 @@ export async function createGateway(config: GatewayConfig) {
         // Coarse status only; never leak upstream body/headers on failure.
         return c.json({ error: "upstream request failed" }, 502);
       }
-      const data = await upstream.json().catch(() => null);
+      let data: unknown = null;
+      try {
+        data = await upstream.json();
+      } catch (err) {
+        console.warn("[bridge/proxy] upstream JSON parse failed:", err instanceof Error ? err.message : String(err));
+      }
       if (data == null) return c.json({ error: "upstream returned no data" }, 502);
       return c.json({ data });
     } catch (e) {

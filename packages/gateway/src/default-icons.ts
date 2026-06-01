@@ -1,8 +1,10 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SAFE_ICON_FILE = /^([a-zA-Z0-9_-]+)\.(png|svg)$/;
 const SKIP_APP_DIRS = new Set(["node_modules"]);
+const BUNDLED_ICON_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../../home/system/icons");
 
 export async function resolveSystemIconUrl(homePath: string, requestedFile: string): Promise<string | null> {
   const match = requestedFile.match(SAFE_ICON_FILE);
@@ -33,6 +35,25 @@ export async function resolveSystemIconUrl(homePath: string, requestedFile: stri
 export async function resolveDefaultAppIconUrl(homePath: string, slug: string): Promise<string | null> {
   if (!/^[a-zA-Z0-9_-]+$/.test(slug)) return null;
   return findDefaultAppIcon(homePath, join(homePath, "apps"), slug);
+}
+
+export async function resolveBundledSystemIconPath(requestedFile: string): Promise<string | null> {
+  const match = requestedFile.match(SAFE_ICON_FILE);
+  if (!match) return null;
+  const [, stem, requestedExt] = match;
+  const candidates = Array.from(new Set([`${stem}.${requestedExt}`, `${stem}.png`, `${stem}.svg`]));
+  for (const candidate of candidates) {
+    const fullPath = join(BUNDLED_ICON_DIR, candidate);
+    try {
+      const iconStat = await lstat(fullPath);
+      if (iconStat.isFile()) return fullPath;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn("[icons] failed to stat bundled system icon:", err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  return null;
 }
 
 async function findDefaultAppIcon(homePath: string, dir: string, slug: string): Promise<string | null> {

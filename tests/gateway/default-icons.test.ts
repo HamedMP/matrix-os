@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../../packages/gateway/src/default-icons.js";
+import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../../packages/gateway/src/default-icons.js";
 
 describe("default app icons", () => {
   it("resolves shipped manifest icons for default apps", async () => {
@@ -32,5 +32,10 @@ describe("default app icons", () => {
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
+  });
+
+  it("resolves bundled system icons by safe filename", async () => {
+    await expect(resolveBundledSystemIconPath("game-center.png")).resolves.toMatch(/home\/system\/icons\/game-center\.png$/);
+    await expect(resolveBundledSystemIconPath("../game-center.png")).resolves.toBeNull();
   });
 });
