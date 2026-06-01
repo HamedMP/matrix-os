@@ -247,8 +247,8 @@ export default function App() {
         await db.update(TASKS_TABLE, id, patch as Record<string, unknown>);
       } catch (err: unknown) {
         console.warn("[todo] task update failed:", errMessage(err));
-        setError("Change could not be saved.");
         await reload();
+        setError("Change could not be saved.");
       }
     },
     [reload],
@@ -301,7 +301,6 @@ export default function App() {
         if (db) await reload();
       } catch (err: unknown) {
         console.warn("[todo] task complete failed:", errMessage(err));
-        setError("Could not complete task.");
         if (db) {
           try {
             await db.update(TASKS_TABLE, task.id, { status: "open" });
@@ -310,6 +309,7 @@ export default function App() {
           }
         }
         await reload();
+        setError("Could not complete task.");
       } finally {
         inFlightComplete.current.delete(task.id);
       }
@@ -328,8 +328,8 @@ export default function App() {
         await reload();
       } catch (err: unknown) {
         console.warn("[todo] task delete failed:", errMessage(err));
-        setError("Task could not be deleted.");
         await reload();
+        setError("Task could not be deleted.");
       }
     },
     [reload, selectedId],

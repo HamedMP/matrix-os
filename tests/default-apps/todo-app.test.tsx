@@ -145,6 +145,19 @@ describe("Todo app", () => {
     });
   });
 
+  it("keeps update failure errors visible after reloading", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Prioritize", status: "open", priority: 0, due: null },
+    ]);
+    db.update.mockRejectedValueOnce(new Error("update failed"));
+
+    render(<App />);
+    await screen.findByText("Prioritize");
+    fireEvent.click(screen.getByRole("button", { name: /priority for prioritize/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Change could not be saved.");
+  });
+
   it("rolls a recurring task back open when scheduling the next occurrence fails", async () => {
     const db = installMatrixDb([
       {
@@ -172,6 +185,19 @@ describe("Todo app", () => {
     expect(await screen.findByText("Standup")).toBeTruthy();
     expect(screen.getByRole("button", { name: /complete .*standup/i })).toBeTruthy();
     expect(screen.queryByText(/tomorrow/i)).toBeNull();
+  });
+
+  it("keeps complete failure errors visible after reloading", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
+    ]);
+    db.update.mockRejectedValueOnce(new Error("complete failed"));
+
+    render(<App />);
+    await screen.findByText("Finish report");
+    fireEvent.click(screen.getByRole("button", { name: /complete .*finish report/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not complete task.");
   });
 
   it("requires a due date before completing a repeating task", async () => {
@@ -296,6 +322,19 @@ describe("Todo app", () => {
     await waitFor(() => {
       expect(db.delete).toHaveBeenCalledWith("tasks", "t1");
     });
+  });
+
+  it("keeps delete failure errors visible after reloading", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Disposable", status: "open", priority: 0, due: null },
+    ]);
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+
+    render(<App />);
+    await screen.findByText("Disposable");
+    fireEvent.click(screen.getByRole("button", { name: /delete .*disposable/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Task could not be deleted.");
   });
 
   it("debounces note edits from the inspector", async () => {
