@@ -4,8 +4,8 @@
 
 Every Matrix OS default app should feel like a serious standalone product — indistinguishable in
 polish and depth from its named benchmark competitor. No mock UI, no placeholder metrics, no generic
-dashboards. Real interaction models, Matrix-owned Postgres persistence where appropriate, the light /
-clay visual language, keyboard support, and tests.
+dashboards. Real interaction models, Matrix-owned Postgres persistence where appropriate, the light
+Matrix product language, keyboard support, and tests.
 
 ## How this is built
 
@@ -18,7 +18,7 @@ owned by the lead and reconciled after agents land. Every agent reads `agent-bri
 
 ## Quality gates (enforced by `tests/default-apps/manifest-quality.test.ts`)
 
-Every `home/apps/*/matrix.json` (excluding `_*` templates) must:
+Every `home/apps/**/matrix.json` (excluding `_*` templates and build output) must:
 1. set `runtime: "vite"` with a `build` block whose `output` is `dist`;
 2. declare a `slug` matching its directory and an `icon` slug that has a shipped
    `home/system/icons/<icon>.(svg|png)`;
@@ -82,3 +82,46 @@ Format: **slug** — benchmark → what "world-class" means here. (DB = durable 
 ## Out of scope here (builtins / kernel, not iframe apps)
 - **Workspace** (`__workspace__`) is a shell builtin (tldraw canvas), not an `home/apps/*` app — track separately.
 - **Hermes** is the kernel agent, not an iframe app — track separately.
+
+## Icon art direction
+
+All default app icons should follow the same light, premium iOS/macOS-inspired skeuomorphic style.
+This replaces the earlier flat sage/clay prompt.
+
+Canonical generation prompt:
+
+> Light premium iOS/macOS skeuomorphic source artwork for an app icon. Render a complete full-square
+> 1:1 image with four visible 90-degree square corners; the bright warm off-white or pale pastel
+> background must continue uninterrupted all the way into every corner. This is source artwork that
+> Matrix clips later, not the final masked icon. Absolutely no rounded canvas corners, no rounded-square
+> tile, no app-icon frame, no corner mask, no black/dark/transparent corners, no vignette hiding the
+> corners, and no border radius baked into the image. Use subtle ceramic/glass depth, soft bevels,
+> glossy highlights, realistic studio shadows, and one large tactile 3D object or symbol that clearly
+> represents the app. Use refined Apple-like product rendering, light neumorphism, dimensional
+> glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent
+> lighting across the icon family. Do not include text, letters, numbers unless the app identity truly
+> requires it, logos, watermarks, transparent background, black/dark dock backgrounds, visible
+> rounded-square frame, or empty padding.
+
+Per-app subject guidance:
+
+- **calculator**: elegant calculator face with soft glowing keys.
+- **clock**: precision analog clock rings.
+- **expense-tracker**: premium wallet/card and coin mark.
+- **games**: arcade portal/controller gem.
+- **2048**: four raised merge tiles; avoid tiny unreadable text.
+- **backgammon**: dice and board points.
+- **chess**: glossy knight chess piece.
+- **minesweeper**: polished mine orb and grid.
+- **snake**: curled green snake path.
+- **solitaire**: layered playing cards with heart/spade.
+- **tetris**: floating tetromino blocks.
+- **notes**: cream notebook with bookmark/ribbon.
+- **pomodoro**: timer dial with tomato-red accent.
+- **profile**: refined avatar silhouette badge.
+- **social**: connected speech bubbles/network nodes.
+- **symphony**: developer orchestration console/gem.
+- **task-manager**: kanban columns/cards.
+- **todo**: checkmark list badge.
+- **weather**: sun/cloud/rain glass weather glyph.
+- **whiteboard**: pen stroke and sticky note.

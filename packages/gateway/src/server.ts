@@ -212,6 +212,12 @@ import {
   writeClientErrorReport,
 } from "./client-error-log.js";
 
+const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
+
+function isSafeIconStem(value: unknown): value is string {
+  return typeof value === "string" && SAFE_ICON_STEM.test(value);
+}
+
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
 // /api/integrations/call endpoint does.
@@ -3681,19 +3687,22 @@ export async function createGateway(config: GatewayConfig) {
 
       const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
-      const prompt = buildIconPrompt(slug, iconStyle);
+      const apps = await listApps(homePath);
+      const targetApp = apps.find((appEntry) => appEntry.slug === slug);
+      const iconStem = isSafeIconStem(targetApp?.icon) ? targetApp.icon : slug;
+      const prompt = buildIconPrompt(targetApp?.name ?? slug, iconStyle);
       const iconsDir = join(homePath, "system/icons");
       const result = await client.generateImage(prompt, {
         aspectRatio: "1:1",
         imageDir: iconsDir,
-        saveAs: `${slug}.png`,
+        saveAs: `${iconStem}.png`,
       });
-      const iconPath = join(iconsDir, `${slug}.png`);
+      const iconPath = join(iconsDir, `${iconStem}.png`);
       const stat = statSync(iconPath);
       const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
       c.header("ETag", etag);
       return c.json({
-        iconUrl: `/files/system/icons/${slug}.png`,
+        iconUrl: `/files/system/icons/${iconStem}.png`,
         etag,
         cost: result.cost,
       });
@@ -3723,13 +3732,17 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     const apps = await listApps(homePath);
-    const slugs: string[] = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
+    const iconTargets = apps.flatMap((appEntry) => appEntry.slug ? [{
+        slug: appEntry.slug,
+        icon: isSafeIconStem(appEntry.icon) ? appEntry.icon : appEntry.slug,
+        name: appEntry.name,
+      }] : []);
 
-    generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
-      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
+    generateIconBatch(geminiKey, iconTargets, loadIconStyle(homePath), iconsDir)
+      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${iconTargets.length} succeeded, ${r.failed.length} failed`))
       .catch((err) => console.error("[icons] Regeneration error:", err))
       .finally(() => { iconRegenerationInProgress = false; });
-    return c.json({ accepted: true, total: slugs.length }, 202);
+    return c.json({ accepted: true, total: iconTargets.length }, 202);
   });
 
   app.get("/api/cron", (c) => {

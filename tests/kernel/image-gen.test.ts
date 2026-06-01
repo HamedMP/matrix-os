@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createImageClient,
+  generateIconBatch,
   type ImageClient,
   type ImageResult,
 } from "../../packages/kernel/src/image-gen.js";
@@ -229,5 +230,45 @@ describe("Image Generation Client", () => {
       const fetchOpts = mockFetch.mock.calls[0][1];
       expect(fetchOpts.signal).toBeDefined();
     });
+  });
+});
+
+describe("generateIconBatch", () => {
+  let imageDir: string;
+
+  beforeEach(() => {
+    imageDir = resolve(mkdtempSync(join(tmpdir(), "icon-batch-")));
+  });
+
+  afterEach(() => {
+    rmSync(imageDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("writes generated app icons using the manifest icon key", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await generateIconBatch(
+      "test-key",
+      [{ slug: "pomodoro", icon: "pomodoro-timer", name: "Pomodoro Timer" }],
+      "light icon style",
+      imageDir,
+    );
+
+    expect(result).toEqual({ generated: 1, failed: [] });
+    expect(existsSync(join(imageDir, "pomodoro-timer.png"))).toBe(true);
+    expect(existsSync(join(imageDir, "pomodoro.png"))).toBe(false);
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.contents[0].parts[0].text).toContain("Pomodoro Timer");
+  });
+
+  it("keeps slug filenames for legacy string targets", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(geminiResponse()));
+
+    await generateIconBatch("test-key", ["calculator"], "light icon style", imageDir);
+
+    expect(existsSync(join(imageDir, "calculator.png"))).toBe(true);
   });
 });

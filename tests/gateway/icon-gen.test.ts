@@ -42,7 +42,7 @@ function createIconApp(homePath: string) {
       } catch { /* ignore */ }
     }
     if (!iconStyle) {
-      iconStyle = "Digital neo-classic app icon filling the entire frame edge to edge, dark matte background with subtle luminous grid lines, clean geometric 3D forms, soft phosphor glow accents, rounded square shape, premium minimalist design, no margins or padding";
+      iconStyle = "Light premium iOS/macOS skeuomorphic source artwork for an app icon. Render a complete full-square 1:1 image with four visible 90-degree square corners; the bright warm off-white or pale pastel background must continue uninterrupted all the way into every corner. Absolutely no rounded canvas corners, no rounded-square tile, no app-icon frame, no corner mask, no black/dark/transparent corners, no vignette hiding the corners, and no border radius baked into the image.";
     }
 
     const client = createImageClient("test-key");
@@ -109,10 +109,12 @@ describe("POST /api/apps/:slug/icon", () => {
     expect(existsSync(join(homePath, "system/icons"))).toBe(true);
   });
 
-  it("uses default neo-classic icon style when no desktop.json", async () => {
+  it("uses default light skeuomorphic icon style when no desktop.json", async () => {
     const res = await app.request("/api/apps/timer/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
-    expect(body.prompt).toContain("Digital neo-classic app icon");
+    expect(body.prompt).toContain("Light premium iOS/macOS skeuomorphic source artwork");
+    expect(body.prompt).toContain("no rounded canvas corners");
+    expect(body.prompt).toContain("no black/dark/transparent corners");
     expect(body.prompt).toContain("timer");
   });
 
@@ -124,7 +126,7 @@ describe("POST /api/apps/:slug/icon", () => {
     const res = await app.request("/api/apps/calculator/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
     expect(body.prompt).toContain("pixel art retro 8-bit style");
-    expect(body.prompt).not.toContain("Digital neo-classic");
+    expect(body.prompt).not.toContain("Light premium iOS/macOS");
   });
 
   it("uses style from request body over desktop.json", async () => {

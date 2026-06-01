@@ -137,11 +137,11 @@ html, body, #root { width: 100%; height: 100%; margin: 0; }
 body { overflow: hidden; -webkit-font-smoothing: antialiased; }
 ```
 
-Visual bar (the "light / clay" Matrix language — warm sand, soft shadows, generous radius):
+Visual bar (the light Matrix product language — warm neutral surfaces, soft shadows, generous radius):
 - Soft elevation: `box-shadow: 0 4px 12px rgba(50,53,46,0.08)`. Avoid hard borders where a shadow reads better.
 - Generous radius (cards ~18–22px, controls ~12–14px), comfortable padding, real whitespace.
 - Smooth `transition: all .15s ease`; hover via `color-mix(in srgb, var(--app-fg) 4%, transparent)`.
-- Accent (clay orange) for the single primary action per view; everything else calm.
+- Accent color for the single primary action per view; everything else calm.
 - The app runs in a fixed window: `height: 100vh; overflow: hidden`, scroll inside panels only.
 - **Empty states are onboarding:** icon + headline + one-line description + a clear first action.
 - **No layout shift:** transient panels overlay, never push content. Click-to-open / click-to-close.
@@ -180,10 +180,12 @@ Match this shape (copy from pomodoro/notes and adapt). `slug` and `icon` are req
 }
 ```
 
-- `icon` must be a slug that has (or will have, created by you) a matching `home/system/icons/<icon>.svg`.
-  Make a crisp, single-concept SVG (24x24 viewBox, `stroke="currentColor"` line style to match lucide,
-  or a tasteful filled mark). Do not reuse an unrelated icon. Games may share `game-center` only if no
-  concrete icon fits — prefer a real one.
+- `icon` must be a slug that has (or will have, created by you) a matching shipped icon asset under
+  `home/system/icons/<icon>.png` or `.svg`. The current preferred generated raster direction is light
+  iOS/macOS skeuomorphic source artwork: full square image with the background continuing into all
+  four square corners, no rounded canvas corners, no rounded-square tile, no black/dark/transparent
+  corner mask, glossy ceramic/glass object, no text, no logos. Do not reuse an unrelated icon. Games
+  must not share `game-center`; every game gets a concrete icon.
 - Omit `storage` entirely if the app has no durable structured data.
 
 ## 5. TDD (non-negotiable — this repo enforces it)
@@ -235,7 +237,7 @@ Keep the existing `matrix.json` `build` block as-is; you may edit name/descripti
 - [ ] `tests/default-apps/<slug>-app.test.tsx` written first and passing; model test passing.
 - [ ] `pnpm build` succeeds → `dist/index.html` exists.
 - [ ] DB usage (if any) guarded, try/catch with typed handling, `onChange` cleanup, optimistic UI.
-- [ ] Empty state, keyboard support, light/clay polish, no layout shift.
+- [ ] Empty state, keyboard support, light Matrix polish, no layout shift.
 - [ ] You did NOT touch shared files or run git.
 
 **Final report back to lead must include:** files created/changed (paths), the benchmark you targeted,

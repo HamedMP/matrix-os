@@ -22,13 +22,20 @@ interface Manifest {
   storage?: { tables?: Record<string, unknown> };
 }
 
-function appDirs(): string[] {
-  return readdirSync(APPS_DIR)
-    .filter((name) => !name.startsWith("_"))
-    .filter((name) => {
-      const dir = join(APPS_DIR, name);
-      return statSync(dir).isDirectory() && existsSync(join(dir, "matrix.json"));
-    });
+function appManifestDirs(root = APPS_DIR): string[] {
+  const dirs: string[] = [];
+  for (const name of readdirSync(root)) {
+    if (name.startsWith("_") || name === "node_modules" || name === "dist") continue;
+    const dir = join(root, name);
+    if (!statSync(dir).isDirectory()) continue;
+    if (existsSync(join(dir, "matrix.json"))) dirs.push(dir);
+    dirs.push(...appManifestDirs(dir));
+  }
+  return dirs;
+}
+
+function appIdForDir(dir: string): string {
+  return dir.replace(`${APPS_DIR}/`, "");
 }
 
 function iconExists(iconSlug: string): boolean {
@@ -39,16 +46,17 @@ function iconExists(iconSlug: string): boolean {
 }
 
 describe("default app manifest quality (spec 083)", () => {
-  const dirs = appDirs();
+  const dirs = appManifestDirs();
 
   it("discovers the default apps", () => {
     expect(dirs.length).toBeGreaterThan(5);
   });
 
   for (const dir of dirs) {
-    describe(dir, () => {
+    const appId = appIdForDir(dir);
+    describe(appId, () => {
       const manifest: Manifest = JSON.parse(
-        readFileSync(join(APPS_DIR, dir, "matrix.json"), "utf-8"),
+        readFileSync(join(dir, "matrix.json"), "utf-8"),
       );
 
       it("is a vite app that builds to dist", () => {
@@ -57,7 +65,8 @@ describe("default app manifest quality (spec 083)", () => {
       });
 
       it("declares a slug matching its directory", () => {
-        expect(manifest.slug ?? dir).toBe(dir);
+        expect(manifest.slug).toBeTruthy();
+        expect(appId.endsWith(manifest.slug as string)).toBe(true);
       });
 
       it("has an icon slug backed by a shipped icon asset", () => {
@@ -68,7 +77,7 @@ describe("default app manifest quality (spec 083)", () => {
         ).toBe(true);
       });
 
-      if (DURABLE_DATA_APPS.has(dir)) {
+      if (DURABLE_DATA_APPS.has(manifest.slug ?? appId)) {
         it("declares Postgres-backed storage tables", () => {
           const tables = manifest.storage?.tables ?? {};
           expect(Object.keys(tables).length).toBeGreaterThan(0);

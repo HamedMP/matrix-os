@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export const DEFAULT_ICON_STYLE = "Minimal app icon filling the entire square canvas edge to edge with zero margin or padding, solid muted sage-cream background color #D1D3BC (a warm gray-green) that is IDENTICAL across ALL icons for a cohesive unified look, a single centered symbolic glyph or pictogram that clearly represents what the app does — the symbol color should be chosen from the Matrix OS design palette: Forest #434E3F (default, earthy dark green), Ember #D06F25 (warm terracotta orange), Deep #32352E (rich charcoal), or Cream #E0E1CA (soft warm light) — pick whichever color best suits the app's personality while maintaining contrast against the sage background, the glyph should be clean and geometric with organic rounded edges, instantly recognizable and directly related to the app purpose, no text, no transparency, no rounded corners (the UI container handles rounding), no gradients on the background (flat solid sage-cream), the symbol can have subtle depth or dimension but the background must remain flat #D1D3BC, every icon must look like part of the same family";
+export const DEFAULT_ICON_STYLE = "Light premium iOS/macOS skeuomorphic source artwork for an app icon. Render a complete full-square 1:1 image with four visible 90-degree square corners; the bright warm off-white or pale pastel background must continue uninterrupted all the way into every corner. This is source artwork that Matrix clips later, not the final masked icon. Absolutely no rounded canvas corners, no rounded-square tile, no app-icon frame, no corner mask, no black/dark/transparent corners, no vignette hiding the corners, and no border radius baked into the image. Use subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and one large tactile 3D object or symbol that clearly represents the app. Use refined Apple-like product rendering, light neumorphism, dimensional glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent lighting across the icon family. Do not include text, letters, numbers unless the app identity truly requires it, logos, watermarks, transparent background, black/dark dock backgrounds, visible rounded-square frame, or empty padding.";
 
 export function loadIconStyle(homePath: string): string {
   try {
@@ -26,9 +26,15 @@ export interface IconBatchResult {
   failed: string[];
 }
 
+export interface IconGenerationTarget {
+  slug: string;
+  icon?: string;
+  name?: string;
+}
+
 export async function generateIconBatch(
   apiKey: string,
-  slugs: string[],
+  targets: Array<string | IconGenerationTarget>,
   iconStyle: string,
   iconsDir: string,
   opts?: { skipExisting?: boolean },
@@ -36,22 +42,39 @@ export async function generateIconBatch(
   const client = createImageClient(apiKey);
   let generated = 0;
   const failed: string[] = [];
-  for (const slug of slugs) {
-    if (opts?.skipExisting && existsSync(join(iconsDir, `${slug}.png`))) continue;
+  for (const target of targets) {
+    const normalized = normalizeIconTarget(target);
+    if (opts?.skipExisting && existsSync(join(iconsDir, `${normalized.fileStem}.png`))) continue;
     try {
-      await client.generateImage(buildIconPrompt(slug, iconStyle), {
+      await client.generateImage(buildIconPrompt(normalized.promptName, iconStyle), {
         aspectRatio: "1:1",
         imageDir: iconsDir,
-        saveAs: `${slug}.png`,
+        saveAs: `${normalized.fileStem}.png`,
       });
       generated++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[icons] Generation failed for "${slug}": ${msg}`);
-      failed.push(slug);
+      console.warn(`[icons] Generation failed for "${normalized.slug}": ${msg}`);
+      failed.push(normalized.slug);
     }
   }
   return { generated, failed };
+}
+
+function normalizeIconTarget(target: string | IconGenerationTarget): { slug: string; fileStem: string; promptName: string } {
+  if (typeof target === "string") {
+    return { slug: target, fileStem: target, promptName: target };
+  }
+  const slug = target.slug;
+  const fileStem = isSafeIconStem(target.icon) ? target.icon : slug;
+  const promptName = typeof target.name === "string" && target.name.trim().length > 0
+    ? target.name.trim()
+    : slug;
+  return { slug, fileStem, promptName };
+}
+
+function isSafeIconStem(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
 }
 
 export interface ImageResult {
