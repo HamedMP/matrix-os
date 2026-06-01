@@ -198,6 +198,7 @@ describe("expense-model", () => {
     it("chooses a locale default currency without hardcoding every display to USD", () => {
       expect(currencyForLocale("sv-SE")).toBe("SEK");
       expect(currencyForLocale("en-GB")).toBe("GBP");
+      expect(currencyForLocale("en-GB-u-nu-latn")).toBe("GBP");
       expect(currencyForLocale("fr-FR")).toBe("EUR");
     });
   });

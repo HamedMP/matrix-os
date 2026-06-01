@@ -244,8 +244,12 @@ const EURO_LOCALES = new Set([
 ]);
 
 export function currencyForLocale(locale: string | undefined): CurrencyCode {
-  const region = locale?.split("-").at(-1)?.toUpperCase();
-  if (!region || region.length !== 2) return "USD";
+  const region = locale
+    ?.split("-")
+    .slice(1)
+    .find((part) => /^[A-Za-z]{2}$/.test(part))
+    ?.toUpperCase();
+  if (!region) return "USD";
   if (EURO_LOCALES.has(region)) return "EUR";
   if (region === "AU") return "AUD";
   if (region === "CA") return "CAD";
