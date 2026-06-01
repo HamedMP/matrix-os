@@ -260,7 +260,9 @@ function App() {
         if (resolvedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
           evictOldestMapEntry(resolvedCreatesRef.current);
         }
-        resolvedCreatesRef.current.set(draft.id, saved.id);
+        if (saved.id !== draft.id) {
+          resolvedCreatesRef.current.set(draft.id, saved.id);
+        }
         setNotes((currentNotes) => {
           const savedNotes = currentNotes.map((note) =>
             note.id === draft.id ? { ...note, id: saved.id, created_at: saved.created_at } : note,
@@ -298,7 +300,9 @@ function App() {
         if (resolvedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
           evictOldestMapEntry(resolvedCreatesRef.current);
         }
-        resolvedCreatesRef.current.set(note.id, saved.id);
+        if (saved.id !== note.id) {
+          resolvedCreatesRef.current.set(note.id, saved.id);
+        }
         const latest = notesRef.current.find((candidate) => candidate.id === note.id) ?? note;
         const savedLatest = { ...latest, id: saved.id, created_at: saved.created_at };
         setNotes((currentNotes) => {
@@ -362,6 +366,10 @@ function App() {
 
   const deleteActiveNote = useCallback(() => {
     if (!activeNote) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
     if (activeNote.id.startsWith("note-")) {
       if (deletedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
         evictOldestMapEntry(deletedCreatesRef.current);

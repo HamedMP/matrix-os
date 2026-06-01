@@ -175,6 +175,56 @@ describe("Notes app", () => {
     expect((updateCall[2] as DbRow).title).toBe("Renamed plan");
   });
 
+  it("cancels pending autosave when deleting the active note", async () => {
+    const db = installMatrixDb([
+      {
+        id: "n-1",
+        title: "Draft",
+        content: "Body text",
+        content_json: { type: "doc", content: [] },
+        pinned: false,
+        tags: "",
+        updated_at: "2026-05-31T10:00:00.000Z",
+      },
+    ]);
+
+    render(<App />);
+    const titleInput = (await screen.findByLabelText("Note title")) as HTMLInputElement;
+    vi.useFakeTimers();
+    fireEvent.change(titleInput, { target: { value: "Renamed plan" } });
+    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.delete).toHaveBeenCalledWith("notes", "n-1");
+    expect(db.update).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("saves debounced local fallback edits without a database bridge", async () => {
+    render(<App />);
+    await screen.findByText("No notes yet");
+
+    fireEvent.click(screen.getByRole("button", { name: "New note" }));
+    const titleInput = screen.getByLabelText("Note title") as HTMLInputElement;
+    vi.useFakeTimers();
+    fireEvent.change(titleInput, { target: { value: "Local draft" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Note could not be saved.")).toBeNull();
+    expect(screen.queryByText("Save failed")).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("saves edits made before a newly inserted note receives its database id", async () => {
     vi.useFakeTimers();
     const db = installMatrixDb([]);
