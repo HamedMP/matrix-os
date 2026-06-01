@@ -95,6 +95,15 @@ describe("Notes app", () => {
     expect(screen.getByText("Weekend")).toBeTruthy();
   });
 
+  it("loads notes in recently updated order", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+
+    await screen.findByText("No notes yet");
+
+    expect(db.find).toHaveBeenCalledWith("notes", { orderBy: { updated_at: "desc" } });
+  });
+
   it("shows the onboarding empty state when there are no notes", async () => {
     installMatrixDb([]);
     render(<App />);

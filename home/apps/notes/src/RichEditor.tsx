@@ -9,7 +9,6 @@ import {
   Heading3,
   Italic,
   List,
-  ListChecks,
   ListOrdered,
   Quote,
   Slash,
@@ -32,7 +31,6 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { id: "h3", label: "Heading 3", hint: "Small section title", icon: Heading3, run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run() },
   { id: "ul", label: "Bullet list", hint: "Simple bulleted list", icon: List, run: (e) => e.chain().focus().toggleBulletList().run() },
   { id: "ol", label: "Numbered list", hint: "Ordered list", icon: ListOrdered, run: (e) => e.chain().focus().toggleOrderedList().run() },
-  { id: "todo", label: "To-do list", hint: "Track tasks with checkboxes", icon: ListChecks, run: (e) => e.chain().focus().toggleBulletList().run() },
   { id: "quote", label: "Quote", hint: "Capture a quote", icon: Quote, run: (e) => e.chain().focus().toggleBlockquote().run() },
   { id: "code", label: "Code block", hint: "Monospaced code", icon: Code, run: (e) => e.chain().focus().toggleCodeBlock().run() },
 ];
@@ -204,17 +202,21 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
                   onKeyDown={(event) => {
                     if (event.key === "Escape") {
                       event.preventDefault();
+                      event.stopPropagation();
                       closeSlash();
                     } else if (event.key === "ArrowDown") {
                       event.preventDefault();
+                      event.stopPropagation();
                       setSlashIndex((i) => (i + 1) % Math.max(filteredCommands.length, 1));
                     } else if (event.key === "ArrowUp") {
                       event.preventDefault();
+                      event.stopPropagation();
                       setSlashIndex((i) => (i - 1 + filteredCommands.length) % Math.max(filteredCommands.length, 1));
                     } else if (event.key === "Enter") {
                       const command = filteredCommands[slashIndex];
                       if (command) {
                         event.preventDefault();
+                        event.stopPropagation();
                         applyCommand(command);
                       }
                     }

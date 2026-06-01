@@ -56,7 +56,7 @@ async function writeKvNotes(notes: Note[]): Promise<void> {
 
 async function loadNotes(): Promise<Note[]> {
   if (window.MatrixOS?.db) {
-    const rows = await window.MatrixOS.db.find("notes", { orderBy: { created_at: "desc" } });
+    const rows = await window.MatrixOS.db.find("notes", { orderBy: { updated_at: "desc" } });
     return rows.map((row) => hydrateNote(row as Record<string, unknown>));
   }
   return readKvNotes();
