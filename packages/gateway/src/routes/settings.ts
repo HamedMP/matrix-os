@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, relative, join } from "node:path";
-import { loadSkills } from "@matrix-os/kernel";
+import { DEFAULT_ICON_STYLE, loadSkills } from "@matrix-os/kernel";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
@@ -19,7 +19,7 @@ const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: ["__workspace__", "__terminal__", "__file-browser__", "__chat__"] as string[],
-  iconStyle: "Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering. Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly represents the app. Use dimensional glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent lighting across the icon family. Do not include text, logos, watermarks, transparent background, black/dark dock backgrounds, or empty padding. The Matrix shell owns the final corner radius, so do not bake a separate visible icon frame into the artwork.",
+  iconStyle: DEFAULT_ICON_STYLE,
 };
 
 const THEME_DEFAULTS = {};

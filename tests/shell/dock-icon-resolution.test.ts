@@ -41,6 +41,16 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("const svgUrl = `/icons/${encodeURIComponent(slug)}.svg`");
   });
 
+  it("ships explicit assets for the mobile dock control slugs", async () => {
+    const [grid, layers] = await Promise.all([
+      readFile("home/system/icons/grid.svg", "utf8"),
+      readFile("home/system/icons/layers.svg", "utf8"),
+    ]);
+
+    expect(grid).toContain("<svg");
+    expect(layers).toContain("<svg");
+  });
+
   it("keeps the desktop dock as a glass rail with stable icon controls", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
     const dockMatch = source.match(/<aside\b[^>]*\bdata-dock\b[\s\S]*?<\/aside>/);

@@ -44,6 +44,10 @@ export async function generateIconBatch(
   const failed: string[] = [];
   for (const target of targets) {
     const normalized = normalizeIconTarget(target);
+    if (!normalized) {
+      failed.push(describeIconTarget(target));
+      continue;
+    }
     if (opts?.skipExisting && existsSync(join(iconsDir, `${normalized.fileStem}.png`))) continue;
     try {
       await client.generateImage(buildIconPrompt(normalized.promptName, iconStyle), {
@@ -61,20 +65,36 @@ export async function generateIconBatch(
   return { generated, failed };
 }
 
-function normalizeIconTarget(target: string | IconGenerationTarget): { slug: string; fileStem: string; promptName: string } {
+function normalizeIconTarget(target: string | IconGenerationTarget): { slug: string; fileStem: string; promptName: string } | null {
   if (typeof target === "string") {
-    return { slug: target, fileStem: target, promptName: target };
+    return isSafeIconStem(target)
+      ? { slug: target, fileStem: target, promptName: target }
+      : null;
   }
   const slug = target.slug;
-  const fileStem = isSafeIconStem(target.icon) ? target.icon : slug;
+  const fileStem = isSafeIconStem(target.icon) ? target.icon : safeStemFromSlug(slug);
+  if (!fileStem) return null;
   const promptName = typeof target.name === "string" && target.name.trim().length > 0
     ? target.name.trim()
     : slug;
   return { slug, fileStem, promptName };
 }
 
+function safeStemFromSlug(slug: string): string | null {
+  const leaf = slug.split("/").filter(Boolean).at(-1);
+  return isSafeIconStem(leaf) ? leaf : null;
+}
+
 function isSafeIconStem(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+function describeIconTarget(target: string | IconGenerationTarget): string {
+  return typeof target === "string" ? target : target.slug;
+}
+
+function isSafeImageFileName(value: string): boolean {
+  return /^[a-zA-Z0-9_.-]+$/.test(value) && !value.includes("..") && value.endsWith(".png");
 }
 
 export interface ImageResult {
@@ -132,6 +152,9 @@ export function createImageClient(apiKey: string): ImageClient {
 
       const model = opts.model ?? DEFAULT_MODEL;
       const fetchFn = opts.fetchFn ?? globalThis.fetch;
+      if (opts.saveAs && !isSafeImageFileName(opts.saveAs)) {
+        throw new Error("Invalid image filename.");
+      }
 
       const url = `${API_BASE}/${model}:generateContent`;
 
@@ -191,6 +214,9 @@ export function createImageClient(apiKey: string): ImageClient {
         .slice(0, 40);
       const timestamp = Date.now();
       const fileName = opts.saveAs ?? `${timestamp}-${slug}.png`;
+      if (!isSafeImageFileName(fileName)) {
+        throw new Error("Invalid image filename.");
+      }
       const localPath = join(opts.imageDir, fileName);
 
       await writeFile(localPath, imageBuffer);

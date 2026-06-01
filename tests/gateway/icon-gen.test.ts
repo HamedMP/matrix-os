@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
-import { createImageClient } from "../../packages/kernel/src/image-gen.js";
+import { createImageClient, DEFAULT_ICON_STYLE } from "../../packages/kernel/src/image-gen.js";
 
 const fakeImageBase64 = Buffer.from("fake-png-data").toString("base64");
 
@@ -42,7 +42,7 @@ function createIconApp(homePath: string) {
       } catch { /* ignore */ }
     }
     if (!iconStyle) {
-      iconStyle = "Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering. Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly represents the app.";
+      iconStyle = DEFAULT_ICON_STYLE;
     }
 
     const client = createImageClient("test-key");
