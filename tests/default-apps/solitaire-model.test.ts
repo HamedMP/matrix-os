@@ -227,6 +227,14 @@ describe("auto-complete + win", () => {
     expect(promoted).toBe(true);
   });
 
+  it("does not offer auto-complete when no top card can move to a foundation", () => {
+    const s = emptyState();
+    s.tableau[0] = [card("hearts", 1), card("spades", 13)];
+
+    expect(autoCompleteStep(s)).toBeNull();
+    expect(canAutoComplete(s)).toBe(false);
+  });
+
   it("auto-completes a near-solved game to a win", () => {
     const s = emptyState();
     const suits: Suit[] = ["spades", "hearts", "diamonds", "clubs"];

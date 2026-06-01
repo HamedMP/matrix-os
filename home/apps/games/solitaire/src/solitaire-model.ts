@@ -335,7 +335,7 @@ export function canAutoComplete(state: GameState): boolean {
       if (!card.faceUp) return false;
     }
   }
-  return true;
+  return autoCompleteStep(state) !== null;
 }
 
 // Perform one auto-complete step: send the lowest available top card to a
