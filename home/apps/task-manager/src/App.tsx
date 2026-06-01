@@ -357,11 +357,18 @@ function App() {
     const position = next.columns.findIndex((column) => column.id === created.id);
     let resolveColumnId: (id: string) => void = () => undefined;
     let rejectColumnId: (err: unknown) => void = () => undefined;
-    pendingColumnIdsRef.current[created.id] = new Promise<string>((resolve, reject) => {
+    const pendingColumnId = new Promise<string>((resolve, reject) => {
       resolveColumnId = resolve;
       rejectColumnId = reject;
     });
-    void persist(async () => {
+    pendingColumnId.catch(() => undefined);
+    pendingColumnIdsRef.current[created.id] = pendingColumnId;
+    void (async () => {
+      if (!usingDbRef.current) {
+        resolveColumnId(created.id);
+        delete pendingColumnIdsRef.current[created.id];
+        return;
+      }
       const bridge = db();
       if (!bridge) {
         resolveColumnId(created.id);
@@ -377,12 +384,14 @@ function App() {
         } : current);
       } catch (err) {
         rejectColumnId(err);
-        throw err;
+        console.warn("[task-manager] Column could not be created:", errMessage(err));
+        await reload();
+        setError("Column could not be created. Reopen the board to refresh.");
       } finally {
         delete pendingColumnIdsRef.current[created.id];
       }
-    }, "Column could not be created");
-  }, [persist]);
+    })();
+  }, [reload]);
 
   const renameBoardColumn = useCallback((columnId: string, title: string) => {
     if (!boardRef.current) return;

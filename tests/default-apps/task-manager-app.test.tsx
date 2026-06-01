@@ -408,6 +408,41 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("reloads away a phantom column when its insert fails", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let rejectColumnInsert: ((error: Error) => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<never>((_resolve, reject) => {
+          rejectColumnInsert = reject;
+        });
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(await screen.findByRole("heading", { name: "Sprint" })).toBeTruthy();
+    await act(async () => {
+      rejectColumnInsert?.(new Error("insert failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText(/column could not be created/i)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Sprint" })).toBeNull());
+    expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
+  });
+
   it("filters cards by text query", async () => {
     installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
