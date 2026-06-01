@@ -1,7 +1,13 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
+import {
+  appendFile as appendFileAsync,
+  mkdir as mkdirAsync,
+  readFile as readFileAsync,
+  stat as statAsync,
+  writeFile as writeFileAsync,
+} from "node:fs/promises";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { dirname, join, normalize, resolve, relative } from "node:path";
+import { dirname, extname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -25,6 +31,7 @@ import {
 } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
 import { getMissingFileFallback } from "./file-fallbacks.js";
+import { getMimeType } from "./file-utils.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
@@ -94,7 +101,7 @@ import { createDraftActionReadinessService } from "./onboarding/draft-action-rea
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
+import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import {
@@ -206,6 +213,12 @@ import {
   ClientErrorReportSchema,
   writeClientErrorReport,
 } from "./client-error-log.js";
+
+const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
+
+function isSafeIconStem(value: unknown): value is string {
+  return typeof value === "string" && SAFE_ICON_STEM.test(value);
+}
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -671,6 +684,50 @@ export async function createGateway(config: GatewayConfig) {
   let appRegistry: AppRegistry | null = null;
   let kyselyInstance: Kysely<any> | null = null;
   let canvasRepository: CanvasRepository | null = null;
+
+  // Apps whose Postgres schema we've already ensured this process lifetime.
+  // The startup loop pre-registers shipped apps, but apps BUILT in-OS after boot
+  // aren't in that pass — so the bridge lazily provisions their schema from the
+  // manifest on first query (otherwise every new app 500s until a restart).
+  const provisionedAppSlugs = new Set<string>();
+  const PROVISIONED_SLUGS_CAP = 500;
+  async function ensureAppProvisioned(storageSlug: string): Promise<void> {
+    const registry = appRegistry;
+    if (!registry || !storageSlug || provisionedAppSlugs.has(storageSlug)) return;
+    if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) return;
+    try {
+      const { loadAppManifest } = await import("./app-manifest.js");
+      const apps = await listApps(homePath);
+      for (const app of apps) {
+        if (!app.file.includes("/")) continue;
+        const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+        if (relDir.replace(/[^a-zA-Z0-9_-]/g, "") !== storageSlug) continue;
+        const manifest = loadAppManifest(join(homePath, "apps", relDir));
+        if (!manifest) break;
+        const tables = manifest.storage?.tables as
+          | Record<string, { columns: Record<string, string>; indexes?: string[] }>
+          | undefined;
+        if (tables && Object.keys(tables).length > 0) {
+          await registry.register({
+            slug: storageSlug,
+            name: manifest.name,
+            description: manifest.description,
+            version: manifest.version,
+            author: manifest.author,
+            category: manifest.category,
+            tables,
+          });
+          console.log(`[app-db] Lazily provisioned schema for ${relDir} (slug ${storageSlug})`);
+        }
+        break;
+      }
+      // Cache even when there were no tables, so we don't rescan on every query.
+      if (provisionedAppSlugs.size >= PROVISIONED_SLUGS_CAP) provisionedAppSlugs.clear();
+      provisionedAppSlugs.add(storageSlug);
+    } catch (err) {
+      console.error(`[app-db] Lazy provisioning failed for ${storageSlug}:`, (err as Error).message);
+    }
+  }
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -749,16 +806,26 @@ export async function createGateway(config: GatewayConfig) {
         const apps = await listApps(homePath);
         let registered = 0;
         for (const app of apps) {
-          const appDir = app.file.includes("/")
-            ? join(homePath, "apps", app.file.replace(/\/index\.html$/, ""))
-            : null;
-          if (!appDir) continue;
-          const manifest = loadAppManifest(appDir);
-          if (manifest?.storage?.tables && Object.keys(manifest.storage.tables).length > 0) {
-            const slug = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
-            if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(slug)) continue;
+          if (!app.file.includes("/")) continue;
+          const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+          const manifest = loadAppManifest(join(homePath, "apps", relDir));
+          if (!manifest?.storage?.tables || Object.keys(manifest.storage.tables).length === 0) {
+            continue;
+          }
+          // The storage slug MUST match what /api/bridge/query derives from the
+          // app identity: all non-[A-Za-z0-9_-] characters stripped. So nested
+          // games like "games/2048" register under schema "games2048" — the same
+          // value the bridge queries. Schema names must start with a letter
+          // (SAFE_SLUG), so numeric-only slugs ("2048") are folded into their path.
+          const storageSlug = relDir.replace(/[^a-zA-Z0-9_-]/g, "");
+          if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) {
+            console.warn(`[app-db] Skipping registration for ${relDir}: unusable storage slug "${storageSlug}"`);
+            continue;
+          }
+          // Register each app independently — one failure must not abort the rest.
+          try {
             await appRegistry.register({
-              slug,
+              slug: storageSlug,
               name: manifest.name,
               description: manifest.description,
               version: manifest.version,
@@ -767,6 +834,9 @@ export async function createGateway(config: GatewayConfig) {
               tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
             });
             registered++;
+            provisionedAppSlugs.add(storageSlug);
+          } catch (appRegErr) {
+            console.error(`[app-db] Registration failed for ${relDir} (slug ${storageSlug}):`, (appRegErr as Error).message);
           }
         }
         if (registered > 0) {
@@ -3099,6 +3169,13 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "offset must be a non-negative integer" }, 400);
     }
 
+    // Ensure the app's Postgres schema exists before querying. Apps built in-OS
+    // after gateway startup aren't in the startup registration pass; provision
+    // them lazily from their manifest so the first query doesn't 500.
+    if (appSlug && action !== "listApps") {
+      await ensureAppProvisioned(appSlug);
+    }
+
     try {
       switch (action) {
         case "find":
@@ -3140,6 +3217,49 @@ export async function createGateway(config: GatewayConfig) {
       const isValidation = msg.startsWith("Invalid ") || msg.startsWith("insert:") || msg.startsWith("update:");
       const safe = isValidation ? msg : "Query failed";
       return c.json({ error: safe }, isValidation ? 400 : 500);
+    }
+  });
+
+  // Read-only outbound proxy for sandboxed apps. Apps run in a null-origin iframe
+  // with CSP connect-src 'self', so they cannot call third-party APIs directly.
+  // This proxies GET requests to a small, fixed allowlist of public, keyless data
+  // APIs. Allowlist-only (no user-supplied host) keeps the SSRF surface closed.
+  const BRIDGE_PROXY_ALLOWED_HOSTS = new Set([
+    "api.open-meteo.com",
+    "geocoding-api.open-meteo.com",
+  ]);
+  app.get("/api/bridge/proxy", async (c) => {
+    const target = c.req.query("url");
+    if (!target || typeof target !== "string" || target.length > 2048) {
+      return c.json({ error: "url query param required" }, 400);
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(target);
+    } catch {
+      return c.json({ error: "invalid url" }, 400);
+    }
+    if (parsed.protocol !== "https:" || !BRIDGE_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
+      // Do not echo the host back; this is an allowlist boundary.
+      return c.json({ error: "url not allowed" }, 403);
+    }
+    try {
+      const upstream = await fetch(parsed.toString(), {
+        method: "GET",
+        redirect: "error",
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!upstream.ok) {
+        // Coarse status only; never leak upstream body/headers on failure.
+        return c.json({ error: "upstream request failed" }, 502);
+      }
+      const data = await upstream.json().catch(() => null);
+      if (data == null) return c.json({ error: "upstream returned no data" }, 502);
+      return c.json({ data });
+    } catch (e) {
+      console.error("[bridge/proxy] fetch error:", (e as Error).message);
+      return c.json({ error: "proxy request failed" }, 502);
     }
   });
 
@@ -3552,6 +3672,27 @@ export async function createGateway(config: GatewayConfig) {
   app.on("HEAD", "/icons/:file", redirectIconRequest);
   app.get("/icons/:file", redirectIconRequest);
 
+  const serveBundledSystemIcon = async (c: Context) => {
+    const file = c.req.param("file");
+    if (!file) return c.text("Icon not found", 404);
+    const target = await resolveBundledSystemIconPath(file);
+    if (!target) return c.text("Icon not found", 404);
+    const stat = await statAsync(target);
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    const headers = {
+      "Content-Type": getMimeType(extname(file)),
+      "Cache-Control": "public, max-age=86400, immutable",
+      "CDN-Cache-Control": "public, max-age=86400",
+      "ETag": etag,
+    };
+    if (c.req.header("if-none-match") === etag) return c.body(null, 304, headers);
+    if (c.req.method === "HEAD") return c.body(null, 200, headers);
+    return c.body(await readFileAsync(target), 200, headers);
+  };
+
+  app.on("HEAD", "/system-icons/:file", serveBundledSystemIcon);
+  app.get("/system-icons/:file", serveBundledSystemIcon);
+
   app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     const { name } = await c.req.json<{ name: string }>();
@@ -3606,19 +3747,22 @@ export async function createGateway(config: GatewayConfig) {
 
       const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
-      const prompt = buildIconPrompt(slug, iconStyle);
+      const apps = await listApps(homePath);
+      const targetApp = apps.find((appEntry) => appEntry.slug === slug);
+      const iconStem = isSafeIconStem(targetApp?.icon) ? targetApp.icon : slug;
+      const prompt = buildIconPrompt(targetApp?.name ?? slug, iconStyle);
       const iconsDir = join(homePath, "system/icons");
       const result = await client.generateImage(prompt, {
         aspectRatio: "1:1",
         imageDir: iconsDir,
-        saveAs: `${slug}.png`,
+        saveAs: `${iconStem}.png`,
       });
-      const iconPath = join(iconsDir, `${slug}.png`);
+      const iconPath = join(iconsDir, `${iconStem}.png`);
       const stat = statSync(iconPath);
       const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
       c.header("ETag", etag);
       return c.json({
-        iconUrl: `/files/system/icons/${slug}.png`,
+        iconUrl: `/files/system/icons/${iconStem}.png`,
         etag,
         cost: result.cost,
       });
@@ -3648,13 +3792,17 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     const apps = await listApps(homePath);
-    const slugs: string[] = apps.map((a) => a.slug).filter((s): s is string => Boolean(s));
+    const iconTargets = apps.flatMap((appEntry) => appEntry.slug ? [{
+        slug: appEntry.slug,
+        icon: isSafeIconStem(appEntry.icon) ? appEntry.icon : appEntry.slug,
+        name: appEntry.name,
+      }] : []);
 
-    generateIconBatch(geminiKey, slugs, loadIconStyle(homePath), iconsDir)
-      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${slugs.length} succeeded, ${r.failed.length} failed`))
+    generateIconBatch(geminiKey, iconTargets, loadIconStyle(homePath), iconsDir)
+      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${iconTargets.length} succeeded, ${r.failed.length} failed`))
       .catch((err) => console.error("[icons] Regeneration error:", err))
       .finally(() => { iconRegenerationInProgress = false; });
-    return c.json({ accepted: true, total: slugs.length }, 202);
+    return c.json({ accepted: true, total: iconTargets.length }, 202);
   });
 
   app.get("/api/cron", (c) => {

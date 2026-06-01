@@ -84,55 +84,52 @@ Always use CSS custom properties so the app matches the OS theme:
 
 ### Data Access
 
-If your manifest declares `storage`, use the MatrixOS database bridge. It writes to the user's local Postgres database through the gateway; app code should not read `DATABASE_URL` directly.
+> **Apps run in a sandboxed, null-origin `srcdoc` iframe with CSP `connect-src 'self'`.**
+> A direct `fetch()` to `/api/bridge/*` is **blocked by both CORS and CSP** and will break your app
+> (`No 'Access-Control-Allow-Origin' header` errors in the console). `localStorage` can also throw
+> `SecurityError` in this sandbox. **Always go through the injected `window.MatrixOS` bridge**, which
+> proxies to the gateway via `postMessage`. Never `fetch` the bridge yourself.
+
+If your manifest declares `storage`, use `window.MatrixOS.db`. It writes to the user's local Postgres
+through the gateway; app code never touches `DATABASE_URL`.
 
 ```javascript
-// The gateway URL is the parent origin
-const API = window.location.origin;
-
-async function dbRequest(action, table, data = {}) {
-  const app = 'my-app'; // must match your app slug
-  const res = await fetch(`${API}/api/bridge/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, app, table, ...data })
-  });
-  return res.json();
+const db = window.MatrixOS?.db; // may be undefined outside the shell (e.g. tests) — guard it
+if (db) {
+  const notes = await db.find('notes', { orderBy: { created_at: 'desc' } });
+  const { id } = await db.insert('notes', { title: 'New', content: '' });
+  await db.update('notes', id, { title: 'Updated' });
+  await db.delete('notes', id);
+  const n = await db.count('notes');
+  const unsub = db.onChange('notes', () => reload()); // call unsub() on cleanup
 }
-
-// CRUD operations
-const notes = await dbRequest('find', 'notes', { orderBy: { created_at: 'desc' } });
-const note = await dbRequest('insert', 'notes', { data: { title: 'New', content: '' } });
-await dbRequest('update', 'notes', { id: note.id, data: { title: 'Updated' } });
-await dbRequest('delete', 'notes', { id: note.id });
 ```
+
+Wrap every call in `try/catch` (no bare catch), update local state optimistically, and reconcile on
+`onChange`. For simple key/value state use `window.MatrixOS.readData(key)` / `writeData(key, value)`
+(also `postMessage`-based) — again, never a raw `fetch`.
 
 ### External Service Integrations (Gmail, Calendar, GitHub, Slack, etc.)
 
-Apps can call connected services via the bridge API:
+Call connected services through the bridge (again, never a raw `fetch`):
 
 ```javascript
 // Check what's connected
-const res = await fetch("/api/bridge/service");
-const { services } = await res.json();
+const services = await window.MatrixOS.integrations();
 const gmail = services.find(s => s.service === "gmail" && s.status === "active");
 
 // Call an action
-const resp = await fetch("/api/bridge/service", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ service: "gmail", action: "list_messages", params: { maxResults: 20 } })
-});
-const { data } = await resp.json();
+const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 });
 ```
 
 Services: gmail, google_calendar, google_drive, github, slack, discord. User connects in Settings > Integrations.
 
-For apps without database storage, use localStorage:
+For simple per-app state without declared `storage`, use the bridge KV helpers (NOT `localStorage`,
+which can be blocked in the sandbox):
 
 ```javascript
-const data = JSON.parse(localStorage.getItem('myapp-data') || '[]');
-localStorage.setItem('myapp-data', JSON.stringify(data));
+const saved = await window.MatrixOS.readData('myapp-data'); // string | null
+await window.MatrixOS.writeData('myapp-data', JSON.stringify(value));
 ```
 
 ## Design Guidelines

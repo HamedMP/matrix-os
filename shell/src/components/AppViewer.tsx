@@ -320,12 +320,13 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     return () => window.removeEventListener("message", handler);
   }, [slug]);
 
-  // Hold the iframe on about:blank until the session cookie is minted.
-  const iframeSrc = !slug
-    ? `/files/${path}`
-    : sessionReady && !iframeHtml
-      ? `/apps/${slug}/`
-      : "about:blank";
+  // Runtime (slug) apps MUST only ever load through the bridged srcDoc — loading
+  // the raw /apps/{slug}/ document in the iframe runs the app in the sandboxed,
+  // null-origin context WITHOUT window.MatrixOS injected, so the app's data layer
+  // sees no bridge and falls back to localStorage (SecurityError) or a direct
+  // fetch (CORS/CSP). Hold on about:blank until the injected srcDoc HTML is ready;
+  // never expose the un-bridged document. Legacy file paths keep /files/{path}.
+  const iframeSrc = !slug ? `/files/${path}` : "about:blank";
 
   if (!shouldRenderAppIframe(path)) {
     return null;

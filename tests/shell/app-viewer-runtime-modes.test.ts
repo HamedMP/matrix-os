@@ -29,6 +29,29 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
     expect(src).toBe("/apps/mail/");
   });
 
+  describe("bridge guarantee: slug apps only ever load via bridged srcDoc", () => {
+    // Mirrors AppViewer's iframeSrc decision. Runtime (slug) apps must NEVER load
+    // the raw /apps/{slug}/ document directly, because that runs un-bridged in the
+    // null-origin sandbox and window.MatrixOS.db is undefined.
+    const iframeSrc = (slug: string | null, path: string) =>
+      !slug ? `/files/${path}` : "about:blank";
+
+    it("a slug app's src is about:blank (real HTML is served via srcDoc instead)", () => {
+      expect(iframeSrc("notes", "apps/notes/index.html")).toBe("about:blank");
+      expect(iframeSrc("task-manager", "apps/task-manager")).toBe("about:blank");
+    });
+
+    it("never points a slug app's src at the un-bridged /apps/{slug}/ document", () => {
+      for (const slug of ["notes", "weather", "2048", "whiteboard"]) {
+        expect(iframeSrc(slug, `apps/${slug}/`)).not.toContain(`/apps/${slug}/`);
+      }
+    });
+
+    it("legacy (non-slug) file paths still load via /files/{path}", () => {
+      expect(iframeSrc(null, "apps/legacy/index.html")).toBe("/files/apps/legacy/index.html");
+    });
+  });
+
   describe("distributionStatus branching", () => {
     it("installable -> openAppSession called", () => {
       const status = "installable";
@@ -142,13 +165,15 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
     });
 
     it("injects MatrixOS bridge into srcdoc html without same-origin DOM access", () => {
-      const html = "<!doctype html><html><head><title>Notes</title></head><body><div id=\"root\"></div></body></html>";
+      const html = "<!doctype html><html><head><title>Notes</title><script type=\"module\" crossorigin src=\"./assets/app.js\"></script><link rel=\"stylesheet\" crossorigin href=\"./assets/app.css\"></head><body><div id=\"root\"></div></body></html>";
       const result = injectBridgeIntoAppHtml(html, "notes", {}, "/apps/notes/");
 
       expect(result).toContain('<base href="/apps/notes/">');
       expect(result).toContain("Content-Security-Policy");
       expect(result).toContain("window.MatrixOS");
       expect(result).toContain("os:bridge-fetch");
+      expect(result).toContain('crossorigin="use-credentials" src="./assets/app.js"');
+      expect(result).toContain('crossorigin="use-credentials" href="./assets/app.css"');
     });
   });
 });

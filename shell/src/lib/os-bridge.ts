@@ -240,6 +240,15 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 	      }, 35000).then(function(r) { return r.json(); });
 	    },
 
+	    proxyFetch: function(url) {
+	      return parentFetch("/api/bridge/proxy?url=" + encodeURIComponent(url), {}, 12000)
+	        .then(function(r) { return r.json(); })
+	        .then(function(d) {
+	          if (d && d.data !== undefined) return d.data;
+	          throw new Error(d && d.error ? d.error : "proxy request failed");
+	        });
+	    },
+
 	    db: {
 	      find: function(table, opts) {
         var body = { app: app, action: "find", table: table };
