@@ -262,6 +262,27 @@ describe("Expense Tracker app", () => {
     expect(screen.queryByText("Could not save that transaction.")).toBeNull();
   });
 
+  it("restores the selected month after a failed transaction insert", async () => {
+    const db = installMatrixDb([expense(2, 12, "Groceries", { note: "Coffee beans" })], []);
+    db.insert.mockRejectedValueOnce(new Error("write failed"));
+
+    render(<App />);
+    expect(await screen.findByText("Coffee beans")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "25.50" } });
+    fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "Bad write" } });
+    fireEvent.change(screen.getByLabelText(/date/i), { target: { value: "2000-01-02" } });
+
+    await act(async () => {
+      fireEvent.submit(screen.getByTestId("expense-form"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Could not save that transaction.")).toBeTruthy();
+    expect(screen.getByText("Coffee beans")).toBeTruthy();
+    expect(screen.queryByText("Bad write")).toBeNull();
+  });
+
   it("keeps a deleted transaction hidden when the follow-up reload fails", async () => {
     const db = installMatrixDb([expense(2, 12, "Groceries", { note: "Coffee beans" })], []);
 
@@ -297,6 +318,21 @@ describe("Expense Tracker app", () => {
     expect(db.update).toHaveBeenCalledWith("budgets", "b1", { monthly_limit: 150 });
     expect(screen.queryByRole("dialog", { name: /edit budgets/i })).toBeNull();
     expect(screen.queryByText("Could not save your budgets.")).toBeNull();
+  });
+
+  it("dismisses budget editing with Escape and backdrop clicks", async () => {
+    installMatrixDb([], [{ id: "b1", category: "Groceries", monthly_limit: 100 }]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
+    expect(screen.getByRole("dialog", { name: /edit budgets/i })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /edit budgets/i })).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: /edit budgets/i }));
+    fireEvent.click(screen.getByRole("dialog", { name: /edit budgets/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /edit budgets/i })).toBeNull());
   });
 
   it("uses the real budget id when a new budget is edited before reload finishes", async () => {

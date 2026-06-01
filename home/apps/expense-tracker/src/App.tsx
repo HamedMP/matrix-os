@@ -192,6 +192,15 @@ export default function App() {
     };
   }, [reload]);
 
+  useEffect(() => {
+    if (!budgetEditor) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setBudgetEditor(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [budgetEditor]);
+
   const summary = useMemo(
     () => summarizeMonth(expenses, budgets, selectedMonth),
     [expenses, budgets, selectedMonth],
@@ -270,6 +279,7 @@ export default function App() {
       };
       setExpenses((current) => [optimistic, ...current]);
       // Keep the month in view so the new row is visible.
+      const previousMonth = selectedMonth;
       setSelectedMonth(monthKey(payload.spent_at));
       resetDraft();
       try {
@@ -280,6 +290,7 @@ export default function App() {
           err instanceof Error ? err.message : String(err),
         );
         setExpenses((current) => current.filter((e) => e.id !== optimistic.id));
+        setSelectedMonth(previousMonth);
         setError("Could not save that transaction.");
         return;
       } finally {
@@ -287,7 +298,7 @@ export default function App() {
       }
       void reload();
     },
-    [draft, editingId, expenses, reload, resetDraft],
+    [draft, editingId, expenses, reload, resetDraft, selectedMonth],
   );
 
   const startEdit = useCallback((expense: ExpenseRow) => {
@@ -681,8 +692,14 @@ export default function App() {
       </section>
 
       {budgetEditor ? (
-        <div className="exp-overlay" role="dialog" aria-modal="true" aria-label="Edit budgets">
-          <div className="exp-overlay__panel">
+        <div
+          className="exp-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edit budgets"
+          onClick={() => setBudgetEditor(false)}
+        >
+          <div className="exp-overlay__panel" onClick={(event) => event.stopPropagation()}>
             <div className="exp-card__head">
               <h2>Monthly budgets</h2>
               <button
