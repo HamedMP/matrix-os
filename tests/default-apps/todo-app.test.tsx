@@ -69,6 +69,16 @@ describe("Todo app", () => {
     expect(screen.getByText("Review PR")).toBeTruthy();
   });
 
+  it("loads tasks without a silent result ceiling", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Long-running task", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+
+    expect(await screen.findByText("Long-running task")).toBeTruthy();
+    expect(db.find).toHaveBeenCalledWith("tasks", { orderBy: { created_at: "desc" } });
+  });
+
   it("shows an onboarding empty state when there are no tasks", async () => {
     installMatrixDb([]);
     render(<App />);
@@ -169,6 +179,37 @@ describe("Todo app", () => {
       "Add a due date before completing a repeating task.",
     );
     expect(db.update).not.toHaveBeenCalledWith("tasks", "t1", { status: "done" });
+  });
+
+  it("preserves recurrence when clearing a due date", async () => {
+    const db = installMatrixDb([
+      {
+        id: "t1",
+        title: "Standup",
+        status: "open",
+        priority: 0,
+        due: "2026-06-01T09:00:00.000Z",
+        recur: "daily",
+      },
+    ]);
+
+    render(<App />);
+    await screen.findByText("Standup");
+    fireEvent.click(screen.getByRole("listitem"));
+
+    const dueInput = screen.getByText("Due date").closest("label")?.querySelector("input") as HTMLInputElement | null;
+    expect(dueInput).toBeInstanceOf(HTMLInputElement);
+    if (!dueInput) throw new Error("Due date input was not rendered");
+    fireEvent.change(dueInput, { target: { value: "" } });
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { due: null });
+    });
+    expect(db.update).not.toHaveBeenCalledWith(
+      "tasks",
+      "t1",
+      expect.objectContaining({ recur: null }),
+    );
   });
 
   it("filters tasks into Today and Upcoming views", async () => {

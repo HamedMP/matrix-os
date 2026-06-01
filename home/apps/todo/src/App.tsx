@@ -89,7 +89,7 @@ function getDb(): NonNullable<Window["MatrixOS"]>["db"] | undefined {
 async function loadTasks(): Promise<Task[]> {
   const db = getDb();
   if (!db) return [];
-  const rows = await db.find(TASKS_TABLE, { orderBy: { created_at: "desc" }, limit: 500 });
+  const rows = await db.find(TASKS_TABLE, { orderBy: { created_at: "desc" } });
   return rows
     .map(normalizeTask)
     .filter((t): t is Task => t !== null);
@@ -668,7 +668,7 @@ function Inspector({
           value={toDateInputValue(task.due)}
           onChange={(e) => {
             const due = fromDateInputValue(e.target.value);
-            onPatch(due ? { due } : { due: null, recur: null });
+            onPatch(due ? { due } : { due: null });
           }}
         />
       </label>
