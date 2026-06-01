@@ -20,8 +20,7 @@ import {
 } from "./solitaire-model";
 
 const STATS_TABLE = "stats";
-const LS_STATS_KEY = "matrix.solitaire.stats";
-const LS_DRAW_KEY = "matrix.solitaire.draw";
+const DRAW_PREF_KEY = "solitaire:draw-mode";
 
 interface Stats {
   id?: string;
@@ -46,25 +45,6 @@ function coerceStats(row: unknown): Stats {
   };
 }
 
-function loadLocalStats(): Stats {
-  try {
-    const raw = localStorage.getItem(LS_STATS_KEY);
-    if (!raw) return { ...EMPTY_STATS };
-    return coerceStats(JSON.parse(raw));
-  } catch (err: unknown) {
-    console.warn("[solitaire] local stats read failed:", err instanceof Error ? err.message : String(err));
-    return { ...EMPTY_STATS };
-  }
-}
-
-function saveLocalStats(stats: Stats): void {
-  try {
-    localStorage.setItem(LS_STATS_KEY, JSON.stringify(stats));
-  } catch (err: unknown) {
-    console.warn("[solitaire] local stats write failed:", err instanceof Error ? err.message : String(err));
-  }
-}
-
 function formatTime(seconds: number): string {
   if (!seconds || seconds < 0) return "--:--";
   const m = Math.floor(seconds / 60).toString().padStart(2, "0");
@@ -77,29 +57,31 @@ interface AppProps {
 }
 
 export default function App({ initialState }: AppProps) {
-  const [draw, setDraw] = useState<1 | 3>(() => {
-    try {
-      return localStorage.getItem(LS_DRAW_KEY) === "3" ? 3 : 1;
-    } catch {
-      return 1;
-    }
-  });
+  const [draw, setDraw] = useState<1 | 3>(1);
   const [game, setGame] = useState<GameState>(() => initialState ?? deal(Math.random, draw));
   const [history, setHistory] = useState<GameState[]>([]);
   const [stats, setStats] = useState<Stats>(EMPTY_STATS);
+  const statsRef = useRef<Stats>(EMPTY_STATS);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(!initialState);
   const [selected, setSelected] = useState<Source | null>(null);
   const recordedWinRef = useRef(false);
+  const countedInitialGameRef = useRef(Boolean(initialState));
+  const statsLoadedRef = useRef(false);
+  const statsRowIdRef = useRef<string | null>(null);
+  const statsInsertRef = useRef<Promise<string> | null>(null);
   const startedAtRef = useRef<number>(Date.now());
 
   const won = isWon(game);
 
-  // ---- Stats persistence (DB with localStorage fallback) -----------------
+  useEffect(() => {
+    statsRef.current = stats;
+  }, [stats]);
+
+  // ---- Stats persistence -------------------------------------------------
   const persistStats = useCallback(async (next: Stats) => {
     setStats(next);
-    saveLocalStats(next);
     const db = window.MatrixOS?.db;
     if (!db) return;
     const payload = {
@@ -109,11 +91,24 @@ export default function App({ initialState }: AppProps) {
       best_moves: next.best_moves,
     };
     try {
-      if (next.id) {
-        await db.update(STATS_TABLE, next.id, payload);
+      const rowId = next.id ?? statsRowIdRef.current;
+      if (rowId) {
+        statsRowIdRef.current = rowId;
+        await db.update(STATS_TABLE, rowId, payload);
       } else {
-        const res = await db.insert(STATS_TABLE, payload);
-        if (res?.id) setStats((cur) => ({ ...cur, id: res.id }));
+        if (!statsInsertRef.current) {
+          statsInsertRef.current = db.insert(STATS_TABLE, payload)
+            .then((res) => {
+              statsRowIdRef.current = res.id;
+              setStats((cur) => ({ ...cur, id: res.id }));
+              return res.id;
+            })
+            .finally(() => {
+              statsInsertRef.current = null;
+            });
+        }
+        const insertedId = await statsInsertRef.current;
+        await db.update(STATS_TABLE, insertedId, payload);
       }
     } catch (err: unknown) {
       console.warn("[solitaire] stats save failed:", err instanceof Error ? err.message : String(err));
@@ -124,22 +119,26 @@ export default function App({ initialState }: AppProps) {
   const loadStats = useCallback(async () => {
     const db = window.MatrixOS?.db;
     if (!db) {
-      setStats(loadLocalStats());
+      setStats({ ...EMPTY_STATS });
+      statsLoadedRef.current = true;
       return;
     }
     try {
       const rows = await db.find(STATS_TABLE, { limit: 1, orderBy: { created_at: "desc" } });
       if (rows && rows.length > 0) {
-        setStats(coerceStats(rows[0]));
+        const loaded = coerceStats(rows[0]);
+        statsRowIdRef.current = loaded.id ?? null;
+        setStats(loaded);
       } else {
-        setStats(loadLocalStats());
+        setStats({ ...EMPTY_STATS });
       }
       setError(null);
     } catch (err: unknown) {
       console.warn("[solitaire] stats load failed:", err instanceof Error ? err.message : String(err));
-      setError("Stats could not be loaded; using local fallback.");
-      setStats(loadLocalStats());
+      setError("Stats could not be loaded.");
+      setStats({ ...EMPTY_STATS });
     }
+    statsLoadedRef.current = true;
   }, []);
 
   useEffect(() => {
@@ -147,6 +146,33 @@ export default function App({ initialState }: AppProps) {
     const db = window.MatrixOS?.db;
     return db?.onChange?.(STATS_TABLE, () => void loadStats());
   }, [loadStats]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const value = await window.MatrixOS?.readData?.(DRAW_PREF_KEY);
+        if (!active) return;
+        if (value === 1 || value === 3) setDraw(value);
+      } catch (err: unknown) {
+        console.warn("[solitaire] draw preference load failed:", err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const recordGamePlayed = useCallback(() => {
+    const cur = statsRef.current;
+    void persistStats({ ...cur, games_played: cur.games_played + 1 });
+  }, [persistStats]);
+
+  useEffect(() => {
+    if (countedInitialGameRef.current || !statsLoadedRef.current) return;
+    countedInitialGameRef.current = true;
+    recordGamePlayed();
+  }, [recordGamePlayed, stats]);
 
   // ---- Timer -------------------------------------------------------------
   useEffect(() => {
@@ -168,44 +194,32 @@ export default function App({ initialState }: AppProps) {
       recordedWinRef.current = false;
       startedAtRef.current = Date.now();
       setRunning(true);
-      // count a played game
-      setStats((cur) => {
-        const next = { ...cur, games_played: cur.games_played + 1 };
-        void persistStats(next);
-        return next;
-      });
+      recordGamePlayed();
     },
-    [draw, persistStats],
+    [draw, recordGamePlayed],
   );
 
   const setDrawMode = useCallback((mode: 1 | 3) => {
     setDraw(mode);
-    try {
-      localStorage.setItem(LS_DRAW_KEY, String(mode));
-    } catch {
-      // non-fatal: preference persistence is best-effort
-      console.warn("[solitaire] could not persist draw preference");
-    }
+    void window.MatrixOS?.writeData?.(DRAW_PREF_KEY, mode).catch((err: unknown) => {
+      console.warn("[solitaire] draw preference save failed:", err instanceof Error ? err.message : String(err));
+    });
     startNewGame(mode);
   }, [startNewGame]);
 
   // ---- Move application with history -------------------------------------
   const commit = useCallback((next: GameState) => {
-    setGame((prev) => {
-      setHistory((h) => [...h.slice(-200), prev]);
-      return next;
-    });
-  }, []);
+    setHistory((h) => [...h.slice(-200), game]);
+    setGame(next);
+  }, [game]);
 
   const undo = useCallback(() => {
-    setHistory((h) => {
-      if (h.length === 0) return h;
-      const prev = h[h.length - 1];
-      setGame(prev);
-      setSelected(null);
-      return h.slice(0, -1);
-    });
-  }, []);
+    if (history.length === 0) return;
+    const prev = history[history.length - 1];
+    setHistory(history.slice(0, -1));
+    setGame(prev);
+    setSelected(null);
+  }, [history]);
 
   const doMove = useCallback(
     (src: Source, dest: Destination) => {
@@ -245,7 +259,10 @@ export default function App({ initialState }: AppProps) {
       if (selected) {
         // clicking the same selection clears it
         const dest = sourceToDestination(src);
-        if (dest && doMove(selected, dest)) return;
+        if (dest) {
+          if (doMove(selected, dest)) return;
+          return;
+        }
       }
       // otherwise auto-route this source to a legal destination
       const dest = findAutoDestination(game, src);
@@ -284,39 +301,36 @@ export default function App({ initialState }: AppProps) {
 
   // ---- Auto-complete -----------------------------------------------------
   const autoComplete = useCallback(() => {
-    setGame((start) => {
-      let cur: GameState | null = start;
-      let last = start;
-      let guard = 0;
-      while (cur && !isWon(cur) && guard < 80) {
-        const step = autoCompleteStep(cur);
-        if (!step) break;
-        last = step;
-        cur = step;
-        guard += 1;
-      }
-      if (last !== start) setHistory((h) => [...h.slice(-200), start]);
-      return last;
-    });
+    let cur: GameState | null = game;
+    let last = game;
+    let guard = 0;
+    while (cur && !isWon(cur) && guard < 80) {
+      const step = autoCompleteStep(cur);
+      if (!step) break;
+      last = step;
+      cur = step;
+      guard += 1;
+    }
+    if (last !== game) {
+      setHistory((h) => [...h.slice(-200), game]);
+      setGame(last);
+    }
     setSelected(null);
-  }, []);
+  }, [game]);
 
   // ---- Win handling ------------------------------------------------------
   useEffect(() => {
     if (!won || recordedWinRef.current) return;
     recordedWinRef.current = true;
     setRunning(false);
-    setStats((cur) => {
-      const time = elapsed;
-      const moves = game.moves;
-      const next: Stats = {
-        ...cur,
-        games_won: cur.games_won + 1,
-        best_time: cur.best_time === 0 ? time : Math.min(cur.best_time, time || cur.best_time),
-        best_moves: cur.best_moves === 0 ? moves : Math.min(cur.best_moves, moves || cur.best_moves),
-      };
-      void persistStats(next);
-      return next;
+    const cur = statsRef.current;
+    const time = elapsed;
+    const moves = game.moves;
+    void persistStats({
+      ...cur,
+      games_won: cur.games_won + 1,
+      best_time: cur.best_time === 0 ? time : Math.min(cur.best_time, time || cur.best_time),
+      best_moves: cur.best_moves === 0 ? moves : Math.min(cur.best_moves, moves || cur.best_moves),
     });
   }, [won, elapsed, game.moves, persistStats]);
 
