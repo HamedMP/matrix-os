@@ -2,11 +2,7 @@
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/gateway", () => ({
-  getGatewayUrl: () => "http://gateway.test",
-}));
+import { describe, expect, it } from "vitest";
 
 import { MarkdownViewer } from "../../shell/src/components/preview-window/MarkdownViewer.js";
 
@@ -22,10 +18,18 @@ describe("MarkdownViewer SVG previews", () => {
     const image = screen.getByRole("img", { name: "Architecture diagram" });
 
     expect(image.getAttribute("src")).toBe(
-      "http://gateway.test/files/docs/assets/diagram.svg",
+      "/files/docs/assets/diagram.svg",
     );
     expect(image.getAttribute("loading")).toBe("lazy");
     expect(screen.getByText("After image.")).toBeTruthy();
+  });
+
+  it("resolves relative SVG paths from the Matrix root when sourcePath is omitted", () => {
+    render(<MarkdownViewer content={"![Logo](brand/logo.svg)"} />);
+
+    const image = screen.getByRole("img", { name: "Logo" });
+
+    expect(image.getAttribute("src")).toBe("/files/brand/logo.svg");
   });
 
   it("uses a readable placeholder for unsafe and broken SVG previews", () => {
@@ -39,6 +43,7 @@ describe("MarkdownViewer SVG previews", () => {
     expect(screen.getByText("SVG preview unavailable")).toBeTruthy();
     expect(screen.getByText("Document continues.")).toBeTruthy();
     expect(screen.queryByRole("img", { name: "Unsafe" })).toBeNull();
+    expect(document.querySelector('img[src^="javascript:"]')).toBeNull();
 
     rerender(
       <MarkdownViewer

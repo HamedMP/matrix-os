@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "rea
 import ReactMarkdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { getGatewayUrl } from "@/lib/gateway";
 
-const GATEWAY_URL = getGatewayUrl();
+const BLOCKED_SVG_SOURCE = "about:blank#matrix-svg-preview-blocked";
 const FILES_PREFIX = "/files/";
 const SAFE_SAME_ORIGIN_SVG_PREFIXES = ["/apps/", "/icons/"] as const;
 
@@ -29,8 +28,8 @@ type SvgSourceResolution =
   | { ok: false };
 
 const markdownUrlTransform: UrlTransform = (url, key, node) => {
-  if (key === "src" && node.tagName === "img" && isSvgReference(url)) {
-    return url;
+  if (key === "src" && node.tagName === "img" && isSvgPreviewCandidate(url)) {
+    return isSafeSvgReference(url) ? url : BLOCKED_SVG_SOURCE;
   }
   return defaultUrlTransform(url);
 };
@@ -45,6 +44,10 @@ export function MarkdownViewer({ content, sourcePath }: MarkdownViewerProps) {
         components={{
           img: ({ node: _node, src, alt, title, ...props }: MarkdownImageProps) => {
             const imageSrc = typeof src === "string" ? src : undefined;
+
+            if (imageSrc === BLOCKED_SVG_SOURCE) {
+              return <SvgPreviewFallback alt={alt} />;
+            }
 
             if (isSvgReference(imageSrc)) {
               return (
@@ -146,18 +149,18 @@ function resolveSvgPreviewSource(
   if (path.startsWith(FILES_PREFIX)) {
     const localPath = normalizeFilePath(path.slice(FILES_PREFIX.length));
     if (!localPath) return { ok: false };
-    return { ok: true, src: `${GATEWAY_URL}${FILES_PREFIX}${encodeFilePath(localPath)}${suffix}` };
+    return { ok: true, src: `${FILES_PREFIX}${encodeFilePath(localPath)}${suffix}` };
   }
 
   if (SAFE_SAME_ORIGIN_SVG_PREFIXES.some((prefix) => path.startsWith(prefix))) {
     const normalized = normalizeRootedPath(path);
     if (!normalized) return { ok: false };
-    return { ok: true, src: `${GATEWAY_URL}${normalized}${suffix}` };
+    return { ok: true, src: `${normalized}${suffix}` };
   }
 
   const localPath = normalizeMarkdownLocalPath(path, sourcePath);
   if (!localPath) return { ok: false };
-  return { ok: true, src: `${GATEWAY_URL}${FILES_PREFIX}${encodeFilePath(localPath)}${suffix}` };
+  return { ok: true, src: `${FILES_PREFIX}${encodeFilePath(localPath)}${suffix}` };
 }
 
 function resolveRemoteSvgSource(value: string): SvgSourceResolution {
@@ -179,6 +182,33 @@ function resolveRemoteSvgSource(value: string): SvgSourceResolution {
 }
 
 function isSvgReference(rawSrc: string | undefined): boolean {
+  return isSafeSvgReference(rawSrc);
+}
+
+function isSafeSvgReference(rawSrc: string | undefined): boolean {
+  const value = rawSrc?.trim();
+  if (!value) return false;
+  if (containsControlCharacter(value) || value.startsWith("//")) return false;
+  if (/^data:image\/svg\+xml(?:[;,]|$)/i.test(value)) return false;
+
+  const { path } = splitAssetReference(value);
+  if (hasExplicitScheme(path)) {
+    try {
+      const url = new URL(value);
+      return (
+        (url.protocol === "https:" || url.protocol === "http:") &&
+        url.pathname.toLowerCase().endsWith(".svg")
+      );
+    } catch (error: unknown) {
+      if (error instanceof TypeError) return false;
+      throw error;
+    }
+  }
+
+  return path.toLowerCase().endsWith(".svg");
+}
+
+function isSvgPreviewCandidate(rawSrc: string | undefined): boolean {
   const value = rawSrc?.trim();
   if (!value) return false;
   if (/^data:image\/svg\+xml(?:[;,]|$)/i.test(value)) return true;
@@ -188,7 +218,7 @@ function isSvgReference(rawSrc: string | undefined): boolean {
     try {
       return new URL(value).pathname.toLowerCase().endsWith(".svg");
     } catch (error: unknown) {
-      if (error instanceof TypeError) return false;
+      if (error instanceof TypeError) return path.toLowerCase().endsWith(".svg");
       throw error;
     }
   }
