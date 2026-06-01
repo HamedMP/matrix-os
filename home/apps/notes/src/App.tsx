@@ -276,7 +276,16 @@ function App() {
     const pendingCreate = pendingCreatesRef.current.get(note.id);
     if (!pendingCreate) {
       const resolvedId = resolvedCreatesRef.current.get(note.id);
-      if (!resolvedId) return persistNote(note, false);
+      if (!resolvedId) {
+        const saved = await persistNote(note, true);
+        setNotes((currentNotes) => {
+          const savedNotes = currentNotes.map((candidate) => (candidate.id === note.id ? saved : candidate));
+          persistAllIfFallback(savedNotes);
+          return savedNotes;
+        });
+        setActiveId((current) => (current === note.id ? saved.id : current));
+        return saved;
+      }
       resolvedCreatesRef.current.delete(note.id);
       const latest = notesRef.current.find((candidate) => candidate.id === resolvedId) ?? {
         ...note,
@@ -289,7 +298,7 @@ function App() {
       ?? notesRef.current.find((candidate) => candidate.id === note.id)
       ?? note;
     return persistNote({ ...latest, id: saved.id, created_at: saved.created_at }, false);
-  }, []);
+  }, [persistAllIfFallback]);
 
   const updateActiveNote = useCallback(
     (patch: Partial<Pick<Note, "title" | "content" | "content_json" | "pinned" | "tags">>) => {

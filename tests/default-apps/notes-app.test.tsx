@@ -250,6 +250,42 @@ describe("Notes app", () => {
     );
   });
 
+  it("retries insert for an orphaned draft after the initial create fails", async () => {
+    vi.useFakeTimers();
+    const db = installMatrixDb([]);
+    db.insert.mockRejectedValueOnce(new Error("temporary insert failure"));
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Note could not be created.")).toBeTruthy();
+
+    const titleInput = screen.getByLabelText("Note title") as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "Recovered draft" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalledTimes(2);
+    expect(db.insert.mock.calls[1][1]).toEqual(expect.objectContaining({ title: "Recovered draft" }));
+    expect(db.update).not.toHaveBeenCalledWith(
+      "notes",
+      expect.stringMatching(/^note-/),
+      expect.anything(),
+    );
+  });
+
   it("does not steal selection when a new note insert resolves", async () => {
     const db = installMatrixDb([
       {
