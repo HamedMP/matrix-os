@@ -17,6 +17,8 @@ export interface BudgetRow {
   monthly_limit: number;
 }
 
+export type CurrencyCode = "AUD" | "CAD" | "CHF" | "DKK" | "EUR" | "GBP" | "JPY" | "NOK" | "SEK" | "USD";
+
 export interface CategoryTotal {
   category: string;
   total: number;
@@ -104,14 +106,22 @@ export function coerceExpense(row: unknown): ExpenseRow | null {
   const spentAt =
     typeof data.spent_at === "string" && data.spent_at.trim() !== ""
       ? data.spent_at
+      : typeof data.date === "string" && data.date.trim() !== ""
+        ? data.date
       : typeof data.created_at === "string"
         ? data.created_at
         : new Date().toISOString();
+  const note =
+    typeof data.note === "string"
+      ? data.note
+      : typeof data.description === "string"
+        ? data.description
+        : "";
   return {
     id: typeof data.id === "string" ? data.id : crypto.randomUUID(),
     amount: round2(amount),
     category: typeof data.category === "string" && data.category.trim() !== "" ? data.category : "Uncategorized",
-    note: typeof data.note === "string" ? data.note : "",
+    note,
     spent_at: spentAt,
     recurring: data.recurring === true,
     created_at: typeof data.created_at === "string" ? data.created_at : undefined,
@@ -129,6 +139,16 @@ export function coerceBudget(row: unknown): BudgetRow | null {
     category: data.category,
     monthly_limit: round2(limit),
   };
+}
+
+export function dedupeBudgets(budgets: BudgetRow[]): BudgetRow[] {
+  const byCategory = new Map<string, BudgetRow>();
+  for (const budget of budgets) {
+    if (!byCategory.has(budget.category)) {
+      byCategory.set(budget.category, budget);
+    }
+  }
+  return Array.from(byCategory.values());
 }
 
 export function monthlyTotal(expenses: ExpenseRow[]): number {
@@ -200,13 +220,49 @@ export function summarizeMonth(allExpenses: ExpenseRow[], budgets: BudgetRow[], 
   };
 }
 
-const MONEY_FORMAT = new Intl.NumberFormat(undefined, {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+const EURO_LOCALES = new Set([
+  "AT",
+  "BE",
+  "CY",
+  "DE",
+  "EE",
+  "ES",
+  "FI",
+  "FR",
+  "GR",
+  "HR",
+  "IE",
+  "IT",
+  "LT",
+  "LU",
+  "LV",
+  "MT",
+  "NL",
+  "PT",
+  "SI",
+  "SK",
+]);
 
-export function formatMoney(value: number): string {
-  return MONEY_FORMAT.format(Number.isFinite(value) ? value : 0);
+export function currencyForLocale(locale: string | undefined): CurrencyCode {
+  const region = locale?.split("-").at(-1)?.toUpperCase();
+  if (!region || region.length !== 2) return "USD";
+  if (EURO_LOCALES.has(region)) return "EUR";
+  if (region === "AU") return "AUD";
+  if (region === "CA") return "CAD";
+  if (region === "CH") return "CHF";
+  if (region === "DK") return "DKK";
+  if (region === "GB") return "GBP";
+  if (region === "JP") return "JPY";
+  if (region === "NO") return "NOK";
+  if (region === "SE") return "SEK";
+  return "USD";
+}
+
+export function formatMoney(value: number, currency: CurrencyCode = "USD"): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
 }

@@ -4,6 +4,8 @@ import {
   categoryBreakdown,
   coerceBudget,
   coerceExpense,
+  currencyForLocale,
+  dedupeBudgets,
   formatMoney,
   isInMonth,
   monthKey,
@@ -65,6 +67,24 @@ describe("expense-model", () => {
       expect(row?.category).toBe("Uncategorized");
       expect(typeof row?.spent_at).toBe("string");
     });
+
+    it("hydrates legacy description and date fields", () => {
+      const row = coerceExpense({
+        id: "legacy",
+        amount: "17.45",
+        category: "Dining",
+        description: "Lunch",
+        date: "2026-05-04T00:00:00.000Z",
+      });
+
+      expect(row).toMatchObject({
+        id: "legacy",
+        amount: 17.45,
+        category: "Dining",
+        note: "Lunch",
+        spent_at: "2026-05-04T00:00:00.000Z",
+      });
+    });
   });
 
   describe("coerceBudget", () => {
@@ -72,6 +92,17 @@ describe("expense-model", () => {
       expect(coerceBudget({ category: "Food", monthly_limit: "200" })?.monthly_limit).toBe(200);
       expect(coerceBudget({ category: "Food", monthly_limit: -3 })).toBeNull();
       expect(coerceBudget({ monthly_limit: 10 })).toBeNull();
+    });
+
+    it("deduplicates budgets by category before summarizing", () => {
+      expect(dedupeBudgets([
+        { id: "b1", category: "Food", monthly_limit: 100 },
+        { id: "b2", category: "Food", monthly_limit: 200 },
+        { id: "b3", category: "Rent", monthly_limit: 900 },
+      ])).toEqual([
+        { id: "b1", category: "Food", monthly_limit: 100 },
+        { id: "b3", category: "Rent", monthly_limit: 900 },
+      ]);
     });
   });
 
@@ -162,6 +193,12 @@ describe("expense-model", () => {
     it("formats currency", () => {
       expect(formatMoney(1234.5)).toMatch(/1,234\.50/);
       expect(formatMoney(0)).toMatch(/0\.00/);
+    });
+
+    it("chooses a locale default currency without hardcoding every display to USD", () => {
+      expect(currencyForLocale("sv-SE")).toBe("SEK");
+      expect(currencyForLocale("en-GB")).toBe("GBP");
+      expect(currencyForLocale("fr-FR")).toBe("EUR");
     });
   });
 });

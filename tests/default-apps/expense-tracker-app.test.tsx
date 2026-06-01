@@ -34,8 +34,18 @@ function installMatrixDb(expenses: DbRow[] = [], budgets: DbRow[] = []): FakeDb 
     (table === "budgets" ? state.budgets : state.expenses).push({ id, created_at: new Date().toISOString(), ...data });
     return { id };
   });
-  state.update.mockImplementation(async () => ({ ok: true }));
-  state.delete.mockImplementation(async () => ({ ok: true }));
+  state.update.mockImplementation(async (table: string, id: string, data: DbRow) => {
+    const rows = table === "budgets" ? state.budgets : state.expenses;
+    const row = rows.find((item) => item.id === id);
+    if (row) Object.assign(row, data);
+    return { ok: true };
+  });
+  state.delete.mockImplementation(async (table: string, id: string) => {
+    const rows = table === "budgets" ? state.budgets : state.expenses;
+    const idx = rows.findIndex((item) => item.id === id);
+    if (idx >= 0) rows.splice(idx, 1);
+    return { ok: true };
+  });
 
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
@@ -116,6 +126,29 @@ describe("Expense Tracker app", () => {
     render(<App />);
 
     expect(await screen.findByTestId("over-budget-warning")).toBeTruthy();
+  });
+
+  it("deduplicates existing budgets when saving the budget sheet", async () => {
+    const db = installMatrixDb(
+      [expense(2, 30, "Groceries")],
+      [
+        { id: "b1", category: "Groceries", monthly_limit: 100 },
+        { id: "b2", category: "Groceries", monthly_limit: 125 },
+      ],
+    );
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("budgets", "b1", { monthly_limit: 100 });
+      expect(db.delete).toHaveBeenCalledWith("budgets", "b2");
+    });
   });
 
   it("adds a transaction by calling db.insert with the right args", async () => {

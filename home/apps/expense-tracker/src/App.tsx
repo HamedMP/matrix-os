@@ -17,6 +17,8 @@ import {
   budgetStatus,
   coerceBudget,
   coerceExpense,
+  currencyForLocale,
+  dedupeBudgets,
   formatMoney,
   monthKey,
   monthLabel,
@@ -73,7 +75,7 @@ function todayInputValue(): string {
 
 function dateInputToIso(value: string): string {
   if (!value) return new Date().toISOString();
-  const parsed = new Date(`${value}T12:00:00.000Z`);
+  const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
 }
 
@@ -111,6 +113,8 @@ export default function App() {
   const [budgetEditor, setBudgetEditor] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState<Record<string, string>>({});
   const submittingRef = useRef(false);
+  const budgetDuplicatesRef = useRef<Map<string, BudgetRow[]>>(new Map());
+  const currency = useMemo(() => currencyForLocale(navigator.language), []);
 
   const reload = useCallback(async () => {
     const db = window.MatrixOS?.db;
@@ -128,11 +132,22 @@ export default function App() {
           .map(coerceExpense)
           .filter((row): row is ExpenseRow => row !== null),
       );
-      setBudgets(
-        rawBudgets
-          .map(coerceBudget)
-          .filter((row): row is BudgetRow => row !== null),
-      );
+      const coercedBudgets = rawBudgets
+        .map(coerceBudget)
+        .filter((row): row is BudgetRow => row !== null);
+      const duplicates = new Map<string, BudgetRow[]>();
+      const seen = new Set<string>();
+      for (const budget of coercedBudgets) {
+        if (!seen.has(budget.category)) {
+          seen.add(budget.category);
+          continue;
+        }
+        const rows = duplicates.get(budget.category) ?? [];
+        rows.push(budget);
+        duplicates.set(budget.category, rows);
+      }
+      budgetDuplicatesRef.current = duplicates;
+      setBudgets(dedupeBudgets(coercedBudgets));
       setError(null);
       setLoadState("ready");
     } catch (err: unknown) {
@@ -295,11 +310,23 @@ export default function App() {
 
   const saveBudgets = useCallback(async () => {
     const db = window.MatrixOS?.db;
+    const previous = budgets;
+    const existingByCategory = new Map<string, BudgetRow[]>();
+    for (const budget of budgets) {
+      const rows = existingByCategory.get(budget.category) ?? [];
+      rows.push(budget);
+      rows.push(...(budgetDuplicatesRef.current.get(budget.category) ?? []));
+      existingByCategory.set(budget.category, rows);
+    }
     const next: BudgetRow[] = [];
     const operations: Array<Promise<unknown>> = [];
     for (const [category, value] of Object.entries(budgetDraft)) {
       const limit = Number(value);
-      const existing = budgets.find((b) => b.category === category);
+      const existingRows = existingByCategory.get(category) ?? [];
+      const existing = existingRows[0];
+      for (const duplicate of existingRows.slice(1)) {
+        if (db) operations.push(db.delete(BUDGETS_TABLE, duplicate.id));
+      }
       if (!value || !Number.isFinite(limit) || limit <= 0) {
         if (existing && db) operations.push(db.delete(BUDGETS_TABLE, existing.id));
         continue;
@@ -323,6 +350,8 @@ export default function App() {
         "[expense-tracker] budget save failed:",
         err instanceof Error ? err.message : String(err),
       );
+      setBudgets(previous);
+      setBudgetEditor(true);
       setError("Could not save your budgets.");
     }
   }, [budgetDraft, budgets, reload]);
@@ -377,7 +406,7 @@ export default function App() {
           <span className="exp-kpi__label">
             <TrendingDown size={15} /> Spent this month
           </span>
-          <strong data-testid="kpi-total">{formatMoney(summary.totalSpent)}</strong>
+          <strong data-testid="kpi-total">{formatMoney(summary.totalSpent, currency)}</strong>
           <em>{summary.transactionCount} transactions</em>
         </article>
         <article
@@ -388,15 +417,15 @@ export default function App() {
           <span className="exp-kpi__label">
             <PiggyBank size={15} /> {summary.remaining < 0 ? "Over budget" : "Remaining budget"}
           </span>
-          <strong data-testid="kpi-remaining">{formatMoney(Math.abs(summary.remaining))}</strong>
-          <em>{summary.totalBudget > 0 ? `of ${formatMoney(summary.totalBudget)}` : "No budgets set"}</em>
+          <strong data-testid="kpi-remaining">{formatMoney(Math.abs(summary.remaining), currency)}</strong>
+          <em>{summary.totalBudget > 0 ? `of ${formatMoney(summary.totalBudget, currency)}` : "No budgets set"}</em>
         </article>
         <article className="exp-kpi exp-kpi--top">
           <span className="exp-kpi__label">
             <ArrowDownUp size={15} /> Biggest category
           </span>
           <strong data-testid="kpi-biggest">{summary.biggestCategory?.category ?? "—"}</strong>
-          <em>{summary.biggestCategory ? formatMoney(summary.biggestCategory.total) : "Nothing yet"}</em>
+          <em>{summary.biggestCategory ? formatMoney(summary.biggestCategory.total, currency) : "Nothing yet"}</em>
         </article>
       </section>
 
@@ -435,7 +464,7 @@ export default function App() {
                         {row.category}
                         {status.over ? <span className="exp-tag exp-tag--over">over</span> : null}
                       </span>
-                      <span className="exp-bar__amt">{formatMoney(row.total)}</span>
+                      <span className="exp-bar__amt">{formatMoney(row.total, currency)}</span>
                     </div>
                     <div className="exp-bar__track">
                       <div
@@ -446,10 +475,10 @@ export default function App() {
                     <div className="exp-bar__meta">
                       {status.hasBudget ? (
                         <span className={status.over ? "exp-over" : ""}>
-                          {formatMoney(row.total)} of {formatMoney(status.limit)} budget
+                          {formatMoney(row.total, currency)} of {formatMoney(status.limit, currency)} budget
                           {status.over
-                            ? ` · ${formatMoney(Math.abs(status.remaining))} over`
-                            : ` · ${formatMoney(status.remaining)} left`}
+                            ? ` · ${formatMoney(Math.abs(status.remaining), currency)} over`
+                            : ` · ${formatMoney(status.remaining, currency)} left`}
                         </span>
                       ) : (
                         <span>{Math.round(row.pct)}% of spend · no budget</span>
@@ -580,10 +609,11 @@ export default function App() {
                     {new Date(expense.spent_at).toLocaleDateString(undefined, {
                       month: "short",
                       day: "numeric",
+                      timeZone: "UTC",
                     })}
                   </span>
                 </div>
-                <span className="exp-row__amt">{formatMoney(expense.amount)}</span>
+                <span className="exp-row__amt">{formatMoney(expense.amount, currency)}</span>
                 <div className="exp-row__actions">
                   <button
                     type="button"
