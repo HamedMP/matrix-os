@@ -53,6 +53,7 @@ interface CanvasTransformActions {
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
   focusOnWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
+  zoomToWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
   setTransform: (zoom: number, panX: number, panY: number) => void;
   resetForMobileViewport: () => void;
 }
@@ -150,6 +151,19 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
       set({ panX, panY });
+    },
+
+    // Zoom so a single window fills the viewport (minus padding) and center it.
+    // Used by double-clicking an app's title bar to "zoom into" that app.
+    zoomToWindow: (win, viewportW, viewportH) => {
+      const availW = viewportW - FIT_PADDING * 2;
+      const availH = viewportH - FIT_PADDING * 2;
+      const zoom = clampZoom(Math.min(availW / win.width, availH / win.height));
+      const centerX = win.x + win.width / 2;
+      const centerY = win.y + win.height / 2;
+      const panX = viewportW / (2 * zoom) - centerX;
+      const panY = viewportH / (2 * zoom) - centerY;
+      set({ zoom, panX, panY });
     },
 
     setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
