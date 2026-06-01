@@ -247,7 +247,7 @@ export default function App() {
   const addLocation = useCallback(
     async (geo: GeoResult) => {
       const previousActiveId = activeId;
-      const label = geo.admin1 && geo.admin1 !== geo.name ? `${geo.name}` : geo.name;
+      const label = geo.admin1 && geo.admin1 !== geo.name ? `${geo.name}, ${geo.admin1}` : geo.name;
       const candidate: SavedLocation = {
         name: label,
         latitude: geo.latitude,
@@ -264,7 +264,8 @@ export default function App() {
 
       const db = window.MatrixOS?.db;
       if (!db) {
-        await writeAppData(LOCATIONS_KEY, [...locations, candidate]);
+        const existing = await readStoredLocations();
+        await writeAppData(LOCATIONS_KEY, [...existing, candidate]);
         return;
       }
       try {

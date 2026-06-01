@@ -251,4 +251,46 @@ describe("Weather app", () => {
     expect(stored).toEqual([expect.objectContaining({ name: "Berlin" })]);
     expect(String(stored[0].id ?? "")).not.toMatch(/^local-/);
   });
+
+  it("does not persist optimistic local ids when adding fallback locations repeatedly", async () => {
+    const bridge = installMatrixDataBridge();
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      const stored = bridge.writeData.mock.calls.find(
+        ([key]) => key === "matrix-weather-locations",
+      )?.[1] as Array<Record<string, unknown>> | undefined;
+      expect(stored?.length).toBe(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add location/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      const writes = bridge.writeData.mock.calls.filter(
+        ([key]) => key === "matrix-weather-locations",
+      );
+      const stored = writes.at(-1)?.[1] as Array<Record<string, unknown>> | undefined;
+      expect(stored?.length).toBe(2);
+      expect(stored?.some((loc) => String(loc.id ?? "").startsWith("local-"))).toBe(false);
+    });
+  });
 });
