@@ -137,6 +137,24 @@ describe("Expense Tracker app", () => {
     expect((await screen.findByTestId("kpi-total")).textContent).toMatch(/575\.00/);
   });
 
+  it("loads budgets beyond the first page", async () => {
+    const budgets = Array.from({ length: 501 }, (_, index) => ({
+      id: `budget-${index}`,
+      category: `Category ${index}`,
+      monthly_limit: index + 1,
+    }));
+    const db = installMatrixDb([], budgets);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(db.find).toHaveBeenCalledWith(
+        "budgets",
+        expect.objectContaining({ limit: 500, offset: 500 }),
+      );
+    });
+  });
+
   it("renders a category breakdown", async () => {
     installMatrixDb([
       expense(2, 40, "Groceries"),
@@ -210,6 +228,47 @@ describe("Expense Tracker app", () => {
     expect(call?.[1]).toMatchObject({ amount: 25.5, note: "Coffee beans" });
     expect(typeof (call?.[1] as Record<string, unknown>).category).toBe("string");
     expect(typeof (call?.[1] as Record<string, unknown>).spent_at).toBe("string");
+  });
+
+  it("keeps an inserted transaction visible when the follow-up reload fails", async () => {
+    const db = installMatrixDb([], []);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "25.50" } });
+    fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "Coffee beans" } });
+    db.find.mockRejectedValueOnce(new Error("read failed"));
+
+    await act(async () => {
+      fireEvent.submit(screen.getByTestId("expense-form"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Coffee beans")).toBeTruthy();
+    expect(screen.queryByText("Could not save that transaction.")).toBeNull();
+  });
+
+  it("does not reopen budget editing when the follow-up reload fails after a save", async () => {
+    const db = installMatrixDb([], [{ id: "b1", category: "Groceries", monthly_limit: 100 }]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
+    fireEvent.change(screen.getByLabelText("Groceries monthly budget"), { target: { value: "150" } });
+    db.find.mockRejectedValueOnce(new Error("read failed"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith("budgets", "b1", { monthly_limit: 150 });
+    expect(screen.queryByRole("dialog", { name: /edit budgets/i })).toBeNull();
+    expect(screen.queryByText("Could not save your budgets.")).toBeNull();
   });
 
   it("renders an empty state with onboarding when there are no transactions", async () => {

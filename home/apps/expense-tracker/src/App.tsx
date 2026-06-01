@@ -141,7 +141,7 @@ export default function App() {
     try {
       const [rawExpenses, rawBudgets] = await Promise.all([
         findAllRows(db, EXPENSES_TABLE, { orderBy: { spent_at: "desc" } }),
-        db.find(BUDGETS_TABLE, { limit: 200 }),
+        findAllRows(db, BUDGETS_TABLE),
       ]);
       setExpenses(
         rawExpenses
@@ -242,7 +242,6 @@ export default function App() {
         resetDraft();
         try {
           if (db) await db.update(EXPENSES_TABLE, editingId, payload);
-          await reload();
         } catch (err: unknown) {
           console.warn(
             "[expense-tracker] update failed:",
@@ -250,9 +249,11 @@ export default function App() {
           );
           setExpenses(previous);
           setError("Could not save that change.");
+          return;
         } finally {
           submittingRef.current = false;
         }
+        void reload();
         return;
       }
 
@@ -267,7 +268,6 @@ export default function App() {
       resetDraft();
       try {
         if (db) await db.insert(EXPENSES_TABLE, payload);
-        await reload();
       } catch (err: unknown) {
         console.warn(
           "[expense-tracker] insert failed:",
@@ -275,9 +275,11 @@ export default function App() {
         );
         setExpenses((current) => current.filter((e) => e.id !== optimistic.id));
         setError("Could not save that transaction.");
+        return;
       } finally {
         submittingRef.current = false;
       }
+      void reload();
     },
     [draft, editingId, expenses, reload, resetDraft],
   );
@@ -360,7 +362,6 @@ export default function App() {
     setBudgetEditor(false);
     try {
       await Promise.all(operations);
-      await reload();
     } catch (err: unknown) {
       console.warn(
         "[expense-tracker] budget save failed:",
@@ -369,7 +370,9 @@ export default function App() {
       setBudgets(previous);
       setBudgetEditor(true);
       setError("Could not save your budgets.");
+      return;
     }
+    void reload();
   }, [budgetDraft, budgets, reload]);
 
   const isEmpty = loadState === "ready" && expenses.length === 0 && budgets.length === 0;
