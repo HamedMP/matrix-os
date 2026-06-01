@@ -16,7 +16,7 @@ permissions:
 jobs:
   screenshots:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
@@ -81,15 +81,6 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Cache Playwright Chromium
-        if: steps.screenshots.outputs.should_run == 'true'
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'shell/pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-chromium-${{ runner.os }}-
-
       - run: pnpm install --frozen-lockfile
         if: steps.screenshots.outputs.should_run == 'true'
 
@@ -101,15 +92,29 @@ jobs:
           NEXT_PUBLIC_E2E_TEST_BYPASS: "1"
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
 
-      - name: Install Playwright Chromium
+      - name: Resolve system Chrome
+        id: chrome
         if: steps.screenshots.outputs.should_run == 'true'
-        timeout-minutes: 20
-        run: cd shell && pnpm exec playwright install --only-shell chromium
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          for candidate in google-chrome-stable google-chrome chromium chromium-browser; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              path="$(command -v "$candidate")"
+              echo "path=$path" >> "$GITHUB_OUTPUT"
+              "$path" --version
+              exit 0
+            fi
+          done
+          echo "No system Chrome or Chromium binary found" >&2
+          exit 1
 
       - name: Run Playwright tests
         if: steps.screenshots.outputs.should_run == 'true'
         timeout-minutes: 15
         run: cd shell && pnpm exec playwright test --update-snapshots
+        env:
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.path }}
 
       - name: Upload test artifacts
         if: failure() && steps.screenshots.outputs.should_run == 'true'
