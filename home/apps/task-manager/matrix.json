@@ -1,14 +1,40 @@
 {
   "name": "Task Manager",
-  "description": "Project boards with Trello-style columns, cards, checklists, and drag-and-drop planning",
+  "description": "Trello-style project boards with draggable cards, labels, due dates, and checklists backed by your own Postgres",
   "category": "productivity",
   "icon": "task-manager",
   "author": "system",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "runtime": "vite",
   "slug": "task-manager",
   "runtimeVersion": "^1.0.0",
   "scope": "personal",
+  "storage": {
+    "tables": {
+      "columns": {
+        "columns": {
+          "title": "text",
+          "color": "text",
+          "position": "integer"
+        },
+        "indexes": ["position"]
+      },
+      "cards": {
+        "columns": {
+          "column_id": "text",
+          "title": "text",
+          "description": "text",
+          "labels": "text",
+          "assignee": "text",
+          "priority": "text",
+          "due": "timestamptz",
+          "checklist": "jsonb",
+          "position": "integer"
+        },
+        "indexes": ["column_id", "position"]
+      }
+    }
+  },
   "build": {
     "install": "pnpm install --ignore-workspace --prefer-offline",
     "command": "pnpm build",
