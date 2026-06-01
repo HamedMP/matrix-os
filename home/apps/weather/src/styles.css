@@ -91,14 +91,14 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
   border: 1px solid transparent;
   border-radius: 14px;
-  padding: 11px 12px;
+  padding: 0;
   background: transparent;
   color: var(--app-fg);
   text-align: left;
   transition: all 0.15s ease;
+  overflow: hidden;
 }
 .loc-chip:hover {
   background: color-mix(in srgb, var(--app-fg) 4%, transparent);
@@ -107,6 +107,18 @@ button {
   background: var(--app-card);
   border-color: var(--app-border);
   box-shadow: 0 4px 12px rgba(50, 53, 46, 0.08);
+}
+.loc-chip__select {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 11px 0 11px 12px;
 }
 .loc-chip__name {
   flex: 1;
@@ -125,11 +137,18 @@ button {
 .loc-chip__remove {
   display: grid;
   place-items: center;
+  align-self: stretch;
+  width: 34px;
+  border: 0;
+  border-radius: 10px;
+  margin: 4px;
+  background: transparent;
   color: var(--app-muted-fg);
   opacity: 0;
   transition: opacity 0.15s ease, color 0.15s ease;
 }
-.loc-chip:hover .loc-chip__remove {
+.loc-chip:hover .loc-chip__remove,
+.loc-chip:focus-within .loc-chip__remove {
   opacity: 1;
 }
 .loc-chip__remove:hover {

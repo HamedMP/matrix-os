@@ -369,30 +369,30 @@ export default function App() {
             const id = loc.id ?? loc.name;
             const isActive = (active?.id ?? active?.name) === id;
             return (
-              <button
+              <div
                 key={id}
-                type="button"
                 role="listitem"
                 data-testid="location-item"
                 className={isActive ? "loc-chip loc-chip--active" : "loc-chip"}
-                onClick={() => setActiveId(id)}
               >
-                <MapPin size={15} />
-                <span className="loc-chip__name">{loc.name}</span>
-                {loc.is_default ? <span className="loc-chip__badge">Default</span> : null}
-                <span
+                <button
+                  type="button"
+                  className="loc-chip__select"
+                  onClick={() => setActiveId(id)}
+                >
+                  <MapPin size={15} />
+                  <span className="loc-chip__name">{loc.name}</span>
+                  {loc.is_default ? <span className="loc-chip__badge">Default</span> : null}
+                </button>
+                <button
+                  type="button"
                   className="loc-chip__remove"
-                  role="button"
-                  tabIndex={-1}
                   aria-label={`Remove ${loc.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void removeLocation(loc);
-                  }}
+                  onClick={() => void removeLocation(loc)}
                 >
                   <Trash2 size={14} />
-                </span>
-              </button>
+                </button>
+              </div>
             );
           })}
           {!hasLocations ? <p className="sidebar__hint">No saved places yet.</p> : null}

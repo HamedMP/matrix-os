@@ -238,7 +238,9 @@ describe("Weather app", () => {
       expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByLabelText(/remove berlin/i));
+    const removeButton = screen.getByRole("button", { name: /remove berlin/i });
+    expect(removeButton.getAttribute("tabindex")).not.toBe("-1");
+    fireEvent.click(removeButton);
 
     await vi.waitFor(() => {
       expect(screen.getByText(/location could not be removed/i)).toBeTruthy();
