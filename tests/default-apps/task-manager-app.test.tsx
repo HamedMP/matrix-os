@@ -193,6 +193,61 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("waits for a new card insert before persisting immediate edits", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let resolveCardInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "cards") {
+        await new Promise<void>((resolve) => {
+          resolveCardInsert = resolve;
+        });
+        const id = "cards-created";
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    const input = await screen.findByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Race card" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    fireEvent.click(await screen.findByText("Race card"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Race card");
+    fireEvent.change(titleInput, { target: { value: "Resolved card" } });
+    fireEvent.blur(titleInput);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalledWith(
+      "cards",
+      expect.stringMatching(/^card-/),
+      expect.anything(),
+    );
+
+    await act(async () => {
+      resolveCardInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith(
+        "cards",
+        "cards-created",
+        expect.objectContaining({ title: "Resolved card" }),
+      ),
+    );
+  });
+
   it("persists a card created in a new column with the resolved DB column id", async () => {
     const { db, store } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -314,6 +369,42 @@ describe("Task Manager app", () => {
 
     expect(await screen.findByText(/column could not be deleted/i)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
+  });
+
+  it("keeps an existing error visible after unrelated card saves", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Keep me", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle("Delete column")[0]);
+    const banner = await screen.findByText(/column could not be deleted/i);
+    expect(banner).toBeTruthy();
+    db.update.mockImplementationOnce(async (table: string, id: string, data: DbRow) => {
+      const list = store[table as keyof FakeDb];
+      const idx = list.findIndex((row) => row.id === id);
+      if (idx >= 0) list[idx] = { ...list[idx], ...data };
+      return { ok: true };
+    });
+
+    fireEvent.click(screen.getByText("Keep me"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Keep me");
+    fireEvent.change(titleInput, { target: { value: "Still visible" } });
+    fireEvent.blur(titleInput);
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith("cards", "card-1", expect.objectContaining({ title: "Still visible" })),
+    );
+    expect(screen.getByText(/column could not be deleted/i)).toBeTruthy();
   });
 
   it("shows a friendly error when the bridge fails to load", async () => {

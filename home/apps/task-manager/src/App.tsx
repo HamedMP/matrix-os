@@ -131,6 +131,7 @@ function App() {
   const boardRef = useRef<Board | null>(null);
   boardRef.current = board;
   const pendingColumnIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
+  const pendingCardIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
   const usingDbRef = useRef(false);
   const suppressReloadRef = useRef(false);
 
@@ -204,11 +205,14 @@ function App() {
     if (!usingDbRef.current) return;
     try {
       await action();
-      setError(null);
     } catch (err: unknown) {
       console.warn(`[task-manager] ${failure}:`, errMessage(err));
       setError(`${failure}. Reopen the board to refresh.`);
     }
+  }, []);
+
+  const resolveCardId = useCallback((cardId: string): Promise<string> => {
+    return pendingCardIdsRef.current[cardId] ?? Promise.resolve(cardId);
   }, []);
 
   // --- Card mutations (optimistic) ---
@@ -222,17 +226,36 @@ function App() {
     setBoard(next);
     const created = next.cards.find((card) => !existing.has(card.id));
     if (!created) return;
+    let resolveCreatedCardId: (id: string) => void = () => undefined;
+    let rejectCreatedCardId: (err: unknown) => void = () => undefined;
+    const pendingCardId = new Promise<string>((resolve, reject) => {
+      resolveCreatedCardId = resolve;
+      rejectCreatedCardId = reject;
+    });
+    pendingCardId.catch(() => undefined);
+    pendingCardIdsRef.current[created.id] = pendingCardId;
     void persist(async () => {
       const bridge = db();
-      if (!bridge) return;
+      if (!bridge) {
+        resolveCreatedCardId(created.id);
+        return;
+      }
       const liveColumnId = boardRef.current?.cards.find((card) => card.id === created.id)?.columnId ?? created.columnId;
       const columnId = await (pendingColumnIdsRef.current[liveColumnId] ?? Promise.resolve(liveColumnId));
-      const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...created, columnId }, created.order));
-      setSelectedCardId((id) => (id === created.id ? result.id : id));
-      setBoard((current) => current ? {
-        ...current,
-        cards: current.cards.map((card) => card.id === created.id ? { ...card, id: result.id } : card),
-      } : current);
+      try {
+        const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...created, columnId }, created.order));
+        resolveCreatedCardId(result.id);
+        setSelectedCardId((id) => (id === created.id ? result.id : id));
+        setBoard((current) => current ? {
+          ...current,
+          cards: current.cards.map((card) => card.id === created.id ? { ...card, id: result.id } : card),
+        } : current);
+      } catch (err) {
+        rejectCreatedCardId(err);
+        throw err;
+      } finally {
+        delete pendingCardIdsRef.current[created.id];
+      }
     }, "Card could not be saved");
   }, [persist]);
 
@@ -246,9 +269,10 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.update(CARDS_TABLE, cardId, cardToRow(updated, updated.order));
+      const persistedCardId = await resolveCardId(cardId);
+      await bridge.update(CARDS_TABLE, persistedCardId, cardToRow({ ...updated, id: persistedCardId }, updated.order));
     }, "Card could not be updated");
-  }, [persist]);
+  }, [persist, resolveCardId]);
 
   const removeCard = useCallback((cardId: string) => {
     const current = boardRef.current;
@@ -258,9 +282,9 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.delete(CARDS_TABLE, cardId);
+      await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
     }, "Card could not be deleted");
-  }, [persist]);
+  }, [persist, resolveCardId]);
 
   const dropCard = useCallback((cardId: string, targetColumnId: string, targetIndex: number) => {
     const current = boardRef.current;
@@ -275,10 +299,10 @@ function App() {
       if (!bridge) return;
       const toWrite = next.cards.filter((card) => affected.has(card.columnId));
       for (const card of toWrite) {
-        await bridge.update(CARDS_TABLE, card.id, { column_id: card.columnId, position: card.order });
+        await bridge.update(CARDS_TABLE, await resolveCardId(card.id), { column_id: card.columnId, position: card.order });
       }
     }, "Card order could not be saved");
-  }, [persist]);
+  }, [persist, resolveCardId]);
 
   // --- Checklist (within selected card) ---
 
@@ -292,9 +316,9 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.update(CARDS_TABLE, cardId, { checklist: updated.checklist });
+      await bridge.update(CARDS_TABLE, await resolveCardId(cardId), { checklist: updated.checklist });
     }, "Checklist could not be saved");
-  }, [persist]);
+  }, [persist, resolveCardId]);
 
   const addChecklist = useCallback((cardId: string, text: string) => {
     const current = boardRef.current;
@@ -306,9 +330,9 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.update(CARDS_TABLE, cardId, { checklist: updated.checklist });
+      await bridge.update(CARDS_TABLE, await resolveCardId(cardId), { checklist: updated.checklist });
     }, "Checklist could not be saved");
-  }, [persist]);
+  }, [persist, resolveCardId]);
 
   // --- Column mutations ---
 
