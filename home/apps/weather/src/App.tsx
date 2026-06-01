@@ -17,6 +17,7 @@ import {
   formatDay,
   formatHour,
   formatTemp,
+  formatWindSpeed,
   isDaytime,
   tempSpan,
   weatherVisual,
@@ -444,7 +445,7 @@ export default function App() {
                   ) : null}
                   {forecast?.current?.wind_speed_10m != null ? (
                     <span className="hero__chip">
-                      <Wind size={13} /> {Math.round(forecast.current.wind_speed_10m)} km/h
+                      <Wind size={13} /> {formatWindSpeed(forecast.current.wind_speed_10m, unit)}
                     </span>
                   ) : null}
                   <button

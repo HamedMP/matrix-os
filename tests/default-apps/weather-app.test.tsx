@@ -132,6 +132,23 @@ describe("Weather app", () => {
     expect(within(daily).getAllByTestId("daily-row").length).toBe(3);
   });
 
+  it("converts wind speed to mph when Fahrenheit is selected", async () => {
+    installMatrixDb([
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+    ]);
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByText("11 km/h")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /toggle temperature unit/i }));
+
+    expect(screen.getByText("7 mph")).toBeTruthy();
+    expect(screen.queryByText("11 km/h")).toBeNull();
+  });
+
   it("falls back to seeded demo data with a notice when fetch fails", async () => {
     installMatrixDb([
       { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },

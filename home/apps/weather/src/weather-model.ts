@@ -143,6 +143,12 @@ export function formatTemp(celsius: number, unit: Unit = "c"): string {
   return `${Math.round(toUnit(celsius, unit))}°`;
 }
 
+/** Format a wind-speed value from Open-Meteo km/h for the requested unit system. */
+export function formatWindSpeed(kmh: number, unit: Unit = "c"): string {
+  if (!Number.isFinite(kmh)) return unit === "f" ? "0 mph" : "0 km/h";
+  return unit === "f" ? `${Math.round(kmh * 0.621371)} mph` : `${Math.round(kmh)} km/h`;
+}
+
 /** Convert a Celsius value to the requested unit (numeric, unrounded). */
 export function toUnit(celsius: number, unit: Unit): number {
   if (!Number.isFinite(celsius)) return 0;
