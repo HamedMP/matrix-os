@@ -19,6 +19,11 @@ type MarkdownImageProps = ComponentPropsWithoutRef<"img"> & {
   node?: unknown;
 };
 
+type MarkdownSvgPreviewProps = Omit<ComponentPropsWithoutRef<"img">, "src"> & {
+  sourcePath?: string;
+  src?: string;
+};
+
 type SvgSourceResolution =
   | { ok: true; src: string }
   | { ok: false };
@@ -39,13 +44,15 @@ export function MarkdownViewer({ content, sourcePath }: MarkdownViewerProps) {
         urlTransform={markdownUrlTransform}
         components={{
           img: ({ node: _node, src, alt, title, ...props }: MarkdownImageProps) => {
-            if (isSvgReference(src)) {
+            const imageSrc = typeof src === "string" ? src : undefined;
+
+            if (isSvgReference(imageSrc)) {
               return (
                 <MarkdownSvgPreview
                   {...props}
                   alt={alt}
                   sourcePath={sourcePath}
-                  src={src}
+                  src={imageSrc}
                   title={title}
                 />
               );
@@ -68,7 +75,7 @@ function MarkdownSvgPreview({
   src,
   title,
   ...props
-}: ComponentPropsWithoutRef<"img"> & { sourcePath?: string }) {
+}: MarkdownSvgPreviewProps) {
   const resolved = useMemo(
     () => resolveSvgPreviewSource(src, sourcePath),
     [src, sourcePath],
