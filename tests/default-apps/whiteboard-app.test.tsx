@@ -8,15 +8,23 @@ type DbRow = Record<string, unknown>;
 
 function installMatrixDb(rows: DbRow[] = []) {
   // Mutable backing store so insert/update/delete + find reflect each other,
-  // and find() can be filtered by `where` (the app loads a board by id).
+  // and find() can be filtered/sorted like the bridge calls the app relies on.
   const store: DbRow[] = rows.map((r) => ({ ...r }));
   let seq = 0;
   const db = {
-    find: vi.fn(async (_table: string, opts?: { where?: Record<string, unknown> }) => {
+    find: vi.fn(async (_table: string, opts?: { where?: Record<string, unknown>; orderBy?: Record<string, "asc" | "desc"> }) => {
       const where = opts?.where;
-      const matched = where
+      let matched = where
         ? store.filter((r) => Object.entries(where).every(([k, v]) => r[k] === v))
         : store;
+      if (opts?.orderBy) {
+        const [field, dir] = Object.entries(opts.orderBy)[0] as [string, "asc" | "desc"];
+        matched = [...matched].sort((a, b) => {
+          const av = String(a[field] ?? "");
+          const bv = String(b[field] ?? "");
+          return dir === "desc" ? bv.localeCompare(av) : av.localeCompare(bv);
+        });
+      }
       return matched.map((r) => ({ ...r }));
     }),
     findOne: vi.fn(async (_table: string, id: string) => {
