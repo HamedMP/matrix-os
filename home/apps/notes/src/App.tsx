@@ -26,8 +26,14 @@ const APP_ID = "notes";
 const KV_KEY = "notes";
 const LOCAL_KEY = `matrixos.${APP_ID}.${KV_KEY}`;
 const SAVE_DELAY_MS = 500;
+const MAX_CREATE_TRACKERS = 100;
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+
+function evictOldestMapEntry<K, V>(map: Map<K, V>): void {
+  const oldest = map.keys().next();
+  if (!oldest.done) map.delete(oldest.value);
+}
 
 // Apps run inside a sandboxed, null-origin srcdoc iframe with CSP
 // `connect-src 'self'`, so a direct fetch() to the gateway is always blocked.
@@ -164,6 +170,7 @@ function App() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const notesRef = useRef<Note[]>([]);
   const pendingCreatesRef = useRef<Map<string, Promise<Note>>>(new Map());
+  const resolvedCreatesRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     notesRef.current = notes;
@@ -234,9 +241,16 @@ function App() {
     setActiveId(draft.id);
     setSaveState("saving");
     const createPromise = persistNote(draft, true);
+    if (pendingCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
+      evictOldestMapEntry(pendingCreatesRef.current);
+    }
     pendingCreatesRef.current.set(draft.id, createPromise);
     createPromise
       .then((saved) => {
+        if (resolvedCreatesRef.current.size >= MAX_CREATE_TRACKERS) {
+          evictOldestMapEntry(resolvedCreatesRef.current);
+        }
+        resolvedCreatesRef.current.set(draft.id, saved.id);
         setNotes((currentNotes) => {
           const savedNotes = currentNotes.map((note) =>
             note.id === draft.id ? { ...note, id: saved.id, created_at: saved.created_at } : note,
@@ -260,7 +274,16 @@ function App() {
   const persistWhenReady = useCallback(async (note: Note): Promise<Note> => {
     if (!note.id.startsWith("note-")) return persistNote(note, false);
     const pendingCreate = pendingCreatesRef.current.get(note.id);
-    if (!pendingCreate) return persistNote(note, false);
+    if (!pendingCreate) {
+      const resolvedId = resolvedCreatesRef.current.get(note.id);
+      if (!resolvedId) return persistNote(note, false);
+      resolvedCreatesRef.current.delete(note.id);
+      const latest = notesRef.current.find((candidate) => candidate.id === resolvedId) ?? {
+        ...note,
+        id: resolvedId,
+      };
+      return persistNote(latest, false);
+    }
     const saved = await pendingCreate;
     const latest = notesRef.current.find((candidate) => candidate.id === saved.id)
       ?? notesRef.current.find((candidate) => candidate.id === note.id)

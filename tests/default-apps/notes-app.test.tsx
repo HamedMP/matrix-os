@@ -216,6 +216,40 @@ describe("Notes app", () => {
     );
   });
 
+  it("saves edits when a new note insert resolves before the debounce fires", async () => {
+    vi.useFakeTimers();
+    const db = installMatrixDb([]);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    const titleInput = screen.getByLabelText("Note title") as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "Fast bridge draft" } });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(db.insert).toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith(
+      "notes",
+      "db-1",
+      expect.objectContaining({ title: "Fast bridge draft" }),
+    );
+  });
+
   it("does not steal selection when a new note insert resolves", async () => {
     const db = installMatrixDb([
       {
