@@ -57,14 +57,16 @@ describe("Clock app", () => {
   beforeEach(() => {
     window.localStorage.clear();
     // jsdom lacks AudioContext; stub so alarm/timer audio paths don't throw.
-    (window as unknown as { AudioContext?: unknown }).AudioContext = vi.fn(() => ({
+    (window as unknown as { AudioContext?: unknown }).AudioContext = vi.fn(function AudioContextMock() {
+      return {
       createOscillator: () => ({ connect: () => undefined, start: () => undefined, stop: () => undefined, frequency: { value: 0 }, type: "sine" }),
       createGain: () => ({ connect: () => undefined, gain: { value: 0, setValueAtTime: () => undefined, exponentialRampToValueAtTime: () => undefined } }),
       destination: {},
       currentTime: 0,
       close: () => Promise.resolve(),
       resume: () => Promise.resolve(),
-    }));
+      };
+    });
   });
 
   afterEach(() => {
@@ -133,6 +135,7 @@ describe("Clock app", () => {
     const bridge = installMatrixDataBridge();
     render(<App />);
 
+    expect(await screen.findAllByText("Synced to device storage")).not.toHaveLength(0);
     expect(await screen.findByText(/no cities yet/i)).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: /add city/i })[0]);
     const search = await screen.findByPlaceholderText(/search cities/i);
@@ -152,6 +155,65 @@ describe("Clock app", () => {
     });
   });
 
+  it("contains invalid saved time zones to one row", async () => {
+    installMatrixDb({
+      zones: [{ id: "bad-zone", tz: "Invalid/Zone", position: 0 }],
+      alarms: [],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Invalid time zone")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /remove zone/i })).toBeTruthy();
+  });
+
+  it("rings alarms while another tab is active, disables one-shot alarms, and snoozes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T06:59:59.000Z"));
+    const db = installMatrixDb({
+      zones: [],
+      alarms: [{ id: "alarm-1", time: "07:00", label: "Morning", repeat: "", enabled: true }],
+    });
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/no cities yet/i)).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
+    expect(db.update).toHaveBeenCalledWith("alarms", "alarm-1", { enabled: false });
+
+    fireEvent.click(screen.getByRole("button", { name: /snooze/i }));
+    expect(screen.queryByRole("button", { name: /snooze/i })).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+    });
+
+    expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
+  });
+
+  it("marks a timer done when it reaches zero", async () => {
+    vi.useFakeTimers();
+    installMatrixDb({ zones: [], alarms: [] });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /timers?/i }));
+    fireEvent.change(screen.getByLabelText("Timer duration"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /^start$/i }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(screen.getByText("Done")).toBeTruthy();
+  });
+
   it("starts the stopwatch and advances the displayed time", async () => {
     installMatrixDb({ zones: [], alarms: [] });
     render(<App />);
@@ -166,6 +228,10 @@ describe("Clock app", () => {
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
+    expect(readout.textContent).not.toBe("00:00.00");
+
+    fireEvent.click(screen.getByRole("tab", { name: /world clock/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /stopwatch/i }));
     expect(readout.textContent).not.toBe("00:00.00");
   });
 });

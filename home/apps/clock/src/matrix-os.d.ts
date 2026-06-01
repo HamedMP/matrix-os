@@ -8,6 +8,7 @@ interface MatrixOSDb {
   findOne(table: string, id: string): Promise<Record<string, unknown> | null>;
   insert(table: string, data: Record<string, unknown>): Promise<{ id: string }>;
   update(table: string, id: string, data: Record<string, unknown>): Promise<{ ok: boolean }>;
+  bulkUpdate(table: string, updates: Array<{ id: string; data: Record<string, unknown> }>): Promise<{ ok: boolean }>;
   delete(table: string, id: string): Promise<{ ok: boolean }>;
   count(table: string, filter?: Record<string, unknown>): Promise<number>;
   onChange(table: string, callback: (e: { table: string }) => void): () => void;

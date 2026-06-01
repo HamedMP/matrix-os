@@ -3147,9 +3147,32 @@ export async function createGateway(config: GatewayConfig) {
     if ((action === "insert" || action === "update") && JSON.stringify(body.data).length > 1_000_000) {
       return c.json({ error: "data too large (max 1MB)" }, 413);
     }
+    if (action === "bulkUpdate") {
+      if (!Array.isArray(body.updates)) {
+        return c.json({ error: "updates must be an array" }, 400);
+      }
+      if (body.updates.length > 200) {
+        return c.json({ error: "updates too large (max 200 rows)" }, 413);
+      }
+      if (JSON.stringify(body.updates).length > 1_000_000) {
+        return c.json({ error: "updates too large (max 1MB)" }, 413);
+      }
+      for (const update of body.updates) {
+        if (!update || typeof update !== "object" || Array.isArray(update)) {
+          return c.json({ error: "updates entries must be objects" }, 400);
+        }
+        const candidate = update as Record<string, unknown>;
+        if (typeof candidate.id !== "string" || candidate.id.length === 0) {
+          return c.json({ error: "updates entries require id" }, 400);
+        }
+        if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
+          return c.json({ error: "updates entries require data" }, 400);
+        }
+      }
+    }
 
     // Validate table is present for actions that need it
-    const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
+    const needsTable = ["find", "findOne", "insert", "update", "bulkUpdate", "delete", "count"].includes(action);
     const safeTable = typeof body.table === "string" ? body.table.replace(/[^a-zA-Z0-9_-]/g, "") : "";
     if (needsTable && !safeTable) {
       return c.json({ error: "table is required and must contain valid characters" }, 400);
@@ -3214,6 +3237,15 @@ export async function createGateway(config: GatewayConfig) {
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
+        case "bulkUpdate": {
+          await queryEngine.bulkUpdate(
+            appSlug,
+            safeTable,
+            body.updates as Array<{ id: string; data: Record<string, unknown> }>,
+          );
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json({ ok: true });
+        }
         case "delete": {
           await queryEngine.delete(appSlug, safeTable, body.id as string);
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
@@ -3231,7 +3263,11 @@ export async function createGateway(config: GatewayConfig) {
     } catch (e) {
       const msg = (e as Error).message;
       console.error("[app-db] Query error:", msg);
-      const isValidation = msg.startsWith("Invalid ") || msg.startsWith("insert:") || msg.startsWith("update:");
+      const isValidation =
+        msg.startsWith("Invalid ") ||
+        msg.startsWith("insert:") ||
+        msg.startsWith("update:") ||
+        msg.startsWith("bulkUpdate:");
       const safe = isValidation ? msg : "Query failed";
       return c.json({ error: safe }, isValidation ? 400 : 500);
     }

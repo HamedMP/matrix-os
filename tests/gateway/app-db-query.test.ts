@@ -153,6 +153,19 @@ describe("QueryEngine", () => {
     expect(row!.done).toBe(true);
   });
 
+  it("bulk-updates rows in one statement", async () => {
+    const first = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+    const second = await engine.insert("todo", "tasks", { title: "B", done: false, priority: 2 });
+
+    await engine.bulkUpdate("todo", "tasks", [
+      { id: first.id, data: { priority: 2 } },
+      { id: second.id, data: { priority: 1 } },
+    ]);
+
+    const rows = await engine.find("todo", "tasks", { orderBy: { priority: "asc" } });
+    expect(rows.map((row) => row.title)).toEqual(["B", "A"]);
+  });
+
   it("deletes a row by id", async () => {
     const { id } = await engine.insert("todo", "tasks", { title: "Delete me", done: false });
     await engine.delete("todo", "tasks", id);

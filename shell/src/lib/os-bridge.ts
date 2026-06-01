@@ -300,15 +300,23 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 	        }, 10000).then(function(r) { return r.json(); });
 	      },
 
-	      update: function(table, id, data) {
-	        return parentFetch("/api/bridge/query", {
-	          method: "POST",
-	          headers: { "Content-Type": "application/json" },
-	          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
-	        }, 10000).then(function(r) { return r.json(); });
-	      },
+		      update: function(table, id, data) {
+		        return parentFetch("/api/bridge/query", {
+		          method: "POST",
+		          headers: { "Content-Type": "application/json" },
+		          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
+		        }, 10000).then(function(r) { return r.json(); });
+		      },
 
-	      delete: function(table, id) {
+		      bulkUpdate: function(table, updates) {
+		        return parentFetch("/api/bridge/query", {
+		          method: "POST",
+		          headers: { "Content-Type": "application/json" },
+		          body: JSON.stringify({ app: app, action: "bulkUpdate", table: table, updates: updates })
+		        }, 10000).then(function(r) { return r.json(); });
+		      },
+
+		      delete: function(table, id) {
 	        return parentFetch("/api/bridge/query", {
 	          method: "POST",
 	          headers: { "Content-Type": "application/json" },

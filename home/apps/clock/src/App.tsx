@@ -45,6 +45,7 @@ import {
 
 const ZONES_TABLE = "zones";
 const ALARMS_TABLE = "alarms";
+const SNOOZE_MS = 5 * 60_000;
 
 type TabId = "world" | "alarms" | "timers" | "stopwatch";
 
@@ -195,6 +196,22 @@ function dedupeZones(rows: ZoneRow[]): ZoneRow[] {
   return deduped;
 }
 
+function storageLabel(): string {
+  if (typeof window === "undefined") return "Session only";
+  if (window.MatrixOS?.db) return "Synced to Matrix Postgres";
+  if (window.MatrixOS?.readData && window.MatrixOS?.writeData) return "Synced to device storage";
+  return "Session only";
+}
+
+function safeFormatZoneTime(timeZone: string, now: Date): ReturnType<typeof formatZoneTime> | null {
+  try {
+    return formatZoneTime(timeZone, LOCAL_TZ, now);
+  } catch (err) {
+    console.warn("[clock] invalid timezone skipped:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 // =================================================================================
 
 export default function App() {
@@ -234,10 +251,16 @@ export default function App() {
       </header>
 
       <section className="panel" role="tabpanel">
-        {tab === "world" && <WorldClock now={now} />}
-        {tab === "alarms" && <Alarms now={now} />}
-        {tab === "timers" && <Timers />}
-        {tab === "stopwatch" && <Stopwatch />}
+        <div hidden={tab !== "world"}>
+          <WorldClock now={now} />
+        </div>
+        <Alarms now={now} active={tab === "alarms"} />
+        <div hidden={tab !== "timers"}>
+          <Timers />
+        </div>
+        <div hidden={tab !== "stopwatch"}>
+          <Stopwatch />
+        </div>
       </section>
     </main>
   );
@@ -256,7 +279,7 @@ function WorldClock({ now }: { now: Date }) {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const allZones = useMemo(() => allTimeZones(), []);
-  const hasDb = typeof window !== "undefined" && !!window.MatrixOS?.db;
+  const persistenceLabel = storageLabel();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -302,7 +325,7 @@ function WorldClock({ now }: { now: Date }) {
         setQuery("");
         return;
       }
-      const position = zones.length;
+      const position = zones.reduce((max, zone) => Math.max(max, zone.position), -1) + 1;
       const optimistic: ZoneRow = { id: `local-${Date.now()}`, tz, position };
       const next = [...zones, optimistic];
       setZones(next);
@@ -361,9 +384,10 @@ function WorldClock({ now }: { now: Date }) {
       }
       const previous = zones;
       try {
-        for (const z of repositioned) {
-          await window.MatrixOS.db.update(ZONES_TABLE, z.id, { position: z.position });
-        }
+        await window.MatrixOS.db.bulkUpdate(
+          ZONES_TABLE,
+          repositioned.map((z) => ({ id: z.id, data: { position: z.position } })),
+        );
       } catch (err: unknown) {
         console.warn("[clock] reorder failed:", err instanceof Error ? err.message : String(err));
         setError("New order could not be saved.");
@@ -384,7 +408,7 @@ function WorldClock({ now }: { now: Date }) {
     <div className="world">
       <div className="world-head">
         <div>
-          <p className="eyebrow">{hasDb ? "Synced to Matrix Postgres" : "Saved on this device"}</p>
+          <p className="eyebrow">{persistenceLabel}</p>
           <h1>World Clock</h1>
         </div>
         <button className="primary-btn" type="button" onClick={() => setAdding(true)}>
@@ -406,7 +430,28 @@ function WorldClock({ now }: { now: Date }) {
       ) : (
         <ul className="zone-list">
           {zones.map((zone) => {
-            const z = formatZoneTime(zone.tz, LOCAL_TZ, now);
+            const z = safeFormatZoneTime(zone.tz, now);
+            if (!z) {
+              return (
+                <li key={zone.id} className="zone-row zone-row--invalid">
+                  <span className="drag-handle" aria-hidden="true">
+                    <GripVertical size={16} />
+                  </span>
+                  <div className="zone-meta">
+                    <strong>{zoneCityLabel(zone.tz)}</strong>
+                    <span>Invalid time zone</span>
+                  </div>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    aria-label={`Remove ${zoneCityLabel(zone.tz)}`}
+                    onClick={() => void removeZone(zone)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </li>
+              );
+            }
             return (
               <li
                 key={zone.id}
@@ -519,7 +564,7 @@ const DAY_LETTERS: { day: WeekDay; label: string }[] = [
   { day: 0, label: "S" },
 ];
 
-function Alarms({ now }: { now: Date }) {
+function Alarms({ now, active }: { now: Date; active: boolean }) {
   const [alarms, setAlarms] = useState<AlarmModel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -528,7 +573,8 @@ function Alarms({ now }: { now: Date }) {
   const [draftDays, setDraftDays] = useState<WeekDay[]>([]);
   const [ringing, setRinging] = useState<AlarmModel | null>(null);
   const firedRef = useRef<Set<string>>(new Set());
-  const hasDb = typeof window !== "undefined" && !!window.MatrixOS?.db;
+  const snoozedRef = useRef<Array<{ alarm: AlarmModel; dueAt: number }>>([]);
+  const persistenceLabel = storageLabel();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -558,8 +604,33 @@ function Alarms({ now }: { now: Date }) {
     );
   }, []);
 
+  const persistAlarmEnabled = useCallback(
+    async (alarm: AlarmModel, enabled: boolean, next: AlarmModel[]) => {
+      if (!window.MatrixOS?.db) {
+        await persistLocal(next);
+        return;
+      }
+      try {
+        await window.MatrixOS.db.update(ALARMS_TABLE, alarm.id, { enabled });
+      } catch (err: unknown) {
+        console.warn("[clock] alarm auto-disable failed:", err instanceof Error ? err.message : String(err));
+        setError("Alarm could not be updated.");
+        void reload();
+      }
+    },
+    [persistLocal, reload],
+  );
+
   // Ring scheduling: when the global tick lands on a matching minute, fire once.
   useEffect(() => {
+    const dueSnooze = snoozedRef.current.find((entry) => now.getTime() >= entry.dueAt);
+    if (dueSnooze) {
+      snoozedRef.current = snoozedRef.current.filter((entry) => entry !== dueSnooze);
+      setRinging(dueSnooze.alarm);
+      beep(3);
+      return;
+    }
+
     const key = alarmMinuteKey(now);
     for (const alarm of alarms) {
       const guard = `${alarm.id}@${key}`;
@@ -571,9 +642,14 @@ function Alarms({ now }: { now: Date }) {
         }
         setRinging(alarm);
         beep(3);
+        if (alarm.repeat.length === 0) {
+          const next = alarms.map((a) => (a.id === alarm.id ? { ...a, enabled: false } : a));
+          setAlarms(next);
+          void persistAlarmEnabled(alarm, false, next);
+        }
       }
     }
-  }, [alarms, now]);
+  }, [alarms, now, persistAlarmEnabled]);
 
   const addAlarm = useCallback(async () => {
     const draft: AlarmModel = {
@@ -649,18 +725,24 @@ function Alarms({ now }: { now: Date }) {
   );
 
   const snooze = useCallback(() => {
-    // Re-arm guard for the next minute so it does not instantly re-ring.
+    if (ringing) {
+      snoozedRef.current = [
+        ...snoozedRef.current.filter((entry) => entry.alarm.id !== ringing.id),
+        { alarm: ringing, dueAt: now.getTime() + SNOOZE_MS },
+      ];
+    }
     setRinging(null);
-  }, []);
+  }, [now, ringing]);
 
   const toggleDraftDay = (day: WeekDay) =>
     setDraftDays((cur) => (cur.includes(day) ? cur.filter((d) => d !== day) : [...cur, day]));
 
   return (
-    <div className="alarms">
+    <>
+    <div className="alarms" hidden={!active}>
       <div className="world-head">
         <div>
-          <p className="eyebrow">{hasDb ? "Synced to Matrix Postgres" : "Saved on this device"}</p>
+          <p className="eyebrow">{persistenceLabel}</p>
           <h1>Alarms</h1>
         </div>
         <button className="primary-btn" type="button" onClick={() => setEditing(true)}>
@@ -762,6 +844,8 @@ function Alarms({ now }: { now: Date }) {
         </div>
       )}
 
+    </div>
+
       {ringing && (
         <div className="overlay overlay--ring">
           <div className="ring-card">
@@ -781,7 +865,7 @@ function Alarms({ now }: { now: Date }) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -809,6 +893,7 @@ function Timers() {
   const [timers, setTimers] = useState<TimerInstance[]>([]);
   const [draft, setDraft] = useState("5:00");
   const [label, setLabel] = useState("");
+  const beepedTimersRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -819,7 +904,6 @@ function Timers() {
           changed = true;
           const remaining = t.remaining - 1;
           if (remaining <= 0) {
-            beep(3);
             return { ...t, remaining: 0, running: false, done: true };
           }
           return { ...t, remaining };
@@ -829,6 +913,19 @@ function Timers() {
     }, 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    for (const id of [...beepedTimersRef.current]) {
+      const timer = timers.find((candidate) => candidate.id === id);
+      if (!timer || !timer.done) beepedTimersRef.current.delete(id);
+    }
+    for (const timer of timers) {
+      if (timer.done && !beepedTimersRef.current.has(timer.id)) {
+        beepedTimersRef.current.add(timer.id);
+        beep(3);
+      }
+    }
+  }, [timers]);
 
   const addTimer = useCallback(
     (seconds: number, name = "") => {
