@@ -286,7 +286,7 @@ describe("Todo app", () => {
     fireEvent.click(screen.getByRole("listitem"));
     const project = screen.getByPlaceholderText("No project");
     fireEvent.change(project, { target: { value: "W" } });
-    fireEvent.change(project, { target: { value: "Work" } });
+    fireEvent.change(project, { target: { value: "Work " } });
 
     expect(db.update).not.toHaveBeenCalledWith(
       "tasks",
@@ -300,6 +300,12 @@ describe("Todo app", () => {
     });
 
     expect(db.update).toHaveBeenCalledWith("tasks", "t1", { project: "Work" });
+    db.update.mockClear();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 

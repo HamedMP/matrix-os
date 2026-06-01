@@ -635,7 +635,7 @@ function Inspector({
   }, [notesDraft, onPatch, task?.id, task?.notes]);
 
   useEffect(() => {
-    if (!task?.id || projectDraft === (task.project ?? "")) return undefined;
+    if (!task?.id || projectDraft.trim() === (task.project ?? "")) return undefined;
     const timer = window.setTimeout(() => {
       onPatch({ project: projectDraft.trim() || null });
     }, NOTES_SAVE_DELAY_MS);
