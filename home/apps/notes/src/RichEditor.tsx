@@ -46,6 +46,13 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
   const lastAppliedNoteIdRef = useRef<string | null>(null);
+  const slashMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const closeSlash = useCallback(() => {
+    setSlashOpen(false);
+    setSlashQuery("");
+    setSlashIndex(0);
+  }, []);
 
   const editor = useEditor({
     extensions: [StarterKit],
@@ -65,11 +72,12 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
   useEffect(() => {
     if (!editor || lastAppliedNoteIdRef.current === note.id) return;
     lastAppliedNoteIdRef.current = note.id;
+    closeSlash();
     editor.commands.setContent(
       note.content_json.content?.length ? note.content_json : markdownToHtml(note.content),
       { emitUpdate: false },
     );
-  }, [editor, note.content, note.content_json, note.id]);
+  }, [closeSlash, editor, note.content, note.content_json, note.id]);
 
   const filteredCommands = useMemo(() => {
     const q = slashQuery.trim().toLowerCase();
@@ -77,11 +85,18 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
     return SLASH_COMMANDS.filter((cmd) => cmd.label.toLowerCase().includes(q) || cmd.id.includes(q));
   }, [slashQuery]);
 
-  const closeSlash = useCallback(() => {
-    setSlashOpen(false);
-    setSlashQuery("");
-    setSlashIndex(0);
-  }, []);
+  useEffect(() => {
+    if (!slashOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && slashMenuRef.current?.contains(target)) return;
+      closeSlash();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [closeSlash, slashOpen]);
 
   const applyCommand = useCallback(
     (command: SlashCommand) => {
@@ -188,7 +203,7 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
         <div className="rich-editor-wrap" onKeyDown={handleEditorKeyDown}>
           <EditorContent editor={editor} className="rich-editor" />
           {slashOpen ? (
-            <div className="slash-menu" role="menu" aria-label="Insert block">
+            <div ref={slashMenuRef} className="slash-menu" role="menu" aria-label="Insert block">
               <div className="slash-menu__search">
                 <Slash size={13} />
                 <input
