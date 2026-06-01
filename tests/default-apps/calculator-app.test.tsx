@@ -8,6 +8,7 @@ type DbRow = Record<string, unknown>;
 
 function installMatrixDb(rows: DbRow[] = []) {
   const store = [...rows];
+  const listeners = new Set<() => void>();
   const db = {
     find: vi.fn(async (_table: string, opts?: { limit?: number }) => {
       const ordered = [...store].reverse();
@@ -26,7 +27,13 @@ function installMatrixDb(rows: DbRow[] = []) {
       return { ok: true };
     }),
     count: vi.fn(async () => store.length),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }),
+    emitChange: () => {
+      for (const listener of listeners) listener();
+    },
   };
   Object.defineProperty(window, "MatrixOS", { configurable: true, value: { db } });
   return db;
@@ -160,6 +167,36 @@ describe("Calculator app", () => {
     await waitFor(() => {
       expect(db.delete).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("does not reload history from change events while clearing", async () => {
+    const rows = [
+      { id: "h1", expression: "1 + 1", result: "2", created_at: "2026-05-31T10:00:00.000Z" },
+      { id: "h2", expression: "2 + 2", result: "4", created_at: "2026-05-31T10:01:00.000Z" },
+    ];
+    const db = installMatrixDb(rows);
+    let resolveDelete: (() => void) | undefined;
+    db.delete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDelete = () => resolve({ ok: true });
+        }),
+    );
+    render(<App />);
+
+    await screen.findByText("Clear");
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+
+    fireEvent.click(clearHistory!);
+    await waitFor(() => expect(db.delete).toHaveBeenCalled());
+    db.find.mockClear();
+    act(() => db.emitChange());
+
+    expect(db.find).not.toHaveBeenCalled();
+    resolveDelete?.();
   });
 
   it("shows an onboarding empty state when history is empty", async () => {

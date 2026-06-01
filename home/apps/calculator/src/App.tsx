@@ -161,6 +161,7 @@ export default function App() {
     let unsub: (() => void) | undefined;
     try {
       unsub = db.onChange(HISTORY_TABLE, () => {
+        if (clearingRef.current) return;
         void reload();
       });
     } catch (err: unknown) {
