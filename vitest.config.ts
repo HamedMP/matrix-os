@@ -26,6 +26,7 @@ export default defineConfig({
       react: path.resolve(__dirname, "node_modules/react"),
       "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
       "@aws-sdk/client-s3": path.resolve(__dirname, "node_modules/@aws-sdk/client-s3"),
+      "chess.js": path.resolve(__dirname, "tests/default-apps/mocks/chess-js.ts"),
     },
   },
   test: {

@@ -1,0 +1,169 @@
+type Piece = { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" };
+type VerboseMove = {
+  from: string;
+  to: string;
+  san: string;
+  color: Piece["color"];
+  piece: Piece["type"];
+  captured?: Piece["type"];
+};
+type MoveRecord = VerboseMove & {
+  moved: Piece;
+  capturedPiece?: Piece;
+};
+
+function startingBoard(): Record<string, Piece> {
+  const board: Record<string, Piece> = {};
+  const back: Piece["type"][] = ["r", "n", "b", "q", "k", "b", "n", "r"];
+  const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  files.forEach((file, i) => {
+    board[`${file}1`] = { color: "w", type: back[i] };
+    board[`${file}2`] = { color: "w", type: "p" };
+    board[`${file}7`] = { color: "b", type: "p" };
+    board[`${file}8`] = { color: "b", type: back[i] };
+  });
+  return board;
+}
+
+export class Chess {
+  private boardState: Record<string, Piece> = startingBoard();
+  private turnColor: Piece["color"] = "w";
+  private moveStack: MoveRecord[] = [];
+
+  reset() {
+    this.boardState = startingBoard();
+    this.turnColor = "w";
+    this.moveStack = [];
+  }
+
+  turn() {
+    return this.turnColor;
+  }
+
+  get(square: string): Piece | undefined {
+    return this.boardState[square];
+  }
+
+  moves(opts?: { square?: string; verbose?: boolean }) {
+    if (opts?.square) {
+      const piece = this.boardState[opts.square];
+      if (!piece || piece.color !== this.turnColor) return [];
+      const file = opts.square[0];
+      const rank = Number(opts.square[1]);
+      const out: Omit<VerboseMove, "san">[] = [];
+      if (piece.type === "p") {
+        const dir = piece.color === "w" ? 1 : -1;
+        const one = `${file}${rank + dir}`;
+        const two = `${file}${rank + dir * 2}`;
+        if (!this.boardState[one]) out.push({ from: opts.square, to: one, piece: "p", color: piece.color });
+        const homeRank = piece.color === "w" ? 2 : 7;
+        if (rank === homeRank && !this.boardState[one] && !this.boardState[two]) {
+          out.push({ from: opts.square, to: two, piece: "p", color: piece.color });
+        }
+      }
+      if (piece.type === "n") {
+        const targets = piece.color === "w" ? ["a3", "c3", "f3", "h3"] : ["a6", "c6", "f6", "h6"];
+        for (const target of targets) {
+          if (!this.boardState[target]) {
+            out.push({ from: opts.square, to: target, piece: "n", color: piece.color });
+          }
+        }
+      }
+      return opts.verbose ? out : out.map((move) => move.to);
+    }
+
+    const out: Omit<VerboseMove, "san">[] = [];
+    for (const square of Object.keys(this.boardState)) {
+      const piece = this.boardState[square];
+      if (piece?.color !== this.turnColor) continue;
+      out.push(...(this.moves({ square, verbose: true }) as Omit<VerboseMove, "san">[]));
+    }
+    return opts?.verbose ? out : out.map((move) => move.to);
+  }
+
+  move(m: { from: string; to: string; promotion?: string }) {
+    const piece = this.boardState[m.from];
+    if (!piece || piece.color !== this.turnColor) return null;
+    const legal = (this.moves({ square: m.from, verbose: true }) as { to: string }[]).some((move) => move.to === m.to);
+    if (!legal) return null;
+
+    const capturedPiece = this.boardState[m.to];
+    delete this.boardState[m.from];
+    this.boardState[m.to] = piece;
+    const san = piece.type === "p" ? m.to : `${piece.type.toUpperCase()}${m.to}`;
+    const record: MoveRecord = {
+      from: m.from,
+      to: m.to,
+      san,
+      color: piece.color,
+      piece: piece.type,
+      captured: capturedPiece?.type,
+      moved: piece,
+      capturedPiece,
+    };
+    this.moveStack.push(record);
+    this.turnColor = this.turnColor === "w" ? "b" : "w";
+    return record;
+  }
+
+  history(opts?: { verbose?: boolean }) {
+    if (opts?.verbose) {
+      return this.moveStack.map(({ from, to, san, color, piece, captured }) => ({
+        from,
+        to,
+        san,
+        color,
+        piece,
+        captured,
+      }));
+    }
+    return this.moveStack.map((move) => move.san);
+  }
+
+  board() {
+    const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const ranks = ["8", "7", "6", "5", "4", "3", "2", "1"];
+    return ranks.map((rank) =>
+      files.map((file) => {
+        const square = `${file}${rank}`;
+        const piece = this.boardState[square];
+        return piece ? { square, ...piece } : null;
+      }),
+    );
+  }
+
+  fen() {
+    return `fake ${this.moveStack.length} ${this.turnColor}`;
+  }
+
+  pgn() {
+    return this.moveStack.map((move) => move.san).join(" ");
+  }
+
+  isCheck() {
+    return false;
+  }
+  isCheckmate() {
+    return false;
+  }
+  isStalemate() {
+    return false;
+  }
+  isDraw() {
+    return false;
+  }
+  isGameOver() {
+    return false;
+  }
+  undo() {
+    const last = this.moveStack.pop();
+    if (!last) return null;
+    delete this.boardState[last.to];
+    this.boardState[last.from] = last.moved;
+    if (last.capturedPiece) {
+      this.boardState[last.to] = last.capturedPiece;
+    }
+    this.turnColor = this.turnColor === "w" ? "b" : "w";
+    return last;
+  }
+}

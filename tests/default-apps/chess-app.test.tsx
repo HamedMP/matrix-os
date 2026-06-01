@@ -3,132 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ---------------------------------------------------------------------------
-// chess.js is an app-local dependency (home/apps/games/chess/node_modules).
-// The root vitest runner cannot be relied upon to resolve it, and chess.js is
-// itself a trusted, separately-tested library — its legality logic is not what
-// this UI test verifies. We therefore mock a faithful subset of the chess.js
-// API that the App consumes, seeded from the real standard opening position.
-// The pure board/material/SAN helpers are exercised by chess-model.test.ts.
-// ---------------------------------------------------------------------------
-type Piece = { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" };
-
-function startingBoard(): Record<string, Piece> {
-  const b: Record<string, Piece> = {};
-  const back: Piece["type"][] = ["r", "n", "b", "q", "k", "b", "n", "r"];
-  const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
-  files.forEach((f, i) => {
-    b[`${f}1`] = { color: "w", type: back[i] };
-    b[`${f}2`] = { color: "w", type: "p" };
-    b[`${f}7`] = { color: "b", type: "p" };
-    b[`${f}8`] = { color: "b", type: back[i] };
-  });
-  return b;
-}
-
-class FakeChess {
-  private board: Record<string, Piece> = startingBoard();
-  private turnColor: "w" | "b" = "w";
-  private moveSans: string[] = [];
-
-  reset() {
-    this.board = startingBoard();
-    this.turnColor = "w";
-    this.moveSans = [];
-  }
-
-  turn() {
-    return this.turnColor;
-  }
-
-  get(square: string): Piece | undefined {
-    return this.board[square];
-  }
-
-  // verbose moves for a specific square (only pawn double/single push needed)
-  moves(opts?: { square?: string; verbose?: boolean }) {
-    if (opts?.square) {
-      const piece = this.board[opts.square];
-      if (!piece || piece.color !== this.turnColor) return [];
-      const file = opts.square[0];
-      const rank = Number(opts.square[1]);
-      const out: { from: string; to: string; piece: string; color: string }[] = [];
-      if (piece.type === "p") {
-        const dir = piece.color === "w" ? 1 : -1;
-        const one = `${file}${rank + dir}`;
-        const two = `${file}${rank + dir * 2}`;
-        if (!this.board[one]) out.push({ from: opts.square, to: one, piece: "p", color: piece.color });
-        const homeRank = piece.color === "w" ? 2 : 7;
-        if (rank === homeRank && !this.board[one] && !this.board[two]) {
-          out.push({ from: opts.square, to: two, piece: "p", color: piece.color });
-        }
-      }
-      if (piece.type === "n") {
-        // knight from b1 / g1 etc. — enumerate a couple of legal jumps
-        const targets = piece.color === "w" ? ["a3", "c3", "f3", "h3"] : ["a6", "c6", "f6", "h6"];
-        for (const t of targets) {
-          if (!this.board[t]) out.push({ from: opts.square, to: t, piece: "n", color: piece.color });
-        }
-      }
-      return opts.verbose ? out : out.map((m) => m.to);
-    }
-    return [];
-  }
-
-  move(m: { from: string; to: string; promotion?: string }) {
-    const piece = this.board[m.from];
-    if (!piece || piece.color !== this.turnColor) return null;
-    const legal = (this.moves({ square: m.from, verbose: true }) as { to: string }[]).some(
-      (x) => x.to === m.to,
-    );
-    if (!legal) return null;
-    delete this.board[m.from];
-    this.board[m.to] = piece;
-    // crude SAN: pawn pushes are the destination square; pieces prefix letter
-    const san = piece.type === "p" ? m.to : `${piece.type.toUpperCase()}${m.to}`;
-    this.moveSans.push(san);
-    this.turnColor = this.turnColor === "w" ? "b" : "w";
-    return { from: m.from, to: m.to, san, color: piece.color, piece: piece.type, captured: undefined };
-  }
-
-  history(_opts?: { verbose?: boolean }) {
-    return this.moveSans.slice();
-  }
-
-  fen() {
-    return `fake ${this.moveSans.length} ${this.turnColor}`;
-  }
-
-  pgn() {
-    return this.moveSans.join(" ");
-  }
-
-  isCheck() {
-    return false;
-  }
-  isCheckmate() {
-    return false;
-  }
-  isStalemate() {
-    return false;
-  }
-  isDraw() {
-    return false;
-  }
-  isGameOver() {
-    return false;
-  }
-  undo() {
-    if (this.moveSans.length === 0) return null;
-    this.moveSans.pop();
-    this.turnColor = this.turnColor === "w" ? "b" : "w";
-    return {};
-  }
-}
-
-vi.mock("chess.js", () => ({ Chess: FakeChess }));
-
-// Import App AFTER the mock is registered.
+// vitest.config.ts aliases app-local chess.js to a faithful test double.
 let App: React.ComponentType;
 
 type DbRow = Record<string, unknown>;
@@ -258,5 +133,26 @@ describe("Chess app", () => {
 
     const history = screen.getByTestId("move-history");
     expect(within(history).queryByText("e4")).toBeNull();
+  });
+
+  it("Undo restores the previous board position", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e2"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-e4"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("square-e4").getAttribute("aria-label")).toBe("e4 White p");
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("square-e2").getAttribute("aria-label")).toBe("e2 White p");
+      expect(screen.getByTestId("square-e4").getAttribute("aria-label")).toBe("e4 empty");
+    });
   });
 });
