@@ -116,7 +116,7 @@ describe("2048 engine — slide + merge per direction", () => {
     expect(r.gained).toBe(4);
   });
 
-  it("merges only the outer pair for four-of-a-kind in correct order (left)", () => {
+  it("merges both adjacent pairs in correct order (left)", () => {
     const b = grid([
       [4, 4, 2, 2],
       [0, 0, 0, 0],

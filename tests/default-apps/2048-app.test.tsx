@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App from "../../home/apps/games/2048/src/App";
+import App, { tilesFromBoard } from "../../home/apps/games/2048/src/App";
 
 type DbRow = Record<string, unknown>;
 
@@ -58,6 +58,30 @@ describe("2048 app", () => {
       expect(tile.className).toContain("is-new");
       expect(tile.className).not.toContain("is-merged");
     }
+  });
+
+  it("marks the merged target instead of a slid same-value tile", () => {
+    const tiles = tilesFromBoard(
+      [
+        [4, 4, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+      ],
+      [
+        { id: 1, value: 2, row: 0, col: 0 },
+        { id: 2, value: 2, row: 0, col: 1 },
+        { id: 3, value: 4, row: 0, col: 3 },
+      ],
+      null,
+      new Set(["0:0"]),
+    );
+
+    const merged = tiles.find((tile) => tile.row === 0 && tile.col === 0);
+    const slid = tiles.find((tile) => tile.row === 0 && tile.col === 1);
+    expect(merged?.merged).toBe(true);
+    expect(merged?.id).not.toBe(3);
+    expect(slid).toMatchObject({ id: 3, merged: false });
   });
 
   it("an arrow key produces a move and increases score on a merge", async () => {

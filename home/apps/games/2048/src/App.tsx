@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { RotateCcw, Undo2, Trophy, Sparkles } from "lucide-react";
 import {
   type Board,
@@ -44,10 +44,43 @@ type Action =
   | { type: "undo" }
   | { type: "load-best"; best: number };
 
-function tilesFromBoard(
+function cellKey(row: number, col: number): string {
+  return `${row}:${col}`;
+}
+
+function mergeCellsForMove(board: Board, direction: Direction): Set<string> {
+  const merged = new Set<string>();
+  for (let line = 0; line < board.length; line += 1) {
+    const values: Array<{ value: number; row: number; col: number }> = [];
+    for (let offset = 0; offset < board.length; offset += 1) {
+      const row = direction === "up" ? offset : direction === "down" ? board.length - 1 - offset : line;
+      const col = direction === "left" ? offset : direction === "right" ? board.length - 1 - offset : line;
+      const value = board[row][col];
+      if (value !== 0) values.push({ value, row, col });
+    }
+
+    let target = 0;
+    for (let index = 0; index < values.length; index += 1) {
+      const current = values[index];
+      const next = values[index + 1];
+      const isMerge = Boolean(next && current.value === next.value);
+      const row = direction === "up" ? target : direction === "down" ? board.length - 1 - target : line;
+      const col = direction === "left" ? target : direction === "right" ? board.length - 1 - target : line;
+      if (isMerge) {
+        merged.add(cellKey(row, col));
+        index += 1;
+      }
+      target += 1;
+    }
+  }
+  return merged;
+}
+
+export function tilesFromBoard(
   board: Board,
   previous: Tile[] = [],
   spawned: { row: number; col: number; value: number } | null = null,
+  mergedCells = new Set<string>(),
 ): Tile[] {
   const tiles: Tile[] = [];
   const used = new Set<number>();
@@ -56,6 +89,10 @@ function tilesFromBoard(
       if (board[r][c] !== 0) {
         if (spawned && spawned.row === r && spawned.col === c && spawned.value === board[r][c]) {
           tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: true });
+          continue;
+        }
+        if (mergedCells.has(cellKey(r, c))) {
+          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: true });
           continue;
         }
         const match = previous
@@ -118,7 +155,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const spawn = addRandomTile(result.board, Math.random);
       const nextBoard = spawn.board;
       const nextScore = state.score + result.gained;
-      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned);
+      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned, mergeCellsForMove(state.board, action.direction));
 
       return {
         board: nextBoard,
