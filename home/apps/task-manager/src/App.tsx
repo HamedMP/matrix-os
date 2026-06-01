@@ -381,9 +381,8 @@ function App() {
   }, [persist]);
 
   const renameBoardColumn = useCallback((columnId: string, title: string) => {
-    const current = boardRef.current;
-    if (!current) return;
-    setBoard(renameColumn(current, columnId, title));
+    if (!boardRef.current) return;
+    setBoard((current) => (current ? renameColumn(current, columnId, title) : current));
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
@@ -398,7 +397,7 @@ function App() {
     const removedCards = current.cards.filter((card) => card.columnId === columnId).map((card) => card.id);
     const bridge = db();
     if (!usingDbRef.current || !bridge) {
-      setBoard(deleteColumn(current, columnId));
+      setBoard((latest) => (latest ? deleteColumn(latest, columnId) : latest));
       return;
     }
     suppressReloadRef.current = true;
@@ -410,7 +409,7 @@ function App() {
         const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
         await bridge.delete(COLUMNS_TABLE, persistedColumnId);
         setError(null);
-        setBoard(deleteColumn(current, columnId));
+        setBoard((latest) => (latest ? deleteColumn(latest, columnId) : latest));
       } catch (err: unknown) {
         console.warn("[task-manager] Column could not be deleted:", errMessage(err));
         await reload();

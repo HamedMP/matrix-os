@@ -467,6 +467,43 @@ describe("Task Manager app", () => {
     });
   });
 
+  it("keeps concurrent card additions when a column delete finishes", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveColumnDelete: (() => void) | null = null;
+    db.delete.mockImplementation(async (table: string, id: string) => {
+      if (table === "columns" && id === "col-1") {
+        await new Promise<void>((resolve) => {
+          resolveColumnDelete = resolve;
+        });
+      }
+      return { ok: true };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle("Delete column")[0]);
+
+    const doneInput = screen.getByPlaceholderText("Add a card to Done");
+    fireEvent.change(doneInput, { target: { value: "Concurrent card" } });
+    fireEvent.keyDown(doneInput, { key: "Enter" });
+    expect(await screen.findByText("Concurrent card")).toBeTruthy();
+
+    await act(async () => {
+      resolveColumnDelete?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "To do" })).toBeNull());
+    expect(screen.getByText("Concurrent card")).toBeTruthy();
+  });
+
   it("waits for a pending column insert before deleting the column row", async () => {
     const { db, store } = installMatrixDb({
       columns: [
