@@ -115,7 +115,11 @@ function fromDateInputValue(value: string): string | null {
 }
 
 function defaultDueForView(view: View, now: Date): string | null {
-  if (view === "today") return now.toISOString();
+  if (view === "today") {
+    const due = new Date(now);
+    due.setHours(9, 0, 0, 0);
+    return due.toISOString();
+  }
   if (view !== "upcoming") return null;
   const due = new Date(now);
   due.setDate(due.getDate() + 1);

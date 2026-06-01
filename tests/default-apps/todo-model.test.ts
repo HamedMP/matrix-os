@@ -51,6 +51,10 @@ describe("normalizeTask", () => {
     expect(normalizeTask({ id: "x", title: "ok", priority: -5 })!.priority).toBe(0);
   });
 
+  it("coerces numeric ids to stable string ids", () => {
+    expect(normalizeTask({ id: 42, title: "Numeric id" })?.id).toBe("42");
+  });
+
   it("hydrates legacy task rows from the previous default app schema", () => {
     const task = normalizeTask({
       id: "legacy",

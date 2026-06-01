@@ -54,7 +54,7 @@ export function normalizeTask(row: unknown): Task | null {
   const status: TaskStatus =
     data.status === "done" || data.done === true ? "done" : "open";
   return {
-    id: typeof data.id === "string" ? data.id : crypto.randomUUID(),
+    id: data.id != null ? String(data.id) : crypto.randomUUID(),
     title,
     notes: typeof data.notes === "string" ? data.notes : "",
     due: toStringOrNull(data.due),

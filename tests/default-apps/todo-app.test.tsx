@@ -125,6 +125,34 @@ describe("Todo app", () => {
     expect(await screen.findByText("Plan launch")).toBeTruthy();
   });
 
+  it("adds tasks captured from Today with a stable 9am due date", async () => {
+    const today = new Date();
+    const db = installMatrixDb([]);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^today/i }));
+    const input = await screen.findByPlaceholderText(/add a task|new task|capture/i);
+    fireEvent.change(input, { target: { value: "Daily review" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.insert).toHaveBeenCalledWith(
+        "tasks",
+        expect.objectContaining({ title: "Daily review", due: expect.any(String) }),
+      );
+    });
+    const payload = db.insert.mock.calls.find((call) => call[0] === "tasks")?.[1] as DbRow;
+    const due = new Date(String(payload.due));
+    expect(due.getFullYear()).toBe(today.getFullYear());
+    expect(due.getMonth()).toBe(today.getMonth());
+    expect(due.getDate()).toBe(today.getDate());
+    expect(due.getHours()).toBe(9);
+    expect(due.getMinutes()).toBe(0);
+  });
+
   it("completing a task calls db.update with done status", async () => {
     const db = installMatrixDb([
       { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
