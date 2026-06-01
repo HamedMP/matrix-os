@@ -1272,8 +1272,10 @@ interface WorkspaceSessionSummary {
 
 function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
   if (left.length !== right.length) return false;
-  return left.every((session, index) => {
-    const next = right[index];
+  const sortedLeft = [...left].sort((a, b) => a.name.localeCompare(b.name));
+  const sortedRight = [...right].sort((a, b) => a.name.localeCompare(b.name));
+  return sortedLeft.every((session, index) => {
+    const next = sortedRight[index];
     if (!next) return false;
     if (
       session.name !== next.name ||
@@ -1300,8 +1302,10 @@ function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSumm
 
 function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
   if (left.length !== right.length) return false;
-  return left.every((session, index) => {
-    const next = right[index];
+  const sortedLeft = [...left].sort((a, b) => a.id.localeCompare(b.id));
+  const sortedRight = [...right].sort((a, b) => a.id.localeCompare(b.id));
+  return sortedLeft.every((session, index) => {
+    const next = sortedRight[index];
     return (
       next !== undefined &&
       session.id === next.id &&
