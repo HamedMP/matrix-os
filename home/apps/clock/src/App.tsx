@@ -124,24 +124,32 @@ function beep(times = 1): void {
   }
 }
 
-// --- localStorage fallback -----------------------------------------------------
+// --- MatrixOS KV fallback ------------------------------------------------------
 
-function lsGet<T>(key: string, fallback: T): T {
+const fallbackData: Record<string, unknown> = {};
+
+async function readAppData<T>(key: string, fallback: T): Promise<T> {
   try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    if (window.MatrixOS?.readData) {
+      const value = await window.MatrixOS.readData(key);
+      return value === undefined || value === null ? fallback : (value as T);
+    }
   } catch (err) {
-    console.warn("[clock] localStorage read failed:", err instanceof Error ? err.message : String(err));
-    return fallback;
+    console.warn("[clock] MatrixOS data read failed:", err instanceof Error ? err.message : String(err));
   }
+  return Object.prototype.hasOwnProperty.call(fallbackData, key) ? (fallbackData[key] as T) : fallback;
 }
 
-function lsSet<T>(key: string, value: T): void {
+async function writeAppData<T>(key: string, value: T): Promise<void> {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    if (window.MatrixOS?.writeData) {
+      await window.MatrixOS.writeData(key, value);
+      return;
+    }
   } catch (err) {
-    console.warn("[clock] localStorage write failed:", err instanceof Error ? err.message : String(err));
+    console.warn("[clock] MatrixOS data write failed:", err instanceof Error ? err.message : String(err));
   }
+  fallbackData[key] = value;
 }
 
 // --- shared types --------------------------------------------------------------
@@ -174,6 +182,17 @@ function coerceAlarm(row: unknown, idx: number): AlarmModel | null {
     repeat: parseRepeat(d.repeat),
     enabled: d.enabled !== false,
   };
+}
+
+function dedupeZones(rows: ZoneRow[]): ZoneRow[] {
+  const seen = new Set<string>();
+  const deduped: ZoneRow[] = [];
+  for (const zone of [...rows].sort((a, b) => a.position - b.position || a.tz.localeCompare(b.tz))) {
+    if (seen.has(zone.tz)) continue;
+    seen.add(zone.tz);
+    deduped.push(zone);
+  }
+  return deduped;
 }
 
 // =================================================================================
@@ -242,13 +261,13 @@ function WorldClock({ now }: { now: Date }) {
   const reload = useCallback(async () => {
     setError(null);
     if (!window.MatrixOS?.db) {
-      const stored = lsGet<ZoneRow[]>("clock.zones", []);
-      setZones([...stored].sort((a, b) => a.position - b.position));
+      const stored = await readAppData<ZoneRow[]>("clock.zones", []);
+      setZones(dedupeZones(stored.map(coerceZone).filter((z): z is ZoneRow => z !== null)));
       return;
     }
     try {
       const rows = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
-      setZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null));
+      setZones(dedupeZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null)));
     } catch (err: unknown) {
       console.warn("[clock] zones load failed:", err instanceof Error ? err.message : String(err));
       setError("Saved cities could not be loaded.");
@@ -260,13 +279,25 @@ function WorldClock({ now }: { now: Date }) {
     return window.MatrixOS?.db?.onChange?.(ZONES_TABLE, () => void reload());
   }, [reload]);
 
-  const persistLocal = useCallback((next: ZoneRow[]) => {
-    lsSet("clock.zones", next);
+  const persistLocal = useCallback(async (next: ZoneRow[]) => {
+    await writeAppData("clock.zones", next);
   }, []);
 
   const addZone = useCallback(
     async (tz: string) => {
-      if (zones.some((z) => z.tz === tz)) {
+      const alreadyVisible = zones.some((z) => z.tz === tz);
+      let existingRows: Record<string, unknown>[] = [];
+      try {
+        existingRows = window.MatrixOS?.db
+          ? await window.MatrixOS.db.find(ZONES_TABLE, { where: { tz }, limit: 1 })
+          : [];
+      } catch (err) {
+        console.warn("[clock] duplicate zone check failed:", err instanceof Error ? err.message : String(err));
+        setError("Saved cities could not be checked.");
+        return;
+      }
+      if (alreadyVisible || existingRows.length > 0) {
+        if (!alreadyVisible) await reload();
         setAdding(false);
         setQuery("");
         return;
@@ -279,7 +310,7 @@ function WorldClock({ now }: { now: Date }) {
       setQuery("");
 
       if (!window.MatrixOS?.db) {
-        persistLocal(next);
+        await persistLocal(next);
         return;
       }
       try {
@@ -299,7 +330,7 @@ function WorldClock({ now }: { now: Date }) {
       const next = zones.filter((z) => z.id !== zone.id);
       setZones(next);
       if (!window.MatrixOS?.db) {
-        persistLocal(next);
+        await persistLocal(next);
         return;
       }
       try {
@@ -325,16 +356,18 @@ function WorldClock({ now }: { now: Date }) {
       const repositioned = next.map((z, i) => ({ ...z, position: i }));
       setZones(repositioned);
       if (!window.MatrixOS?.db) {
-        persistLocal(repositioned);
+        await persistLocal(repositioned);
         return;
       }
+      const previous = zones;
       try {
-        await Promise.all(
-          repositioned.map((z) => window.MatrixOS!.db!.update(ZONES_TABLE, z.id, { position: z.position })),
-        );
+        for (const z of repositioned) {
+          await window.MatrixOS.db.update(ZONES_TABLE, z.id, { position: z.position });
+        }
       } catch (err: unknown) {
         console.warn("[clock] reorder failed:", err instanceof Error ? err.message : String(err));
         setError("New order could not be saved.");
+        setZones(previous);
         void reload();
       }
     },
@@ -500,7 +533,8 @@ function Alarms({ now }: { now: Date }) {
   const reload = useCallback(async () => {
     setError(null);
     if (!window.MatrixOS?.db) {
-      setAlarms(lsGet<AlarmModel[]>("clock.alarms", []).map((a) => ({ ...a, repeat: parseRepeat(a.repeat) })));
+      const stored = await readAppData<AlarmModel[]>("clock.alarms", []);
+      setAlarms(stored.map((a) => ({ ...a, repeat: parseRepeat(a.repeat) })));
       return;
     }
     try {
@@ -517,8 +551,8 @@ function Alarms({ now }: { now: Date }) {
     return window.MatrixOS?.db?.onChange?.(ALARMS_TABLE, () => void reload());
   }, [reload]);
 
-  const persistLocal = useCallback((next: AlarmModel[]) => {
-    lsSet(
+  const persistLocal = useCallback(async (next: AlarmModel[]) => {
+    await writeAppData(
       "clock.alarms",
       next.map((a) => ({ ...a, repeat: serializeRepeat(a.repeat) })),
     );
@@ -557,7 +591,7 @@ function Alarms({ now }: { now: Date }) {
     setDraftTime("07:00");
 
     if (!window.MatrixOS?.db) {
-      persistLocal(next);
+      await persistLocal(next);
       return;
     }
     try {
@@ -581,7 +615,7 @@ function Alarms({ now }: { now: Date }) {
       const next = alarms.map((a) => (a.id === alarm.id ? { ...a, enabled } : a));
       setAlarms(next);
       if (!window.MatrixOS?.db) {
-        persistLocal(next);
+        await persistLocal(next);
         return;
       }
       try {
@@ -600,7 +634,7 @@ function Alarms({ now }: { now: Date }) {
       const next = alarms.filter((a) => a.id !== alarm.id);
       setAlarms(next);
       if (!window.MatrixOS?.db) {
-        persistLocal(next);
+        await persistLocal(next);
         return;
       }
       try {

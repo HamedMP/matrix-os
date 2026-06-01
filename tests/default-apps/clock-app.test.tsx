@@ -13,20 +13,44 @@ interface FakeStore {
 
 function installMatrixDb(store: FakeStore) {
   const db = {
-    find: vi.fn(async (table: string) => (table === "zones" ? store.zones : store.alarms)),
+    find: vi.fn(async (table: string, opts?: { where?: Record<string, unknown>; limit?: number }) => {
+      let rows = table === "zones" ? store.zones : store.alarms;
+      if (opts?.where) {
+        rows = rows.filter((row) =>
+          Object.entries(opts.where ?? {}).every(([key, value]) => row[key] === value),
+        );
+      }
+      return typeof opts?.limit === "number" ? rows.slice(0, opts.limit) : rows;
+    }),
     findOne: vi.fn(async () => null),
     insert: vi.fn(async (table: string, data: DbRow) => {
       const id = `${table}-${Math.random().toString(36).slice(2)}`;
       (table === "zones" ? store.zones : store.alarms).push({ id, created_at: new Date().toISOString(), ...data });
       return { id };
     }),
-    update: vi.fn(async () => ({ ok: true })),
+    update: vi.fn(async (table: string, id: string, data: DbRow) => {
+      const rows = table === "zones" ? store.zones : store.alarms;
+      const index = rows.findIndex((row) => row.id === id);
+      if (index >= 0) rows[index] = { ...rows[index], ...data };
+      return { ok: true };
+    }),
     delete: vi.fn(async () => ({ ok: true })),
     count: vi.fn(async () => 0),
     onChange: vi.fn(() => () => undefined),
   };
   Object.defineProperty(window, "MatrixOS", { configurable: true, value: { db } });
   return db;
+}
+
+function installMatrixDataBridge(data = new Map<string, unknown>()) {
+  const bridge = {
+    readData: vi.fn(async (key: string) => data.get(key) ?? null),
+    writeData: vi.fn(async (key: string, value: unknown) => {
+      data.set(key, value);
+    }),
+  };
+  Object.defineProperty(window, "MatrixOS", { configurable: true, value: bridge });
+  return bridge;
 }
 
 describe("Clock app", () => {
@@ -80,6 +104,50 @@ describe("Clock app", () => {
       expect(db.insert).toHaveBeenCalledWith(
         "zones",
         expect.objectContaining({ tz: "Asia/Tokyo" }),
+      );
+    });
+  });
+
+  it("does not insert a duplicate world-clock zone", async () => {
+    const db = installMatrixDb({
+      zones: [{ id: "zone-1", tz: "Asia/Tokyo", position: 0 }],
+      alarms: [],
+    });
+    render(<App />);
+
+    expect(await screen.findByText(/tokyo/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add city/i }));
+    const search = await screen.findByPlaceholderText(/search cities/i);
+    fireEvent.change(search, { target: { value: "Tokyo" } });
+
+    const option = await screen.findByRole("option", { name: /tokyo/i });
+    await act(async () => {
+      fireEvent.click(option);
+      await Promise.resolve();
+    });
+
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("uses the MatrixOS data bridge when app DB is unavailable", async () => {
+    const bridge = installMatrixDataBridge();
+    render(<App />);
+
+    expect(await screen.findByText(/no cities yet/i)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: /add city/i })[0]);
+    const search = await screen.findByPlaceholderText(/search cities/i);
+    fireEvent.change(search, { target: { value: "Tokyo" } });
+
+    const option = await screen.findByRole("option", { name: /tokyo/i });
+    await act(async () => {
+      fireEvent.click(option);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith(
+        "clock.zones",
+        expect.arrayContaining([expect.objectContaining({ tz: "Asia/Tokyo" })]),
       );
     });
   });
