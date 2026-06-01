@@ -72,6 +72,10 @@ final human review.
      rating per PR, especially whether it is `5/5`.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
+   - Before editing any branch, snapshot the current remote head for every PR
+     that could be rewritten by the next Graphite submit:
+     `gh pr view <number> --json headRefOid,headRefName`. Keep this baseline
+     with the branch list for the Step 4 conflict check.
 
 4. Fix actionable feedback.
    - Cluster findings by branch and behavior.
