@@ -193,6 +193,55 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("persists a card created in a new column with the resolved DB column id", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let resolveColumnInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<void>((resolve) => {
+          resolveColumnInsert = resolve;
+        });
+        const id = "columns-sprint";
+        store.columns.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      if (table === "cards") {
+        const id = "cards-sprint";
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    const sprintInput = await screen.findByPlaceholderText("Add a card to Sprint");
+    fireEvent.change(sprintInput, { target: { value: "Resolve the id race" } });
+    fireEvent.keyDown(sprintInput, { key: "Enter" });
+
+    expect(db.insert).not.toHaveBeenCalledWith("cards", expect.objectContaining({ title: "Resolve the id race" }));
+    await act(async () => {
+      resolveColumnInsert?.();
+    });
+
+    await waitFor(() =>
+      expect(db.insert).toHaveBeenCalledWith("cards", expect.objectContaining({
+        title: "Resolve the id race",
+        column_id: "columns-sprint",
+      })),
+    );
+  });
+
   it("filters cards by text query", async () => {
     installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],

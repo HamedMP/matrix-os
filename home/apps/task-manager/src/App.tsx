@@ -130,6 +130,7 @@ function App() {
 
   const boardRef = useRef<Board | null>(null);
   boardRef.current = board;
+  const pendingColumnIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
   const usingDbRef = useRef(false);
   const suppressReloadRef = useRef(false);
 
@@ -224,7 +225,9 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      const result = await bridge.insert(CARDS_TABLE, cardToRow(created, created.order));
+      const liveColumnId = boardRef.current?.cards.find((card) => card.id === created.id)?.columnId ?? created.columnId;
+      const columnId = await (pendingColumnIdsRef.current[liveColumnId] ?? Promise.resolve(liveColumnId));
+      const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...created, columnId }, created.order));
       setSelectedCardId((id) => (id === created.id ? result.id : id));
       setBoard((current) => current ? {
         ...current,
@@ -318,15 +321,32 @@ function App() {
     const created = next.columns.find((column) => !existing.has(column.id));
     if (!created) return;
     const position = next.columns.findIndex((column) => column.id === created.id);
+    let resolveColumnId: (id: string) => void = () => undefined;
+    let rejectColumnId: (err: unknown) => void = () => undefined;
+    pendingColumnIdsRef.current[created.id] = new Promise<string>((resolve, reject) => {
+      resolveColumnId = resolve;
+      rejectColumnId = reject;
+    });
     void persist(async () => {
       const bridge = db();
-      if (!bridge) return;
-      const result = await bridge.insert(COLUMNS_TABLE, columnToRow(created, position));
-      setBoard((current) => current ? {
-        ...current,
-        columns: current.columns.map((column) => column.id === created.id ? { ...column, id: result.id } : column),
-        cards: current.cards.map((card) => card.columnId === created.id ? { ...card, columnId: result.id } : card),
-      } : current);
+      if (!bridge) {
+        resolveColumnId(created.id);
+        return;
+      }
+      try {
+        const result = await bridge.insert(COLUMNS_TABLE, columnToRow(created, position));
+        resolveColumnId(result.id);
+        setBoard((current) => current ? {
+          ...current,
+          columns: current.columns.map((column) => column.id === created.id ? { ...column, id: result.id } : column),
+          cards: current.cards.map((card) => card.columnId === created.id ? { ...card, columnId: result.id } : card),
+        } : current);
+      } catch (err) {
+        rejectColumnId(err);
+        throw err;
+      } finally {
+        delete pendingColumnIdsRef.current[created.id];
+      }
     }, "Column could not be created");
   }, [persist]);
 
@@ -359,8 +379,8 @@ function App() {
         setBoard(deleteColumn(current, columnId));
       } catch (err: unknown) {
         console.warn("[task-manager] Column could not be deleted:", errMessage(err));
-        setError("Column could not be deleted. Reopen the board to refresh.");
         await reload();
+        setError("Column could not be deleted. Reopen the board to refresh.");
       } finally {
         suppressReloadRef.current = false;
       }
