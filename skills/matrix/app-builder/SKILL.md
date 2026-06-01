@@ -135,28 +135,20 @@ If the template is not present, create the standard Vite files directly with `re
 
 ## Data Access
 
-Use `/api/bridge/query` for structured data. Include a timeout on every fetch.
-
-```ts
-async function bridgeQuery(body: unknown) {
-  const res = await fetch("/api/bridge/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error("Matrix data request failed");
-  return res.json();
-}
-```
+Use the injected `window.MatrixOS.db` bridge for structured data. Do not call `/api/bridge/query`
+directly from app code; runtime apps load as sandboxed `srcdoc` iframes, and direct bridge fetches
+are blocked by the shell's CORS/CSP boundary.
 
 Example CRUD:
 
 ```ts
-await bridgeQuery({ app: "todo", action: "find", table: "tasks" });
-await bridgeQuery({ app: "todo", action: "insert", table: "tasks", data: { title: "Ship" } });
-await bridgeQuery({ app: "todo", action: "update", table: "tasks", id, data: { done: true } });
-await bridgeQuery({ app: "todo", action: "delete", table: "tasks", id });
+const db = window.MatrixOS?.db;
+if (!db) throw new Error("Matrix data bridge is unavailable");
+
+const tasks = await db.find("tasks", { orderBy: { created_at: "desc" } });
+const created = await db.insert("tasks", { title: "Ship" });
+await db.update("tasks", created.id, { done: true });
+await db.delete("tasks", created.id);
 ```
 
 ## Integrations
