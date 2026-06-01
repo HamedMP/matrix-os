@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+matrix_prepend_path_once() {
+  local entry="$1"
+  [ -n "$entry" ] || return 0
+  case ":${PATH:-}:" in
+    *":$entry:"*) ;;
+    *) PATH="$entry${PATH:+:$PATH}" ;;
+  esac
+  export PATH
+}
+
+matrix_export_owner_env() {
+  export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+  export HOME="$MATRIX_HOME"
+  export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+  export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+  export PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"
+  matrix_prepend_path_once "/opt/matrix/runtime/node/bin"
+  matrix_prepend_path_once "/opt/matrix/bin"
+  matrix_prepend_path_once "$HOME/.local/bin"
+}
+
+matrix_install_owner_dirs() {
+  local owner="${1:-matrix}"
+  local group="${2:-$owner}"
+  install -d -o "$owner" -g "$group" -m 0755 \
+    "$MATRIX_HOME" \
+    "$MATRIX_HOME/.local" \
+    "$MATRIX_HOME/.local/bin" \
+    "$MATRIX_HOME/.local/share" \
+    "$MATRIX_HOME/.cache" \
+    "$MATRIX_HOME/.config" \
+    "$MATRIX_HOME/.config/systemd" \
+    "$MATRIX_HOME/.config/systemd/user"
+}
+
+matrix_migrate_legacy_dotdir() {
+  local name="$1"
+  local mode="${2:-0755}"
+  local owner="${MATRIX_RUNTIME_USER:-matrix}"
+  local group="${MATRIX_RUNTIME_GROUP:-$owner}"
+  local legacy="/home/matrix/$name"
+  local target="$MATRIX_HOME/$name"
+
+  install -d -o "$owner" -g "$group" -m "$mode" "$target"
+  if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
+    if ! cp -an "$legacy/." "$target/"; then
+      printf 'matrix-owner-env: failed to copy %s to %s; leaving legacy directory in place\n' "$legacy" "$target" >&2
+      return 0
+    fi
+    rm -rf "$legacy"
+  fi
+  if [ ! -e "$legacy" ] || [ -L "$legacy" ]; then
+    ln -sfn "$target" "$legacy"
+    chown -h "$owner:$group" "$legacy"
+  fi
+}

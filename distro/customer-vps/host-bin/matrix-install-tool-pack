@@ -2,7 +2,14 @@
 set -euo pipefail
 
 MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
-MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-/home/matrix}"
+if [ -r /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  source /opt/matrix/bin/matrix-owner-env
+  matrix_export_owner_env
+fi
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-$MATRIX_RUNTIME_DIR/node}"
@@ -41,12 +48,21 @@ retry() {
 
 run_as_matrix() {
   if [ "$(id -u -n)" = "$MATRIX_RUNTIME_USER" ]; then
-    env HOME="$MATRIX_RUNTIME_HOME" PATH="$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" "$@"
+    env \
+      HOME="$MATRIX_RUNTIME_HOME" \
+      XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
+      XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
+      XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
+      PATH="$MATRIX_RUNTIME_HOME/.local/bin:$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+      "$@"
     return
   fi
   sudo -H -u "$MATRIX_RUNTIME_USER" env \
     HOME="$MATRIX_RUNTIME_HOME" \
-    PATH="$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+    XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
+    XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
+    XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
+    PATH="$MATRIX_RUNTIME_HOME/.local/bin:$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
     "$@"
 }
 
@@ -74,7 +90,7 @@ with_pack_lock() {
 
 sync_agent_skills() {
   if [ -x "$MATRIX_APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$MATRIX_APP_DIR/skills/matrix" ]; then
-    run_as_matrix bash -lc "cd '$MATRIX_APP_DIR' && MATRIX_SKILL_TARGETS=matrix,claude,codex MATRIX_SKILLS_SOURCE='$MATRIX_APP_DIR/skills/matrix' MATRIX_HOME='${MATRIX_HOME:-$MATRIX_RUNTIME_HOME/home}' ./scripts/sync-matrix-agent-skills.sh"
+    run_as_matrix bash -lc "cd '$MATRIX_APP_DIR' && MATRIX_SKILL_TARGETS=matrix,claude,codex MATRIX_SKILLS_SOURCE='$MATRIX_APP_DIR/skills/matrix' MATRIX_HOME='$MATRIX_RUNTIME_HOME' ./scripts/sync-matrix-agent-skills.sh"
   fi
 }
 

@@ -215,10 +215,16 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(toolPackInstaller).toContain('runtime/code-server');
     expect(toolPackInstaller).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
-    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
-    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix/home/.config /home/matrix/home/.config/systemd /home/matrix/home/.config/systemd/user');
-    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.config/gh');
-    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/gh /home/matrix/.config/gh');
+    expect(cloudInit).toContain('export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"');
+    expect(cloudInit).toContain('export HOME="$MATRIX_HOME"');
+    expect(cloudInit).toContain('export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"');
+    expect(cloudInit).toContain('export PATH="$HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:$PATH"');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/home /home/matrix/home/.local /home/matrix/home/.local/bin /home/matrix/home/.local/share /home/matrix/home/.cache /home/matrix/home/.config');
+    expect(cloudInit).toContain('usermod -d /home/matrix/home matrix');
+    expect(cloudInit).toContain('ensure_owner_link .local 0755');
+    expect(cloudInit).toContain('ensure_owner_link .cache 0755');
+    expect(cloudInit).toContain('ensure_owner_link .config 0755');
+    expect(cloudInit).toContain('ensure_owner_link .hermes 0700');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
@@ -233,7 +239,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2');
     expect(cloudInit).not.toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
     expect(cloudInit).toContain('test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"');
-    expect(gateway).toContain('export PATH="/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(gateway).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
@@ -255,7 +261,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('visudo -cf /etc/sudoers.d/matrix');
     expect(cloudInit).toContain('loginctl enable-linger matrix');
     expect(cloudInit).toContain('systemctl start "user@$(id -u matrix).service"');
-    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user');
+    expect(cloudInit).toContain('ensure_owner_link .config 0755');
   });
 
   it('installs Homebrew, Graphite CLI, and GitHub CLI on customer Linux hosts', () => {
@@ -265,7 +271,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
     expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
     expect(installer).toContain('retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
-    expect(installer).toContain('cd "${HOME:-/home/matrix}"');
+    expect(installer).toContain('cd "${HOME:-/home/matrix/home}"');
     expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite');
     expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install gh');
     expect(installer).toContain('/etc/profile.d/homebrew.sh');

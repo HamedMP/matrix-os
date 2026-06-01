@@ -55,7 +55,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
-    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-gateway"');
+    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway"');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
     expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
@@ -69,8 +69,11 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
+    const hermesInstaller = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-hermes'), 'utf8');
+    const ownerEnv = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-owner-env'), 'utf8');
 
     expect(script).toContain('matrix-install-tool-pack');
+    expect(script).toContain('matrix-owner-env');
     expect(script).not.toContain('curl --fail --location --max-time 180 "$CODE_SERVER_URL"');
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
@@ -95,6 +98,17 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('if ! wait "$pid"; then');
     expect(installer).toContain('exit "$failed"');
     expect(installer).not.toMatch(/wait "\$pid_coding_agents" "\$pid_code_server"/);
+    expect(ownerEnv).toContain('matrix_export_owner_env()');
+    expect(ownerEnv).toContain('export HOME="$MATRIX_HOME"');
+    expect(ownerEnv).toContain('export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"');
+    expect(ownerEnv).toContain('matrix_prepend_path_once()');
+    expect(ownerEnv).toContain('matrix_prepend_path_once "$HOME/.local/bin"');
+    expect(ownerEnv).toContain('failed to copy %s to %s; leaving legacy directory in place');
+    expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
+    expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');
+    expect(hermesInstaller).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700');
+    expect(hermesInstaller).toContain('HOME="$MATRIX_RUNTIME_HOME"');
+    expect(hermesInstaller).toContain('XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config"');
   });
 
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {
@@ -399,7 +413,7 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
-    expect(launcher).toContain('export PATH="/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
     expect(launcher).toContain('sync_bundled_home_assets');
     expect(launcher).toContain('sync-matrix-agent-skills.sh');
