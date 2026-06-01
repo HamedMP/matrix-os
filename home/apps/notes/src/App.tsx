@@ -91,10 +91,10 @@ async function deletePersistedNote(note: Note): Promise<void> {
   }
 }
 
-function relativeTime(iso: string): string {
+function relativeTime(iso: string, nowMs = Date.now()): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "just now";
-  const diffMs = Date.now() - then;
+  const diffMs = nowMs - then;
   const minutes = Math.round(diffMs / 60_000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes} min ago`;
@@ -124,10 +124,12 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 function NoteCard({
   note,
   active,
+  nowMs,
   onSelect,
 }: {
   note: Note;
   active: boolean;
+  nowMs: number;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -141,7 +143,7 @@ function NoteCard({
         {note.title}
       </span>
       <span className="note-card__preview">{note.preview}</span>
-      <span className="note-card__meta">{relativeTime(note.updated_at)}</span>
+      <span className="note-card__meta">{relativeTime(note.updated_at, nowMs)}</span>
     </button>
   );
 }
@@ -154,6 +156,7 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
@@ -180,6 +183,11 @@ function App() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const visibleNotes = useMemo(() => filterNotes(notes, query, activeTag), [notes, query, activeTag]);
@@ -355,7 +363,7 @@ function App() {
                 <Pin size={11} /> Pinned
               </div>
               {pinnedNotes.map((note) => (
-                <NoteCard key={note.id} note={note} active={note.id === activeId} onSelect={setActiveId} />
+                <NoteCard key={note.id} note={note} active={note.id === activeId} nowMs={nowMs} onSelect={setActiveId} />
               ))}
             </>
           ) : null}
@@ -365,7 +373,7 @@ function App() {
             </div>
           ) : null}
           {otherNotes.map((note) => (
-            <NoteCard key={note.id} note={note} active={note.id === activeId} onSelect={setActiveId} />
+            <NoteCard key={note.id} note={note} active={note.id === activeId} nowMs={nowMs} onSelect={setActiveId} />
           ))}
           {visibleNotes.length === 0 ? <div className="empty-list">No matching notes</div> : null}
         </div>
@@ -378,7 +386,7 @@ function App() {
             {saveState === "error" ? "Save failed" : saveState === "saving" ? "Saving" : "Saved"}
             {activeNote ? (
               <span className="toolbar__meta">
-                <Clock3 size={12} /> Updated {relativeTime(activeNote.updated_at)}
+                <Clock3 size={12} /> Updated {relativeTime(activeNote.updated_at, nowMs)}
               </span>
             ) : null}
           </div>

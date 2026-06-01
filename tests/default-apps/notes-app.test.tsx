@@ -221,4 +221,33 @@ describe("Notes app", () => {
     expect(sections.some((text) => /Pinned/i.test(text ?? ""))).toBe(true);
     expect(screen.getByText("Pinned idea")).toBeTruthy();
   });
+
+  it("refreshes relative timestamps every minute", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-31T10:00:10.000Z"));
+    installMatrixDb([
+      {
+        id: "n-1",
+        title: "Fresh note",
+        content: "body",
+        content_json: { type: "doc", content: [] },
+        pinned: false,
+        tags: "",
+        updated_at: "2026-05-31T10:00:00.000Z",
+      },
+    ]);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("just now")).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(screen.getByText("1 min ago")).toBeTruthy();
+  });
 });

@@ -123,7 +123,7 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (!slashOpen) {
         if (event.key === "/" && editor?.isFocused) {
-          // Open the block menu affordance; the "/" is also typed into the doc.
+          event.preventDefault();
           setSlashOpen(true);
           setSlashQuery("");
           setSlashIndex(0);
