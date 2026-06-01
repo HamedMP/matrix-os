@@ -73,7 +73,8 @@ final human review.
    - Audit existing `ready-for-ci` labels before any fixes. For each monitored
      PR, compare the label state with the latest Greptile review and current
      `headRefOid`; remove `ready-for-ci` immediately if the label is not backed
-     by a current-head `5/5` review.
+     by a current-head `5/5` review:
+     `gh pr edit <number> --remove-label "ready-for-ci"`.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
    - Before each edit/submit iteration, snapshot the current remote head for
@@ -116,8 +117,9 @@ final human review.
    - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
      until checks pass, fail with actionable output, or are blocked.
    - If actionable CI failure fixes require a new push after `ready-for-ci` was
-     applied, remove the label before editing. Re-add it only after a fresh
-     current-head Greptile review returns `5/5` for the new commit.
+     applied, remove the label before editing:
+     `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
+     a fresh current-head Greptile review returns `5/5` for the new commit.
    - Completion requires every monitored PR to be either:
      - latest trusted Greptile `5/5`, or
      - explicitly deferred with the reason and follow-up.
