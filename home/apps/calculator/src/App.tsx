@@ -308,9 +308,9 @@ export default function App() {
     clearingRef.current = true;
     const rows = history;
     setHistory([]);
-    writeLocal([]);
     const db = window.MatrixOS?.db;
     if (!db) {
+      writeLocal([]);
       clearingRef.current = false;
       return;
     }
@@ -328,14 +328,18 @@ export default function App() {
           .filter((id) => !id.startsWith("local-") && !seen.has(id));
         if (ids.length === 0) break;
         ids.forEach((id) => seen.add(id));
-        await Promise.all(ids.map((id) => db.delete(HISTORY_TABLE, id)));
+        const results = await Promise.all(ids.map((id) => db.delete(HISTORY_TABLE, id)));
+        const failed = results.filter((result) => result.ok === false);
+        if (failed.length > 0) throw new Error(`${failed.length} row(s) could not be deleted`);
       }
       await reload();
+      writeLocal([]);
     } catch (err: unknown) {
       console.warn("[calculator] history clear failed:", err instanceof Error ? err.message : String(err));
+      writeLocal(rows);
+      const status = await reload();
+      if (status === "error") setHistory(rows);
       setError("History could not be cleared.");
-      setHistory(rows);
-      await reload();
     } finally {
       clearingRef.current = false;
     }

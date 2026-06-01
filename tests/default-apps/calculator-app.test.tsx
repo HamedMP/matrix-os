@@ -119,6 +119,27 @@ describe("Calculator app", () => {
     expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe("[]");
   });
 
+  it("reports non-throwing delete failures without clearing local fallback history", async () => {
+    const rows = [
+      { id: "h1", expression: "9 + 1", result: "10", created_at: "2026-05-31T10:00:00.000Z" },
+    ];
+    const db = installMatrixDb(rows);
+    db.delete.mockResolvedValueOnce({ ok: false });
+    localStorage.setItem("matrixos.calculator.history.v1", JSON.stringify(rows));
+    render(<App />);
+
+    await screen.findByText("Clear");
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+    fireEvent.click(clearHistory!);
+
+    expect(await screen.findByText("History could not be cleared.")).toBeTruthy();
+    expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe(JSON.stringify(rows));
+    expect(screen.getByText("9 + 1")).toBeTruthy();
+  });
+
   it("ignores a concurrent clear while deletion is already in flight", async () => {
     const rows = [
       { id: "h1", expression: "1 + 1", result: "2", created_at: "2026-05-31T10:00:00.000Z" },
