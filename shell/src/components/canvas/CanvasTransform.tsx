@@ -245,6 +245,12 @@ export function CanvasTransform({
         style={{
           transformOrigin: "0 0",
           transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
+          // Eased "zoom into app" transition (gentle overshoot/bounce), applied
+          // ONLY during programmatic zoom (isAnimating) so wheel pan/zoom and
+          // drag stay instant/responsive.
+          transition: isAnimating
+            ? "transform 460ms cubic-bezier(0.34, 1.32, 0.5, 1)"
+            : undefined,
           pointerEvents: isAnimating ? "none" : "auto",
           // Hint the compositor only while the transform is actively changing
           // (programmatic animation or wheel pan/zoom); a permanent will-change

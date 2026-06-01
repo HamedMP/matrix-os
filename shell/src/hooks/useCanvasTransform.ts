@@ -58,6 +58,18 @@ interface CanvasTransformActions {
   resetForMobileViewport: () => void;
 }
 
+// Duration of the programmatic zoom animation; kept in sync with the CSS
+// transition in CanvasTransform. Exported so the view can read one value.
+export const ZOOM_ANIM_MS = 460;
+
+let zoomAnimTimer: ReturnType<typeof setTimeout> | null = null;
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 export const useCanvasTransform = create<CanvasTransformState & CanvasTransformActions>()(
   subscribeWithSelector((set, get) => ({
     zoom: 1,
@@ -154,7 +166,9 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     },
 
     // Zoom so a single window fills the viewport (minus padding) and center it.
-    // Used by double-clicking an app's title bar to "zoom into" that app.
+    // Used by double-clicking an app's title bar to "zoom into" that app. The
+    // transform change is eased (with a gentle overshoot) via a CSS transition
+    // gated on `isAnimating` in CanvasTransform — so the jump isn't abrupt.
     zoomToWindow: (win, viewportW, viewportH) => {
       const availW = viewportW - FIT_PADDING * 2;
       const availH = viewportH - FIT_PADDING * 2;
@@ -163,7 +177,19 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       const centerY = win.y + win.height / 2;
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
-      set({ zoom, panX, panY });
+
+      if (prefersReducedMotion()) {
+        set({ zoom, panX, panY, isAnimating: false });
+        return;
+      }
+      if (zoomAnimTimer) clearTimeout(zoomAnimTimer);
+      // Flip on the eased transition, then set the target transform in the same
+      // commit so React applies both together and the browser animates to it.
+      set({ zoom, panX, panY, isAnimating: true });
+      zoomAnimTimer = setTimeout(() => {
+        set({ isAnimating: false });
+        zoomAnimTimer = null;
+      }, ZOOM_ANIM_MS);
     },
 
     setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
