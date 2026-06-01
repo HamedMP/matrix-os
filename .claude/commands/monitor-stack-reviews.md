@@ -16,7 +16,7 @@ $ARGUMENTS
 ## Goal
 
 Monitor every PR in an existing Graphite stack, inspect Greptile feedback, fix
-actionable review findings, add the `ready for ci` label only after Greptile is
+actionable review findings, add the `ready-for-ci` label only after Greptile is
 `5/5`, and keep monitoring CI until every non-deferred stack PR is ready for
 final human review.
 
@@ -31,9 +31,9 @@ final human review.
 - Do not create worktrees, create implementation branches, open new feature PRs,
   or convert draft PRs to ready. This command is for monitoring and fixing an
   existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
-- Do not add `ready for ci` before the latest trusted Greptile review for that
+- Do not add `ready-for-ci` before the latest trusted Greptile review for that
   PR is `5/5`, unless the requester explicitly overrides this gate.
-- If the `ready for ci` label is missing from the repository, stop and report
+- If the `ready-for-ci` label is missing from the repository, stop and report
   the blocker instead of creating a label silently.
 - Never force-push over remote work unless the requester explicitly approves
   that exact risk.
@@ -82,19 +82,19 @@ final human review.
 5. Continue until complete.
    - Re-poll checks and Greptile after each pushed fix.
    - When the latest trusted Greptile result for a PR is `5/5`, add the
-     repository label exactly named `ready for ci` if it is not already present:
-     `gh pr edit <number> --add-label "ready for ci"`.
+     repository label exactly named `ready-for-ci` if it is not already present:
+     `gh pr edit <number> --add-label "ready-for-ci"`.
    - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
      until checks pass, fail with actionable output, or are blocked.
    - Completion requires every monitored PR to be either:
      - latest trusted Greptile `5/5`, or
      - explicitly deferred with the reason and follow-up.
    - For non-deferred PRs with Greptile `5/5`, completion also requires the
-     `ready for ci` label to be present and CI to be passing or explicitly
+     `ready-for-ci` label to be present and CI to be passing or explicitly
      blocked by an external condition.
 
 6. Report status.
    - Include the PR list, branch list, latest commit, checks run, current
-     Greptile rating for each PR, `ready for ci` label state, CI state, fixes
+     Greptile rating for each PR, `ready-for-ci` label state, CI state, fixes
      made, and residual risks.
    - If blocked, state the exact blocker and next required action.
