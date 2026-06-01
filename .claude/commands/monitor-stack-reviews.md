@@ -70,6 +70,10 @@ final human review.
      flat issue comments.
    - Inspect Greptile comments/status. Record the latest trusted Greptile
      rating per PR, especially whether it is `5/5`.
+   - Audit existing `ready-for-ci` labels before any fixes. For each monitored
+     PR, compare the label state with the latest Greptile review and current
+     `headRefOid`; remove `ready-for-ci` immediately if the label is not backed
+     by a current-head `5/5` review.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
    - Before each edit/submit iteration, snapshot the current remote head for
