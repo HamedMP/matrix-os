@@ -5,6 +5,7 @@ import {
   createGame,
   isOpposite,
   nextDirection,
+  queuedDirection,
   spawnFood,
   speedForScore,
   step,
@@ -33,6 +34,13 @@ describe("snake-model: direction", () => {
     expect(nextDirection("right", "up")).toBe("up");
     expect(nextDirection("up", "down")).toBe("up");
     expect(nextDirection("up", "right")).toBe("right");
+  });
+
+  it("does not clobber an already queued turn with its opposite", () => {
+    expect(queuedDirection("right", "up", "down")).toBe("up");
+    expect(queuedDirection("right", "right", "left")).toBe("right");
+    expect(queuedDirection("right", "up", "left")).toBe("up");
+    expect(queuedDirection("right", "right", "up")).toBe("up");
   });
 });
 

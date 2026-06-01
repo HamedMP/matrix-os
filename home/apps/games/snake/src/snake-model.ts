@@ -49,6 +49,11 @@ export function nextDirection(current: Direction, requested: Direction): Directi
   return requested;
 }
 
+export function queuedDirection(current: Direction, queued: Direction, requested: Direction): Direction {
+  if (isOpposite(current, requested) || isOpposite(queued, requested)) return queued;
+  return requested;
+}
+
 /** Pick a uniformly random free cell, or null if the board is full. */
 export function spawnFood(snake: Cell[], rng: Rng): Cell | null {
   const occupied = new Set(snake.map((c) => `${c.x},${c.y}`));

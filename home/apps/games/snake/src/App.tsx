@@ -5,7 +5,7 @@ import {
   GRID_COLS,
   GRID_ROWS,
   createGame,
-  nextDirection,
+  queuedDirection,
   speedForScore,
   step,
   type Direction,
@@ -78,7 +78,7 @@ async function loadBest(): Promise<number> {
 
 async function persistScore(score: number, best: number): Promise<void> {
   const db = window.MatrixOS?.db;
-  if (!db) return;
+  if (!db || score <= 0) return;
   await db.insert(SCORES_TABLE, { score, best });
 }
 
@@ -92,6 +92,7 @@ export default function App() {
   const [difficulty, setDifficulty] = useState<Difficulty>("classic");
   const [best, setBest] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastGameWasBest, setLastGameWasBest] = useState(false);
 
   const gameRef = useRef(game);
   gameRef.current = game;
@@ -125,7 +126,9 @@ export default function App() {
   // --- Persist new high score on game end ---
   const commitScore = useCallback(async (finalScore: number) => {
     const newBest = Math.max(bestRef.current, finalScore);
-    if (newBest > bestRef.current) {
+    const wasNewBest = finalScore > bestRef.current;
+    setLastGameWasBest(wasNewBest);
+    if (wasNewBest) {
       setBest(newBest);
       writeLocalBest(newBest);
     }
@@ -133,8 +136,8 @@ export default function App() {
       await persistScore(finalScore, newBest);
     } catch (err: unknown) {
       console.warn("[snake] score save failed:", err instanceof Error ? err.message : String(err));
-      writeLocalBest(newBest);
-      setError("Score could not be synced; kept locally.");
+      if (wasNewBest) writeLocalBest(newBest);
+      setError("Score could not be synced.");
     }
   }, []);
 
@@ -142,6 +145,7 @@ export default function App() {
   const startNewGame = useCallback(() => {
     savedForRef.current = false;
     prevScoreRef.current = 0;
+    setLastGameWasBest(false);
     setError(null);
     setGame({ ...createGame(rng), status: "running" });
   }, []);
@@ -159,8 +163,11 @@ export default function App() {
     setGame((current) => {
       if (current.status === "over" || current.status === "won") return current;
       const status = current.status === "ready" ? "running" : current.status;
-      if (status === "paused") return { ...current, status: "running" };
-      return { ...current, status, nextDir: nextDirection(current.direction, dir) };
+      return {
+        ...current,
+        status: status === "paused" ? "running" : status,
+        nextDir: queuedDirection(current.direction, current.nextDir, dir),
+      };
     });
   }, []);
 
@@ -323,7 +330,7 @@ export default function App() {
     }
   }, [game.status]);
 
-  const isNewBest = (game.status === "over" || game.status === "won") && game.score >= best && game.score > 0;
+  const isNewBest = (game.status === "over" || game.status === "won") && lastGameWasBest;
   const overlayVisible = game.status === "ready" || game.status === "over" || game.status === "won";
 
   return (
