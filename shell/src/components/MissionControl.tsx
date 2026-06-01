@@ -3,7 +3,7 @@
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
-import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import { isSystemApp, isGameApp, applyOrder } from "@/lib/dock-sections";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppTile } from "./AppTile";
@@ -195,16 +195,19 @@ function LauncherGrid({
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
 
-  const { mainApps, generatedApps } = (() => {
+  const { mainApps, generatedApps, gameApps } = (() => {
     const main: AppEntry[] = [];
     const gen: AppEntry[] = [];
+    const games: AppEntry[] = [];
     for (const app of apps) {
       if (isSystemApp(app.path)) main.push(app);
+      else if (isGameApp(app.path)) games.push(app);
       else gen.push(app);
     }
     return {
       mainApps: applyOrder(main, dockOrder?.systemApps, appLaunchTimes),
       generatedApps: applyOrder(gen, dockOrder?.userApps, appLaunchTimes),
+      gameApps: applyOrder(games, dockOrder?.userApps, appLaunchTimes),
     };
   })();
 
@@ -295,6 +298,37 @@ function LauncherGrid({
           >
             {/* react-doctor-disable-next-line react-hooks-js/refs -- closingRef is an intentional non-reactive latch read during render for the stagger timing: it must NOT trigger a re-render when toggled, but its current value selects the per-tile transitionDelay at render time. */}
             {generatedApps.map((app, i) => renderTile(app, mainApps.length + i))}
+          </div>
+        </>
+      )}
+
+      {gameApps.length > 0 && (mainApps.length > 0 || generatedApps.length > 0) && (
+        <div
+          className="my-5 h-px w-full bg-white/15"
+          aria-hidden
+          style={{
+            opacity: visible ? 1 : 0,
+            transition: "opacity 300ms ease-out",
+            // react-doctor-disable-next-line react-hooks-js/refs -- closingRef is a non-reactive stagger latch read at render time; toggling it must not re-render.
+            transitionDelay: closingRef.current ? "0ms" : `${50 + (mainApps.length + generatedApps.length) * 20}ms`,
+          }}
+        />
+      )}
+
+      {gameApps.length > 0 && (
+        <>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+            Games
+          </div>
+          {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes the launcher only when the empty grid gap (not an app tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}
+          <div
+            className="flex flex-wrap gap-1 justify-start"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) onClose();
+            }}
+          >
+            {/* react-doctor-disable-next-line react-hooks-js/refs -- closingRef is an intentional non-reactive latch read during render for the stagger timing. */}
+            {gameApps.map((app, i) => renderTile(app, mainApps.length + generatedApps.length + i))}
           </div>
         </>
       )}

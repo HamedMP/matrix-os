@@ -53,8 +53,21 @@ interface CanvasTransformActions {
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
   focusOnWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
+  zoomToWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
   setTransform: (zoom: number, panX: number, panY: number) => void;
   resetForMobileViewport: () => void;
+}
+
+// Duration of the programmatic zoom animation; kept in sync with the CSS
+// transition in CanvasTransform. Exported so the view can read one value.
+export const ZOOM_ANIM_MS = 460;
+
+let zoomAnimTimer: ReturnType<typeof setTimeout> | null = null;
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export const useCanvasTransform = create<CanvasTransformState & CanvasTransformActions>()(
@@ -150,6 +163,33 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
       set({ panX, panY });
+    },
+
+    // Zoom so a single window fills the viewport (minus padding) and center it.
+    // Used by double-clicking an app's title bar to "zoom into" that app. The
+    // transform change is eased (with a gentle overshoot) via a CSS transition
+    // gated on `isAnimating` in CanvasTransform — so the jump isn't abrupt.
+    zoomToWindow: (win, viewportW, viewportH) => {
+      const availW = viewportW - FIT_PADDING * 2;
+      const availH = viewportH - FIT_PADDING * 2;
+      const zoom = clampZoom(Math.min(availW / win.width, availH / win.height));
+      const centerX = win.x + win.width / 2;
+      const centerY = win.y + win.height / 2;
+      const panX = viewportW / (2 * zoom) - centerX;
+      const panY = viewportH / (2 * zoom) - centerY;
+
+      if (prefersReducedMotion()) {
+        set({ zoom, panX, panY, isAnimating: false });
+        return;
+      }
+      if (zoomAnimTimer) clearTimeout(zoomAnimTimer);
+      // Flip on the eased transition, then set the target transform in the same
+      // commit so React applies both together and the browser animates to it.
+      set({ zoom, panX, panY, isAnimating: true });
+      zoomAnimTimer = setTimeout(() => {
+        set({ isAnimating: false });
+        zoomAnimTimer = null;
+      }, ZOOM_ANIM_MS);
     },
 
     setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),

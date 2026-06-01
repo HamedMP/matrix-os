@@ -11,6 +11,15 @@ export function isSystemApp(path: string): boolean {
 }
 
 /**
+ * Game apps (and the Game Center) live under `apps/games/...`. The launcher
+ * groups these into their own section, separate from productivity / utility
+ * apps, so the grid reads as Main · Apps · Games.
+ */
+export function isGameApp(path: string): boolean {
+  return path.includes("apps/games/");
+}
+
+/**
  * Apply a persisted user order to a list of apps. Apps not in the
  * persisted order get prepended (in launch-time-desc order) so freshly-
  * built apps land at the outer edge before the user has dragged them.
