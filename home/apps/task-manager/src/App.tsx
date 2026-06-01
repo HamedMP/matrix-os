@@ -299,7 +299,13 @@ function App() {
       if (!bridge) return;
       const toWrite = next.cards.filter((card) => affected.has(card.columnId));
       for (const card of toWrite) {
-        await bridge.update(CARDS_TABLE, await resolveCardId(card.id), { column_id: card.columnId, position: card.order });
+        const persistedColumnId = await (
+          pendingColumnIdsRef.current[card.columnId] ?? Promise.resolve(card.columnId)
+        );
+        await bridge.update(CARDS_TABLE, await resolveCardId(card.id), {
+          column_id: persistedColumnId,
+          position: card.order,
+        });
       }
     }, "Card order could not be saved");
   }, [persist, resolveCardId]);
