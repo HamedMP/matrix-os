@@ -75,7 +75,16 @@ function tilesFromBoard(
 
 function freshGame(): InternalState {
   const g = newGame();
-  return { ...g, tiles: tilesFromBoard(g.board), history: null };
+  const tiles: Tile[] = [];
+  for (let row = 0; row < g.board.length; row += 1) {
+    for (let col = 0; col < g.board[row].length; col += 1) {
+      const value = g.board[row][col];
+      if (value !== 0) {
+        tiles.push({ id: nextId(), value, row, col, spawned: true, merged: false });
+      }
+    }
+  }
+  return { ...g, tiles, history: null };
 }
 
 function reducer(state: InternalState, action: Action): InternalState {

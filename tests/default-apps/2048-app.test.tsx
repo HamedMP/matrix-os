@@ -46,6 +46,20 @@ describe("2048 app", () => {
     await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("5000"));
   });
 
+  it("marks initial tiles as newly spawned rather than merged", async () => {
+    installMatrixDb([]);
+    render(<App />);
+
+    const board = await screen.findByTestId("board");
+    const tiles = within(board).getAllByTestId("tile");
+
+    expect(tiles).toHaveLength(2);
+    for (const tile of tiles) {
+      expect(tile.className).toContain("is-new");
+      expect(tile.className).not.toContain("is-merged");
+    }
+  });
+
   it("an arrow key produces a move and increases score on a merge", async () => {
     const db = installMatrixDb([]);
     render(<App />);
