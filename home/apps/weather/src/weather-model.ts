@@ -162,23 +162,25 @@ export function formatHour(iso: string, isNow = false): string {
 
 /** Short weekday label, e.g. "Mon", or "Today" for the current day. */
 export function formatDay(iso: string, todayIso?: string): string {
+  const todayKey = todayIso?.slice(0, 10) ?? localDateKey(new Date());
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const todayKey = todayIso?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
     if (iso === todayKey) return "Today";
     const [year, month, day] = iso.split("-").map(Number);
     return new Date(year, month - 1, day).toLocaleDateString("en-US", { weekday: "short" });
   }
+  const isoKey = iso.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (isoKey === todayKey) return "Today";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "--";
-  const ref = todayIso ? new Date(todayIso) : new Date();
-  if (
-    d.getFullYear() === ref.getFullYear() &&
-    d.getMonth() === ref.getMonth() &&
-    d.getDate() === ref.getDate()
-  ) {
-    return "Today";
-  }
   return d.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function localDateKey(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 export interface HourPoint {

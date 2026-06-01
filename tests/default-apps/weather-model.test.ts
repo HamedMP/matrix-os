@@ -74,6 +74,10 @@ describe("hour and day labels", () => {
   it("compares Open-Meteo date-only days without timezone rollover", () => {
     expect(formatDay("2026-06-01", "2026-06-01T00:30:00-07:00")).toBe("Today");
   });
+
+  it("compares timestamp days by date prefix when today has an offset", () => {
+    expect(formatDay("2026-06-01T00:30:00", "2026-06-01T00:30:00-07:00")).toBe("Today");
+  });
 });
 
 describe("isDaytime", () => {

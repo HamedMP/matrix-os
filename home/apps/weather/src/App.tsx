@@ -196,7 +196,6 @@ export default function App() {
     }
     let cancelled = false;
     setStatus("loading");
-    setError(null);
     (async () => {
       try {
         const data = await fetchForecast(activeForecastLocation);
@@ -265,7 +264,7 @@ export default function App() {
 
       const db = window.MatrixOS?.db;
       if (!db) {
-        await writeAppData(LOCATIONS_KEY, [...locations, optimistic]);
+        await writeAppData(LOCATIONS_KEY, [...locations, candidate]);
         return;
       }
       try {
@@ -398,6 +397,7 @@ export default function App() {
       </aside>
 
       <section className="stage">
+        {error ? <div className="error-notice">{error}</div> : null}
         {!hasLocations ? (
           <div className="empty-state" data-testid="empty-state">
             <div className="empty-state__mark">
@@ -463,7 +463,6 @@ export default function App() {
                 Showing demo data — live forecast is unavailable right now.
               </div>
             ) : null}
-            {error ? <div className="error-notice">{error}</div> : null}
 
             <div className="panel">
               <h3 className="panel__title">Hourly forecast</h3>

@@ -9,11 +9,12 @@ type DbRow = Record<string, unknown>;
 function installMatrixDb(initialRows: DbRow[] = []) {
   const rows = [...initialRows];
   let changeHandler: (() => void) | null = null;
+  let insertCount = 0;
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
     insert: vi.fn(async (_table: string, data: DbRow) => {
-      const id = "loc-new";
+      const id = `loc-new-${++insertCount}`;
       rows.push({ id, created_at: new Date().toISOString(), ...data });
       changeHandler?.();
       return { id };
@@ -215,7 +216,7 @@ describe("Weather app", () => {
 
     render(<App />);
     await vi.waitFor(() => {
-      expect(screen.getByText("Berlin")).toBeTruthy();
+      expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
     });
 
     fireEvent.click(screen.getByLabelText(/remove berlin/i));
@@ -223,7 +224,7 @@ describe("Weather app", () => {
     await vi.waitFor(() => {
       expect(screen.getByText(/location could not be removed/i)).toBeTruthy();
     });
-    expect(screen.getByText("Berlin")).toBeTruthy();
+    expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
   });
 
   it("stores fallback locations through MatrixOS data bridge", async () => {
@@ -243,11 +244,11 @@ describe("Weather app", () => {
     });
     fireEvent.click(screen.getByTestId("search-result"));
 
-    await waitFor(() => {
-      expect(bridge.writeData).toHaveBeenCalledWith(
-        "matrix-weather-locations",
-        expect.arrayContaining([expect.objectContaining({ name: "Berlin" })]),
-      );
+    await vi.waitFor(() => {
+      expect(bridge.writeData.mock.calls.some(([key]) => key === "matrix-weather-locations")).toBe(true);
     });
+    const stored = bridge.writeData.mock.calls.find(([key]) => key === "matrix-weather-locations")?.[1] as Array<Record<string, unknown>>;
+    expect(stored).toEqual([expect.objectContaining({ name: "Berlin" })]);
+    expect(String(stored[0].id ?? "")).not.toMatch(/^local-/);
   });
 });
