@@ -352,6 +352,7 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain("find \"$STAGING_DIR\" -mindepth 1 -maxdepth 1 \\( -name 'failed-*' -o -name 'bundle-*' \\) -print0");
     expect(syncAgent).toContain('maybe_clean_staging');
     expect(syncAgent).toContain('clean_staging || true');
+    expect(syncAgent).toContain('last_staging_cleanup="$(date +%s)"');
   });
 
   it('sync agent replaces the app tree with root permissions', () => {

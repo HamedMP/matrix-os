@@ -318,6 +318,7 @@ maybe_clean_staging() {
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
 mkdir -p "$STAGING_DIR"
 clean_staging
+last_staging_cleanup="$(date +%s)"
 
 while true; do
   # React to trigger files and signals
