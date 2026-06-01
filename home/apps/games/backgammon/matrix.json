@@ -1,9 +1,9 @@
 {
   "name": "Backgammon",
-  "description": "Classic board game with dice",
+  "description": "Local two-player backgammon with a full legal-move engine, dice, hitting and bearing off.",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "backgammon",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -12,6 +12,16 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "backgammon",
+  "storage": {
+    "tables": {
+      "matches": {
+        "columns": {
+          "winner": "text",
+          "points": "integer"
+        }
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",
