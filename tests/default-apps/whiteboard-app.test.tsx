@@ -103,6 +103,25 @@ describe("Whiteboard app", () => {
     expect(screen.getByTestId("whiteboard-empty")).toBeTruthy();
   });
 
+  it("prevents native autoscroll when starting a middle-button pan", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    const wasNotCanceled = fireEvent.pointerDown(canvas, {
+      clientX: 100,
+      clientY: 100,
+      button: 1,
+      pointerId: 1,
+    });
+
+    expect(wasNotCanceled).toBe(false);
+  });
+
   it("draws a rectangle which adds an element and autosaves to the DB", async () => {
     const db = installMatrixDb([]);
     render(<App />);

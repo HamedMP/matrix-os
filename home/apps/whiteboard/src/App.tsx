@@ -493,6 +493,7 @@ export default function App() {
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
       if (e.button === 1 || (e.button === 0 && tool === "select" && e.altKey)) {
+        e.preventDefault();
         dragRef.current = {
           mode: "pan",
           startScene: { x: 0, y: 0 },
