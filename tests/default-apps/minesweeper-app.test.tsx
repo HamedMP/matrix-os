@@ -87,17 +87,27 @@ describe("Minesweeper app", () => {
     ]);
     render(<App />);
     await screen.findAllByTestId(/^cell-/);
-    expect(db.find).toHaveBeenCalledWith("times", expect.any(Object));
+    expect(db.find).toHaveBeenCalledWith("times", { orderBy: { seconds: "asc" }, limit: 500 });
     const best = await screen.findByTestId("best-time");
     expect(within(best).getByText(/42/)).toBeTruthy();
   });
 
-  it("falls back to localStorage when the DB bridge is unavailable", async () => {
+  it("works without a DB bridge", async () => {
     // No MatrixOS injected.
     render(<App />);
     const cells = await screen.findAllByTestId(/^cell-/);
     expect(cells.length).toBe(81);
     // Should not crash; mine counter still renders.
     expect(screen.getByTestId("mine-counter").textContent).toBe("010");
+  });
+
+  it("sets a native max for custom mine counts", async () => {
+    installMatrixDb([]);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Custom" }));
+
+    const mines = screen.getByLabelText("Mines");
+    expect(mines.getAttribute("max")).toBe("247");
   });
 });

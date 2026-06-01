@@ -113,6 +113,17 @@ describe("reveal + flood fill", () => {
     expect(after).toBe(CELL.FLAGGED);
   });
 
+  it("does not place mines when the first clicked cell is flagged", () => {
+    let board = createBoard({ rows: 5, cols: 5, mines: 1 });
+    board = toggleFlag(board, 0, 0);
+
+    const after = reveal(board, 0, 0, seededRng([0.0]));
+
+    expect(after).toBe(board);
+    expect(after.status).toBe("ready");
+    expect(after.cells.flat().some((cell) => cell.mine)).toBe(false);
+  });
+
   it("loses when revealing a mine and exposes all mines", () => {
     let board = createBoard({ rows: 3, cols: 3, mines: 1 });
     board = placeMinesAvoiding(board, 2, 2, seededRng([0.0])); // mine at (0,0)

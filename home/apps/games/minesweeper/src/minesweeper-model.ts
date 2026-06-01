@@ -204,6 +204,8 @@ function checkWin(board: Board): Board {
 export function reveal(board: Board, r: number, c: number, rng: () => number = Math.random): Board {
   if (board.status === "won" || board.status === "lost") return board;
   if (!inBounds(r, c, board.rows, board.cols)) return board;
+  const initial = board.cells[r][c];
+  if (initial.state === CELL.FLAGGED || initial.state === CELL.REVEALED) return board;
 
   // Lazily place mines on the first reveal so the first click is always safe.
   let working = board;

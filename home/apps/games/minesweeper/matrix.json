@@ -3,7 +3,7 @@
   "description": "Classic mine-clearing puzzle",
   "runtime": "vite",
   "category": "games",
-  "icon": "minesweeper",
+  "icon": "game-center",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -17,9 +17,12 @@
       "times": {
         "columns": {
           "difficulty": "text",
+          "rows": "integer",
+          "cols": "integer",
+          "mines": "integer",
           "seconds": "integer"
         },
-        "indexes": ["difficulty"]
+        "indexes": ["difficulty", "rows", "cols", "mines"]
       }
     }
   },

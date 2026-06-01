@@ -36,11 +36,19 @@ const NUMBER_COLORS: Record<number, string> = {
   8: "#6b7280",
 };
 
-const LS_KEY = "matrix-minesweeper-best-times";
+const BEST_TIME_QUERY_LIMIT = 500;
 
 function specFor(difficulty: Difficulty, custom: DifficultySpec): DifficultySpec {
   if (difficulty === "custom") return clampCustom(custom);
   return difficultyConfig(difficulty);
+}
+
+function bestKeyFor(difficulty: Difficulty, spec: DifficultySpec): string {
+  return `${difficulty}:${spec.rows}x${spec.cols}:${spec.mines}`;
+}
+
+function isDifficulty(value: unknown): value is Difficulty {
+  return value === "beginner" || value === "intermediate" || value === "expert" || value === "custom";
 }
 
 function pad3(n: number): string {
@@ -49,25 +57,17 @@ function pad3(n: number): string {
   return String(clamped).padStart(3, "0");
 }
 
-function readLocalBest(): Record<string, number> {
-  try {
-    const raw = window.localStorage?.getItem(LS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === "object") return parsed as Record<string, number>;
-    return {};
-  } catch (err) {
-    console.warn("[minesweeper] failed to read local best times", err);
-    return {};
+function rowBestKey(row: Record<string, unknown>): string | null {
+  const difficulty = isDifficulty(row.difficulty) ? row.difficulty : null;
+  if (!difficulty) return null;
+  const rows = typeof row.rows === "number" ? row.rows : Number(row.rows);
+  const cols = typeof row.cols === "number" ? row.cols : Number(row.cols);
+  const mines = typeof row.mines === "number" ? row.mines : Number(row.mines);
+  if (Number.isFinite(rows) && Number.isFinite(cols) && Number.isFinite(mines)) {
+    return bestKeyFor(difficulty, clampCustom({ rows, cols, mines }));
   }
-}
-
-function writeLocalBest(best: Record<string, number>): void {
-  try {
-    window.localStorage?.setItem(LS_KEY, JSON.stringify(best));
-  } catch (err) {
-    console.warn("[minesweeper] failed to persist local best times", err);
-  }
+  if (difficulty === "custom") return null;
+  return bestKeyFor(difficulty, difficultyConfig(difficulty));
 }
 
 export default function App(): React.ReactElement {
@@ -81,9 +81,9 @@ export default function App(): React.ReactElement {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const savedThisGame = useRef(false);
-  const dbAvailable = useRef(false);
 
   const spec = useMemo(() => specFor(difficulty, custom), [difficulty, custom]);
+  const bestKey = useMemo(() => bestKeyFor(difficulty, spec), [difficulty, spec.rows, spec.cols, spec.mines]);
 
   // --- Responsive board sizing --------------------------------------------
   // The board area flexes to fill the remaining window space; we measure it
@@ -152,25 +152,23 @@ export default function App(): React.ReactElement {
   const loadBestTimes = useCallback(async () => {
     const db = window.MatrixOS?.db;
     if (!db) {
-      dbAvailable.current = false;
-      setBestTimes(readLocalBest());
+      setBestTimes({});
       return;
     }
-    dbAvailable.current = true;
     try {
-      const rows = await db.find("times", { orderBy: { seconds: "asc" } });
+      const rows = await db.find("times", { orderBy: { seconds: "asc" }, limit: BEST_TIME_QUERY_LIMIT });
       const best: Record<string, number> = {};
       for (const row of rows) {
-        const diff = typeof row.difficulty === "string" ? row.difficulty : null;
+        const key = rowBestKey(row);
         const secs = typeof row.seconds === "number" ? row.seconds : Number(row.seconds);
-        if (!diff || Number.isNaN(secs)) continue;
-        if (best[diff] === undefined || secs < best[diff]) best[diff] = secs;
+        if (!key || Number.isNaN(secs)) continue;
+        if (best[key] === undefined || secs < best[key]) best[key] = secs;
       }
       setBestTimes(best);
     } catch (err) {
       console.warn("[minesweeper] failed to load best times from DB", err);
       setStatusMsg("Could not load best times");
-      setBestTimes(readLocalBest());
+      setBestTimes({});
     }
   }, []);
 
@@ -198,32 +196,47 @@ export default function App(): React.ReactElement {
   }, [loadBestTimes]);
 
   const persistBestTime = useCallback(
-    async (diff: Difficulty, secs: number) => {
-      // Optimistic local update.
+    async (diff: Difficulty, bestSpec: DifficultySpec, secs: number) => {
+      const key = bestKeyFor(diff, bestSpec);
       setBestTimes((prev) => {
-        const current = prev[diff];
+        const current = prev[key];
         if (current !== undefined && current <= secs) return prev;
-        const next = { ...prev, [diff]: secs };
-        if (!dbAvailable.current) writeLocalBest(next);
-        return next;
+        return { ...prev, [key]: secs };
       });
 
       const db = window.MatrixOS?.db;
       if (!db) {
+        setStatusMsg("Best time sync unavailable");
         return;
       }
       try {
-        await db.insert("times", { difficulty: diff, seconds: secs });
+        const inserted = await db.insert("times", {
+          difficulty: diff,
+          rows: bestSpec.rows,
+          cols: bestSpec.cols,
+          mines: bestSpec.mines,
+          seconds: secs,
+        });
+        void (async () => {
+          try {
+            const rows = await db.find("times", {
+              where: { difficulty: diff, rows: bestSpec.rows, cols: bestSpec.cols, mines: bestSpec.mines },
+              orderBy: { seconds: "asc" },
+              limit: BEST_TIME_QUERY_LIMIT,
+            });
+            await Promise.all(
+              rows
+                .filter((row) => typeof row.id === "string" && row.id !== inserted.id && Number(row.seconds) >= secs)
+                .map((row) => db.delete("times", row.id as string)),
+            );
+          } catch (err) {
+            console.warn("[minesweeper] failed to prune stale best times", err);
+          }
+        })();
         setStatusMsg("Best time saved to Matrix Postgres");
       } catch (err) {
         console.warn("[minesweeper] failed to persist best time", err);
         setStatusMsg("Could not save best time");
-        // Fall back to localStorage so the record is not lost.
-        const local = readLocalBest();
-        if (local[diff] === undefined || secs < local[diff]) {
-          local[diff] = secs;
-          writeLocalBest(local);
-        }
       }
     },
     [],
@@ -248,36 +261,30 @@ export default function App(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [difficulty, spec.rows, spec.cols, spec.mines]);
 
-  const handleResult = useCallback(
-    (next: Board) => {
-      if (next.status === "won") {
-        setFace("win");
-        if (!savedThisGame.current) {
-          savedThisGame.current = true;
-          // seconds may lag the final tick; ensure at least 1.
-          const finalSecs = Math.max(1, seconds);
-          const current = bestTimes[difficulty];
-          if (current === undefined || finalSecs < current) {
-            void persistBestTime(difficulty, finalSecs);
-          }
+  useEffect(() => {
+    if (board.status === "won") {
+      setFace("win");
+      if (!savedThisGame.current) {
+        savedThisGame.current = true;
+        const finalSecs = Math.max(1, seconds);
+        const current = bestTimes[bestKey];
+        if (current === undefined || finalSecs < current) {
+          void persistBestTime(difficulty, spec, finalSecs);
         }
-      } else if (next.status === "lost") {
-        setFace("dead");
       }
-    },
-    [seconds, bestTimes, difficulty, persistBestTime],
-  );
+    } else if (board.status === "lost") {
+      setFace("dead");
+    }
+  }, [bestKey, bestTimes, board.status, difficulty, persistBestTime, seconds, spec]);
 
   const onReveal = useCallback(
     (r: number, c: number) => {
       setBoard((prev) => {
         if (prev.status === "won" || prev.status === "lost") return prev;
-        const next = reveal(prev, r, c);
-        handleResult(next);
-        return next;
+        return reveal(prev, r, c);
       });
     },
-    [handleResult],
+    [],
   );
 
   const onFlag = useCallback((r: number, c: number) => {
@@ -288,12 +295,10 @@ export default function App(): React.ReactElement {
     (r: number, c: number) => {
       setBoard((prev) => {
         if (prev.status !== "playing") return prev;
-        const next = chord(prev, r, c);
-        handleResult(next);
-        return next;
+        return chord(prev, r, c);
       });
     },
-    [handleResult],
+    [],
   );
 
   // --- Pointer handling (left reveal, right flag, both = chord) ------------
@@ -382,9 +387,13 @@ export default function App(): React.ReactElement {
     [board, clearLongPress, onChord, onReveal],
   );
 
+  const onTouchCancelCell = useCallback(() => {
+    clearLongPress();
+  }, [clearLongPress]);
+
   const remaining = minesRemaining(board);
   const flags = flagsPlaced(board);
-  const best = bestTimes[difficulty];
+  const best = bestTimes[bestKey];
 
   const faceGlyph =
     face === "win" ? "😎" : face === "dead" ? "😵" : face === "scared" ? "😮" : "🙂";
@@ -437,6 +446,7 @@ export default function App(): React.ReactElement {
               <input
                 type="number"
                 min={1}
+                max={custom.rows * custom.cols - 9}
                 value={custom.mines}
                 onChange={(e) => setCustom((p) => ({ ...p, mines: Number(e.target.value) }))}
               />
@@ -510,6 +520,7 @@ export default function App(): React.ReactElement {
                   onContextMenu={(e) => onContextMenuCell(e, r, c)}
                   onTouchStart={() => onTouchStartCell(r, c)}
                   onTouchEnd={() => onTouchEndCell(r, c)}
+                  onTouchCancel={onTouchCancelCell}
                 >
                   {showNumber ? cell.adjacent : null}
                   {showMine ? <Bomb size={14} aria-hidden="true" /> : null}
