@@ -102,6 +102,20 @@ describe("Canvas Toolbar", () => {
       expect(arranged[1].x).toBe(arranged[2].x);
     });
 
+    it("tiles three portrait windows with a wide top slot and two lower slots", () => {
+      const arranged = computeTiledWindowLayout([
+        { id: "a", x: 0, y: 0, width: 640, height: 420 },
+        { id: "b", x: 2000, y: 0, width: 640, height: 420 },
+        { id: "c", x: 4000, y: 0, width: 640, height: 420 },
+      ], 900, 1440);
+
+      expect(arranged).toHaveLength(3);
+      expect(arranged[0].width).toBeGreaterThan(arranged[1].width);
+      expect(arranged[0].y).toBeLessThan(arranged[1].y);
+      expect(arranged[1].y).toBe(arranged[2].y);
+      expect(arranged[1].x).toBeLessThan(arranged[2].x);
+    });
+
     it("uses a compact square grid for four windows", () => {
       const arranged = computeTiledWindowLayout([
         { id: "a", x: 0, y: 0, width: 640, height: 420 },

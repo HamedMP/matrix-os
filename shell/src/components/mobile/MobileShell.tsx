@@ -727,9 +727,10 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
         objectFit: "contain",
       }}
       onError={() => {
-        if (!triedSvg.current) {
+        const svgUrl = `/icons/${encodeURIComponent(slug)}.svg`;
+        if (!triedSvg.current && src !== svgUrl) {
           triedSvg.current = true;
-          setSrc(`/icons/${encodeURIComponent(slug)}.svg`);
+          setSrc(svgUrl);
         } else {
           setSrc("/icon-192.png");
         }
