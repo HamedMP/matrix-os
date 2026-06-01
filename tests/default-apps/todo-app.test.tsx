@@ -104,6 +104,27 @@ describe("Todo app", () => {
     expect(screen.getByText("Buy groceries")).toBeTruthy();
   });
 
+  it("adds tasks captured from Upcoming with a future due date", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^upcoming/i }));
+    const input = await screen.findByPlaceholderText(/add a task|new task|capture/i);
+    fireEvent.change(input, { target: { value: "Plan launch" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.insert).toHaveBeenCalledWith(
+        "tasks",
+        expect.objectContaining({ title: "Plan launch", due: expect.any(String) }),
+      );
+    });
+    expect(await screen.findByText("Plan launch")).toBeTruthy();
+  });
+
   it("completing a task calls db.update with done status", async () => {
     const db = installMatrixDb([
       { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
@@ -210,6 +231,35 @@ describe("Todo app", () => {
     });
   });
 
+  it("does not delete a task after a due-date edit removes it from the current view", async () => {
+    const db = installMatrixDb([
+      {
+        id: "t1",
+        title: "Today only",
+        status: "open",
+        priority: 0,
+        due: new Date().toISOString(),
+        recur: null,
+      },
+    ]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^today/i }));
+    await screen.findByText("Today only");
+    fireEvent.click(screen.getByRole("listitem"));
+
+    const dueInput = screen.getByText("Due date").closest("label")?.querySelector("input") as HTMLInputElement | null;
+    expect(dueInput).toBeInstanceOf(HTMLInputElement);
+    if (!dueInput) throw new Error("Due date input was not rendered");
+    fireEvent.change(dueInput, { target: { value: "" } });
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { due: null, recur: null });
+    });
+
+    fireEvent.keyDown(screen.getByTestId("task-list"), { key: "Backspace", ctrlKey: true });
+
+    expect(db.delete).not.toHaveBeenCalled();
+  });
+
   it("filters tasks into Today and Upcoming views", async () => {
     installMatrixDb([
       { id: "td", title: "Due today task", status: "open", priority: 0, due: isoDaysFromNow(0) },
@@ -270,6 +320,22 @@ describe("Todo app", () => {
       vi.advanceTimersByTime(500);
       await Promise.resolve();
     });
+
+    expect(db.update).toHaveBeenCalledWith("tasks", "t1", { notes: "Draft note" });
+    vi.useRealTimers();
+  });
+
+  it("flushes pending note edits when closing the inspector", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Annotate", status: "open", priority: 0, due: null, notes: "" },
+    ]);
+    render(<App />);
+    await screen.findByText("Annotate");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("listitem"));
+    fireEvent.change(screen.getByPlaceholderText("Add notes…"), { target: { value: "Draft note" } });
+    fireEvent.click(screen.getByRole("button", { name: /close details/i }));
 
     expect(db.update).toHaveBeenCalledWith("tasks", "t1", { notes: "Draft note" });
     vi.useRealTimers();

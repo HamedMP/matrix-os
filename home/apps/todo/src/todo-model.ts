@@ -170,17 +170,15 @@ export function nextRecurrence(recur: Recurrence | null, from: Date): string | n
   if (!recur || !RECURRENCES.has(recur)) return null;
   const next = new Date(from);
   if (Number.isNaN(next.getTime())) return null;
-  // Operate in UTC so results are deterministic regardless of the host timezone.
-  const DAY = 24 * 60 * 60 * 1000;
   if (recur === "daily") {
-    next.setTime(next.getTime() + DAY);
+    next.setDate(next.getDate() + 1);
   } else if (recur === "weekly") {
-    next.setTime(next.getTime() + 7 * DAY);
+    next.setDate(next.getDate() + 7);
   } else {
-    // weekdays: advance at least one day, skipping Sat (6) and Sun (0) in UTC
-    next.setTime(next.getTime() + DAY);
-    while (next.getUTCDay() === 0 || next.getUTCDay() === 6) {
-      next.setTime(next.getTime() + DAY);
+    // weekdays: advance at least one local day, skipping Sat (6) and Sun (0).
+    next.setDate(next.getDate() + 1);
+    while (next.getDay() === 0 || next.getDay() === 6) {
+      next.setDate(next.getDate() + 1);
     }
   }
   return next.toISOString();

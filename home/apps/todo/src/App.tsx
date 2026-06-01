@@ -114,6 +114,15 @@ function fromDateInputValue(value: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+function defaultDueForView(view: View, now: Date): string | null {
+  if (view === "today") return now.toISOString();
+  if (view !== "upcoming") return null;
+  const due = new Date(now);
+  due.setDate(due.getDate() + 1);
+  due.setHours(9, 0, 0, 0);
+  return due.toISOString();
+}
+
 function formatDue(iso: string | null, now: Date): { label: string; tone: "overdue" | "today" | "soon" | "later" } | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -182,6 +191,10 @@ export default function App() {
     [selectedId, visible],
   );
 
+  useEffect(() => {
+    if (selectedId && !visible.some((task) => task.id === selectedId)) setSelectedId(null);
+  }, [selectedId, visible]);
+
   const activeSmart: SmartViewMeta | null =
     typeof view === "string" ? SMART_VIEWS.find((v) => v.id === view) ?? null : null;
   const headerTitle = typeof view === "string" ? activeSmart?.label ?? "Tasks" : view.project;
@@ -196,7 +209,7 @@ export default function App() {
       id: `local-${Date.now()}`,
       title,
       notes: "",
-      due: view === "today" ? now.toISOString() : null,
+      due: defaultDueForView(view, now),
       priority: 0,
       project,
       status: "open",
@@ -243,9 +256,9 @@ export default function App() {
 
   const patchSelectedTask = useCallback(
     (patch: Partial<Task>) => {
-      if (selectedId) void persistUpdate(selectedId, patch);
+      if (selectedTask?.id) void persistUpdate(selectedTask.id, patch);
     },
-    [persistUpdate, selectedId],
+    [persistUpdate, selectedTask?.id],
   );
 
   const completeTask = useCallback(
@@ -360,7 +373,9 @@ export default function App() {
         if (task) void completeTask(task);
       } else if (e.key === "Backspace" && (e.metaKey || e.ctrlKey) && selectedId) {
         e.preventDefault();
-        void deleteTask(selectedId);
+        const task = visible.find((t) => t.id === selectedId);
+        if (task) void deleteTask(task.id);
+        else setSelectedId(null);
       }
     },
     [editingId, visible, selectedId, completeTask, deleteTask],
@@ -620,11 +635,26 @@ function Inspector({
 }) {
   const [notesDraft, setNotesDraft] = useState(task?.notes ?? "");
   const [projectDraft, setProjectDraft] = useState(task?.project ?? "");
+  const latestDraftRef = useRef({ task, notesDraft, projectDraft });
+
+  latestDraftRef.current = { task, notesDraft, projectDraft };
+
+  const flushDrafts = useCallback(() => {
+    const current = latestDraftRef.current;
+    if (!current.task?.id) return;
+    const patch: Partial<Task> = {};
+    if (current.notesDraft !== current.task.notes) patch.notes = current.notesDraft;
+    const project = current.projectDraft.trim() || null;
+    if (project !== (current.task.project ?? null)) patch.project = project;
+    if (Object.keys(patch).length > 0) onPatch(patch);
+  }, [onPatch]);
 
   useEffect(() => {
     setNotesDraft(task?.notes ?? "");
     setProjectDraft(task?.project ?? "");
   }, [task?.id]);
+
+  useEffect(() => () => flushDrafts(), [flushDrafts, task?.id]);
 
   useEffect(() => {
     if (!task?.id || notesDraft === task.notes) return undefined;
@@ -647,7 +677,15 @@ function Inspector({
     <div className="inspector" role="dialog" aria-label={`Details for ${task.title}`}>
       <div className="inspector-head">
         <strong>Details</strong>
-        <button type="button" className="inspector-close" onClick={onClose} aria-label="Close details">
+        <button
+          type="button"
+          className="inspector-close"
+          onClick={() => {
+            flushDrafts();
+            onClose();
+          }}
+          aria-label="Close details"
+        >
           ✕
         </button>
       </div>
