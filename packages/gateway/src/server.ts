@@ -677,6 +677,50 @@ export async function createGateway(config: GatewayConfig) {
   let appRegistry: AppRegistry | null = null;
   let kyselyInstance: Kysely<any> | null = null;
   let canvasRepository: CanvasRepository | null = null;
+
+  // Apps whose Postgres schema we've already ensured this process lifetime.
+  // The startup loop pre-registers shipped apps, but apps BUILT in-OS after boot
+  // aren't in that pass — so the bridge lazily provisions their schema from the
+  // manifest on first query (otherwise every new app 500s until a restart).
+  const provisionedAppSlugs = new Set<string>();
+  const PROVISIONED_SLUGS_CAP = 500;
+  async function ensureAppProvisioned(storageSlug: string): Promise<void> {
+    const registry = appRegistry;
+    if (!registry || !storageSlug || provisionedAppSlugs.has(storageSlug)) return;
+    if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) return;
+    try {
+      const { loadAppManifest } = await import("./app-manifest.js");
+      const apps = await listApps(homePath);
+      for (const app of apps) {
+        if (!app.file.includes("/")) continue;
+        const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+        if (relDir.replace(/[^a-zA-Z0-9_-]/g, "") !== storageSlug) continue;
+        const manifest = loadAppManifest(join(homePath, "apps", relDir));
+        if (!manifest) break;
+        const tables = manifest.storage?.tables as
+          | Record<string, { columns: Record<string, string>; indexes?: string[] }>
+          | undefined;
+        if (tables && Object.keys(tables).length > 0) {
+          await registry.register({
+            slug: storageSlug,
+            name: manifest.name,
+            description: manifest.description,
+            version: manifest.version,
+            author: manifest.author,
+            category: manifest.category,
+            tables,
+          });
+          console.log(`[app-db] Lazily provisioned schema for ${relDir} (slug ${storageSlug})`);
+        }
+        break;
+      }
+      // Cache even when there were no tables, so we don't rescan on every query.
+      if (provisionedAppSlugs.size >= PROVISIONED_SLUGS_CAP) provisionedAppSlugs.clear();
+      provisionedAppSlugs.add(storageSlug);
+    } catch (err) {
+      console.error(`[app-db] Lazy provisioning failed for ${storageSlug}:`, (err as Error).message);
+    }
+  }
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -783,6 +827,7 @@ export async function createGateway(config: GatewayConfig) {
               tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
             });
             registered++;
+            provisionedAppSlugs.add(storageSlug);
           } catch (appRegErr) {
             console.error(`[app-db] Registration failed for ${relDir} (slug ${storageSlug}):`, (appRegErr as Error).message);
           }
@@ -3114,6 +3159,13 @@ export async function createGateway(config: GatewayConfig) {
     }
     if (body.offset != null && (typeof body.offset !== "number" || !Number.isInteger(body.offset) || body.offset < 0)) {
       return c.json({ error: "offset must be a non-negative integer" }, 400);
+    }
+
+    // Ensure the app's Postgres schema exists before querying. Apps built in-OS
+    // after gateway startup aren't in the startup registration pass; provision
+    // them lazily from their manifest so the first query doesn't 500.
+    if (appSlug && action !== "listApps") {
+      await ensureAppProvisioned(appSlug);
     }
 
     try {

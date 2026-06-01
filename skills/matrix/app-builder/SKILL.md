@@ -76,6 +76,49 @@ Use this baseline and adjust the app name, description, category, icon, and stor
 
 Valid storage column types include `text`, `boolean`, `integer`, `float`, `timestamptz`, `jsonb`, and `uuid`.
 
+## Naming
+
+- `name` is the **human, Title-Case label** shown in the launcher, dock, and title bar — e.g.
+  `"Calorie Tracker"`, `"Habit Garden"`. Make it short and real; never show the slug to users.
+- `slug` is the lowercase, hyphenated id used in paths/URLs (`^[a-z0-9][a-z0-9-]{0,63}$`). Derive it
+  from the name (`calorie-tracker`). It is internal — do not use it as a display string anywhere.
+
+## Icon (required — or the app shows a broken tile)
+
+The launcher loads each app's icon from `~/system/icons/<icon>.svg` (or `.png`) matching the manifest
+`icon` field. **If you don't ship that file, `/icons/<icon>` 404s and the app gets a broken/placeholder
+icon.** So always:
+
+1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
+2. Create `~/system/icons/<slug>.svg` — a crisp, single-concept mark: 24×24 `viewBox`, `stroke="currentColor"`
+   lucide-style lines (or a tasteful filled mark in the Forest/Ember palette). No text characters, no
+   remote icon scripts. Keep it simple and legible at small sizes.
+
+```bash
+cat > ~/system/icons/<slug>.svg <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- one clear concept for the app -->
+</svg>
+SVG
+```
+
+## Data (Postgres via the MatrixOS bridge)
+
+Apps run in a sandboxed, null-origin iframe (CSP `connect-src 'self'`), so a direct `fetch()` to
+`/api/bridge/*` is **blocked** and `localStorage` throws `SecurityError`. Persist ONLY through the
+injected bridge:
+
+- Declare your tables in `matrix.json` `storage.tables` (above). The gateway provisions the Postgres
+  schema automatically — at startup for shipped apps, and **lazily on first query** for apps you build
+  now, so a freshly-built app's `db` calls work without any restart.
+- In code use `window.MatrixOS.db` (`find`/`findOne`/`insert`/`update`/`delete`/`count`/`onChange`).
+  Guard for `undefined` (it's absent in unit tests), wrap every call in `try/catch` (log + user-visible
+  error; never a bare catch), update local state optimistically, and reconcile on `onChange`.
+- For external/third-party APIs use `window.MatrixOS.proxyFetch(url)` (allowlisted) — never a raw fetch.
+- Do NOT add a `localStorage` fallback that runs in the shell; it throws in the sandbox. A guarded
+  `try/catch` localStorage path is acceptable only as a no-op for the unit-test environment.
+
 ## Scaffold Commands
 
 Prefer copying Matrix's bundled Vite template when it exists:
