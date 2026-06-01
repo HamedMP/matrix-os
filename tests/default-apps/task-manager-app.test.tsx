@@ -297,6 +297,54 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("waits for a new column insert before persisting an immediate rename", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let resolveColumnInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<void>((resolve) => {
+          resolveColumnInsert = resolve;
+        });
+        const id = "columns-sprint";
+        store.columns.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    const sprintHeading = await screen.findByRole("heading", { name: "Sprint" });
+    fireEvent.click(sprintHeading.closest("button")!);
+    const renameInput = screen.getByDisplayValue("Sprint");
+    fireEvent.change(renameInput, { target: { value: "Ready" } });
+    fireEvent.blur(renameInput);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalledWith("columns", expect.stringMatching(/^column-/), expect.anything());
+
+    await act(async () => {
+      resolveColumnInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith("columns", "columns-sprint", { title: "Ready" }),
+    );
+  });
+
   it("filters cards by text query", async () => {
     installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -369,6 +417,54 @@ describe("Task Manager app", () => {
 
     expect(await screen.findByText(/column could not be deleted/i)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
+  });
+
+  it("waits for pending card inserts before deleting cards with their column", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveCardInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "cards") {
+        await new Promise<void>((resolve) => {
+          resolveCardInsert = resolve;
+        });
+        const id = "cards-created";
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    const input = await screen.findByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Remove with column" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("Remove with column")).toBeTruthy();
+
+    fireEvent.click(screen.getAllByTitle("Delete column")[0]);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.delete).not.toHaveBeenCalledWith("cards", expect.stringMatching(/^card-/));
+
+    await act(async () => {
+      resolveCardInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("cards", "cards-created");
+      expect(db.delete).toHaveBeenCalledWith("columns", "col-1");
+    });
   });
 
   it("keeps an existing error visible after unrelated card saves", async () => {

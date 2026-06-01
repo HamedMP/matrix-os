@@ -381,7 +381,8 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.update(COLUMNS_TABLE, columnId, { title: title.trim() });
+      const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
+      await bridge.update(COLUMNS_TABLE, persistedColumnId, { title: title.trim() });
     }, "Column could not be renamed");
   }, [persist]);
 
@@ -397,7 +398,9 @@ function App() {
     suppressReloadRef.current = true;
     void (async () => {
       try {
-        for (const cardId of removedCards) await bridge.delete(CARDS_TABLE, cardId);
+        for (const cardId of removedCards) {
+          await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
+        }
         await bridge.delete(COLUMNS_TABLE, columnId);
         setError(null);
         setBoard(deleteColumn(current, columnId));
@@ -409,7 +412,7 @@ function App() {
         suppressReloadRef.current = false;
       }
     })();
-  }, [reload]);
+  }, [reload, resolveCardId]);
 
   const dropColumn = useCallback((columnId: string, targetIndex: number) => {
     const current = boardRef.current;
