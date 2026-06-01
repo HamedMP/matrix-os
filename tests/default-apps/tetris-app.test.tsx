@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/games/tetris/src/App";
@@ -49,6 +51,16 @@ describe("Tetris app", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
+  });
+
+  it("uses the shipped shared game icon", () => {
+    const repoRoot = join(__dirname, "..", "..");
+    const manifest = JSON.parse(
+      readFileSync(join(repoRoot, "home/apps/games/tetris/matrix.json"), "utf-8"),
+    ) as { icon?: string };
+
+    expect(manifest.icon).toBe("game-center");
+    expect(existsSync(join(repoRoot, "home/system/icons/game-center.png"))).toBe(true);
   });
 
   it("renders a 10x20 playfield and loads the best score from Matrix Postgres", async () => {
