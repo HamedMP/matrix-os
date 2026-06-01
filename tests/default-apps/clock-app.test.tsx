@@ -34,6 +34,14 @@ function installMatrixDb(store: FakeStore) {
       if (index >= 0) rows[index] = { ...rows[index], ...data };
       return { ok: true };
     }),
+    bulkUpdate: vi.fn(async (table: string, updates: Array<{ id: string; data: DbRow }>) => {
+      const rows = table === "zones" ? store.zones : store.alarms;
+      for (const { id, data } of updates) {
+        const index = rows.findIndex((row) => row.id === id);
+        if (index >= 0) rows[index] = { ...rows[index], ...data };
+      }
+      return { ok: true };
+    }),
     delete: vi.fn(async () => ({ ok: true })),
     count: vi.fn(async () => 0),
     onChange: vi.fn(() => () => undefined),
@@ -129,6 +137,37 @@ describe("Clock app", () => {
     });
 
     expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("persists world-clock zone reorders with bulkUpdate", async () => {
+    const db = installMatrixDb({
+      zones: [
+        { id: "zone-tokyo", tz: "Asia/Tokyo", position: 0 },
+        { id: "zone-london", tz: "Europe/London", position: 1 },
+      ],
+      alarms: [],
+    });
+    render(<App />);
+
+    const tokyo = (await screen.findByText(/tokyo/i)).closest("li");
+    const london = (await screen.findByText(/london/i)).closest("li");
+    expect(tokyo).toBeTruthy();
+    expect(london).toBeTruthy();
+    if (!tokyo || !london) throw new Error("Expected zone rows to render");
+
+    fireEvent.dragStart(london);
+    fireEvent.dragOver(tokyo);
+    fireEvent.drop(tokyo);
+
+    await waitFor(() => {
+      expect(db.bulkUpdate).toHaveBeenCalledWith(
+        "zones",
+        expect.arrayContaining([
+          { id: "zone-london", data: { position: 0 } },
+          { id: "zone-tokyo", data: { position: 1 } },
+        ]),
+      );
+    });
   });
 
   it("uses the MatrixOS data bridge when app DB is unavailable", async () => {
