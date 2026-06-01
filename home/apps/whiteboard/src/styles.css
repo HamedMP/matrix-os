@@ -1,11 +1,18 @@
 :root {
+  --app-bg: var(--matrix-bg, #fafaf5);
+  --app-fg: var(--matrix-fg, #32352e);
+  --app-card: var(--matrix-card, #ffffff);
+  --app-muted: var(--matrix-muted, #f0ede4);
+  --app-muted-fg: var(--matrix-muted-fg, #7a7768);
+  --app-border: var(--matrix-border, #d6d3c8);
+  --app-primary: var(--matrix-primary, #434e3f);
+  --app-primary-fg: var(--matrix-primary-fg, #fafaf5);
+  --app-accent: var(--matrix-accent, #d06f25);
+  --app-success: var(--matrix-success, #3a7d44);
+  --app-danger: var(--matrix-destructive, #c4342d);
+  --app-radius: var(--matrix-radius, 22px);
+  --app-font: var(--matrix-font-sans, "Inter", system-ui, sans-serif);
   color-scheme: light;
-  font-family: 'Inter', system-ui, sans-serif;
-  background: #F7F1E7;
-  color: #32352E;
-  --matrix-primary: #434E3F;
-  --matrix-border: #D6D3C8;
-  --matrix-muted: #F3EAE0;
 }
 
 * {
@@ -18,63 +25,686 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
-  overflow: hidden;
 }
 
 body {
-  background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--app-font);
+  color: var(--app-fg);
+  background: var(--app-bg);
 }
 
-.whiteboard-shell {
-  position: fixed;
-  inset: 0;
-  min-width: 0;
+.wb-app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--app-bg);
+  color: var(--app-fg);
+}
+
+/* ---- Toolbar ---- */
+.wb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--app-card);
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.06);
+  z-index: 5;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.wb-toolbar__spacer {
+  flex: 1;
+}
+
+.wb-toolgroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wb-divider {
+  width: 1px;
+  height: 26px;
+  background: color-mix(in srgb, var(--app-border) 70%, transparent);
+  margin: 0 2px;
+  flex: none;
+}
+
+.wb-tool,
+.wb-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--app-fg);
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wb-action {
+  width: auto;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wb-tool:hover:not(:disabled),
+.wb-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+}
+
+.wb-tool:disabled,
+.wb-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.wb-tool--active {
+  background: var(--app-primary);
+  color: var(--app-primary-fg);
+  box-shadow: 0 2px 6px rgba(50, 53, 46, 0.18);
+}
+
+.wb-tool:focus-visible,
+.wb-action:focus-visible,
+.wb-swatch:focus-visible,
+.wb-stroke:focus-visible,
+.wb-zoom button:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.wb-action {
+  background: var(--app-accent);
+  color: #fff;
+  height: 38px;
+}
+
+.wb-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-accent) 88%, #000);
+}
+
+.wb-action--ghost {
+  background: transparent;
+  color: var(--app-muted-fg);
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+}
+
+.wb-action--ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+  color: var(--app-fg);
+}
+
+/* color palette */
+.wb-palette {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.wb-swatch:hover {
+  transform: scale(1.12);
+}
+
+.wb-swatch--active {
+  border-color: var(--app-card);
+  box-shadow: 0 0 0 2px var(--app-fg);
+}
+
+/* stroke widths */
+.wb-strokes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wb-stroke {
+  width: 34px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.wb-stroke span {
+  display: block;
+  width: 18px;
+  border-radius: 999px;
+  background: var(--app-fg);
+}
+
+.wb-stroke:hover {
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+}
+
+.wb-stroke--active {
+  background: color-mix(in srgb, var(--app-fg) 8%, transparent);
+  border-color: color-mix(in srgb, var(--app-border) 80%, transparent);
+}
+
+.wb-save {
+  font-size: 12px;
+  color: var(--app-muted-fg);
+  min-width: 56px;
+  text-align: right;
+}
+
+.wb-tool--panel {
+  flex: none;
+}
+
+.wb-boardname {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-fg);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ---- Body layout (sidebar + stage) ---- */
+.wb-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- Board sidebar ---- */
+.wb-sidebar {
+  width: 232px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--app-card);
+  border-right: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  overflow: hidden;
+}
+
+.wb-sidebar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 14px 10px;
+}
+
+.wb-sidebar__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--app-muted-fg);
+}
+
+.wb-newboard {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 10px;
+  background: var(--app-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 8px rgba(208, 111, 37, 0.28);
+}
+
+.wb-newboard:hover {
+  background: color-mix(in srgb, var(--app-accent) 88%, #000);
+}
+
+.wb-newboard--cta {
+  margin-top: 10px;
+}
+
+.wb-sidebar__empty {
+  padding: 18px 16px;
+  text-align: center;
+  color: var(--app-muted-fg);
+  font-size: 13px;
+}
+
+.wb-boardlist {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 12px;
+  overflow-y: auto;
+  flex: 1;
   min-height: 0;
 }
 
-.whiteboard-shell .excalidraw {
-  --color-primary: #434E3F;
-  --color-primary-darker: #32352E;
-  --color-primary-darkest: #2a2d26;
-  --color-primary-light: #E0E1CA;
-  font-family: 'Inter', system-ui, sans-serif;
+.wb-boarditem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 2px 4px 2px 0;
+  transition: background 0.15s ease;
 }
 
-.app-loading {
-  display: grid;
+.wb-boarditem + .wb-boarditem {
+  margin-top: 2px;
+}
+
+.wb-boarditem:hover {
+  background: color-mix(in srgb, var(--app-fg) 5%, transparent);
+}
+
+.wb-boarditem--active {
+  background: color-mix(in srgb, var(--app-accent) 14%, transparent);
+}
+
+.wb-boarditem--active:hover {
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+}
+
+.wb-boarditem__open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--app-fg);
+}
+
+.wb-boarditem__open:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
+
+.wb-boarditem__name {
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-boarditem--active .wb-boarditem__name {
+  color: color-mix(in srgb, var(--app-accent) 70%, var(--app-fg));
+}
+
+.wb-boarditem__time {
+  font-size: 11px;
+  color: var(--app-muted-fg);
+}
+
+.wb-boarditem__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.wb-boarditem:hover .wb-boarditem__actions,
+.wb-boarditem--active .wb-boarditem__actions {
+  opacity: 1;
+}
+
+.wb-boarditem__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--app-muted-fg);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wb-boarditem__action:hover {
+  background: color-mix(in srgb, var(--app-fg) 8%, transparent);
+  color: var(--app-fg);
+}
+
+.wb-boarditem__action--danger:hover {
+  background: color-mix(in srgb, var(--app-danger) 14%, transparent);
+  color: var(--app-danger);
+}
+
+.wb-boarditem__action:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+
+.wb-rename-input {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 4px 4px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--app-accent);
+  border-radius: 8px;
+  background: var(--app-card);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+
+/* ---- Stage / canvas ---- */
+.wb-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.wb-canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  place-items: center;
-  background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%);
-  color: #7A7768;
-  font-size: 0.875rem;
-  letter-spacing: 0;
+  touch-action: none;
+  display: block;
 }
 
-.save-pill {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 10;
-  min-width: 5.5rem;
-  border: 1px solid rgba(214,211,200,0.35);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.65);
-  box-shadow: 0 10px 30px rgba(50,53,46,0.12);
-  color: #32352E;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1;
-  padding: 0.55rem 0.75rem;
+.wb-grid-dot {
+  fill: color-mix(in srgb, var(--app-fg) 16%, transparent);
+}
+
+.wb-grid-bg {
+  pointer-events: none;
+}
+
+.wb-el {
+  transition: opacity 0.12s ease;
+}
+
+.wb-selbox {
+  fill: none;
+  stroke: var(--app-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+.wb-marquee {
+  fill: color-mix(in srgb, var(--app-accent) 12%, transparent);
+  stroke: var(--app-accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+.wb-sticky {
+  filter: drop-shadow(0 4px 10px rgba(50, 53, 46, 0.16));
+}
+
+.wb-sticky-text,
+.wb-text {
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px;
+  font-family: var(--app-font);
+  font-size: 15px;
+  line-height: 1.35;
+  color: #32352e;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.wb-text {
+  padding: 0;
+}
+
+/* ---- Empty state ---- */
+.wb-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   text-align: center;
-  backdrop-filter: blur(14px);
+  max-width: 360px;
+  padding: 28px;
+  pointer-events: none;
 }
 
-.save-pill--saving {
-  color: #434E3F;
+.wb-empty__mark {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: var(--app-card);
+  color: var(--app-accent);
+  box-shadow: 0 8px 22px rgba(50, 53, 46, 0.12);
 }
 
-.save-pill--error {
-  color: #C4342D;
+.wb-empty h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.wb-empty p {
+  margin: 0 0 18px;
+  color: var(--app-muted-fg);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.wb-empty__cta {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 12px;
+  background: var(--app-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 4px 12px rgba(208, 111, 37, 0.3);
+}
+
+.wb-empty__cta:hover {
+  background: color-mix(in srgb, var(--app-accent) 88%, #000);
+}
+
+/* ---- Zoom control ---- */
+.wb-zoom {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--app-card);
+  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  border-radius: 12px;
+  padding: 4px;
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.1);
+}
+
+.wb-zoom button {
+  border: none;
+  background: transparent;
+  color: var(--app-fg);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.wb-zoom button:hover {
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+}
+
+.wb-zoom__level {
+  width: auto !important;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Text editor overlay ---- */
+.wb-text-editor {
+  position: absolute;
+  z-index: 20;
+  border: 2px solid var(--app-accent);
+  border-radius: 8px;
+  background: var(--app-card);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+  font-size: 15px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  resize: none;
+  outline: none;
+  box-shadow: 0 8px 22px rgba(50, 53, 46, 0.18);
+}
+
+/* ---- Toast ---- */
+.wb-toast {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 22px rgba(50, 53, 46, 0.18);
+}
+
+.wb-toast--error {
+  background: var(--app-danger);
+  color: #fff;
+}
+
+/* ---- Modal ---- */
+.wb-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(50, 53, 46, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.wb-modal__card {
+  width: min(360px, 90vw);
+  background: var(--app-card);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 18px 48px rgba(50, 53, 46, 0.28);
+}
+
+.wb-modal__card h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.wb-modal__card p {
+  margin: 0 0 20px;
+  color: var(--app-muted-fg);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.wb-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.wb-btn-ghost,
+.wb-btn-danger {
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.wb-btn-ghost {
+  background: transparent;
+  color: var(--app-fg);
+  border-color: color-mix(in srgb, var(--app-border) 80%, transparent);
+}
+
+.wb-btn-ghost:hover {
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+}
+
+.wb-btn-danger {
+  background: var(--app-danger);
+  color: #fff;
+}
+
+.wb-btn-danger:hover {
+  background: color-mix(in srgb, var(--app-danger) 88%, #000);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.wb-app--reduced * {
+  transition: none !important;
+  animation: none !important;
 }
