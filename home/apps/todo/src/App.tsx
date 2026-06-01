@@ -606,7 +606,7 @@ function Inspector({
 
   useEffect(() => {
     setNotesDraft(task?.notes ?? "");
-  }, [task?.id, task?.notes]);
+  }, [task?.id]);
 
   useEffect(() => {
     if (!task || notesDraft === task.notes) return undefined;

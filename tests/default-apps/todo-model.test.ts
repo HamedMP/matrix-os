@@ -20,7 +20,7 @@ function makeTask(partial: Partial<Task> = {}): Task {
     status: partial.status ?? "open",
     recur: partial.recur ?? null,
     created_at: partial.created_at ?? "2026-05-31T00:00:00.000Z",
-  });
+  })!;
 }
 
 const NOW = new Date("2026-05-31T12:00:00.000Z"); // Sunday
