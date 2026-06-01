@@ -635,17 +635,31 @@ function Inspector({
 }) {
   const [notesDraft, setNotesDraft] = useState(task?.notes ?? "");
   const [projectDraft, setProjectDraft] = useState(task?.project ?? "");
-  const latestDraftRef = useRef({ task, notesDraft, projectDraft });
+  const latestDraftRef = useRef({
+    taskId: task?.id ?? null,
+    notesDraft,
+    projectDraft,
+    originalNotes: task?.notes ?? "",
+    originalProject: task?.project ?? null,
+  });
 
-  latestDraftRef.current = { task, notesDraft, projectDraft };
+  useEffect(() => {
+    latestDraftRef.current = {
+      taskId: task?.id ?? null,
+      notesDraft,
+      projectDraft,
+      originalNotes: task?.notes ?? "",
+      originalProject: task?.project ?? null,
+    };
+  }, [notesDraft, projectDraft, task?.id, task?.notes, task?.project]);
 
   const flushDrafts = useCallback(() => {
     const current = latestDraftRef.current;
-    if (!current.task?.id) return;
+    if (!current.taskId) return;
     const patch: Partial<Task> = {};
-    if (current.notesDraft !== current.task.notes) patch.notes = current.notesDraft;
+    if (current.notesDraft !== current.originalNotes) patch.notes = current.notesDraft;
     const project = current.projectDraft.trim() || null;
-    if (project !== (current.task.project ?? null)) patch.project = project;
+    if (project !== current.originalProject) patch.project = project;
     if (Object.keys(patch).length > 0) onPatch(patch);
   }, [onPatch]);
 

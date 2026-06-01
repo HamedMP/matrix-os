@@ -11,11 +11,14 @@
       "tasks": {
         "columns": {
           "title": "text",
+          "text": "text",
           "notes": "text",
           "due": "timestamptz",
           "priority": "integer",
           "project": "text",
+          "category": "text",
           "status": "text",
+          "done": "boolean",
           "recur": "text"
         },
         "indexes": [

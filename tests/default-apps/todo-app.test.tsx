@@ -380,6 +380,32 @@ describe("Todo app", () => {
     vi.useRealTimers();
   });
 
+  it("flushes the previous task draft when switching tasks with matching notes", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Alpha", status: "open", priority: 0, due: null, notes: "Original" },
+      { id: "t2", title: "Beta", status: "open", priority: 0, due: null, notes: "Shared" },
+    ]);
+    render(<App />);
+    await screen.findByText("Alpha");
+
+    vi.useFakeTimers();
+    const alphaRow = screen.getByText("Alpha").closest('[role="listitem"]');
+    if (!alphaRow) throw new Error("Alpha row was not rendered");
+    fireEvent.click(alphaRow);
+    fireEvent.change(screen.getByPlaceholderText("Add notes…"), { target: { value: "Shared" } });
+    db.update.mockClear();
+
+    const betaRow = screen.getByText("Beta").closest('[role="listitem"]');
+    if (!betaRow) throw new Error("Beta row was not rendered");
+    await act(async () => {
+      fireEvent.click(betaRow);
+      await Promise.resolve();
+    });
+
+    expect(db.update).toHaveBeenCalledWith("tasks", "t1", { notes: "Shared" });
+    vi.useRealTimers();
+  });
+
   it("debounces project edits from the inspector", async () => {
     const db = installMatrixDb([
       { id: "t1", title: "Organize", status: "open", priority: 0, due: null, notes: "", project: null },

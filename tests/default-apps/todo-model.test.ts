@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   countByView,
@@ -25,6 +27,7 @@ function makeTask(partial: Partial<Task> = {}): Task {
 }
 
 const NOW = new Date("2026-05-31T12:00:00.000Z"); // Sunday
+const REPO_ROOT = join(__dirname, "..", "..");
 
 describe("normalizeTask", () => {
   it("coerces loose db rows into typed tasks", () => {
@@ -65,6 +68,24 @@ describe("normalizeTask", () => {
       project: "Launch",
       priority: 3,
       due: "2026-06-02T09:00:00.000Z",
+    });
+  });
+});
+
+describe("todo manifest schema", () => {
+  it("keeps legacy task columns declared during the schema transition", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(REPO_ROOT, "home", "apps", "todo", "matrix.json"), "utf-8"),
+    ) as { storage?: { tables?: { tasks?: { columns?: Record<string, string> } } } };
+    const columns = manifest.storage?.tables?.tasks?.columns ?? {};
+
+    expect(columns).toMatchObject({
+      title: "text",
+      text: "text",
+      status: "text",
+      done: "boolean",
+      project: "text",
+      category: "text",
     });
   });
 });
