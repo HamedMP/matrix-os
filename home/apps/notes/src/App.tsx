@@ -263,13 +263,11 @@ function App() {
         if (saved.id !== draft.id) {
           resolvedCreatesRef.current.set(draft.id, saved.id);
         }
-        setNotes((currentNotes) => {
-          const savedNotes = currentNotes.map((note) =>
-            note.id === draft.id ? { ...note, id: saved.id, created_at: saved.created_at } : note,
-          );
-          persistAllIfFallback(savedNotes);
-          return savedNotes;
-        });
+        const savedNotes = notesRef.current.map((note) =>
+          note.id === draft.id ? { ...note, id: saved.id, created_at: saved.created_at } : note,
+        );
+        setNotes(savedNotes);
+        persistAllIfFallback(savedNotes);
         setActiveId((current) => (current === draft.id ? saved.id : current));
         setSaveState("saved");
       })
@@ -305,11 +303,9 @@ function App() {
         }
         const latest = notesRef.current.find((candidate) => candidate.id === note.id) ?? note;
         const savedLatest = { ...latest, id: saved.id, created_at: saved.created_at };
-        setNotes((currentNotes) => {
-          const savedNotes = currentNotes.map((candidate) => (candidate.id === note.id ? savedLatest : candidate));
-          persistAllIfFallback(savedNotes);
-          return savedNotes;
-        });
+        const savedNotes = notesRef.current.map((candidate) => (candidate.id === note.id ? savedLatest : candidate));
+        setNotes(savedNotes);
+        persistAllIfFallback(savedNotes);
         setActiveId((current) => (current === note.id ? saved.id : current));
         return savedLatest;
       }
@@ -346,13 +342,11 @@ function App() {
       saveTimerRef.current = setTimeout(() => {
         persistWhenReady(nextNote)
           .then((saved) => {
-            setNotes((currentNotes) => {
-              const savedNotes = currentNotes.map((note) =>
-                note.id === saved.id || note.id === nextNote.id ? saved : note,
-              );
-              persistAllIfFallback(savedNotes);
-              return savedNotes;
-            });
+            const savedNotes = notesRef.current.map((note) =>
+              note.id === saved.id || note.id === nextNote.id ? saved : note,
+            );
+            setNotes(savedNotes);
+            persistAllIfFallback(savedNotes);
             setSaveState("saved");
           })
           .catch((err: unknown) => {
@@ -379,12 +373,10 @@ function App() {
     }
     deletePersistedNote(activeNote)
       .then(() => {
-        setNotes((currentNotes) => {
-          const remaining = currentNotes.filter((note) => note.id !== activeNote.id);
-          setActiveId(remaining[0]?.id ?? null);
-          persistAllIfFallback(remaining);
-          return remaining;
-        });
+        const remaining = notesRef.current.filter((note) => note.id !== activeNote.id);
+        setNotes(remaining);
+        setActiveId(remaining[0]?.id ?? null);
+        persistAllIfFallback(remaining);
       })
       .catch((err: unknown) => {
         console.warn("[notes] delete failed:", err instanceof Error ? err.message : String(err));

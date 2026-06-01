@@ -73,11 +73,12 @@ describe("notes model", () => {
     expect(note.tags).toEqual(["ai"]);
   });
 
-  it("declares an index for stored tag strings", () => {
+  it("does not index comma-separated tag strings", () => {
     const manifest = JSON.parse(
       readFileSync(join(REPO_ROOT, "home", "apps", "notes", "matrix.json"), "utf-8"),
     ) as { storage?: { tables?: { notes?: { indexes?: string[] } } } };
 
-    expect(manifest.storage?.tables?.notes?.indexes).toContain("tags");
+    expect(manifest.storage?.tables?.notes?.indexes).toContain("pinned");
+    expect(manifest.storage?.tables?.notes?.indexes).not.toContain("tags");
   });
 });
