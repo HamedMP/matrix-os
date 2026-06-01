@@ -137,6 +137,7 @@ export default function App() {
   const startGame = useCallback(() => {
     savedForGameRef.current = false;
     setSaveNote(null);
+    setError(null);
     setGame(createGame());
     setPhase("playing");
   }, []);

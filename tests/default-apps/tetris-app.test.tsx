@@ -94,6 +94,22 @@ describe("Tetris app", () => {
     expect(screen.getByTestId("tetris-score").textContent).toContain("0");
   });
 
+  it("clears stale error banners when starting a new game", async () => {
+    const db = installMatrixDb([]);
+    db.find.mockRejectedValueOnce(new Error("load failed"));
+    render(<App />);
+
+    expect(await screen.findByText("High score history could not be loaded.")).toBeTruthy();
+    const dialog = await screen.findByRole("dialog");
+    const startBtn = within(dialog).getByRole("button", { name: /play|start/i });
+    await act(async () => {
+      fireEvent.click(startBtn);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("High score history could not be loaded.")).toBeNull();
+  });
+
   it("moves the active piece when an arrow key is pressed", async () => {
     installMatrixDb([]);
     vi.useFakeTimers();
