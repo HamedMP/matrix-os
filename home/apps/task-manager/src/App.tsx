@@ -701,7 +701,7 @@ function BoardColumnView(props: ColumnViewProps) {
       aria-label={column.title}
       onDragOver={(event) => {
         if (draggingColumnId && draggingColumnId !== column.id) event.preventDefault();
-        else if (draggingCardId) {
+        else if (draggingCardId && !isFiltering) {
           event.preventDefault();
           onSetDropTarget(cards.length);
         }
@@ -712,7 +712,7 @@ function BoardColumnView(props: ColumnViewProps) {
           onColumnDrop();
           return;
         }
-        if (draggingCardId) {
+        if (draggingCardId && !isFiltering) {
           event.preventDefault();
           onCardDrop(cards.length);
         }
@@ -768,7 +768,7 @@ function BoardColumnView(props: ColumnViewProps) {
             {dropTarget === index && draggingCardId ? <div className="drop-indicator" /> : null}
             <div
               onDragOver={(event) => {
-                if (!draggingCardId) return;
+                if (!draggingCardId || isFiltering) return;
                 event.preventDefault();
                 event.stopPropagation();
                 onSetDropTarget(index);
@@ -777,6 +777,7 @@ function BoardColumnView(props: ColumnViewProps) {
                 if (!draggingCardId) return;
                 event.preventDefault();
                 event.stopPropagation();
+                if (isFiltering) return;
                 onCardDrop(index);
               }}
             >

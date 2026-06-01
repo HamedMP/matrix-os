@@ -462,6 +462,32 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("does not persist card reorders while a filter is active", async () => {
+    const { db } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Visible card", description: "", labels: "urgent", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "card-2", column_id: "col-1", title: "Hidden card", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    render(<App />);
+
+    await screen.findByText("Visible card");
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "Visible" } });
+    expect(screen.queryByText("Hidden card")).toBeNull();
+
+    const visibleCard = screen.getByText("Visible card").closest(".task-card");
+    const column = screen.getByLabelText("To do");
+    if (!visibleCard) throw new Error("Expected visible task card");
+    fireEvent.dragStart(visibleCard);
+    fireEvent.drop(column);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
   it("keeps a column visible when a DB column delete fails", async () => {
     const { db } = installMatrixDb({
       columns: [
