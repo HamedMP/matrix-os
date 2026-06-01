@@ -335,6 +335,57 @@ describe("Expense Tracker app", () => {
     expect(db.update).not.toHaveBeenCalledWith("budgets", "local-Groceries", expect.anything());
   });
 
+  it("does not reinsert a budget after a mixed save partially commits", async () => {
+    const db = installMatrixDb(
+      [expense(2, 30, "Groceries"), expense(3, 45, "Rent")],
+      [
+        { id: "b1", category: "Groceries", monthly_limit: 100 },
+        { id: "b2", category: "Groceries", monthly_limit: 125 },
+      ],
+    );
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      const id = table === "budgets" ? `budget-${String(data.category).toLowerCase()}` : `${table}-real`;
+      (table === "budgets" ? db.budgets : db.expenses).push({
+        id,
+        created_at: new Date().toISOString(),
+        ...data,
+      });
+      return { id };
+    });
+    let deleteAttempts = 0;
+    db.delete.mockImplementation(async (table: string, id: string) => {
+      if (table === "budgets" && id === "b2" && deleteAttempts === 0) {
+        deleteAttempts += 1;
+        throw new Error("delete failed");
+      }
+      const rows = table === "budgets" ? db.budgets : db.expenses;
+      const idx = rows.findIndex((item) => item.id === id);
+      if (idx >= 0) rows.splice(idx, 1);
+      return { ok: true };
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
+    fireEvent.change(screen.getByLabelText("Rent monthly budget"), { target: { value: "200" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Could not save your budgets.")).toBeTruthy();
+    expect(db.insert.mock.calls.filter((call) => call[0] === "budgets")).toHaveLength(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert.mock.calls.filter((call) => call[0] === "budgets")).toHaveLength(1);
+    expect(db.update).toHaveBeenCalledWith("budgets", "budget-rent", { monthly_limit: 200 });
+  });
+
   it("renders an empty state with onboarding when there are no transactions", async () => {
     installMatrixDb([], []);
 

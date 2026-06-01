@@ -108,6 +108,10 @@ interface DraftExpense {
   recurring: boolean;
 }
 
+type BudgetOperationResult =
+  | { type: "insert"; budget: BudgetRow }
+  | { type: "update" | "delete" };
+
 function emptyDraft(): DraftExpense {
   return {
     amount: "",
@@ -340,16 +344,16 @@ export default function App() {
       existingByCategory.set(budget.category, rows);
     }
     const next: BudgetRow[] = [];
-    const operations: Array<Promise<unknown>> = [];
+    const operations: Array<Promise<BudgetOperationResult>> = [];
     for (const [category, value] of Object.entries(budgetDraft)) {
       const limit = Number(value);
       const existingRows = existingByCategory.get(category) ?? [];
       const existing = existingRows[0];
       for (const duplicate of existingRows.slice(1)) {
-        if (db) operations.push(db.delete(BUDGETS_TABLE, duplicate.id));
+        if (db) operations.push(db.delete(BUDGETS_TABLE, duplicate.id).then(() => ({ type: "delete" })));
       }
       if (!value || !Number.isFinite(limit) || limit <= 0) {
-        if (existing && db) operations.push(db.delete(BUDGETS_TABLE, existing.id));
+        if (existing && db) operations.push(db.delete(BUDGETS_TABLE, existing.id).then(() => ({ type: "delete" })));
         continue;
       }
       const localId = existing?.id ?? `local-${category}`;
@@ -357,28 +361,37 @@ export default function App() {
       if (db) {
         operations.push(
           existing
-            ? db.update(BUDGETS_TABLE, existing.id, { monthly_limit: limit })
-            : db.insert(BUDGETS_TABLE, { category, monthly_limit: limit }).then(({ id }) => {
-                setBudgets((current) =>
-                  current.map((budget) => (budget.id === localId ? { ...budget, id } : budget)),
-                );
-              }),
+            ? db.update(BUDGETS_TABLE, existing.id, { monthly_limit: limit }).then(() => ({ type: "update" }))
+            : db
+                .insert(BUDGETS_TABLE, { category, monthly_limit: limit })
+                .then(({ id }) => ({ type: "insert", budget: { id, category, monthly_limit: limit } })),
         );
       }
     }
     setBudgets(next);
     setBudgetEditor(false);
-    try {
-      await Promise.all(operations);
-    } catch (err: unknown) {
+    const results = await Promise.allSettled(operations);
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    const insertedBudgets = results
+      .filter(
+        (result): result is PromiseFulfilledResult<BudgetOperationResult> =>
+          result.status === "fulfilled" && result.value.type === "insert",
+      )
+      .map((result) => (result.value as { type: "insert"; budget: BudgetRow }).budget);
+    if (failed) {
       console.warn(
         "[expense-tracker] budget save failed:",
-        err instanceof Error ? err.message : String(err),
+        failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
       );
-      setBudgets(previous);
+      setBudgets(insertedBudgets.length > 0 ? dedupeBudgets([...previous, ...insertedBudgets]) : previous);
       setBudgetEditor(true);
       setError("Could not save your budgets.");
       return;
+    }
+    if (insertedBudgets.length > 0) {
+      setBudgets((current) =>
+        current.map((budget) => insertedBudgets.find((inserted) => inserted.category === budget.category) ?? budget),
+      );
     }
     void reload();
   }, [budgetDraft, budgets, reload]);
