@@ -183,6 +183,10 @@ export default function App() {
   // --- Commit (=/Enter) ----------------------------------------------------
   const commit = useCallback(async () => {
     if (committingRef.current) return;
+    if (clearingRef.current) {
+      setError("Wait for history to finish clearing.");
+      return;
+    }
     const trimmed = expr.trim();
     if (trimmed === "") return;
     const result = evaluate(trimmed, { degrees });

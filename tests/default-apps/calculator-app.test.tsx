@@ -203,6 +203,41 @@ describe("Calculator app", () => {
     resolveDelete?.();
   });
 
+  it("does not insert new history while clearing is in flight", async () => {
+    const rows = [
+      { id: "h1", expression: "1 + 1", result: "2", created_at: "2026-05-31T10:00:00.000Z" },
+    ];
+    const db = installMatrixDb(rows);
+    let resolveDelete: (() => void) | undefined;
+    db.delete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDelete = () => resolve({ ok: true });
+        }),
+    );
+    render(<App />);
+
+    const input = (await screen.findByTestId("calc-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "6 * 7" } });
+    await screen.findByText("Clear");
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+
+    fireEvent.click(clearHistory!);
+    await waitFor(() => expect(db.delete).toHaveBeenCalled());
+    db.insert.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(await screen.findByText("Wait for history to finish clearing.")).toBeTruthy();
+    resolveDelete?.();
+  });
+
   it("shows an onboarding empty state when history is empty", async () => {
     installMatrixDb([]);
     render(<App />);
