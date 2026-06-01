@@ -62,9 +62,23 @@ export class Chess {
         }
       }
       if (piece.type === "n") {
-        const targets = piece.color === "w" ? ["a3", "c3", "f3", "h3"] : ["a6", "c6", "f6", "h6"];
-        for (const target of targets) {
-          if (!this.boardState[target]) {
+        const fileIdx = "abcdefgh".indexOf(file);
+        const knightDeltas = [
+          [-2, -1],
+          [-2, 1],
+          [-1, -2],
+          [-1, 2],
+          [1, -2],
+          [1, 2],
+          [2, -1],
+          [2, 1],
+        ];
+        for (const [dr, dc] of knightDeltas) {
+          const targetFile = "abcdefgh"[fileIdx + dc];
+          const targetRank = rank + dr;
+          if (!targetFile || targetRank < 1 || targetRank > 8) continue;
+          const target = `${targetFile}${targetRank}`;
+          if (!this.boardState[target] || this.boardState[target]!.color !== piece.color) {
             out.push({ from: opts.square, to: target, piece: "n", color: piece.color });
           }
         }

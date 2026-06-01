@@ -79,6 +79,7 @@ async function persistGame(pgn: string, result: string): Promise<void> {
     await db.insert(GAMES_TABLE, { pgn, result });
     return;
   }
+  if (window.MatrixOS) return;
   // localStorage fallback when the DB bridge is unavailable.
   const raw = window.localStorage.getItem(LS_KEY);
   let prior: unknown[] = [];
@@ -140,6 +141,10 @@ export default function App() {
       if (db) {
         const n = await db.count(GAMES_TABLE);
         setGamesPlayed(typeof n === "number" ? n : 0);
+        return;
+      }
+      if (window.MatrixOS) {
+        setGamesPlayed(0);
         return;
       }
       const raw = window.localStorage.getItem(LS_KEY);
