@@ -377,7 +377,10 @@ export default function App() {
       } else if ((e.key === " " || e.key === "Enter") && selectedId) {
         e.preventDefault();
         const task = visible.find((t) => t.id === selectedId);
-        if (task) void completeTask(task);
+        if (task) {
+          setSelectedId(null);
+          void completeTask(task);
+        }
       } else if (e.key === "Backspace" && (e.metaKey || e.ctrlKey) && selectedId) {
         e.preventDefault();
         const task = visible.find((t) => t.id === selectedId);

@@ -343,6 +343,25 @@ describe("Todo app", () => {
     expect(db.delete).not.toHaveBeenCalled();
   });
 
+  it("clears keyboard selection after completing the selected task", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+    await screen.findByText("Finish report");
+    fireEvent.click(screen.getByRole("listitem"));
+    expect(screen.getByRole("dialog", { name: /details for finish report/i })).toBeTruthy();
+
+    fireEvent.keyDown(screen.getByTestId("task-list"), { key: "Enter" });
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { status: "done" });
+    });
+
+    expect(screen.queryByRole("dialog", { name: /details for finish report/i })).toBeNull();
+    fireEvent.keyDown(screen.getByTestId("task-list"), { key: "Backspace", ctrlKey: true });
+    expect(db.delete).not.toHaveBeenCalled();
+  });
+
   it("filters tasks into Today and Upcoming views", async () => {
     installMatrixDb([
       { id: "td", title: "Due today task", status: "open", priority: 0, due: isoDaysFromNow(0) },
