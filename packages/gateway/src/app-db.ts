@@ -141,9 +141,16 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
       // ("column X does not exist"). ADD COLUMN IF NOT EXISTS is idempotent.
       for (const [name, type] of Object.entries(columns)) {
         if (BUILTIN_COLUMNS.has(name) || !isSafeName(name)) continue;
-        await sql
-          .raw(`ALTER TABLE ${fullTable} ADD COLUMN IF NOT EXISTS "${name}" ${pgType(type)}`)
-          .execute(kysely);
+        try {
+          await sql
+            .raw(`ALTER TABLE ${fullTable} ADD COLUMN IF NOT EXISTS "${name}" ${pgType(type)}`)
+            .execute(kysely);
+        } catch (err) {
+          console.error(
+            `[app-db] Failed to migrate column "${schema}.${table}.${name}":`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
       }
 
       if (indexes) {

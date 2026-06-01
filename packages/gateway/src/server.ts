@@ -690,7 +690,18 @@ export async function createGateway(config: GatewayConfig) {
   // aren't in that pass — so the bridge lazily provisions their schema from the
   // manifest on first query (otherwise every new app 500s until a restart).
   const provisionedAppSlugs = new Set<string>();
+  const provisionedAppSlugOrder: string[] = [];
   const PROVISIONED_SLUGS_CAP = 500;
+  function rememberProvisionedAppSlug(storageSlug: string): void {
+    if (provisionedAppSlugs.has(storageSlug)) return;
+    provisionedAppSlugs.add(storageSlug);
+    provisionedAppSlugOrder.push(storageSlug);
+    while (provisionedAppSlugOrder.length > PROVISIONED_SLUGS_CAP) {
+      const oldest = provisionedAppSlugOrder.shift();
+      if (oldest) provisionedAppSlugs.delete(oldest);
+    }
+  }
+
   async function ensureAppProvisioned(storageSlug: string): Promise<void> {
     const registry = appRegistry;
     if (!registry || !storageSlug || provisionedAppSlugs.has(storageSlug)) return;
@@ -698,12 +709,17 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const { loadAppManifest } = await import("./app-manifest.js");
       const apps = await listApps(homePath);
+      let shouldCacheProvisionAttempt = false;
       for (const app of apps) {
         if (!app.file.includes("/")) continue;
         const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
         if (relDir.replace(/[^a-zA-Z0-9_-]/g, "") !== storageSlug) continue;
         const manifest = loadAppManifest(join(homePath, "apps", relDir));
-        if (!manifest) break;
+        if (!manifest) {
+          console.warn(`[app-db] Lazy provisioning skipped for ${relDir}: manifest could not be loaded`);
+          break;
+        }
+        shouldCacheProvisionAttempt = true;
         const tables = manifest.storage?.tables as
           | Record<string, { columns: Record<string, string>; indexes?: string[] }>
           | undefined;
@@ -721,9 +737,10 @@ export async function createGateway(config: GatewayConfig) {
         }
         break;
       }
-      // Cache even when there were no tables, so we don't rescan on every query.
-      if (provisionedAppSlugs.size >= PROVISIONED_SLUGS_CAP) provisionedAppSlugs.clear();
-      provisionedAppSlugs.add(storageSlug);
+      // Cache matched apps even when there were no tables, so we don't rescan
+      // on every query. Do not cache missing/corrupt manifests; those can be
+      // fixed by an in-OS build without restarting the gateway.
+      if (shouldCacheProvisionAttempt) rememberProvisionedAppSlug(storageSlug);
     } catch (err) {
       console.error(`[app-db] Lazy provisioning failed for ${storageSlug}:`, (err as Error).message);
     }
@@ -834,7 +851,7 @@ export async function createGateway(config: GatewayConfig) {
               tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
             });
             registered++;
-            provisionedAppSlugs.add(storageSlug);
+            rememberProvisionedAppSlug(storageSlug);
           } catch (appRegErr) {
             console.error(`[app-db] Registration failed for ${relDir} (slug ${storageSlug}):`, (appRegErr as Error).message);
           }
