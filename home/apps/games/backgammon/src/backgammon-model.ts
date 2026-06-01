@@ -315,14 +315,14 @@ export function hasAnyMove(state: GameState): boolean {
 }
 
 // Max number of die-plays the player could make from this position (search).
-function maxPlayable(state: GameState, depth = 0): number {
+function maxPlayable(state: GameState): number {
   if (state.movesLeft.length === 0) return 0;
   const moves = rawLegalMoves(state);
   if (moves.length === 0) return 0;
   let best = 0;
   for (const m of moves) {
     const after = applyMove(state, m);
-    const sub = 1 + maxPlayable(after, depth + 1);
+    const sub = 1 + maxPlayable(after);
     if (sub > best) best = sub;
   }
   return best;

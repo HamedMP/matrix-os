@@ -49,7 +49,11 @@ async function saveMatch(record: MatchRecord, setError: (s: string | null) => vo
   const db = window.MatrixOS?.db;
   if (db) {
     try {
-      await db.insert(MATCHES_TABLE, { winner: record.winner, points: record.points });
+      await db.insert(MATCHES_TABLE, {
+        winner: record.winner,
+        points: record.points,
+        created_at: new Date().toISOString(),
+      });
       return true;
     } catch (err) {
       console.warn("[backgammon] failed to persist match to DB", err);
@@ -460,6 +464,8 @@ export default function App() {
           {state.dice.length === 0 ? (
             <span className="bg-note">tap roll</span>
           ) : (
+            // Doubles still render as the two rolled dice; movesLeft carries
+            // four consumable die plays and drives the used/available state.
             state.dice.map((d, i) => {
               const used = !diceStillAvailable(state, d, i);
               return <DieFace key={i} value={d} used={used} rolling={rolling} />;
