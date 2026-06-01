@@ -59,8 +59,8 @@ final human review.
    - If any PR is still draft, report that Greptile may not run until a human or
      a separate explicit action marks it ready. Do not convert it from this
      command.
-   - Keep the PR order intact. Do not alter bases manually unless Graphite
-     reports the stack is malformed.
+   - Always keep the PR order intact, regardless of draft state. Do not alter
+     bases manually unless Graphite reports the stack is malformed.
 
 3. Monitor Greptile and reviews first.
    - Inspect PR review threads with a thread-aware GitHub workflow, not only
@@ -80,7 +80,11 @@ final human review.
      concise response and ask before changing behavior.
 
 5. Continue until complete.
-   - Re-poll checks and Greptile after each pushed fix.
+   - Re-poll checks and Greptile after each pushed fix, waiting at least
+     60 seconds between polls. If three consecutive polls show no review/check
+     state change, stop and report the current blocker instead of looping.
+   - Trust a Greptile score only when its reviewed commit matches the PR's
+     current `headRefOid`; otherwise treat it as stale and keep waiting.
    - When the latest trusted Greptile result for a PR is `5/5`, add the
      repository label exactly named `ready-for-ci` if it is not already present:
      `gh pr edit <number> --add-label "ready-for-ci"`.
