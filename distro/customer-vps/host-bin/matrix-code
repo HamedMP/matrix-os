@@ -2,13 +2,21 @@
 set -euo pipefail
 
 source /opt/matrix/env/host.env
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  source /opt/matrix/bin/matrix-owner-env
+fi
 
 CODE_SERVER_PORT="${MATRIX_CODE_SERVER_PORT:-8787}"
 CODE_SERVER_UPSTREAM_PORT="${MATRIX_CODE_SERVER_UPSTREAM_PORT:-8788}"
-MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+if declare -F matrix_export_owner_env >/dev/null 2>&1; then
+  matrix_export_owner_env
+else
+  export HOME="$MATRIX_HOME"
+fi
 CODE_SERVER_ROOT="$MATRIX_HOME/system/code-server"
 
-export PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
+export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 
 if ! command -v code-server >/dev/null 2>&1; then
   echo "matrix-code: code-server is not installed" >&2
