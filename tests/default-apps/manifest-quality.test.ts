@@ -10,9 +10,10 @@ const REPO_ROOT = join(__dirname, "..", "..");
 const APPS_DIR = join(REPO_ROOT, "home", "apps");
 const ICONS_DIR = join(REPO_ROOT, "home", "system", "icons");
 
-// Apps whose product value depends on durable structured data living in
-// owner-controlled Postgres (per spec 083). These must declare storage.tables.
-const DURABLE_DATA_APPS = new Set(["notes", "task-manager", "todo", "expense-tracker"]);
+// Apps whose current runtime already depends on durable structured data living
+// in owner-controlled Postgres (per spec 083). Newly migrated apps should add
+// themselves here in the same PR that declares storage.tables.
+const DURABLE_DATA_APPS = new Set(["notes", "todo", "expense-tracker"]);
 
 interface Manifest {
   slug?: string;
