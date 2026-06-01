@@ -361,6 +361,7 @@ describe("Todo app", () => {
     });
 
     expect(db.update).toHaveBeenCalledWith("tasks", "t1", { notes: "Draft note" });
+    expect(db.update.mock.calls.filter((call) => call[0] === "tasks" && call[1] === "t1")).toHaveLength(1);
     vi.useRealTimers();
   });
 

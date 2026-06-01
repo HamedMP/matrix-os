@@ -694,10 +694,7 @@ function Inspector({
         <button
           type="button"
           className="inspector-close"
-          onClick={() => {
-            flushDrafts();
-            onClose();
-          }}
+          onClick={onClose}
           aria-label="Close details"
         >
           ✕

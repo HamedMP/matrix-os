@@ -14,7 +14,7 @@
           "text": "text",
           "notes": "text",
           "due": "timestamptz",
-          "priority": "integer",
+          "priority": "text",
           "project": "text",
           "category": "text",
           "status": "text",

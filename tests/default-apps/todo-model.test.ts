@@ -84,6 +84,7 @@ describe("todo manifest schema", () => {
       text: "text",
       status: "text",
       done: "boolean",
+      priority: "text",
       project: "text",
       category: "text",
     });
