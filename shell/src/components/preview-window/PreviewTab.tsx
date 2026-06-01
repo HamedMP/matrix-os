@@ -137,7 +137,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
           ) : tab.type === "pdf" ? (
             <PdfPlaceholder path={tab.path} />
           ) : tab.type === "markdown" && tab.mode === "preview" ? (
-            <MarkdownViewer content={content} />
+            <MarkdownViewer content={content} sourcePath={tab.path} />
           ) : (
             <CodeEditor
               content={content}

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: /screenshots\.spec\.ts/,
@@ -18,6 +20,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
     ...devices["Desktop Chrome"],
+    launchOptions: chromiumExecutablePath
+      ? { executablePath: chromiumExecutablePath }
+      : undefined,
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
