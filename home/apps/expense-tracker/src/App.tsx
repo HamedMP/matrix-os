@@ -31,6 +31,7 @@ import "./styles.css";
 
 const EXPENSES_TABLE = "expenses";
 const BUDGETS_TABLE = "budgets";
+const READ_PAGE_SIZE = 500;
 
 const DEFAULT_CATEGORIES = [
   "Groceries",
@@ -70,7 +71,22 @@ function colorForCategory(category: string): string {
 type LoadState = "loading" | "ready" | "error";
 
 function todayInputValue(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function findAllRows(
+  db: NonNullable<NonNullable<Window["MatrixOS"]>["db"]>,
+  table: string,
+  opts: { orderBy?: Record<string, "asc" | "desc">; limit?: number } = {},
+): Promise<Record<string, unknown>[]> {
+  const pageSize = opts.limit ?? READ_PAGE_SIZE;
+  const rows: Record<string, unknown>[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await db.find(table, { orderBy: opts.orderBy, limit: pageSize, offset });
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
 }
 
 function dateInputToIso(value: string): string {
@@ -124,7 +140,7 @@ export default function App() {
     }
     try {
       const [rawExpenses, rawBudgets] = await Promise.all([
-        db.find(EXPENSES_TABLE, { orderBy: { spent_at: "desc" }, limit: 1000 }),
+        findAllRows(db, EXPENSES_TABLE, { orderBy: { spent_at: "desc" } }),
         db.find(BUDGETS_TABLE, { limit: 200 }),
       ]);
       setExpenses(

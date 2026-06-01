@@ -26,8 +26,21 @@ function installMatrixDb(expenses: DbRow[] = [], budgets: DbRow[] = []): FakeDb 
     delete: vi.fn(),
     onChange: vi.fn(() => () => undefined),
   };
-  state.find.mockImplementation(async (table: string) =>
-    table === "budgets" ? state.budgets : state.expenses,
+  state.find.mockImplementation(
+    async (table: string, opts?: { limit?: number; offset?: number; orderBy?: Record<string, "asc" | "desc"> }) => {
+      let rows = table === "budgets" ? state.budgets : state.expenses;
+      const orderEntry = Object.entries(opts?.orderBy ?? {})[0];
+      if (orderEntry) {
+        const [column, direction] = orderEntry;
+        rows = [...rows].sort((a, b) =>
+          direction === "desc"
+            ? String(b[column] ?? "").localeCompare(String(a[column] ?? ""))
+            : String(a[column] ?? "").localeCompare(String(b[column] ?? "")),
+        );
+      }
+      const offset = opts?.offset ?? 0;
+      return typeof opts?.limit === "number" ? rows.slice(offset, offset + opts.limit) : rows.slice(offset);
+    },
   );
   state.insert.mockImplementation(async (table: string, data: DbRow) => {
     const id = `${table}-${Math.random().toString(36).slice(2)}`;
@@ -102,6 +115,26 @@ describe("Expense Tracker app", () => {
 
     const total = await screen.findByTestId("kpi-total");
     expect(total.textContent).toMatch(/100\.00/);
+  });
+
+  it("loads expenses beyond the first page", async () => {
+    const rows = Array.from({ length: 501 }, (_, index) =>
+      expense(2, index === 500 ? 75 : 1, index === 500 ? "Health" : "Other", {
+        id: `expense-${index}`,
+        spent_at: `${YM}-02T${String(index % 24).padStart(2, "0")}:00:00.000Z`,
+      }),
+    );
+    const db = installMatrixDb(rows, []);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(db.find).toHaveBeenCalledWith(
+        "expenses",
+        expect.objectContaining({ limit: 500, offset: 500 }),
+      );
+    });
+    expect((await screen.findByTestId("kpi-total")).textContent).toMatch(/575\.00/);
   });
 
   it("renders a category breakdown", async () => {
