@@ -15,7 +15,7 @@ function installMatrixDb(initialRows: DbRow[] = []) {
     findOne: vi.fn(async () => null),
     insert: vi.fn(async (_table: string, data: DbRow) => {
       const id = `loc-new-${++insertCount}`;
-      rows.push({ id, created_at: new Date().toISOString(), ...data });
+      rows.push({ id, ...data });
       changeHandler?.();
       return { id };
     }),
@@ -198,6 +198,8 @@ describe("Weather app", () => {
     const [table, payload] = db.insert.mock.calls[0];
     expect(table).toBe("locations");
     expect(payload).toMatchObject({ name: "Berlin", latitude: 52.52, longitude: 13.405 });
+    expect(typeof payload.created_at).toBe("string");
+    expect(Number.isNaN(Date.parse(payload.created_at as string))).toBe(false);
   });
 
   it("rolls back optimistic add when DB insert fails", async () => {

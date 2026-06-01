@@ -275,6 +275,7 @@ export default function App() {
           latitude: candidate.latitude,
           longitude: candidate.longitude,
           is_default: candidate.is_default ?? false,
+          created_at: new Date().toISOString(),
         });
         const saved: SavedLocation = { ...candidate, id };
         setLocations((curr) =>
