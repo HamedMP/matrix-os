@@ -191,13 +191,13 @@ export default function App() {
 
   const visible = useMemo(() => sortTasks(filterTasks(tasks, view, now)), [tasks, view, now]);
   const selectedTask = useMemo(
-    () => (selectedId ? visible.find((t) => t.id === selectedId) ?? null : null),
-    [selectedId, visible],
+    () => (selectedId ? tasks.find((t) => t.id === selectedId) ?? null : null),
+    [selectedId, tasks],
   );
 
   useEffect(() => {
-    if (selectedId && !visible.some((task) => task.id === selectedId)) setSelectedId(null);
-  }, [selectedId, visible]);
+    if (selectedId && !tasks.some((task) => task.id === selectedId)) setSelectedId(null);
+  }, [selectedId, tasks]);
 
   const activeSmart: SmartViewMeta | null =
     typeof view === "string" ? SMART_VIEWS.find((v) => v.id === view) ?? null : null;

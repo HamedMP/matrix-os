@@ -335,6 +335,8 @@ describe("Todo app", () => {
     await waitFor(() => {
       expect(db.update).toHaveBeenCalledWith("tasks", "t1", { due: null, recur: null });
     });
+    expect(screen.getByRole("dialog", { name: /details for today only/i })).toBeTruthy();
+    expect(within(screen.getByTestId("task-list")).queryByText("Today only")).toBeNull();
 
     fireEvent.keyDown(screen.getByTestId("task-list"), { key: "Backspace", ctrlKey: true });
 
