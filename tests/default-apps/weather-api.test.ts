@@ -22,4 +22,19 @@ describe("weather api proxy", () => {
       longitude: 13.405,
     })).rejects.toThrow("proxy request failed");
   });
+
+  it("rejects empty proxy responses instead of treating them as forecast data", async () => {
+    Object.defineProperty(window, "MatrixOS", {
+      configurable: true,
+      value: {
+        proxyFetch: vi.fn(async () => null),
+      },
+    });
+
+    await expect(fetchForecast({
+      name: "Berlin",
+      latitude: 52.52,
+      longitude: 13.405,
+    })).rejects.toThrow("proxy request failed: empty response");
+  });
 });

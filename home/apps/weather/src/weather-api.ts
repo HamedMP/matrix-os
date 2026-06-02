@@ -22,8 +22,10 @@ async function proxyJson<T>(url: string): Promise<T> {
     return (await res.json()) as T;
   }
   const data = await withTimeout(proxy(url), 12_000);
+  if (data == null) {
+    throw new Error("proxy request failed: empty response");
+  }
   if (
-    data &&
     typeof data === "object" &&
     "error" in data
   ) {
