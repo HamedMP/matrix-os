@@ -369,12 +369,33 @@ kbd {
   color: var(--app-fg);
 }
 .banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   font-size: 12px;
   text-align: center;
   color: var(--app-danger);
   background: color-mix(in srgb, var(--app-danger) 10%, transparent);
   border-radius: 10px;
   padding: 8px 12px;
+}
+.banner-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 12%, transparent);
+  cursor: pointer;
+}
+.banner-dismiss:focus-visible {
+  outline: 2px solid var(--app-danger);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

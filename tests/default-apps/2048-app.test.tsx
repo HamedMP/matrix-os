@@ -109,6 +109,20 @@ describe("2048 app", () => {
     expect(survivor).toMatchObject({ id: 3, value: 4, merged: false });
   });
 
+  it("does not mark unmatched fallback tiles as merged", () => {
+    const tiles = tilesFromBoard(
+      [
+        [16, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+      ],
+      [{ id: 1, value: 2, row: 0, col: 0 }],
+    );
+
+    expect(tiles[0]).toMatchObject({ value: 16, spawned: false, merged: false });
+  });
+
   it("an arrow key produces a move and increases score on a merge", async () => {
     const db = installMatrixDb([]);
     render(<App />);
@@ -159,10 +173,89 @@ describe("2048 app", () => {
     await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
   });
 
+  it("waits for the initial score row before persisting an early best", async () => {
+    const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
+    vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);
+    const db = installMatrixDb([]);
+    let resolveFind: (rows: DbRow[]) => void = () => undefined;
+    db.find.mockImplementation(async () => new Promise<DbRow[]>((resolve) => {
+      resolveFind = resolve;
+    }));
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveFind([{ id: "s1", score: 0, best: 5000, created_at: "2026-05-31T00:00:00.000Z" }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith("scores", "s1", expect.objectContaining({ best: 5000 })),
+    );
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(screen.getByTestId("best").textContent).toBe("5000");
+  });
+
   it("falls back to localStorage best score when MatrixOS.db is undefined", async () => {
     window.localStorage.setItem("matrixos.2048.best", "7777");
     render(<App />);
     await screen.findByTestId("board");
     await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
+  });
+
+  it("logs unexpected localStorage read failures", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("read failed");
+    });
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    expect(warn).toHaveBeenCalledWith("[2048] unexpected localStorage read error", expect.any(Error));
+  });
+
+  it("logs unexpected localStorage write failures", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("write failed");
+    });
+    vi.spyOn(Math, "random").mockReturnValue(0.1);
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith("[2048] unexpected localStorage write error", expect.any(Error)),
+    );
+  });
+
+  it("lets the player dismiss a transient sync error banner", async () => {
+    const db = installMatrixDb([]);
+    db.find.mockRejectedValueOnce(new Error("load failed"));
+
+    render(<App />);
+    await screen.findByTestId("board");
+    expect(await screen.findByText("Couldn't load your best score; playing locally.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /dismiss sync message/i }));
+
+    expect(screen.queryByText("Couldn't load your best score; playing locally.")).toBeNull();
   });
 });

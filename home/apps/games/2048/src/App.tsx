@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { RotateCcw, Undo2, Trophy, Sparkles } from "lucide-react";
+import { RotateCcw, Undo2, Trophy, Sparkles, X } from "lucide-react";
 import {
   type Board,
   type Direction,
@@ -41,8 +41,7 @@ interface InternalState extends GameState {
 type Action =
   | { type: "reset" }
   | { type: "move"; direction: Direction }
-  | { type: "undo" }
-  | { type: "load-best"; best: number };
+  | { type: "undo" };
 
 function cellKey(row: number, col: number): string {
   return `${row}:${col}`;
@@ -110,7 +109,7 @@ export function tilesFromBoard(
           used.add(match.id);
           tiles.push({ ...match, row: r, col: c, spawned: false, merged: false });
         } else {
-          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: true });
+          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: false });
         }
       }
     }
@@ -176,9 +175,6 @@ function reducer(state: InternalState, action: Action): InternalState {
       };
     }
 
-    case "load-best":
-      return state;
-
     default:
       return state;
   }
@@ -210,6 +206,7 @@ export default function App() {
   const [keepPlaying, setKeepPlaying] = useState(false);
   const dbRowId = useRef<string | null>(null);
   const dbRowInsertRef = useRef<Promise<string> | null>(null);
+  const dbInitialLoadRef = useRef<Promise<void> | null>(null);
   const pendingBestRef = useRef(0);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
@@ -234,8 +231,10 @@ export default function App() {
       try {
         const raw = window.localStorage.getItem(BEST_KEY);
         if (raw && active) setBest(Number(raw) || 0);
-      } catch {
-        // localStorage may be unavailable (privacy mode); ignore safely.
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "SecurityError")) {
+          console.warn("[2048] unexpected localStorage read error", err);
+        }
       }
     };
 
@@ -246,24 +245,30 @@ export default function App() {
       };
     }
 
-    (async () => {
+    const load = (async () => {
       try {
         const rows = await db.find(SCORES_TABLE, { orderBy: { created_at: "desc" }, limit: 1 });
         if (!active) return;
         const row = rows[0];
         if (row) {
+          const loadedBest = Number(row.best) || 0;
           dbRowId.current = (row.id as string) ?? null;
-          setBest(Number(row.best) || 0);
+          pendingBestRef.current = Math.max(pendingBestRef.current, loadedBest);
+          setBest((prev) => Math.max(prev, loadedBest));
         } else {
           fromLocal();
         }
+        setError(null);
       } catch (err) {
         if (!active) return;
         console.warn("[2048] failed to load best score from MatrixOS.db", err);
         setError("Couldn't load your best score; playing locally.");
         fromLocal();
+      } finally {
+        dbInitialLoadRef.current = null;
       }
     })();
+    dbInitialLoadRef.current = load;
 
     return () => {
       active = false;
@@ -284,6 +289,7 @@ export default function App() {
             if (row) {
               dbRowId.current = (row.id as string) ?? dbRowId.current;
               setBest((prev) => Math.max(prev, Number(row.best) || 0));
+              setError(null);
             }
           } catch (err) {
             console.warn("[2048] onChange reload failed", err);
@@ -303,14 +309,19 @@ export default function App() {
     // Optimistic local fallback always.
     try {
       window.localStorage.setItem(BEST_KEY, String(newBest));
-    } catch {
-      // ignore; non-fatal
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "SecurityError")) {
+        console.warn("[2048] unexpected localStorage write error", err);
+      }
     }
     const db = window.MatrixOS?.db;
     if (!db) return;
     pendingBestRef.current = Math.max(pendingBestRef.current, newBest);
     (async () => {
       try {
+        if (!dbRowId.current && dbInitialLoadRef.current) {
+          await dbInitialLoadRef.current;
+        }
         if (dbRowId.current) {
           await db.update(SCORES_TABLE, dbRowId.current, { best: Math.max(newBest, pendingBestRef.current) });
         } else {
@@ -321,7 +332,7 @@ export default function App() {
               created_at: new Date().toISOString(),
             })
               .then((res) => {
-                dbRowId.current = res.id;
+                if (!dbRowId.current) dbRowId.current = res.id;
                 return res.id;
               })
               .finally(() => {
@@ -329,8 +340,9 @@ export default function App() {
               });
           }
           const id = await dbRowInsertRef.current;
-          await db.update(SCORES_TABLE, id, { best: Math.max(newBest, pendingBestRef.current) });
+          await db.update(SCORES_TABLE, dbRowId.current ?? id, { best: Math.max(newBest, pendingBestRef.current) });
         }
+        setError(null);
       } catch (err) {
         console.warn("[2048] failed to persist best score", err);
         setError("Best score saved locally; sync failed.");
@@ -353,6 +365,10 @@ export default function App() {
 
   const showWin = state.won && !keepPlaying;
   const showOver = state.over && (!state.won || keepPlaying);
+  const undoMove = useCallback(() => {
+    setKeepPlaying(false);
+    dispatch({ type: "undo" });
+  }, []);
 
   // ---- Keyboard input ------------------------------------------------------
   useEffect(() => {
@@ -360,7 +376,7 @@ export default function App() {
       if (e.metaKey || e.ctrlKey) {
         if ((e.key === "z" || e.key === "Z") && state.history) {
           e.preventDefault();
-          dispatch({ type: "undo" });
+          undoMove();
         }
         return;
       }
@@ -373,7 +389,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showWin, state.history]);
+  }, [showWin, state.history, undoMove]);
 
   // ---- Touch swipe ---------------------------------------------------------
   useEffect(() => {
@@ -446,7 +462,7 @@ export default function App() {
         </header>
 
         <div className="controls">
-          <button type="button" className="btn ghost" onClick={() => dispatch({ type: "undo" })} disabled={!state.history}>
+          <button type="button" className="btn ghost" onClick={undoMove} disabled={!state.history}>
             <Undo2 size={15} aria-hidden /> Undo
           </button>
           <button type="button" className="btn primary" onClick={newGameClick}>
@@ -528,7 +544,10 @@ export default function App() {
 
         {error && (
           <div className="banner" role="status">
-            {error}
+            <span>{error}</span>
+            <button type="button" className="banner-dismiss" aria-label="Dismiss sync message" onClick={() => setError(null)}>
+              <X size={13} aria-hidden />
+            </button>
           </div>
         )}
       </div>
