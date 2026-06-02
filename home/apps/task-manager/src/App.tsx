@@ -96,16 +96,34 @@ function formatDue(due: string): string {
 
 async function persistBoardToBridge(bridge: MatrixDb, source: Board): Promise<Board> {
   const columnIdMap = new Map<string, string>();
-  for (let i = 0; i < source.columns.length; i += 1) {
-    const column = source.columns[i];
-    const result = await bridge.insert(COLUMNS_TABLE, columnToRow(column, i));
-    columnIdMap.set(column.id, result.id);
-  }
-  for (const card of source.cards) {
-    await bridge.insert(CARDS_TABLE, {
-      ...cardToRow(card, card.order),
-      column_id: columnIdMap.get(card.columnId) ?? card.columnId,
-    });
+  const insertedColumnIds: string[] = [];
+  const insertedCardIds: string[] = [];
+  try {
+    for (let i = 0; i < source.columns.length; i += 1) {
+      const column = source.columns[i];
+      const result = await bridge.insert(COLUMNS_TABLE, columnToRow(column, i));
+      insertedColumnIds.push(result.id);
+      columnIdMap.set(column.id, result.id);
+    }
+    for (const card of source.cards) {
+      const result = await bridge.insert(CARDS_TABLE, {
+        ...cardToRow(card, card.order),
+        column_id: columnIdMap.get(card.columnId) ?? card.columnId,
+      });
+      insertedCardIds.push(result.id);
+    }
+  } catch (err) {
+    for (const cardId of [...insertedCardIds].reverse()) {
+      await bridge.delete(CARDS_TABLE, cardId).catch((cleanupErr: unknown) => {
+        console.warn("[task-manager] seed card cleanup failed:", errMessage(cleanupErr));
+      });
+    }
+    for (const columnId of [...insertedColumnIds].reverse()) {
+      await bridge.delete(COLUMNS_TABLE, columnId).catch((cleanupErr: unknown) => {
+        console.warn("[task-manager] seed column cleanup failed:", errMessage(cleanupErr));
+      });
+    }
+    throw err;
   }
   const [columnRows, cardRows] = await Promise.all([
     bridge.find(COLUMNS_TABLE, { orderBy: { position: "asc" } }),
@@ -154,13 +172,23 @@ function App() {
       if (columnRows.length === 0) {
         const legacy = await loadBridgeBoard();
         if (legacy) {
-          setBoard(await persistBoardToBridge(bridge, legacy));
+          suppressReloadRef.current = true;
+          try {
+            setBoard(await persistBoardToBridge(bridge, legacy));
+          } finally {
+            suppressReloadRef.current = false;
+          }
           setError(null);
           return;
         }
         // First run: seed the default workflow columns into Postgres.
         const seed = emptyBoard();
-        setBoard(await persistBoardToBridge(bridge, seed));
+        suppressReloadRef.current = true;
+        try {
+          setBoard(await persistBoardToBridge(bridge, seed));
+        } finally {
+          suppressReloadRef.current = false;
+        }
         setError(null);
         return;
       }
@@ -423,12 +451,14 @@ function App() {
 
   const renameBoardColumn = useCallback((columnId: string, title: string) => {
     if (!boardRef.current) return;
+    const trimmedTitle = title.trim();
     setBoard((current) => (current ? renameColumn(current, columnId, title) : current));
+    if (!trimmedTitle) return;
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
       const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
-      await bridge.update(COLUMNS_TABLE, persistedColumnId, { title: title.trim() });
+      await bridge.update(COLUMNS_TABLE, persistedColumnId, { title: trimmedTitle });
     }, "Column could not be renamed");
   }, [persist]);
 

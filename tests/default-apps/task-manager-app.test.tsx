@@ -138,6 +138,25 @@ describe("Task Manager app", () => {
     await waitFor(() => expect(db.insert).toHaveBeenCalledWith("columns", expect.objectContaining({ title: "Backlog" })));
     expect(await screen.findByRole("heading", { name: "Backlog" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Done" })).toBeTruthy();
+    expect(db.find.mock.calls.filter((call) => call[0] === "columns")).toHaveLength(2);
+  });
+
+  it("cleans up partially seeded columns when first-run seeding fails", async () => {
+    const { db, store } = installMatrixDb();
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Ready") {
+        throw new Error("seed failed");
+      }
+      const id = `${table}-${store[table as keyof FakeDb].length + 1}`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText(/board could not be loaded/i)).toBeTruthy();
+    await waitFor(() => expect(db.delete).toHaveBeenCalledWith("columns", "columns-1"));
+    expect(store.columns).toHaveLength(0);
   });
 
   it("migrates the legacy project-board bridge data before seeding defaults", async () => {
@@ -662,6 +681,28 @@ describe("Task Manager app", () => {
     });
 
     expect(db.update).not.toHaveBeenCalledWith("columns", "col-1", { title: "Cancelled" });
+    expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
+  });
+
+  it("does not persist an empty column title on rename", async () => {
+    const { db } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+
+    render(<App />);
+    const heading = await screen.findByRole("heading", { name: "To do" });
+    fireEvent.click(heading.closest("button")!);
+    const renameInput = screen.getByDisplayValue("To do");
+    fireEvent.change(renameInput, { target: { value: "   " } });
+    fireEvent.blur(renameInput);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(db.update).not.toHaveBeenCalledWith("columns", "col-1", { title: "" });
+    expect(db.update).not.toHaveBeenCalledWith("columns", "col-1", { title: "   " });
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
