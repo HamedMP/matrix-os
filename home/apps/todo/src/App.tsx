@@ -519,6 +519,7 @@ export default function App() {
                     aria-label={`Complete ${task.title}`}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setSelectedId(null);
                       void completeTask(task);
                     }}
                   >

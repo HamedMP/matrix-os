@@ -8,6 +8,7 @@ type DbRow = Record<string, unknown>;
 
 function isoDaysFromNow(days: number): string {
   const d = new Date();
+  d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() + days);
   return d.toISOString();
 }
@@ -173,6 +174,23 @@ describe("Todo app", () => {
     });
   });
 
+  it("closes the inspector when completing a selected task with the check button", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
+    ]);
+    render(<App />);
+    await screen.findByText("Finish report");
+    fireEvent.click(screen.getByRole("listitem"));
+    expect(screen.getByRole("dialog", { name: /details for finish report/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /complete .*finish report/i }));
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { status: "done" });
+    });
+
+    expect(screen.queryByRole("dialog", { name: /details for finish report/i })).toBeNull();
+  });
+
   it("does not roll back a completed task when the follow-up reload fails", async () => {
     const db = installMatrixDb([
       { id: "t1", title: "Finish report", status: "open", priority: 0, due: null },
@@ -319,7 +337,7 @@ describe("Todo app", () => {
         title: "Today only",
         status: "open",
         priority: 0,
-        due: new Date().toISOString(),
+        due: isoDaysFromNow(0),
         recur: null,
       },
     ]);
