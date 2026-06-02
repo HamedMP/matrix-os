@@ -73,8 +73,11 @@ final human review.
      rating per PR, especially whether it is `5/5`.
    - Audit existing `ready-for-ci` labels before any fixes. For each monitored
      PR, compare the label state with the latest Greptile review and current
-     `headRefOid`; remove `ready-for-ci` immediately if the PR is draft or if
-     the label is not backed by a current-head `5/5` review:
+     `headRefOid`; also inspect unresolved human review threads, unresolved
+     Codex review comments, and unresolved actionable issue comments. Remove
+     `ready-for-ci` immediately if the PR is draft, if the label is not backed
+     by a current-head `5/5` review, or if any unresolved review blocker is
+     present:
      `gh pr edit <number> --remove-label "ready-for-ci"`.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
