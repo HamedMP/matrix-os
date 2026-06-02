@@ -145,7 +145,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [time, setTime] = useState(() => formatClock(new Date()));
+  const [time, setTime] = useState("--:--");
   const stackRef = useRef(openStack);
   const launchPathConsumedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -156,6 +156,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
 
   useEffect(() => {
     const tick = () => setTime(formatClock(new Date()));
+    tick();
     const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
   }, []);
@@ -301,7 +302,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
         className="flex items-center justify-between px-4 text-xs"
         style={{ height: 28, color: "var(--muted-foreground)" }}
       >
-        <span style={{ fontWeight: 600 }}>{time}</span>
+        <span data-testid="mobile-shell-clock" style={{ fontWeight: 600 }}>{time}</span>
         <span style={{ opacity: 0.7 }}>{view === "app" && top ? top.app.name : "Matrix OS"}</span>
         <button
           type="button"

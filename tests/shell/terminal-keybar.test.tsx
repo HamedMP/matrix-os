@@ -83,10 +83,26 @@ describe("TerminalKeyBar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show more keys" }));
 
+    expect(screen.getByRole("tab", { name: "ABC keyboard" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "letter q" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "letter m" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Space" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backspace" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Enter" })).toHaveLength(1);
+  });
+
+  it("switches expanded keyboard layers without hiding the collapse action", () => {
+    render(<TerminalKeyBar onSend={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more keys" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Sym keyboard" }));
+
+    expect(screen.getByRole("tab", { name: "Sym keyboard" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "$" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Nav keyboard" }));
+
+    expect(screen.getByRole("button", { name: "Control U" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show fewer keys" })).toBeTruthy();
   });
 });

@@ -380,6 +380,25 @@ export function TerminalPane({
     const onKey = (e: Event) => {
       const detail = (e as CustomEvent<TerminalInputEventDetail>).detail;
       if (!detail || detail.paneId !== paneId) return;
+      if (detail.action === "search") {
+        setSearchOpen((prev) => !prev);
+        return;
+      }
+      if (detail.action === "paste") {
+        navigator.clipboard.readText().then((text) => {
+          const ws = wsRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const safe = text.replace(/\x1b\[20[01]~/g, "");
+            const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
+            const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
+            ws.send(JSON.stringify({ type: "input", data: bracketed }));
+          }
+        }).catch((err: unknown) => {
+          console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+        });
+        return;
+      }
+      if (!detail.data) return;
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "input", data: detail.data }));
