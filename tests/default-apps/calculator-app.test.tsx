@@ -152,7 +152,7 @@ describe("Calculator app", () => {
     expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe("[]");
   });
 
-  it("reports non-throwing delete failures without clearing local fallback history", async () => {
+  it("reports non-throwing delete failures without restoring attempted local fallback rows", async () => {
     const rows = [
       { id: "h1", expression: "9 + 1", result: "10", created_at: "2026-05-31T10:00:00.000Z" },
     ];
@@ -169,7 +169,7 @@ describe("Calculator app", () => {
     fireEvent.click(clearHistory!);
 
     expect(await screen.findByText("History could not be cleared.")).toBeTruthy();
-    expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe(JSON.stringify(rows));
+    expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe("[]");
     expect(screen.getByText("9 + 1")).toBeTruthy();
   });
 

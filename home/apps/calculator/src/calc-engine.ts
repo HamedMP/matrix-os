@@ -68,6 +68,8 @@ export function tokenize(input: string): Token[] {
           k += 1;
           while (src[k] >= "0" && src[k] <= "9") k += 1;
           j = k;
+        } else {
+          throw new CalcError(`Unexpected character "${src[j]}"`);
         }
       }
       tokens.push({ type: "number", value: src.slice(i, j) });

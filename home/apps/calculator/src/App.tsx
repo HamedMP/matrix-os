@@ -325,8 +325,8 @@ export default function App() {
       clearingRef.current = false;
       return;
     }
+    const seen = new Set<string>();
     try {
-      const seen = new Set<string>();
       for (let page = 0; page < MAX_CLEAR_PAGES; page += 1) {
         const pageRows = await db.find(HISTORY_TABLE, {
           orderBy: { created_at: "desc" },
@@ -347,7 +347,7 @@ export default function App() {
       writeLocal([]);
     } catch (err: unknown) {
       console.warn("[calculator] history clear failed:", err instanceof Error ? err.message : String(err));
-      writeLocal(rows);
+      writeLocal(rows.filter((row) => row.id.startsWith("local-") || !seen.has(row.id)));
       const status = await reload();
       if (status === "error") setHistory(rows);
       setError("History could not be cleared.");

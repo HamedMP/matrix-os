@@ -120,6 +120,12 @@ describe("calc-engine evaluation", () => {
     expect(ok("3e-2 + 0.2")).toBeCloseTo(0.23, 10);
   });
 
+  it("rejects bare scientific notation markers", () => {
+    expect(err("1e")).toMatch(/Unexpected character/);
+    expect(err("1e+")).toMatch(/Unexpected character/);
+    expect(err("1E-")).toMatch(/Unexpected character/);
+  });
+
   it("evaluates factorial", () => {
     expect(ok("5!")).toBe(120);
     expect(ok("0!")).toBe(1);
