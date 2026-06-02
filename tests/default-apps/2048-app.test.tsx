@@ -75,6 +75,7 @@ describe("2048 app", () => {
       ],
       null,
       new Set(["0:0"]),
+      new Set(["0:0", "0:1"]),
     );
 
     const merged = tiles.find((tile) => tile.row === 0 && tile.col === 0);
@@ -82,6 +83,30 @@ describe("2048 app", () => {
     expect(merged?.merged).toBe(true);
     expect(merged?.id).not.toBe(3);
     expect(slid).toMatchObject({ id: 3, merged: false });
+  });
+
+  it("does not reuse consumed merge-source ids for surviving same-value tiles", () => {
+    const tiles = tilesFromBoard(
+      [
+        [8, 4, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+      ],
+      [
+        { id: 1, value: 4, row: 0, col: 0 },
+        { id: 2, value: 4, row: 0, col: 1 },
+        { id: 3, value: 4, row: 0, col: 2 },
+      ],
+      null,
+      new Set(["0:0"]),
+      new Set(["0:0", "0:1"]),
+    );
+
+    const merged = tiles.find((tile) => tile.row === 0 && tile.col === 0);
+    const survivor = tiles.find((tile) => tile.row === 0 && tile.col === 1);
+    expect(merged?.merged).toBe(true);
+    expect(survivor).toMatchObject({ id: 3, value: 4, merged: false });
   });
 
   it("an arrow key produces a move and increases score on a merge", async () => {

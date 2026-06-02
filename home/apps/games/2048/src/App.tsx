@@ -48,8 +48,9 @@ function cellKey(row: number, col: number): string {
   return `${row}:${col}`;
 }
 
-function mergeCellsForMove(board: Board, direction: Direction): Set<string> {
+function animationCellsForMove(board: Board, direction: Direction): { merged: Set<string>; consumed: Set<string> } {
   const merged = new Set<string>();
+  const consumed = new Set<string>();
   for (let line = 0; line < board.length; line += 1) {
     const values: Array<{ value: number; row: number; col: number }> = [];
     for (let offset = 0; offset < board.length; offset += 1) {
@@ -68,12 +69,14 @@ function mergeCellsForMove(board: Board, direction: Direction): Set<string> {
       const col = direction === "left" ? target : direction === "right" ? board.length - 1 - target : line;
       if (isMerge) {
         merged.add(cellKey(row, col));
+        consumed.add(cellKey(current.row, current.col));
+        if (next) consumed.add(cellKey(next.row, next.col));
         index += 1;
       }
       target += 1;
     }
   }
-  return merged;
+  return { merged, consumed };
 }
 
 export function tilesFromBoard(
@@ -81,9 +84,14 @@ export function tilesFromBoard(
   previous: Tile[] = [],
   spawned: { row: number; col: number; value: number } | null = null,
   mergedCells = new Set<string>(),
+  consumedCells = new Set<string>(),
 ): Tile[] {
   const tiles: Tile[] = [];
-  const used = new Set<number>();
+  const used = new Set(
+    previous
+      .filter((tile) => consumedCells.has(cellKey(tile.row, tile.col)))
+      .map((tile) => tile.id),
+  );
   for (let r = 0; r < board.length; r += 1) {
     for (let c = 0; c < board[r].length; c += 1) {
       if (board[r][c] !== 0) {
@@ -155,7 +163,8 @@ function reducer(state: InternalState, action: Action): InternalState {
       const spawn = addRandomTile(result.board, Math.random);
       const nextBoard = spawn.board;
       const nextScore = state.score + result.gained;
-      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned, mergeCellsForMove(state.board, action.direction));
+      const animationCells = animationCellsForMove(state.board, action.direction);
+      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned, animationCells.merged, animationCells.consumed);
 
       return {
         board: nextBoard,
