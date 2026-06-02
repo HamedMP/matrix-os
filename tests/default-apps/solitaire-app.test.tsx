@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/games/solitaire/src/App";
@@ -7,7 +7,10 @@ import { type GameState } from "../../home/apps/games/solitaire/src/solitaire-mo
 
 type DbRow = Record<string, unknown>;
 
-function installMatrixDb(rows: DbRow[] = []) {
+function installMatrixDb(
+  rows: DbRow[] = [],
+  bridge: { readData?: () => Promise<unknown>; writeData?: (key: string, value: unknown) => Promise<void> } = {},
+) {
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
@@ -19,7 +22,7 @@ function installMatrixDb(rows: DbRow[] = []) {
   };
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
-    value: { db },
+    value: { db, ...bridge },
   });
   return db;
 }
@@ -114,6 +117,69 @@ describe("Solitaire app", () => {
 
     fireEvent.click(card);
     expect(card.className).not.toContain("sol-card--selected");
+  });
+
+  it("applies saved draw-three preference to the untouched initial deal", async () => {
+    installMatrixDb([], { readData: vi.fn(async () => 3) });
+    render(<App />);
+
+    const drawThree = await screen.findByRole("button", { name: /draw 3/i });
+    await waitFor(() => expect(drawThree.className).toContain("seg--on"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("stock"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("stock").textContent).toContain("21");
+  });
+
+  it("does not double-count when a new game starts before stats finish loading", async () => {
+    let resolveFind: (rows: DbRow[]) => void = () => undefined;
+    const db = installMatrixDb();
+    db.find.mockImplementation(async () => new Promise<DbRow[]>((resolve) => {
+      resolveFind = resolve;
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /new game/i }));
+
+    await act(async () => {
+      resolveFind([{ id: "stats-1", games_played: 5, games_won: 2, best_time: 90, best_moves: 30 }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith(
+      "stats",
+      "stats-1",
+      expect.objectContaining({ games_played: 6 }),
+    ));
+    expect(db.update.mock.calls.filter((call) => call[0] === "stats" && (call[2] as DbRow).games_played === 7)).toHaveLength(0);
+  });
+
+  it("does not auto-route a waste card while another source is selected", async () => {
+    installMatrixDb();
+    const state: GameState = {
+      ...seededState(),
+      tableau: [
+        [{ id: "spades-5", suit: "spades", rank: 5, faceUp: true }],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+      ],
+    };
+    render(<App initialState={state} />);
+
+    fireEvent.click(await screen.findByTestId("card-spades-5"));
+    fireEvent.click(screen.getByTestId("card-spades-1"));
+
+    expect(screen.getByTestId("waste").textContent).toContain("A");
+    expect(screen.getAllByTestId("foundation").some((pile) => within(pile).queryByTestId("card-spades-1"))).toBe(false);
+    expect(screen.getByTestId("card-spades-1").className).toContain("sol-card--selected");
   });
 
   it("persists stats to the bridge when a game is won", async () => {

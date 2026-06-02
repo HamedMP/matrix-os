@@ -284,9 +284,10 @@ export function applyMove(state: GameState, src: Source, dest: Destination): Gam
 // Find a legal destination for a click on a given source. Prefers foundation
 // for a single top card, then any legal tableau pile.
 export function findAutoDestination(state: GameState, src: Source): Destination | null {
+  if (src.type === "foundation") return null;
+
   const isSingleTop =
     (src.type === "waste") ||
-    (src.type === "foundation") ||
     (src.type === "tableau" && src.index === state.tableau[src.pile].length - 1);
 
   if (isSingleTop) {
@@ -329,7 +330,6 @@ export function autoMoveToFoundation(state: GameState, src: Source): GameState |
 export function canAutoComplete(state: GameState): boolean {
   if (isWon(state)) return false;
   if (state.stock.length > 0) return false;
-  if (state.waste.length > 1) return false;
   for (const pile of state.tableau) {
     for (const card of pile) {
       if (!card.faceUp) return false;

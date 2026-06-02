@@ -113,6 +113,15 @@ describe("foundation legality", () => {
     expect(applyMove(s, { type: "foundation", pile: 0 }, { type: "foundation", pile: 1 })).toBeNull();
     expect(findAutoDestination(s, { type: "foundation", pile: 0 })).toBeNull();
   });
+
+  it("does not auto-route foundation cards back to tableau on single click", () => {
+    const s = emptyState();
+    s.foundations[0] = [card("spades", 7)];
+    s.tableau[0] = [card("hearts", 8)];
+
+    expect(isLegalMove(s, { type: "foundation", pile: 0 }, { type: "tableau", pile: 0 })).toBe(true);
+    expect(findAutoDestination(s, { type: "foundation", pile: 0 })).toBeNull();
+  });
 });
 
 describe("movable runs", () => {
@@ -225,6 +234,16 @@ describe("auto-complete + win", () => {
     // one king got promoted
     const promoted = step!.foundations.some((p) => p.length === 13);
     expect(promoted).toBe(true);
+  });
+
+  it("can auto-complete through multiple face-up waste cards when stock is empty", () => {
+    const s = emptyState();
+    s.foundations[0] = [card("spades", 1), card("spades", 2)];
+    s.waste = [card("spades", 4), card("spades", 3)];
+
+    expect(canAutoComplete(s)).toBe(true);
+    const step = autoCompleteStep(s);
+    expect(step?.foundations[0].at(-1)?.rank).toBe(3);
   });
 
   it("does not offer auto-complete when no top card can move to a foundation", () => {

@@ -71,6 +71,7 @@ export default function App({ initialState }: AppProps) {
   const statsLoadedRef = useRef(false);
   const statsRowIdRef = useRef<string | null>(null);
   const statsInsertRef = useRef<Promise<string> | null>(null);
+  const pendingGamesPlayedRef = useRef(0);
   const startedAtRef = useRef<number>(Date.now());
 
   const won = isWon(game);
@@ -153,7 +154,16 @@ export default function App({ initialState }: AppProps) {
       try {
         const value = await window.MatrixOS?.readData?.(DRAW_PREF_KEY);
         if (!active) return;
-        if (value === 1 || value === 3) setDraw(value);
+        if (value === 1 || value === 3) {
+          setDraw(value);
+          if (!initialState) {
+            setGame((current) => {
+              if (current.moves !== 0 || current.drawCount === value) return current;
+              startedAtRef.current = Date.now();
+              return deal(Math.random, value);
+            });
+          }
+        }
       } catch (err: unknown) {
         console.warn("[solitaire] draw preference load failed:", err instanceof Error ? err.message : String(err));
       }
@@ -161,12 +171,24 @@ export default function App({ initialState }: AppProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialState]);
 
   const recordGamePlayed = useCallback(() => {
+    if (!statsLoadedRef.current) {
+      pendingGamesPlayedRef.current += 1;
+      return;
+    }
     const cur = statsRef.current;
     void persistStats({ ...cur, games_played: cur.games_played + 1 });
   }, [persistStats]);
+
+  useEffect(() => {
+    if (!statsLoadedRef.current || pendingGamesPlayedRef.current === 0) return;
+    const pending = pendingGamesPlayedRef.current;
+    pendingGamesPlayedRef.current = 0;
+    const cur = statsRef.current;
+    void persistStats({ ...cur, games_played: cur.games_played + pending });
+  }, [persistStats, stats]);
 
   useEffect(() => {
     if (countedInitialGameRef.current || !statsLoadedRef.current) return;
@@ -192,6 +214,7 @@ export default function App({ initialState }: AppProps) {
       setElapsed(0);
       setError(null);
       recordedWinRef.current = false;
+      countedInitialGameRef.current = true;
       startedAtRef.current = Date.now();
       setRunning(true);
       recordGamePlayed();
@@ -268,6 +291,8 @@ export default function App({ initialState }: AppProps) {
           if (doMove(selected, dest)) return;
           return;
         }
+        setSelected(src);
+        return;
       }
       // otherwise auto-route this source to a legal destination
       const dest = findAutoDestination(game, src);
