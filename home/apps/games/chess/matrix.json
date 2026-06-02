@@ -26,12 +26,14 @@
     }
   },
   "build": {
-    "install": "pnpm install --ignore-workspace --prefer-offline",
-    "command": "pnpm build",
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
     "output": "dist",
     "timeout": 180,
     "sourceGlobs": [
       "src/**",
+      "../_shared/**",
+      "../../_shared/**",
       "index.html",
       "matrix.json",
       "package.json",
