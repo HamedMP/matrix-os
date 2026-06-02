@@ -217,13 +217,9 @@ export default function App(): React.ReactElement {
         setStatusMsg("Best time sync unavailable");
         return;
       }
-      let previousBest: number | undefined;
-      setBestTimes((prev) => {
-        const current = prev[key];
-        previousBest = current;
-        if (current !== undefined && current <= secs) return prev;
-        return { ...prev, [key]: secs };
-      });
+      const previousBest = bestTimesRef.current[key];
+      if (previousBest !== undefined && previousBest <= secs) return;
+      setBestTimes((prev) => ({ ...prev, [key]: secs }));
 
       try {
         const inserted = await db.insert("times", {
@@ -233,22 +229,22 @@ export default function App(): React.ReactElement {
           mines: bestSpec.mines,
           seconds: secs,
         });
-        void (async () => {
-          try {
-            const rows = await db.find("times", {
-              where: { difficulty: diff, rows: bestSpec.rows, cols: bestSpec.cols, mines: bestSpec.mines },
-              orderBy: { seconds: "asc" },
-              limit: BEST_TIME_QUERY_LIMIT,
-            });
-            await Promise.all(
-              rows
-                .filter((row) => typeof row.id === "string" && row.id !== inserted.id && Number(row.seconds) > secs)
-                .map((row) => db.delete("times", row.id as string)),
-            );
-          } catch (err) {
-            console.warn("[minesweeper] failed to prune stale best times", err);
-          }
-        })();
+        try {
+          const rows = await db.find("times", {
+            where: { difficulty: diff, rows: bestSpec.rows, cols: bestSpec.cols, mines: bestSpec.mines },
+            orderBy: { seconds: "asc" },
+            limit: BEST_TIME_QUERY_LIMIT,
+          });
+          await Promise.all(
+            rows
+              .filter((row) => typeof row.id === "string" && row.id !== inserted.id && Number(row.seconds) > secs)
+              .map((row) => db.delete("times", row.id as string)),
+          );
+        } catch (err) {
+          console.warn("[minesweeper] failed to prune stale best times", err);
+          setStatusMsg("Best time saved; cleanup pending");
+          return;
+        }
         setStatusMsg("Best time saved to Matrix Postgres");
       } catch (err) {
         console.warn("[minesweeper] failed to persist best time", err);

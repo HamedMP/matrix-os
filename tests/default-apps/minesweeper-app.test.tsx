@@ -208,6 +208,7 @@ describe("Minesweeper app", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(7_000);
     });
+    vi.useRealTimers();
 
     for (let index = 1; index < 25; index += 1) {
       fireEvent.click(screen.getByTestId(`cell-${index}`));
@@ -215,6 +216,45 @@ describe("Minesweeper app", () => {
 
     expect(screen.getByText(/Cleared! Best time sync unavailable/)).toBeTruthy();
     expect(within(screen.getByTestId("best-time")).getByText("—")).toBeTruthy();
+  });
+
+  it("surfaces stale best-time cleanup failures after saving", async () => {
+    const db = installMatrixDb([]);
+    db.find
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "old-best", difficulty: "custom", rows: 5, cols: 5, mines: 1, seconds: 20 },
+      ]);
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+
+    render(<App />);
+    await screen.findAllByTestId(/^cell-/);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Custom" }));
+    fireEvent.change(screen.getByLabelText("Width"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Height"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Mines"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(await screen.findAllByTestId(/^cell-/)).toHaveLength(25);
+
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    fireEvent.click(screen.getByTestId("cell-12"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_000);
+    });
+
+    for (let index = 1; index < 25; index += 1) {
+      fireEvent.click(screen.getByTestId(`cell-${index}`));
+    }
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Best time saved; cleanup pending/)).toBeTruthy();
+    expect(db.delete).toHaveBeenCalledWith("times", "old-best");
+    expect(within(screen.getByTestId("best-time")).getByText("1s")).toBeTruthy();
   });
 
   it("works without a DB bridge", async () => {
