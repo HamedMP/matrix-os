@@ -322,6 +322,37 @@ describe("Whiteboard app", () => {
 
     expect(screen.queryByText("Committed text")).toBeNull();
   });
+
+  it("reopens placed text for editing and commits a second edit", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Text (T)" }));
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    await act(async () => {
+      fireEvent.pointerDown(canvas, { clientX: 120, clientY: 100, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(canvas, { clientX: 260, clientY: 150, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 260, clientY: 150, pointerId: 1 });
+      await Promise.resolve();
+    });
+
+    const editor = screen.getByLabelText("Edit text") as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "Initial text" } });
+    fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+
+    fireEvent.doubleClick(screen.getByText("Initial text"));
+    const reopened = screen.getByLabelText("Edit text") as HTMLTextAreaElement;
+    expect(reopened.value).toBe("Initial text");
+    fireEvent.change(reopened, { target: { value: "Revised text" } });
+    fireEvent.keyDown(reopened, { key: "Enter", metaKey: true });
+
+    expect(screen.getByText("Revised text")).toBeTruthy();
+    expect(screen.queryByText("Initial text")).toBeNull();
+  });
 });
 
 describe("Whiteboard app — multi-board files", () => {

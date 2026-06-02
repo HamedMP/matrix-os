@@ -871,6 +871,17 @@ export default function App() {
     setEditing(null);
   }, [activeId, apply, editing, scene]);
 
+  useEffect(() => {
+    if (!editing) editingCommitIdRef.current = null;
+  }, [editing]);
+
+  const startEditingElement = useCallback((el: SceneElement) => {
+    if (el.kind !== "text" && el.kind !== "sticky") return;
+    const box = el as BoxElement;
+    setSelected(new Set([el.id]));
+    setEditing({ id: el.id, value: box.text ?? "" });
+  }, []);
+
   // -- keyboard shortcuts ---------------------------------------------------
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -989,9 +1000,16 @@ export default function App() {
   const renderElements = useMemo(() => {
     const list = draft ? [...elements, draft] : elements;
     return list.map((el) => (
-      <ElementView key={el.id} el={el} selected={selected.has(el.id)} editing={editing?.id === el.id} arrowId={arrowId} />
+      <ElementView
+        key={el.id}
+        el={el}
+        selected={selected.has(el.id)}
+        editing={editing?.id === el.id}
+        arrowId={arrowId}
+        onEdit={startEditingElement}
+      />
     ));
-  }, [arrowId, draft, editing, elements, selected]);
+  }, [arrowId, draft, editing, elements, selected, startEditingElement]);
 
   const motion = reduceMotion();
   const gridUnit = 24 * viewport.zoom;
@@ -1516,7 +1534,19 @@ function penPath(points: Point[]): string {
   return d;
 }
 
-function ElementView({ el, selected, editing, arrowId }: { el: SceneElement; selected: boolean; editing: boolean; arrowId: string }) {
+function ElementView({
+  el,
+  selected,
+  editing,
+  arrowId,
+  onEdit,
+}: {
+  el: SceneElement;
+  selected: boolean;
+  editing: boolean;
+  arrowId: string;
+  onEdit: (el: SceneElement) => void;
+}) {
   const className = selected ? "wb-el wb-el--selected" : "wb-el";
   if (el.kind === "pen") {
     return (
@@ -1559,7 +1589,7 @@ function ElementView({ el, selected, editing, arrowId }: { el: SceneElement; sel
   }
   if (el.kind === "sticky") {
     return (
-      <g className={className}>
+      <g className={className} onDoubleClick={() => onEdit(el)}>
         <rect x={x} y={y} width={w} height={h} rx={6} fill={b.fill} stroke="rgba(50,53,46,0.14)" strokeWidth={1} className="wb-sticky" />
         {!editing && b.text ? (
           <foreignObject x={x} y={y} width={w} height={h}>
@@ -1572,7 +1602,14 @@ function ElementView({ el, selected, editing, arrowId }: { el: SceneElement; sel
   if (el.kind === "text") {
     if (editing) return null;
     return (
-      <foreignObject x={x} y={y} width={Math.max(w, 40)} height={Math.max(h, 24)} className={className}>
+      <foreignObject
+        x={x}
+        y={y}
+        width={Math.max(w, 40)}
+        height={Math.max(h, 24)}
+        className={className}
+        onDoubleClick={() => onEdit(el)}
+      >
         <div className="wb-text" style={{ color: el.stroke, fontSize: 18 + el.strokeWidth * 2 }}>
           {b.text || ""}
         </div>
