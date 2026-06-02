@@ -356,6 +356,38 @@ describe("Calculator app", () => {
     });
   });
 
+  it("shows feedback for rapid double-submit while a result save is in flight", async () => {
+    const db = installMatrixDb([]);
+    let resolveInsert: (() => void) | undefined;
+    db.insert.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveInsert = () => resolve({ id: "new-1" });
+        }),
+    );
+    render(<App />);
+
+    const input = (await screen.findByTestId("calc-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "6 * 7" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(db.insert).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Wait for result to finish saving.")).toBeTruthy();
+    await act(async () => {
+      resolveInsert?.();
+      await Promise.resolve();
+    });
+  });
+
   it("shows an onboarding empty state when history is empty", async () => {
     installMatrixDb([]);
     render(<App />);

@@ -180,4 +180,13 @@ describe("calc-engine formatting", () => {
   it("preserves exact safe integers without precision rounding", () => {
     expect(formatResult(999_999_999_999_999)).toBe("999,999,999,999,999");
   });
+
+  it("rounds binary float noise through the precision path", () => {
+    expect(formatResult(0.1 + 0.2)).toBe("0.3");
+    expect(formatResult(1 / 3)).toBe("0.3333333333");
+  });
+
+  it("coerces precision-rounded floats back to integer display", () => {
+    expect(formatResult(99.999999999999)).toBe("100");
+  });
 });
