@@ -87,7 +87,7 @@ const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
 
 const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
   color: "var(--foreground)",
-  fontSize: 12,
+  fontSize: 13,
   fontWeight: 650,
   fontFamily: "var(--font-mono, ui-monospace, monospace)",
   background: "transparent",
@@ -96,6 +96,8 @@ const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
   textAlign: "left",
   cursor: "copy",
 };
+
+const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 
 const PROJECT_BRANCH_BADGE_STYLE: CSSProperties = {
   padding: "1px 5px",
@@ -1140,13 +1142,15 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               style={{
                 ...TAB_ITEM_BASE_STYLE,
-                background: active ? "var(--background)" : "transparent",
+                background: active ? "var(--background)" : "color-mix(in srgb, var(--background) 42%, transparent)",
                 color: active ? "var(--foreground)" : "var(--muted-foreground)",
-                border: `1px solid ${active ? "var(--border)" : "transparent"}`,
-                padding: ctx.mobile ? "0 8px" : "0 10px",
-                fontWeight: active ? 500 : 400,
-                minWidth: ctx.mobile ? 112 : 136,
-                maxWidth: ctx.mobile ? 168 : 220,
+                border: `1px solid ${active ? "var(--border)" : "color-mix(in srgb, var(--border) 55%, transparent)"}`,
+                padding: ctx.mobile ? "0 7px" : "0 8px",
+                fontWeight: active ? 600 : 450,
+                flex: ctx.mobile ? "0 1 148px" : "0 1 168px",
+                minWidth: ctx.mobile ? 96 : 108,
+                maxWidth: ctx.mobile ? 160 : 190,
+                boxShadow: active ? "0 1px 0 rgba(0,0,0,0.08)" : "none",
               }}
               draggable
               onClick={() => ctx.setActiveTab(tab.id)}
@@ -1302,6 +1306,20 @@ function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSumm
   });
 }
 
+function getShellTabCount(shell: ShellSessionSummary): number | null {
+  if (!Array.isArray(shell.tabs)) return null;
+  return shell.tabs.reduce((count, tab) => {
+    const indexedCount = Number.isInteger(tab.idx) && tab.idx >= 0 ? tab.idx + 1 : 0;
+    return Math.max(count, indexedCount);
+  }, shell.tabs.length);
+}
+
+function formatShellTabCount(shell: ShellSessionSummary): string {
+  const count = getShellTabCount(shell);
+  if (count === null) return "tabs unknown";
+  return `${count} tab${count === 1 ? "" : "s"}`;
+}
+
 function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
   if (left.length !== right.length) return false;
   const sortedLeft = [...left].sort((a, b) => a.id.localeCompare(b.id));
@@ -1328,7 +1346,7 @@ function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: Workspac
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
-  const [tab, setTab] = useState<SidebarTab>("sessions");
+  const [tab, setTab] = useState<SidebarTab>("shells");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -1385,16 +1403,18 @@ function LocalTerminalSidebar() {
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
-    if (!options.silent) setShellsLoading(true);
-    if (!options.silent) setShellsError(null);
+    const silent = options.silent === true;
+    if (!silent) setShellsLoading(true);
+    if (!silent) setShellsError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
         signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        setShellsError("Failed to load shells");
-        if (!options.silent) setShells([]);
+        if (!silent) {
+          setShellsError("Failed to load shells");
+        }
         return;
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
@@ -1402,18 +1422,27 @@ function LocalTerminalSidebar() {
       setShells((prev) => shellSessionsEqual(prev, nextShells) ? prev : nextShells);
       setShellsError(null);
     } catch (err: unknown) {
-      if (options.silent && err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (silent) return;
       console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
       setShellsError("Could not reach gateway");
-      if (!options.silent) setShells([]);
     } finally {
-      if (!options.silent) setShellsLoading(false);
+      if (!silent) setShellsLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (tab !== "shells") return;
+    const controller = new AbortController();
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the shell-session list when the Shells tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
-    if (tab === "shells") void fetchShells();
+    void fetchShells({ signal: controller.signal });
+    const refreshTimer = window.setInterval(() => {
+      void fetchShells({ silent: true });
+    }, SHELLS_REFRESH_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(refreshTimer);
+    };
   }, [fetchShells, tab]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchSessions` is in the dependency array of the sessions-tab useEffect below.
@@ -1554,6 +1583,8 @@ function LocalTerminalSidebar() {
     deletingShellsRef.current!.add(name);
     setDeletingShellNames(Array.from(deletingShellsRef.current!));
     setShellsError(null);
+    const previousShells = shells;
+    setShells((prev) => prev.filter((shell) => shell.name !== name));
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async delete flow is correct as written
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
@@ -1562,12 +1593,14 @@ function LocalTerminalSidebar() {
       });
       if (!res.ok) {
         setShellsError("Failed to remove shell");
+        setShells((prev) => prev.some((shell) => shell.name === name) ? prev : previousShells);
         return;
       }
-      await fetchShells();
+      await fetchShells({ silent: true });
     } catch (err: unknown) {
       console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
       setShellsError("Could not remove shell");
+      setShells((prev) => prev.some((shell) => shell.name === name) ? prev : previousShells);
     } finally {
       deletingShellsRef.current!.delete(name);
       setDeletingShellNames(Array.from(deletingShellsRef.current!));
@@ -1663,9 +1696,9 @@ function LocalTerminalSidebar() {
           background: "color-mix(in srgb, var(--background) 62%, var(--card))",
         }}
       >
+        <SidebarRailButton label="Shells" icon={<TerminalIcon size={16} strokeWidth={1.8} />} active={tab === "shells"} onClick={() => selectSidebarTab("shells")} />
         <SidebarRailButton label="Sessions" icon={<BotIcon size={16} strokeWidth={1.8} />} active={tab === "sessions"} onClick={() => selectSidebarTab("sessions")} />
         <SidebarRailButton label="Projects" icon={<FolderIcon size={16} strokeWidth={1.8} />} active={tab === "projects"} onClick={() => selectSidebarTab("projects")} />
-        <SidebarRailButton label="Shells" icon={<TerminalIcon size={16} strokeWidth={1.8} />} active={tab === "shells"} onClick={() => selectSidebarTab("shells")} />
         <SidebarRailButton label="Files" icon={<FilesIcon size={16} strokeWidth={1.8} />} active={tab === "files"} onClick={() => selectSidebarTab("files")} />
         <div style={{ flex: 1 }} />
         <button
@@ -1957,6 +1990,7 @@ function ShellCard({
 }) {
   const tabs = shell.tabs ?? [];
   const focusedTab = tabs.find((tab) => tab.focused) ?? tabs[0];
+  const tabCountLabel = formatShellTabCount(shell);
   const statusColor =
     shell.status === "active" || !shell.status
       ? "var(--success)"
@@ -1976,21 +2010,23 @@ function ShellCard({
   return (
     <div
       style={{
-        margin: "5px 8px",
-        padding: "9px 10px",
+        margin: "6px 8px",
+        padding: "10px",
         borderRadius: 8,
         border: "1px solid var(--border)",
-        background: "var(--background)",
+        background: "color-mix(in srgb, var(--background) 84%, var(--card))",
+        boxShadow: "0 1px 0 rgba(0,0,0,0.05)",
       }}
     >
-      <div className="flex items-center gap-2" style={{ marginBottom: 5 }}>
+      <div className="flex items-center gap-2" style={{ marginBottom: 7 }}>
         <span
           style={{
-            width: 7,
-            height: 7,
+            width: 8,
+            height: 8,
             borderRadius: "50%",
             background: statusColor,
             flexShrink: 0,
+            boxShadow: "0 0 0 2px color-mix(in srgb, var(--background) 80%, transparent)",
           }}
         />
         <button
@@ -2003,12 +2039,26 @@ function ShellCard({
         >
           {shell.name}
         </button>
-        <span style={{ color: "var(--muted-foreground)", fontSize: 12, whiteSpace: "nowrap" }}>
-          {shell.attachedClients ?? 0} attached
+        <span
+          style={{
+            color: "var(--foreground)",
+            fontSize: 11,
+            whiteSpace: "nowrap",
+            border: "1px solid var(--border)",
+            borderRadius: 999,
+            background: "var(--card)",
+            padding: "1px 7px",
+            lineHeight: "18px",
+            flexShrink: 0,
+          }}
+        >
+          {tabCountLabel}
         </span>
       </div>
-      <div className="truncate" style={{ color: "var(--muted-foreground)", fontSize: 12, paddingLeft: 15 }}>
-        {shell.status ?? "active"} · {tabs.length} zellij tab{tabs.length === 1 ? "" : "s"}
+      <div className="flex min-w-0 items-center gap-2" style={{ color: "var(--muted-foreground)", fontSize: 12, paddingLeft: 16 }}>
+        <span className="truncate">{shell.status ?? "active"}</span>
+        <span aria-hidden="true">·</span>
+        <span className="truncate">{shell.attachedClients ?? 0} attached</span>
       </div>
       {focusedTab ? (
         <div
@@ -2016,15 +2066,15 @@ function ShellCard({
           style={{
             color: "var(--muted-foreground)",
             fontSize: 12,
-            paddingLeft: 15,
-            marginTop: 2,
+            paddingLeft: 16,
+            marginTop: 4,
             fontFamily: "var(--font-mono, ui-monospace, monospace)",
           }}
         >
           {focusedTab.idx}: {focusedTab.name ?? "tab"}
         </div>
       ) : null}
-      <div className="flex items-center gap-1" style={{ marginTop: 8, paddingLeft: 15 }}>
+      <div className="flex items-center gap-1" style={{ marginTop: 9, paddingLeft: 16 }}>
         <SessionActionBtn label="Open" sessionId={shell.name} onClick={onOpen} />
         <SessionActionBtn
           label={deleting ? "Deleting" : "Delete"}
