@@ -37,6 +37,13 @@ function asPriority(value: unknown): Priority {
 function parseLabels(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
   if (typeof value === "string") {
+    if (!value.trim()) return [];
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === "string");
+    } catch {
+      // Older rows used comma-separated labels. Keep reading them as a migration fallback.
+    }
     return value.split(",").map((part) => part.trim()).filter(Boolean);
   }
   return [];
@@ -158,7 +165,7 @@ export function cardToRow(card: Card, position: number): Record<string, unknown>
     column_id: card.columnId,
     title: card.title,
     description: card.description,
-    labels: card.labels.join(", "),
+    labels: JSON.stringify(card.labels),
     assignee: card.assignee,
     priority: card.priority,
     due: card.dueDate ? card.dueDate : null,

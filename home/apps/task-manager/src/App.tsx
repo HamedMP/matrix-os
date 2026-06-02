@@ -243,7 +243,8 @@ function App() {
       const liveColumnId = boardRef.current?.cards.find((card) => card.id === created.id)?.columnId ?? created.columnId;
       const columnId = await (pendingColumnIdsRef.current[liveColumnId] ?? Promise.resolve(liveColumnId));
       try {
-        const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...created, columnId }, created.order));
+        const liveOrder = boardRef.current?.cards.find((card) => card.id === created.id)?.order ?? created.order;
+        const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...created, columnId }, liveOrder));
         resolveCreatedCardId(result.id);
         setSelectedCardId((id) => (id === created.id ? result.id : id));
         setBoard((current) => current ? {
@@ -280,7 +281,14 @@ function App() {
       const rowCard = liveCard
         ? { ...updated, columnId: liveCard.columnId, order: liveCard.order }
         : updated;
-      await bridge.update(CARDS_TABLE, persistedCardId, cardToRow({ ...rowCard, id: persistedCardId }, rowCard.order));
+      const persistedColumnId = await (
+        pendingColumnIdsRef.current[rowCard.columnId] ?? Promise.resolve(rowCard.columnId)
+      );
+      await bridge.update(
+        CARDS_TABLE,
+        persistedCardId,
+        cardToRow({ ...rowCard, id: persistedCardId, columnId: persistedColumnId }, rowCard.order),
+      );
     }, "Card could not be updated");
   }, [persist, resolveCardId]);
 
@@ -711,6 +719,7 @@ function BoardColumnView(props: ColumnViewProps) {
     onSetDropTarget, onCardDrop, onOpenCard,
   } = props;
   const [renameValue, setRenameValue] = useState(column.title);
+  const skipNextRenameBlurRef = useRef(false);
   useEffect(() => setRenameValue(column.title), [column.title]);
 
   const isColumnDropTarget = draggingColumnId !== null && draggingColumnId !== column.id;
@@ -758,8 +767,21 @@ function BoardColumnView(props: ColumnViewProps) {
               autoFocus
               value={renameValue}
               onChange={(event) => setRenameValue(event.target.value)}
-              onBlur={() => onRename(renameValue)}
-              onKeyDown={(event) => { if (event.key === "Escape") { setRenameValue(column.title); onCancelEdit(); } }}
+              onBlur={() => {
+                if (skipNextRenameBlurRef.current) {
+                  skipNextRenameBlurRef.current = false;
+                  return;
+                }
+                onRename(renameValue);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  skipNextRenameBlurRef.current = true;
+                  setRenameValue(column.title);
+                  onCancelEdit();
+                }
+              }}
             />
           </form>
         ) : (

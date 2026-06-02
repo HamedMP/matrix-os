@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/task-manager/src/App";
-import { boardFromRows } from "../../home/apps/task-manager/src/persistence";
+import { boardFromRows, cardToRow } from "../../home/apps/task-manager/src/persistence";
 
 type DbRow = Record<string, unknown>;
 
@@ -101,6 +101,33 @@ describe("Task Manager app", () => {
     );
 
     expect(board.cards[0].updatedAt).toBe("2026-05-02T00:00:00.000Z");
+  });
+
+  it("round-trips labels containing commas through text storage", () => {
+    const row = cardToRow({
+      id: "card-1",
+      projectId: "project-default",
+      columnId: "col-1",
+      title: "Tagged",
+      description: "",
+      priority: "medium",
+      labels: ["bug, ui", "release"],
+      assignee: "",
+      dueDate: "",
+      checklist: [],
+      delegation: null,
+      order: 0,
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    }, 0);
+
+    expect(row.labels).toBe(JSON.stringify(["bug, ui", "release"]));
+
+    const board = boardFromRows(
+      [{ id: "col-1", title: "To do", color: "#7A7768", position: 0 }],
+      [{ id: "card-1", created_at: "2026-05-01T00:00:00.000Z", ...row }],
+    );
+    expect(board.cards[0].labels).toEqual(["bug, ui", "release"]);
   });
 
   it("seeds default columns into Postgres on first run", async () => {
@@ -360,6 +387,66 @@ describe("Task Manager app", () => {
     });
   });
 
+  it("resolves a pending destination column before persisting card detail edits", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [{ id: "card-1", column_id: "col-1", title: "Move me", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" }],
+    });
+    let resolveColumnInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<void>((resolve) => {
+          resolveColumnInsert = resolve;
+        });
+        const id = "columns-sprint";
+        store.columns.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByText("Move me")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    fireEvent.click(screen.getByText("Move me"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Move me");
+    fireEvent.change(titleInput, { target: { value: "Moved with title" } });
+    fireEvent.blur(titleInput);
+    const columnSelect = within(dialog).getByLabelText("Column") as HTMLSelectElement;
+    const sprintOption = Array.from(columnSelect.options).find((option) => option.textContent === "Sprint");
+    expect(sprintOption?.value).toMatch(/^column-/);
+    fireEvent.change(columnSelect, { target: { value: sprintOption!.value } });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalledWith(
+      "cards",
+      "card-1",
+      expect.objectContaining({ column_id: expect.stringMatching(/^column-/) }),
+    );
+
+    await act(async () => {
+      resolveColumnInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith(
+        "cards",
+        "card-1",
+        expect.objectContaining({ title: "Moved with title", column_id: "columns-sprint" }),
+      ),
+    );
+  });
+
   it("keeps card detail drafts when a pending card id resolves", async () => {
     const { db, store } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -454,6 +541,60 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("persists pending new-column cards with their latest live order", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let resolveColumnInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "columns" && data.title === "Sprint") {
+        await new Promise<void>((resolve) => {
+          resolveColumnInsert = resolve;
+        });
+        const id = "columns-sprint";
+        store.columns.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      if (table === "cards") {
+        const id = `cards-${String(data.title).toLowerCase()}`;
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByPlaceholderText("Column name"), { target: { value: "Sprint" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    const sprintInput = await screen.findByPlaceholderText("Add a card to Sprint");
+    fireEvent.change(sprintInput, { target: { value: "Alpha" } });
+    fireEvent.keyDown(sprintInput, { key: "Enter" });
+    fireEvent.change(sprintInput, { target: { value: "Beta" } });
+    fireEvent.keyDown(sprintInput, { key: "Enter" });
+
+    fireEvent.click(await screen.findByText("Alpha"));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /delete card/i }));
+
+    await act(async () => {
+      resolveColumnInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.insert).toHaveBeenCalledWith(
+        "cards",
+        expect.objectContaining({ title: "Beta", column_id: "columns-sprint", position: 0 }),
+      ),
+    );
+  });
+
   it("waits for a new column insert before persisting an immediate rename", async () => {
     const { db, store } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -500,6 +641,28 @@ describe("Task Manager app", () => {
     await waitFor(() =>
       expect(db.update).toHaveBeenCalledWith("columns", "columns-sprint", { title: "Ready" }),
     );
+  });
+
+  it("does not persist a cancelled column rename after Escape blurs the input", async () => {
+    const { db } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+
+    render(<App />);
+    const heading = await screen.findByRole("heading", { name: "To do" });
+    fireEvent.click(heading.closest("button")!);
+    const renameInput = screen.getByDisplayValue("To do");
+    fireEvent.change(renameInput, { target: { value: "Cancelled" } });
+    fireEvent.keyDown(renameInput, { key: "Escape" });
+    fireEvent.blur(renameInput);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(db.update).not.toHaveBeenCalledWith("columns", "col-1", { title: "Cancelled" });
+    expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
   it("reloads away a phantom column when its insert fails", async () => {
