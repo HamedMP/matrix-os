@@ -226,6 +226,30 @@ describe("Canvas Transform Store", () => {
       vi.advanceTimersByTime(ZOOM_ANIM_MS);
       expect(useCanvasTransform.getState().isAnimating).toBe(false);
     });
+
+    it("toolbar zoom cancels a programmatic zoom animation", () => {
+      vi.useFakeTimers();
+      useCanvasTransform.getState().zoomToWindow({ x: 0, y: 0, width: 400, height: 300 }, 1200, 800);
+      expect(useCanvasTransform.getState().isAnimating).toBe(true);
+
+      useCanvasTransform.getState().zoomIn();
+
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+      vi.advanceTimersByTime(ZOOM_ANIM_MS);
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+    });
+
+    it("fitAll cancels a programmatic zoom animation", () => {
+      vi.useFakeTimers();
+      useCanvasTransform.getState().zoomToWindow({ x: 0, y: 0, width: 400, height: 300 }, 1200, 800);
+      expect(useCanvasTransform.getState().isAnimating).toBe(true);
+
+      useCanvasTransform.getState().fitAll([{ x: 0, y: 0, width: 800, height: 600 }], 1200, 800);
+
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+      vi.advanceTimersByTime(ZOOM_ANIM_MS);
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+    });
   });
 
   describe("container offset", () => {

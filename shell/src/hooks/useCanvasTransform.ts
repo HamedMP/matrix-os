@@ -71,6 +71,11 @@ function cancelZoomAnimation(): void {
   }
 }
 
+function finishInstantTransform(): { isAnimating: false } {
+  cancelZoomAnimation();
+  return { isAnimating: false };
+}
+
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined"
     && typeof window.matchMedia === "function"
@@ -86,13 +91,13 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     isScrolling: false,
     containerRect: null,
 
-    setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+    setZoom: (zoom) => set({ zoom: clampZoom(zoom), ...finishInstantTransform() }),
 
-    zoomIn: () => set((s) => ({ zoom: clampZoom(s.zoom + ZOOM_STEP) })),
+    zoomIn: () => set((s) => ({ zoom: clampZoom(s.zoom + ZOOM_STEP), ...finishInstantTransform() })),
 
-    zoomOut: () => set((s) => ({ zoom: clampZoom(s.zoom - ZOOM_STEP) })),
+    zoomOut: () => set((s) => ({ zoom: clampZoom(s.zoom - ZOOM_STEP), ...finishInstantTransform() })),
 
-    resetZoom: () => set({ zoom: 1 }),
+    resetZoom: () => set({ zoom: 1, ...finishInstantTransform() }),
 
     zoomAtPoint: (newZoom, cx, cy) => {
       cancelZoomAnimation();
@@ -108,7 +113,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       }));
     },
 
-    setPan: (x, y) => set({ panX: x, panY: y }),
+    setPan: (x, y) => set({ panX: x, panY: y, ...finishInstantTransform() }),
 
     panBy: (dx, dy) => {
       cancelZoomAnimation();
@@ -143,9 +148,10 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     fitAll: (windows, viewportW, viewportH) => {
       if (windows.length === 0) {
-        set({ zoom: 1, panX: 0, panY: 0 });
+        set({ zoom: 1, panX: 0, panY: 0, ...finishInstantTransform() });
         return;
       }
+      const instant = finishInstantTransform();
 
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const w of windows) {
@@ -166,16 +172,17 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
 
-      set({ zoom, panX, panY });
+      set({ zoom, panX, panY, ...instant });
     },
 
     focusOnWindow: (win, viewportW, viewportH) => {
+      const instant = finishInstantTransform();
       const { zoom } = get();
       const centerX = win.x + win.width / 2;
       const centerY = win.y + win.height / 2;
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
-      set({ panX, panY });
+      set({ panX, panY, ...instant });
     },
 
     // Zoom so a single window fills the viewport (minus padding) and center it.
@@ -205,8 +212,8 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       }, ZOOM_ANIM_MS);
     },
 
-    setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
+    setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY, ...finishInstantTransform() }),
 
-    resetForMobileViewport: () => set({ zoom: 1, panX: 0, panY: 0, isScrolling: false, isAnimating: false }),
+    resetForMobileViewport: () => set({ zoom: 1, panX: 0, panY: 0, isScrolling: false, ...finishInstantTransform() }),
   })),
 );
