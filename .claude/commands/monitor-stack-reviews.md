@@ -25,8 +25,9 @@ final human review.
 - Use Graphite for stack operations. If `gt` is missing or unauthenticated,
   stop and report the blocker instead of falling back to raw branch surgery.
 - Use `gh` for GitHub PR metadata, checks, draft/ready state, and review
-  comments. Confirm `gh auth status` before network operations if auth is
-  uncertain.
+  comments. Run `gh auth status` before network operations. If `gh` is missing
+  or unauthenticated, stop and report the blocker instead of treating GitHub
+  command failures as PR state.
 - Never merge PRs unless the requester explicitly asks.
 - Do not create worktrees, create implementation branches, open new feature PRs,
   or convert draft PRs to ready. This command is for monitoring and fixing an
@@ -72,8 +73,8 @@ final human review.
      rating per PR, especially whether it is `5/5`.
    - Audit existing `ready-for-ci` labels before any fixes. For each monitored
      PR, compare the label state with the latest Greptile review and current
-     `headRefOid`; remove `ready-for-ci` immediately if the label is not backed
-     by a current-head `5/5` review:
+     `headRefOid`; remove `ready-for-ci` immediately if the PR is draft or if
+     the label is not backed by a current-head `5/5` review:
      `gh pr edit <number> --remove-label "ready-for-ci"`.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
@@ -98,8 +99,10 @@ final human review.
      classes, run the relevant typecheck and `bun run check:patterns` or report
      the exact reason a broad gate was skipped.
    - Use Graphite to sync, restack, and submit updates:
-     `gt sync`, `gt restack` when needed, and
-     `gt submit --stack --no-edit --no-ai`.
+     `gt sync`, `gt restack`, and `gt submit --stack --no-edit --no-ai`.
+     Run `gt restack` after any `gt modify` that touches a layer below the
+     stack tip before submitting, so descendants are anchored to the rewritten
+     parent SHA.
    - Before submitting, verify the
      current remote head for every branch that will be rewritten still matches
      the head recorded for this edit iteration; if it changed unexpectedly,
@@ -117,13 +120,25 @@ final human review.
 
 5. Continue until complete.
    - Re-poll checks and Greptile after each pushed fix, waiting at least
-     60 seconds between polls. If three consecutive polls show no review/check
-     state change, stop and report the current blocker instead of looping.
+     60 seconds between polls. Do not stop only because an already-running CI
+     job remains `queued`, `pending`, or `in_progress` across consecutive
+     polls; normal Matrix OS checks can run longer than several poll intervals.
+     Stop and report a blocker only when checks fail with actionable output, the
+     expected checks never enter an active state after the push, or an active
+     check exceeds its documented timeout/stuck threshold.
+   - Track the push time and current head SHA for each PR awaiting Greptile. If
+     no Greptile comment for that head appears within 30 minutes after the
+     push, stop and report `Greptile review not received for <pr> @ <sha>` as a
+     blocker instead of polling indefinitely.
    - Trust a Greptile score only when its reviewed commit matches the PR's
      current `headRefOid`; otherwise treat it as stale and keep waiting.
-   - When the latest trusted Greptile result for a PR is `5/5`, add the
-     repository label exactly named `ready-for-ci` if it is not already present:
-     `gh pr edit <number> --add-label "ready-for-ci"`.
+   - When the PR is not draft, the latest trusted Greptile result is `5/5`, and
+     there are no unresolved human review threads, unresolved Codex review
+     comments, or unresolved actionable issue comments, add the repository label
+     exactly named `ready-for-ci` if it is not already present:
+     `gh pr edit <number> --add-label "ready-for-ci"`. If any review thread or
+     actionable comment remains unresolved, or if the PR is draft, do not label
+     the PR yet.
    - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
      until checks pass, fail with actionable output, or are blocked.
    - If actionable CI failure fixes require a new push after `ready-for-ci` was
