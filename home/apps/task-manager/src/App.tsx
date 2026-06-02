@@ -150,6 +150,7 @@ function App() {
   boardRef.current = board;
   const pendingColumnIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
   const pendingCardIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
+  const pendingCardIdSwapsRef = useRef<Record<string, string | undefined>>({});
   const deletingColumnIdsRef = useRef<Set<string>>(new Set());
   const usingDbRef = useRef(false);
   const suppressReloadRef = useRef(false);
@@ -299,6 +300,7 @@ function App() {
         const columnId = await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
         const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...liveCard, columnId }, liveCard.order));
         resolveCreatedCardId(result.id);
+        pendingCardIdSwapsRef.current[result.id] = created.id;
         setSelectedCardId((id) => (id === created.id ? result.id : id));
         setBoard((current) => current ? {
           ...current,
@@ -506,6 +508,7 @@ function App() {
       });
       return;
     }
+    if (deletingColumnIdsRef.current.has(columnId)) return;
     deletingColumnIdsRef.current.add(columnId);
     suppressReloadRef.current = true;
     void (async () => {
@@ -763,6 +766,7 @@ function App() {
         <CardDetail
           card={selectedCard}
           columns={board.columns}
+          pendingSwapFromId={pendingCardIdSwapsRef.current[selectedCard.id] ?? null}
           onClose={() => setSelectedCardId(null)}
           onPatch={(patch) => patchCard(selectedCard.id, patch)}
           onMoveColumn={(columnId) => {
@@ -1034,6 +1038,7 @@ function TaskCardView({
 function CardDetail({
   card,
   columns,
+  pendingSwapFromId,
   onClose,
   onPatch,
   onMoveColumn,
@@ -1043,6 +1048,7 @@ function CardDetail({
 }: {
   card: Card;
   columns: BoardColumn[];
+  pendingSwapFromId: string | null;
   onClose: () => void;
   onPatch: (patch: Partial<Omit<Card, "id" | "createdAt">>) => void;
   onMoveColumn: (columnId: string) => void;
@@ -1058,7 +1064,7 @@ function CardDetail({
   const previousCardRef = useRef(card);
   useEffect(() => {
     const previous = previousCardRef.current;
-    const sameCard = previous.id === card.id || (previous.createdAt === card.createdAt && previous.title === card.title);
+    const sameCard = previous.id === card.id || pendingSwapFromId === previous.id;
     if (!sameCard || title === previous.title) setTitle(card.title);
     if (!sameCard || description === previous.description) setDescription(card.description);
     if (!sameCard || assignee === previous.assignee) setAssignee(card.assignee);
@@ -1067,7 +1073,7 @@ function CardDetail({
       setChecklistInput("");
     }
     previousCardRef.current = card;
-  }, [assignee, card, description, title]);
+  }, [assignee, card, description, pendingSwapFromId, title]);
 
   const progress = checklistProgress(card.checklist);
 

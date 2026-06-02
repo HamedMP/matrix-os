@@ -1090,6 +1090,34 @@ describe("Task Manager app", () => {
     expect((within(dialog).getByLabelText("Add checklist item") as HTMLInputElement).value).toBe("");
   });
 
+  it("resets detail drafts when switching between same-title same-createdAt cards", async () => {
+    installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Duplicate", description: "Alpha detail", labels: "", assignee: "Alice", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00.000Z" },
+        { id: "card-2", column_id: "col-1", title: "Duplicate", description: "Beta detail", labels: "", assignee: "Bob", priority: "medium", due: null, checklist: [], position: 1, created_at: "2026-05-01T00:00:00.000Z" },
+      ],
+    });
+    render(<App />);
+
+    await screen.findAllByText("Duplicate");
+    const cards = screen.getAllByText("Duplicate").filter((node) => node.closest(".task-card"));
+    fireEvent.click(cards[0]);
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Card title"), { target: { value: "Unsaved Alpha" } });
+    fireEvent.change(within(dialog).getByPlaceholderText("Add more detail…"), {
+      target: { value: "Unsaved details" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("Unassigned"), { target: { value: "Morgan" } });
+
+    fireEvent.click(cards[1]);
+
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByDisplayValue("Duplicate")).toBeTruthy();
+    expect(within(dialog).getByDisplayValue("Beta detail")).toBeTruthy();
+    expect(within(dialog).getByDisplayValue("Bob")).toBeTruthy();
+  });
+
   it("does not persist card reorders while a filter is active", async () => {
     const { db } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -1238,6 +1266,42 @@ describe("Task Manager app", () => {
 
     await waitFor(() => expect(screen.queryByRole("heading", { name: "To do" })).toBeNull());
     expect(screen.getByText("Concurrent card")).toBeTruthy();
+  });
+
+  it("ignores duplicate delete clicks while a column delete is in flight", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveColumnDelete: (() => void) | null = null;
+    db.delete.mockImplementation(async (table: string, id: string) => {
+      if (table === "columns" && id === "col-1") {
+        await new Promise<void>((resolve) => {
+          resolveColumnDelete = resolve;
+        });
+      }
+      return { ok: true };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    const deleteButton = screen.getAllByTitle("Delete column")[0];
+    fireEvent.click(deleteButton);
+    fireEvent.click(deleteButton);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.delete.mock.calls.filter(([table, id]) => table === "columns" && id === "col-1")).toHaveLength(1);
+
+    await act(async () => {
+      resolveColumnDelete?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   });
 
   it("does not add cards to a column while its deletion is in flight", async () => {
