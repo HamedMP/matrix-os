@@ -859,6 +859,25 @@ describe("Task Manager app", () => {
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
+  it("keeps a card visible when a DB card delete fails", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Keep me", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Keep me"));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /delete card/i }));
+
+    expect(await screen.findByText(/card could not be deleted/i)).toBeTruthy();
+    expect(await screen.findByText("Keep me")).toBeTruthy();
+  });
+
   it("waits for pending card inserts before deleting cards with their column", async () => {
     const { db, store } = installMatrixDb({
       columns: [

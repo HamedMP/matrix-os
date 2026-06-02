@@ -300,9 +300,18 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
+      try {
+        await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
+      } catch (err) {
+        try {
+          await reload();
+        } catch (reloadErr: unknown) {
+          console.warn("[task-manager] card delete recovery reload failed:", errMessage(reloadErr));
+        }
+        throw err;
+      }
     }, "Card could not be deleted");
-  }, [persist, resolveCardId]);
+  }, [persist, reload, resolveCardId]);
 
   const dropCard = useCallback((cardId: string, targetColumnId: string, targetIndex: number) => {
     const current = boardRef.current;
