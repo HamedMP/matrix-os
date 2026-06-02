@@ -31,6 +31,7 @@ export interface NoteInput {
   pinned?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
+  tags?: string[] | string | null;
 }
 
 let sequence = 0;
@@ -90,6 +91,28 @@ export function extractTags(content: string): string[] {
   return tags;
 }
 
+/** Normalize an arbitrary tag input (array or comma/space-joined string) into a clean, deduped list. */
+export function normalizeTags(input: string[] | string | null | undefined): string[] {
+  const raw = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/[,\s]+/)
+      : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const tag = item.replace(/^#/, "").trim().toLowerCase();
+    if (!tag) continue;
+    if (!/^[a-z][a-z0-9-]{1,40}$/.test(tag)) continue;
+    if (!out.includes(tag)) out.push(tag);
+  }
+  return out;
+}
+
+/** Serialize tags for the `tags text` column (comma-joined). */
+export function serializeTags(tags: string[]): string {
+  return normalizeTags(tags).join(",");
+}
+
 export function buildNotePreview(content: string): string {
   return content
     .replace(/```[\s\S]*?```/g, " ")
@@ -111,6 +134,8 @@ export function createNote(input: NoteInput = {}): Note {
     ? input.content_json
     : emptyTiptapDoc();
   const searchableText = [content, tiptapDocToText(contentJson)].join(" ");
+  const extractedTags = extractTags(searchableText);
+  const tags = extractedTags.length > 0 ? extractedTags : normalizeTags(input.tags);
   return {
     id: input.id ?? globalThis.crypto?.randomUUID?.() ?? fallbackId(),
     title: (input.title ?? "").trim() || "Untitled",
@@ -119,7 +144,7 @@ export function createNote(input: NoteInput = {}): Note {
     pinned: Boolean(input.pinned),
     created_at: input.created_at ?? now,
     updated_at: input.updated_at ?? now,
-    tags: extractTags(searchableText),
+    tags,
     preview: buildNotePreview(searchableText) || "No content yet",
   };
 }
@@ -134,6 +159,7 @@ export function hydrateNote(row: Record<string, unknown>): Note {
     pinned: typeof row.pinned === "boolean" ? row.pinned : false,
     created_at: typeof row.created_at === "string" ? row.created_at : null,
     updated_at: typeof row.updated_at === "string" ? row.updated_at : null,
+    tags: typeof row.tags === "string" ? row.tags : Array.isArray(row.tags) ? (row.tags as string[]) : null,
   });
 }
 
