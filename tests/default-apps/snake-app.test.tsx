@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/games/snake/src/App";
@@ -61,6 +63,14 @@ describe("Snake app", () => {
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
     localStorage.clear();
+  });
+
+  it("uses a shipped default game icon", () => {
+    const manifestPath = resolve(process.cwd(), "home/apps/games/snake/matrix.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { icon?: string };
+
+    expect(manifest.icon).toBe("game-center");
+    expect(existsSync(resolve(process.cwd(), "home/system/icons/game-center.png"))).toBe(true);
   });
 
   it("renders the start screen with controls hint and a high score", async () => {
