@@ -200,6 +200,37 @@ describe("2048 app", () => {
     expect(db.update).not.toHaveBeenCalledWith("scores", "s1", { score: 4 });
   });
 
+  it("does not persist an in-flight previous score after starting a new game", async () => {
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValue(0.1);
+    const db = installMatrixDb([]);
+    let resolveFind: (rows: DbRow[]) => void = () => undefined;
+    db.find.mockImplementation(async () => new Promise<DbRow[]>((resolve) => {
+      resolveFind = resolve;
+    }));
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("score").textContent).toBe("4"));
+
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(screen.getByTestId("score").textContent).toBe("0");
+
+    await act(async () => {
+      resolveFind([{ id: "s1", score: 0, best: 0, created_at: "2026-05-31T00:00:00.000Z" }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+    expect(db.update).not.toHaveBeenCalledWith("scores", "s1", { score: 4 });
+  });
+
   it("creates the initial DB score row with the latest early-move score", async () => {
     const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
     vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);

@@ -209,6 +209,7 @@ export default function App() {
   const dbInitialLoadRef = useRef<Promise<void> | null>(null);
   const pendingBestRef = useRef(0);
   const latestScoreRef = useRef(0);
+  const sessionRef = useRef(0);
   const boardRef = useRef<HTMLDivElement | null>(null);
   latestScoreRef.current = state.score;
 
@@ -238,9 +239,11 @@ export default function App() {
   const persistScore = useCallback((score: number) => {
     const db = window.MatrixOS?.db;
     if (!db) return;
+    const session = sessionRef.current;
     (async () => {
       try {
         const id = await ensureScoreRow(db, score);
+        if (session !== sessionRef.current) return;
         await db.update(SCORES_TABLE, id, { score: Math.max(score, latestScoreRef.current) });
       } catch (err) {
         console.warn("[2048] failed to update current score", err);
@@ -443,6 +446,7 @@ export default function App() {
   }, [showWin]);
 
   const newGameClick = useCallback(() => {
+    sessionRef.current += 1;
     setKeepPlaying(false);
     dispatch({ type: "reset" });
   }, []);
