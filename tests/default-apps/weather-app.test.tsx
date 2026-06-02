@@ -11,7 +11,18 @@ function installMatrixDb(initialRows: DbRow[] = []) {
   let changeHandler: (() => void) | null = null;
   let insertCount = 0;
   const db = {
-    find: vi.fn(async () => rows),
+    find: vi.fn(async (_table: string, opts?: { orderBy?: Record<string, "asc" | "desc"> }) => {
+      const result = [...rows];
+      const [key, dir] = Object.entries(opts?.orderBy ?? {})[0] ?? [];
+      if (key) {
+        result.sort((a, b) => {
+          const left = String(a[key] ?? "");
+          const right = String(b[key] ?? "");
+          return dir === "desc" ? right.localeCompare(left) : left.localeCompare(right);
+        });
+      }
+      return result;
+    }),
     findOne: vi.fn(async () => null),
     insert: vi.fn(async (_table: string, data: DbRow) => {
       const id = `loc-new-${++insertCount}`;
@@ -39,8 +50,9 @@ function installMatrixDb(initialRows: DbRow[] = []) {
       };
     }),
   };
+  Object.assign(db, { rows });
   Object.defineProperty(window, "MatrixOS", { configurable: true, value: { db } });
-  return db;
+  return db as typeof db & { rows: DbRow[] };
 }
 
 function installMatrixDataBridge(data = new Map<string, unknown>()) {
@@ -137,6 +149,22 @@ describe("Weather app", () => {
     expect(within(daily).getAllByTestId("daily-row").length).toBe(3);
   });
 
+  it("orders saved locations by creation time", async () => {
+    installMatrixDb([
+      { id: "loc-2", name: "Paris", latitude: 48.8566, longitude: 2.3522, is_default: false, created_at: "2026-05-31T11:00:00.000Z" },
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true, created_at: "2026-05-31T10:00:00.000Z" },
+    ]);
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+
+    await vi.waitFor(() => {
+      const items = screen.getAllByTestId("location-item");
+      expect(within(items[0]).getByText("Berlin")).toBeTruthy();
+      expect(within(items[1]).getByText("Paris")).toBeTruthy();
+    });
+  });
+
   it("converts wind speed to mph when Fahrenheit is selected", async () => {
     installMatrixDb([
       { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
@@ -219,6 +247,123 @@ describe("Weather app", () => {
     expect(screen.getAllByTestId("location-item")).toHaveLength(1);
   });
 
+  it("only shows the search spinner when the debounced geocode request starts", async () => {
+    installMatrixDb([]);
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+
+    expect(screen.queryByText("Searching…")).toBeNull();
+    await vi.advanceTimersByTimeAsync(279);
+    expect(screen.queryByText("Searching…")).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("geocoding-api"))).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+  });
+
+  it("clears a stale search error as soon as a new debounced query starts", async () => {
+    installMatrixDb([]);
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("geocode unavailable"))
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => GEOCODE_JSON,
+      } as Response);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    const input = screen.getByTestId("search-input");
+    fireEvent.change(input, { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByText("Search is unavailable right now.")).toBeTruthy();
+    });
+
+    fireEvent.change(input, { target: { value: "Paris" } });
+
+    expect(screen.queryByText("Search is unavailable right now.")).toBeNull();
+    expect(screen.queryByText("Searching…")).toBeNull();
+  });
+
+  it("does not show stale geocode results after the query becomes too short", async () => {
+    installMatrixDb([]);
+    let resolveGeocode: ((response: Response) => void) | null = null;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveGeocode = resolve;
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    const input = screen.getByTestId("search-input");
+    fireEvent.change(input, { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(280);
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(input, { target: { value: "B" } });
+    expect(screen.queryByTestId("search-result")).toBeNull();
+
+    resolveGeocode?.({
+      ok: true,
+      status: 200,
+      json: async () => GEOCODE_JSON,
+    } as Response);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(screen.queryByTestId("search-result")).toBeNull();
+    expect(screen.getByText("Type at least two characters.")).toBeTruthy();
+  });
+
+  it("does not refetch an identical forecast when an optimistic id resolves", async () => {
+    installMatrixDb([]);
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /search a city/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("hero-location").textContent).toContain("Berlin");
+    });
+    const forecastCalls = fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes("api.open-meteo.com/v1/forecast")
+    ));
+    expect(forecastCalls).toHaveLength(1);
+  });
+
   it("rolls back optimistic add when DB insert fails", async () => {
     const db = installMatrixDb([]);
     db.insert.mockRejectedValueOnce(new Error("insert failed"));
@@ -289,6 +434,127 @@ describe("Weather app", () => {
     );
     expect(parisItem).toBeTruthy();
     expect(within(parisItem as HTMLElement).getByText("Default")).toBeTruthy();
+  });
+
+  it("promotes a pending inserted location when removing the default", async () => {
+    const db = installMatrixDb([
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+    ]);
+    let resolveInsert: (() => void) | null = null;
+    db.insert.mockImplementationOnce(async (_table: string, data: DbRow) => {
+      await new Promise<void>((resolve) => {
+        resolveInsert = resolve;
+      });
+      const id = "loc-new-1";
+      db.rows.push({ id, ...data });
+      return { id };
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("geocoding-api")
+        ? {
+            results: [
+              { name: "Paris", latitude: 48.8566, longitude: 2.3522, country: "France", admin1: "Ile-de-France" },
+            ],
+          }
+        : FORECAST_JSON;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add location/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Paris" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Paris, Ile-de-France").length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /remove berlin/i }));
+
+    await vi.waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("locations", "loc-1");
+      expect(screen.queryByText("Berlin")).toBeNull();
+    });
+
+    resolveInsert?.();
+
+    await vi.waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("locations", "loc-new-1", { is_default: true });
+    });
+    const parisItem = screen.getAllByTestId("location-item").find((item) =>
+      within(item).queryByText("Paris, Ile-de-France"),
+    );
+    expect(parisItem).toBeTruthy();
+    expect(within(parisItem as HTMLElement).getByText("Default")).toBeTruthy();
+  });
+
+  it("does not re-add a pending inserted location after it was removed", async () => {
+    const db = installMatrixDb([
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+    ]);
+    let resolveInsert: (() => void) | null = null;
+    db.insert.mockImplementationOnce(async (_table: string, data: DbRow) => {
+      await new Promise<void>((resolve) => {
+        resolveInsert = resolve;
+      });
+      const id = "loc-new-1";
+      db.rows.push({ id, ...data });
+      return { id };
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("geocoding-api")
+        ? {
+            results: [
+              { name: "Paris", latitude: 48.8566, longitude: 2.3522, country: "France", admin1: "Ile-de-France" },
+            ],
+          }
+        : FORECAST_JSON;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add location/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Paris" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Paris, Ile-de-France").length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /remove paris/i }));
+    expect(screen.queryByText("Paris, Ile-de-France")).toBeNull();
+
+    resolveInsert?.();
+
+    await vi.waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("locations", "loc-new-1");
+    });
+    expect(screen.queryByText("Paris, Ile-de-France")).toBeNull();
+    expect(db.rows.some((row) => row.id === "loc-new-1")).toBe(false);
   });
 
   it("keeps the removed location deleted when default promotion fails", async () => {

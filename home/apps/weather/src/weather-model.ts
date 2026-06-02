@@ -82,7 +82,7 @@ const GRADIENTS: Record<WeatherKind, { day: string; night: string; tone: "light"
   fog: {
     day: "linear-gradient(160deg, #8d97a1 0%, #b3bbc3 55%, #d6dbe0 100%)",
     night: "linear-gradient(160deg, #232a31 0%, #3a444d 60%, #545f69 100%)",
-    tone: "light",
+    tone: "dark",
   },
   drizzle: {
     day: "linear-gradient(160deg, #5b7d99 0%, #7c9bb4 55%, #a7c0d3 100%)",
@@ -97,7 +97,7 @@ const GRADIENTS: Record<WeatherKind, { day: string; night: string; tone: "light"
   snow: {
     day: "linear-gradient(160deg, #7f93a8 0%, #aebfce 55%, #e2ebf4 100%)",
     night: "linear-gradient(160deg, #1d2733 0%, #36475a 60%, #5b7088 100%)",
-    tone: "light",
+    tone: "dark",
   },
   thunder: {
     day: "linear-gradient(160deg, #3a3f55 0%, #545a78 55%, #7d83a3 100%)",
@@ -187,6 +187,16 @@ function localDateKey(date: Date): string {
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0"),
   ].join("-");
+}
+
+function localDateTime(date: Date): string {
+  const dateKey = localDateKey(date);
+  const timeKey = [
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+  ].join(":");
+  return `${dateKey}T${timeKey}`;
 }
 
 export interface HourPoint {
@@ -313,7 +323,7 @@ export function demoForecast(baseIso?: string): OpenMeteoForecast {
   const hourlyCode: number[] = [];
   for (let i = 0; i < 24; i += 1) {
     const t = new Date(base.getTime() + i * 3_600_000);
-    hourlyTime.push(t.toISOString());
+    hourlyTime.push(localDateTime(t));
     // Mild diurnal curve peaking mid-afternoon.
     const hour = t.getHours();
     const temp = 14 + 6 * Math.sin(((hour - 6) / 24) * Math.PI * 2);
@@ -332,22 +342,23 @@ export function demoForecast(baseIso?: string): OpenMeteoForecast {
   const lows = [11, 10, 9, 9, 10, 12, 13];
   for (let i = 0; i < 7; i += 1) {
     const d = new Date(dayStart.getTime() + i * 86_400_000);
-    dayDate.push(d.toISOString().slice(0, 10));
+    dayDate.push(localDateKey(d));
     dayMax.push(highs[i]);
     dayMin.push(lows[i]);
     dayCode.push(dailyCodes[i]);
   }
 
-  const sunrise = new Date(dayStart.getTime() + 6.5 * 3_600_000).toISOString();
-  const sunset = new Date(dayStart.getTime() + 19.5 * 3_600_000).toISOString();
+  const sunrise = localDateTime(new Date(dayStart.getTime() + 6.5 * 3_600_000));
+  const sunset = localDateTime(new Date(dayStart.getTime() + 19.5 * 3_600_000));
+  const currentTime = localDateTime(base);
 
   return {
     current: {
-      time: base.toISOString(),
+      time: currentTime,
       temperature_2m: hourlyTemp[0],
       apparent_temperature: hourlyTemp[0] - 1.5,
       weather_code: hourlyCode[0],
-      is_day: isDaytime(base.toISOString(), sunrise, sunset) ? 1 : 0,
+      is_day: isDaytime(currentTime, sunrise, sunset) ? 1 : 0,
       relative_humidity_2m: 68,
       wind_speed_10m: 12,
     },
@@ -368,8 +379,8 @@ export function coerceLocation(row: unknown): SavedLocation | null {
   if (!row || typeof row !== "object") return null;
   const r = row as Record<string, unknown>;
   const name = typeof r.name === "string" ? r.name.trim() : "";
-  const latitude = typeof r.latitude === "number" ? r.latitude : Number(r.latitude);
-  const longitude = typeof r.longitude === "number" ? r.longitude : Number(r.longitude);
+  const latitude = typeof r.latitude === "number" ? r.latitude : (r.latitude == null ? NaN : Number(r.latitude));
+  const longitude = typeof r.longitude === "number" ? r.longitude : (r.longitude == null ? NaN : Number(r.longitude));
   if (!name) return null;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
   if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;

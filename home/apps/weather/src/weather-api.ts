@@ -25,11 +25,12 @@ async function proxyJson<T>(url: string): Promise<T> {
   if (data == null) {
     throw new Error("proxy request failed: empty response");
   }
-  if (
-    typeof data === "object" &&
-    "error" in data
-  ) {
-    throw new Error("proxy request failed");
+  if (typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("proxy request failed: invalid response");
+  }
+  if ("error" in data) {
+    const detail = String((data as Record<string, unknown>).error);
+    throw new Error(`proxy request failed: ${detail}`);
   }
   return data as T;
 }
@@ -63,7 +64,11 @@ export async function geocode(query: string): Promise<GeoResult[]> {
         typeof r.name === "string" &&
         r.name.trim().length > 0 &&
         Number.isFinite(r.latitude) &&
-        Number.isFinite(r.longitude),
+        Number.isFinite(r.longitude) &&
+        r.latitude >= -90 &&
+        r.latitude <= 90 &&
+        r.longitude >= -180 &&
+        r.longitude <= 180,
     )
     .map((r) => ({
       name: r.name.trim(),

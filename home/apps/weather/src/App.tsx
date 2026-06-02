@@ -124,6 +124,7 @@ export default function App() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchSeq = useRef(0);
   const pendingRemovalKeys = useRef<string[]>([]);
+  const pendingDefaultPromotionKeys = useRef<Set<string>>(new Set());
 
   const reloadLocations = useCallback(async () => {
     const db = window.MatrixOS?.db;
@@ -200,13 +201,11 @@ export default function App() {
   const activeForecastLocation = useMemo<SavedLocation | null>(() => {
     if (!active) return null;
     return {
-      id: active.id,
       name: active.name,
       latitude: active.latitude,
       longitude: active.longitude,
-      is_default: active.is_default,
     };
-  }, [active?.id, active?.name, active?.latitude, active?.longitude, active?.is_default]);
+  }, [active?.name, active?.latitude, active?.longitude]);
 
   // Load forecast for the active location with graceful demo fallback.
   useEffect(() => {
@@ -239,15 +238,17 @@ export default function App() {
   useEffect(() => {
     if (!searchOpen) return undefined;
     const q = query.trim();
+    const seq = ++searchSeq.current;
     if (q.length < 2) {
       setResults([]);
       setSearchError(null);
       setSearching(false);
       return undefined;
     }
-    const seq = ++searchSeq.current;
-    setSearching(true);
+    setSearching(false);
+    setSearchError(null);
     const handle = window.setTimeout(async () => {
+      setSearching(true);
       try {
         const found = await geocode(q);
         if (seq !== searchSeq.current) return;
@@ -307,18 +308,54 @@ export default function App() {
           is_default: candidate.is_default ?? false,
           created_at: new Date().toISOString(),
         });
-        const saved: SavedLocation = { ...candidate, id };
-        setLocations((curr) =>
-          curr.map((loc) => (locationKey(loc) === optimistic.id ? saved : loc)),
-        );
+        if (pendingRemovalKeys.current.includes(optimistic.id!)) {
+          try {
+            await db.delete(LOCATIONS_TABLE, id);
+            setError(null);
+          } catch (err: unknown) {
+            console.warn("[weather] pending removed location cleanup failed:", errMsg(err));
+            setError("Location could not be removed.");
+          } finally {
+            pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== optimistic.id && k !== id);
+            pendingDefaultPromotionKeys.current.delete(optimistic.id!);
+          }
+          await reloadLocations();
+          return;
+        }
+        let savedIsDefault = candidate.is_default ?? false;
+        let promotionFailed = false;
+        if (pendingDefaultPromotionKeys.current.has(optimistic.id!)) {
+          try {
+            await db.update(LOCATIONS_TABLE, id, { is_default: true });
+            savedIsDefault = true;
+          } catch (err: unknown) {
+            promotionFailed = true;
+            console.warn("[weather] default location promotion failed:", errMsg(err));
+          } finally {
+            pendingDefaultPromotionKeys.current.delete(optimistic.id!);
+          }
+        }
+        const saved: SavedLocation = { ...candidate, id, is_default: savedIsDefault };
+        setLocations((curr) => {
+          const savedKey = locationKey(saved);
+          if (curr.some((loc) => locationKey(loc) === optimistic.id)) {
+            return curr.map((loc) => (locationKey(loc) === optimistic.id ? saved : loc));
+          }
+          if (curr.some((loc) => locationKey(loc) === savedKey)) {
+            return curr.map((loc) => (locationKey(loc) === savedKey ? { ...loc, ...saved } : loc));
+          }
+          return [...curr, saved];
+        });
         setActiveId(id);
         await reloadLocations();
-        setError(null);
+        setError(promotionFailed ? "Default location could not be updated." : null);
       } catch (err: unknown) {
         console.warn("[weather] location save failed:", errMsg(err));
         setError("Location could not be saved.");
         setLocations((curr) => curr.filter((loc) => locationKey(loc) !== optimistic.id));
         setActiveId(previousActiveId);
+        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== optimistic.id);
+        pendingDefaultPromotionKeys.current.delete(optimistic.id!);
       }
     },
     [activeId, locations, reloadLocations],
@@ -335,6 +372,10 @@ export default function App() {
       const nextLocations = shouldPromoteDefault && remaining[0]
         ? remaining.map((item, index) => index === 0 ? { ...item, is_default: true } : item)
         : remaining;
+      const promotedLocalKey = shouldPromoteDefault && remaining[0] ? locationKey(remaining[0]) : null;
+      if (promotedLocalKey?.startsWith("local-")) {
+        pendingDefaultPromotionKeys.current.add(promotedLocalKey);
+      }
       setLocations(nextLocations);
       const db = window.MatrixOS?.db;
       if (!db) {
@@ -344,13 +385,14 @@ export default function App() {
         return;
       }
       if (!loc.id || loc.id.startsWith("local-")) {
-        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+        pendingDefaultPromotionKeys.current.delete(key);
         return;
       }
       try {
         await db.delete(LOCATIONS_TABLE, loc.id);
       } catch (err: unknown) {
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+        if (promotedLocalKey) pendingDefaultPromotionKeys.current.delete(promotedLocalKey);
         console.warn("[weather] location delete failed:", errMsg(err));
         setError("Location could not be removed.");
         setLocations(previousLocations);
@@ -366,6 +408,9 @@ export default function App() {
           promotionFailed = true;
           console.warn("[weather] default location promotion failed:", errMsg(err));
         }
+      }
+      if (promotedLocalKey && !promotedLocalKey.startsWith("local-")) {
+        pendingDefaultPromotionKeys.current.delete(promotedLocalKey);
       }
       pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
       await reloadLocations();

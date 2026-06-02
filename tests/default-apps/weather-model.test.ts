@@ -27,8 +27,10 @@ describe("weatherVisual code mapping", () => {
   it("maps rain and snow and thunder families", () => {
     expect(weatherVisual(63).kind).toBe("rain");
     expect(weatherVisual(75).kind).toBe("snow");
+    expect(weatherVisual(75).tone).toBe("dark");
     expect(weatherVisual(95).kind).toBe("thunder");
     expect(weatherVisual(45).kind).toBe("fog");
+    expect(weatherVisual(45).tone).toBe("dark");
     expect(weatherVisual(51).kind).toBe("drizzle");
     expect(weatherVisual(3).kind).toBe("cloudy");
   });
@@ -151,6 +153,8 @@ describe("coerceLocation", () => {
     expect(coerceLocation({ name: "", latitude: 1, longitude: 1 })).toBeNull();
     expect(coerceLocation({ name: "X", latitude: 200, longitude: 1 })).toBeNull();
     expect(coerceLocation({ name: "X", latitude: 1, longitude: "abc" })).toBeNull();
+    expect(coerceLocation({ name: "Null Island", latitude: null, longitude: 0 })).toBeNull();
+    expect(coerceLocation({ name: "Null Island", latitude: 0, longitude: null })).toBeNull();
   });
 });
 
@@ -162,5 +166,15 @@ describe("demoForecast", () => {
     expect(typeof f.current?.temperature_2m).toBe("number");
     const hours = buildHourly(f, "2026-05-31T10:00:00");
     expect(hours[0].isNow).toBe(true);
+  });
+
+  it("uses local Open-Meteo timestamp strings instead of UTC strings", () => {
+    const f = demoForecast("2026-05-31T00:30:00+14:00");
+    expect(f.current?.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:00:00$/);
+    expect(f.current?.time).not.toContain("Z");
+    expect(f.hourly?.time?.[0]).not.toContain("Z");
+    expect(f.daily?.time?.[0]).toBe(f.current?.time?.slice(0, 10));
+    expect(f.daily?.sunrise?.[0]).not.toContain("Z");
+    expect(formatDay(f.daily?.time?.[0] ?? "", f.current?.time)).toBe("Today");
   });
 });
