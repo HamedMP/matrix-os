@@ -179,16 +179,17 @@ export default function LandingPage() {
           transform: translateX(-50%);
           z-index: 100;
           width: fit-content;
-          max-width: min(calc(100vw - 2rem), 44rem);
+          max-width: calc(100vw - 1rem);
         }
         .nav-island-inner {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-columns: max-content max-content;
           align-items: center;
-          column-gap: 0.75rem;
+          justify-content: start;
+          column-gap: 0.45rem;
           width: 100%;
           min-height: 3rem;
-          padding: 10px 1.25rem 10px 1.375rem;
+          padding: 9px 0.75rem 9px 0.825rem;
           border-radius: 9999px;
           background: rgba(250, 250, 245, 0.96);
           backdrop-filter: blur(16px) saturate(1.8);
@@ -199,6 +200,7 @@ export default function LandingPage() {
         .nav-brand {
           grid-column: 1;
           justify-self: start;
+          min-width: 0;
         }
         .nav-links {
           display: none;
@@ -207,12 +209,28 @@ export default function LandingPage() {
           grid-column: 2;
           justify-self: end;
         }
+        @media (max-width: 350px) {
+          .nav-island-inner {
+            column-gap: 0.35rem;
+            padding: 8px 0.625rem;
+          }
+          .mobile-brand-wordmark {
+            font-size: 11px;
+          }
+          .nav-actions a {
+            padding-left: 0.625rem;
+            padding-right: 0.625rem;
+            letter-spacing: 0.08em;
+          }
+        }
         @media (min-width: 760px) {
           .nav-island {
             width: min(calc(100vw - 2rem), 39.5rem);
+            max-width: none;
           }
           .nav-island-inner {
             grid-template-columns: auto minmax(0, 1fr) auto;
+            justify-content: stretch;
             column-gap: 0.75rem;
             padding: 9px 1rem 9px 1.125rem;
           }
@@ -364,12 +382,12 @@ function NavIsland() {
       <div className="nav-island-inner">
         <Link
           href="/"
-          className="nav-brand flex shrink-0 items-center gap-2.5"
+          className="nav-brand flex items-center gap-2"
           style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}
         >
-          <Logo className="h-7 w-auto min-[1100px]:h-8" style={{ color: c.forest }} />
-          <span className="hidden min-[1100px]:inline whitespace-nowrap text-[15px] font-bold tracking-tight min-[1280px]:text-base" style={{ color: c.forest }}>
-            matrix os
+          <Logo className="h-6 w-auto shrink-0 min-[380px]:h-7 min-[1100px]:h-8" style={{ color: c.forest }} />
+          <span className="mobile-brand-wordmark whitespace-nowrap text-[12px] font-bold tracking-tight min-[380px]:text-[13px] min-[1100px]:text-[15px] min-[1280px]:text-base" style={{ color: c.forest }}>
+            Matrix OS
           </span>
         </Link>
         <nav className="nav-links" aria-label="Primary">
@@ -384,7 +402,7 @@ function NavIsland() {
               data-ph-event="marketing_cta_clicked"
               data-ph-location="nav"
               data-ph-target="get_started"
-              className="inline-flex shrink-0 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] transition-colors duration-200 min-[1280px]:px-5"
+              className="inline-flex shrink-0 rounded-full px-3 py-2 text-[10px] font-medium uppercase tracking-[0.1em] transition-colors duration-200 min-[1280px]:px-5"
               style={{ backgroundColor: c.forest, color: c.pageBg }}
             >
               get started
@@ -398,7 +416,7 @@ function NavIsland() {
               data-ph-target="open_app"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex shrink-0 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] transition-colors duration-200 min-[1280px]:px-5"
+              className="inline-flex shrink-0 rounded-full px-3 py-2 text-[10px] font-medium uppercase tracking-[0.1em] transition-colors duration-200 min-[1280px]:px-5"
               style={{ backgroundColor: c.forest, color: c.pageBg }}
             >
               open matrix os
