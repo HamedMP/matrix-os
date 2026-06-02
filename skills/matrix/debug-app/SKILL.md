@@ -76,6 +76,9 @@ Avoid stale fields from old app formats such as `type: "html-app"` or `type: "re
 - `404 /icons/<slug>.png`: default icon asset missing or manifest points at a non-existent icon.
 - `404 app bundle`: `entry` or Vite `base` is wrong.
 - `CORS` from provider API: app is calling a provider directly. Use Matrix integration routes.
+- `SecurityError` from `localStorage`: app code is running inside the Matrix sandbox. Persist through
+  `window.MatrixOS.db`; keep localStorage fallback code test-only/no-op.
+- Missing or undefined saved fields: check `matrix.json` `storage.tables` declares the column and type.
 - `401 /api/auth/ws-token`: user is not authenticated or the route is being called from the wrong shell context.
 - `Clerk failed to load clerk.example.com`: stale environment or image build used placeholder Clerk config.
 
@@ -84,7 +87,18 @@ Avoid stale fields from old app formats such as `type: "html-app"` or `type: "re
 - Use committed default icon assets for built-in apps.
 - Manifest `icon` should be a slug, not an arbitrary URL.
 - Verify the resolved icon path exists in Matrix's system icons.
+- For games, prefer the shipped `game-center` asset unless the app has its own committed icon.
 - Do not rely on runtime image generation for default icons.
+
+## Data Bridge Checks
+
+- Confirm `window.MatrixOS?.db` exists before debugging state as an app bug.
+- Check the manifest declares every table and persisted column used by the app.
+- Reproduce create/update/delete failures and verify the UI rolls optimistic state back after bridge errors.
+- For ordered lists, best scores, timers, histories, and stats, look for racing writes. Serialize dependent
+  updates or use a single bridge operation when possible.
+- Avoid treating a test-only localStorage guard as production persistence. The shell sandbox should use the
+  bridge path.
 
 ## Integration Errors
 

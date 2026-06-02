@@ -19,7 +19,15 @@ if [ -d "${MATRIX_SKILLS_SOURCE}/skills/matrix" ]; then
   exit 0
 fi
 
-for skill_dir in app-builder design-system integrations dev-vps debug-app; do
+if [ -d "${MATRIX_SKILLS_SOURCE}/app-builder" ]; then
+  MATRIX_SKILL_TARGETS=hermes \
+    MATRIX_SKILLS_SOURCE="$MATRIX_SKILLS_SOURCE" \
+    HERMES_HOME="$HERMES_HOME" \
+    bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sync-matrix-agent-skills.sh"
+  exit 0
+fi
+
+for skill_dir in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
   "$HERMES_BIN" skills install --force --yes "${MATRIX_SKILLS_SOURCE}/skills/matrix/${skill_dir}"
 done
 

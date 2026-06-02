@@ -8,7 +8,7 @@ platforms: [linux, macos]
 metadata:
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
-    related_skills: [matrix-design-system, matrix-integrations, matrix-debug-app]
+    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app]
 ---
 
 # Matrix App Builder
@@ -28,9 +28,11 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
 - Use Matrix theme variables and iframe-safe sizing.
-- For UI, ALWAYS load and follow the `matrix-design-system` skill. Key rules: Forest/Cream/Ember/Deep palette, gradient backgrounds (sand washes not flat), Orbitron H1/H2 only, Inter for everything else, capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stagger animations on mount. No exceptions.
+- For UI, ALWAYS load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Key rules: Forest/Cream/Ember/Deep palette, gradient backgrounds (sand washes not flat), Orbitron H1/H2 only, Inter for everything else, capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stable window-sized layouts, and stagger animations on mount. No exceptions.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
+- Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.
+- For default or first-party apps under `home/apps/**`, keep manifests deterministic: `runtime: "vite"`, `build.output: "dist"`, schema columns declared in `storage.tables`, and `icon` pointing to a committed asset in `home/system/icons/`.
 
 ## Standard Structure
 
@@ -118,6 +120,29 @@ injected bridge:
 - For external/third-party APIs use `window.MatrixOS.proxyFetch(url)` (allowlisted) — never a raw fetch.
 - Do NOT add a `localStorage` fallback that runs in the shell; it throws in the sandbox. A guarded
   `try/catch` localStorage path is acceptable only as a no-op for the unit-test environment.
+
+### Persistence Rules
+
+- Declare every persisted field in `matrix.json` `storage.tables`, including audit fields such as
+  `created_at`, best-score/best-time columns, and JSONB state payloads.
+- Load from bridge storage on startup; do not seed duplicate fallback rows after real rows load.
+- Roll back optimistic UI changes on failed creates, updates, deletes, and reorders. Keep pending deletes
+  filtered from visible state until the bridge confirms or rolls back.
+- Serialize dependent writes that update ordering, best scores, stats counters, or history rows. Avoid racing
+  two bridge writes that can overwrite each other's derived state.
+- Keep browser-only helpers guarded for tests. In production shell iframes, direct `localStorage` access and
+  raw bridge `fetch()` calls are not reliable persistence.
+
+## First-Party Default Apps
+
+When editing bundled default apps in this repo:
+
+- Keep app manifests and schema in `home/apps/<slug>/matrix.json`.
+- Reuse the shared default-app Vite build path; do not add stale per-app package/runtime fields unless the
+  app truly needs them.
+- Run `node scripts/build-default-apps.mjs home/apps` before host-bundle work when default app source changed.
+- Prefer the shared `game-center` icon for games unless a concrete shipped icon exists.
+- Verify app icon slugs against `home/system/icons/<slug>.svg` or `.png`; never rely on runtime icon generation.
 
 ## Scaffold Commands
 

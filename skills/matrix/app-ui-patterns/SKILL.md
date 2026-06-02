@@ -26,6 +26,8 @@ Matrix OS apps render inside iframes within window frames. The OS provides title
 - Use their own scroll containers, not body scroll
 - Never render their own title bar or window chrome
 - Never add internal margin against window edges
+- Keep fixed-format UI stable with explicit dimensions, grid tracks, aspect ratios, or min/max constraints so
+  hover states, labels, icons, tiles, and loading states do not shift layout.
 
 ## App Shell Pattern
 
@@ -178,6 +180,8 @@ For spatial apps: whiteboards, kanban boards, node editors.
 - Toolbar buttons: ghost variant, 36×36px, icon-only with tooltips
 - Zoom controls: bottom-right corner, small pill-shaped container
 - Canvas background: very subtle dot grid or topo pattern at 2-3% opacity
+- Cancellation must be explicit: Escape/cancel should suppress follow-up blur commits for inline editors.
+- Destructive actions and failed saves should not clear visible local state until the bridge/server confirms.
 
 ## Pattern: Empty State
 
@@ -234,3 +238,7 @@ Apps should be usable at 320px width (minimum window size).
 4. **One primary action per view.** The main thing the user came to do should be immediately obvious.
 5. **Never nest cards inside cards.** If you need hierarchy, use muted backgrounds or border-left accents.
 6. **Navigation: top (tabs) or left (sidebar).** Never bottom — the OS owns that space.
+7. **No layout shift under data refresh.** Loading, empty, error, and populated states should reserve compatible
+   space for the same controls.
+8. **Keyboard behavior is stateful.** Pause overlays, inline editors, and selected tools should treat Enter,
+   Escape, and arrow keys according to the current mode instead of restarting or committing unexpectedly.
