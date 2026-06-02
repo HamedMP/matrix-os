@@ -350,7 +350,9 @@ describe("Expense Tracker app", () => {
     expect(await screen.findByText("Coffee beans")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /edit coffee beans/i }));
-    fireEvent.change(screen.getByLabelText(/date/i), { target: { value: dateInputMonthsFromCurrent(1) } });
+    const retryDate = dateInputMonthsFromCurrent(1);
+    fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "Retry this edit" } });
+    fireEvent.change(screen.getByLabelText(/date/i), { target: { value: retryDate } });
 
     await act(async () => {
       fireEvent.submit(screen.getByTestId("expense-form"));
@@ -360,6 +362,9 @@ describe("Expense Tracker app", () => {
     expect(await screen.findByText("Could not save that change.")).toBeTruthy();
     expect(screen.getByTestId("selected-month").textContent).toBe(originalMonthLabel);
     expect(screen.getByText("Coffee beans")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /edit transaction/i })).toBeTruthy();
+    expect((screen.getByLabelText(/note/i) as HTMLInputElement).value).toBe("Retry this edit");
+    expect((screen.getByLabelText(/date/i) as HTMLInputElement).value).toBe(retryDate);
   });
 
   it("keeps a deleted transaction hidden when the follow-up reload fails", async () => {

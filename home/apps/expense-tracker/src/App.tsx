@@ -286,7 +286,6 @@ export default function App() {
           current.map((e) => (e.id === editingId ? { ...e, ...payload } : e)),
         );
         setSelectedMonth(monthKey(payload.spent_at));
-        resetDraft();
         try {
           if (db) await db.update(EXPENSES_TABLE, editingId, payload);
         } catch (err: unknown) {
@@ -301,6 +300,7 @@ export default function App() {
         } finally {
           submittingRef.current = false;
         }
+        resetDraft();
         void reload();
         return;
       }
