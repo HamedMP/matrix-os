@@ -94,6 +94,25 @@ describe("Whiteboard app", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
   });
 
+  it("does not switch drawing tools for browser modifier shortcuts", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const select = screen.getByRole("button", { name: "Select (V)" });
+    const pen = screen.getByRole("button", { name: "Pen (P)" });
+    expect(select.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+    expect(select.getAttribute("aria-pressed")).toBe("true");
+    expect(pen.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.keyDown(window, { key: "p" });
+    expect(pen.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows an empty-state onboarding affordance when the board is blank", async () => {
     installMatrixDb([]);
     render(<App />);

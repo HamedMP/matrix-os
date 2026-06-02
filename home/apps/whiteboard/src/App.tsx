@@ -814,8 +814,10 @@ export default function App() {
         setConfirmDelete(null);
         return;
       }
-      const match = TOOLS.find((t) => t.shortcut.toLowerCase() === e.key.toLowerCase());
-      if (match) setTool(match.kind);
+      if (!mod) {
+        const match = TOOLS.find((t) => t.shortcut.toLowerCase() === e.key.toLowerCase());
+        if (match) setTool(match.kind);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
