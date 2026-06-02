@@ -182,6 +182,7 @@ describe("chord", () => {
     board = toggleFlag(board, 0, 1); // wrong flag (not the mine)
     const after = chord(board, 1, 1);
     expect(after.status).toBe("lost");
+    expect(after.cells[0][1].state).toBe(CELL.WRONG_FLAG);
   });
 });
 

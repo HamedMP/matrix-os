@@ -274,5 +274,8 @@ describe("Minesweeper app", () => {
 
     const mines = screen.getByLabelText("Mines");
     expect(mines.getAttribute("max")).toBe("247");
+
+    fireEvent.change(screen.getByLabelText("Width"), { target: { value: "3" } });
+    expect(mines.getAttribute("max")).toBe("71");
   });
 });

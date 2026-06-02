@@ -476,7 +476,7 @@ export default function App(): React.ReactElement {
               <input
                 type="number"
                 min={1}
-                max={custom.rows * custom.cols - 9}
+                max={spec.rows * spec.cols - 9}
                 value={custom.mines}
                 onChange={(e) => setCustom((p) => ({ ...p, mines: Number(e.target.value) }))}
               />
@@ -523,6 +523,7 @@ export default function App(): React.ReactElement {
               const revealed = cell.state === CELL.REVEALED;
               const exploded = cell.state === CELL.EXPLODED;
               const flagged = cell.state === CELL.FLAGGED;
+              const wrongFlag = cell.state === CELL.WRONG_FLAG;
               const showNumber = revealed && !cell.mine && cell.adjacent > 0;
               const showMine = (revealed || exploded) && cell.mine;
               return (
@@ -533,10 +534,12 @@ export default function App(): React.ReactElement {
                   data-state={cell.state}
                   className={`ms-cell${revealed || exploded ? " is-open" : ""}${
                     exploded ? " is-exploded" : ""
-                  }`}
+                  }${wrongFlag ? " is-wrong-flag" : ""}`}
                   style={showNumber ? { color: NUMBER_COLORS[cell.adjacent] } : undefined}
                   aria-label={
-                    flagged
+                    wrongFlag
+                      ? "Incorrect flag"
+                      : flagged
                       ? "Flagged cell"
                       : revealed
                         ? showNumber
@@ -555,6 +558,7 @@ export default function App(): React.ReactElement {
                   {showNumber ? cell.adjacent : null}
                   {showMine ? <Bomb size={14} aria-hidden="true" /> : null}
                   {flagged ? <Flag size={13} className="ms-flag" aria-hidden="true" /> : null}
+                  {wrongFlag ? <span className="ms-wrong-flag" aria-hidden="true">x</span> : null}
                 </button>
               );
             }),

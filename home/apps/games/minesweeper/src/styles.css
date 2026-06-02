@@ -300,6 +300,13 @@ button {
   color: var(--app-danger);
 }
 
+.ms-wrong-flag {
+  color: var(--app-danger);
+  font-size: clamp(10px, calc(var(--ms-cell) * 0.62), 16px);
+  font-weight: 800;
+  line-height: 1;
+}
+
 .ms-footer {
   display: flex;
   align-items: center;

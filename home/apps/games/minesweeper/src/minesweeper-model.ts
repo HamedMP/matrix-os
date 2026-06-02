@@ -6,6 +6,7 @@ export const CELL = {
   REVEALED: "revealed",
   FLAGGED: "flagged",
   EXPLODED: "exploded",
+  WRONG_FLAG: "wrong-flag",
 } as const;
 
 export type CellState = (typeof CELL)[keyof typeof CELL];
@@ -159,8 +160,10 @@ export function placeMinesAvoiding(
 
 function floodReveal(cells: Cell[][], r: number, c: number, rows: number, cols: number): void {
   const stack: Array<[number, number]> = [[r, c]];
+  const queued = new Set<number>([r * cols + c]);
   while (stack.length > 0) {
     const [cr, cc] = stack.pop() as [number, number];
+    queued.delete(cr * cols + cc);
     const cell = cells[cr][cc];
     if (cell.state === CELL.REVEALED || cell.state === CELL.FLAGGED) continue;
     if (cell.mine) continue;
@@ -168,7 +171,11 @@ function floodReveal(cells: Cell[][], r: number, c: number, rows: number, cols: 
     if (cell.adjacent === 0) {
       for (const [nr, nc] of neighbors(cr, cc, rows, cols)) {
         const ncell = cells[nr][nc];
-        if (ncell.state === CELL.HIDDEN && !ncell.mine) stack.push([nr, nc]);
+        const key = nr * cols + nc;
+        if (ncell.state === CELL.HIDDEN && !ncell.mine && !queued.has(key)) {
+          queued.add(key);
+          stack.push([nr, nc]);
+        }
       }
     }
   }
@@ -177,6 +184,10 @@ function floodReveal(cells: Cell[][], r: number, c: number, rows: number, cols: 
 function exposeAllMines(cells: Cell[][]): void {
   for (const row of cells) {
     for (const cell of row) {
+      if (!cell.mine && cell.state === CELL.FLAGGED) {
+        cell.state = CELL.WRONG_FLAG;
+        continue;
+      }
       if (cell.mine && cell.state !== CELL.EXPLODED && cell.state !== CELL.FLAGGED) {
         cell.state = CELL.REVEALED;
       }
