@@ -111,7 +111,7 @@ interface DraftExpense {
 type BudgetOperationResult =
   | { type: "insert"; budget: BudgetRow }
   | { type: "delete"; id: string }
-  | { type: "update" };
+  | { type: "update"; budget: BudgetRow };
 
 function emptyDraft(): DraftExpense {
   return {
@@ -405,7 +405,9 @@ export default function App() {
       if (db) {
         operations.push(
           existing
-            ? db.update(BUDGETS_TABLE, existing.id, { monthly_limit: limit }).then(() => ({ type: "update" }))
+            ? db
+                .update(BUDGETS_TABLE, existing.id, { monthly_limit: limit })
+                .then(() => ({ type: "update", budget: { ...existing, monthly_limit: limit } }))
             : db
                 .insert(BUDGETS_TABLE, { category, monthly_limit: limit })
                 .then(({ id }) => ({ type: "insert", budget: { id, category, monthly_limit: limit } })),
@@ -430,12 +432,21 @@ export default function App() {
         )
         .map((result) => (result.value as { type: "delete"; id: string }).id),
     );
+    const updatedBudgets = results
+      .filter(
+        (result): result is PromiseFulfilledResult<BudgetOperationResult> =>
+          result.status === "fulfilled" && result.value.type === "update",
+      )
+      .map((result) => (result.value as { type: "update"; budget: BudgetRow }).budget);
     if (failed) {
       console.warn(
         "[expense-tracker] budget save failed:",
         failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
       );
-      const rollbackBase = previous.filter((budget) => !deletedBudgetIds.has(budget.id));
+      const updatedById = new Map(updatedBudgets.map((budget) => [budget.id, budget]));
+      const rollbackBase = previous
+        .filter((budget) => !deletedBudgetIds.has(budget.id))
+        .map((budget) => updatedById.get(budget.id) ?? budget);
       setBudgets(
         insertedBudgets.length > 0
           ? dedupeBudgets([...rollbackBase, ...insertedBudgets])
@@ -451,6 +462,7 @@ export default function App() {
         current.map((budget) => insertedBudgets.find((inserted) => inserted.category === budget.category) ?? budget),
       );
     }
+    budgetDuplicatesRef.current = new Map();
     void reload();
   }, [budgetDraft, budgets, refreshBudgets, reload]);
 

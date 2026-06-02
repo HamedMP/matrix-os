@@ -216,6 +216,7 @@ describe("Expense Tracker app", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
+    db.find.mockImplementation(async () => new Promise<DbRow[]>(() => undefined));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
       await Promise.resolve();
@@ -225,6 +226,14 @@ describe("Expense Tracker app", () => {
       expect(db.update).toHaveBeenCalledWith("budgets", "b1", { monthly_limit: 100 });
       expect(db.delete).toHaveBeenCalledWith("budgets", "b2");
     });
+
+    fireEvent.click(screen.getByRole("button", { name: /edit budgets/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+    });
+
+    expect(db.delete.mock.calls.filter((call) => call[0] === "budgets" && call[1] === "b2")).toHaveLength(1);
   });
 
   it("adds a transaction by calling db.insert with the right args", async () => {
@@ -402,6 +411,41 @@ describe("Expense Tracker app", () => {
     expect(db.update).toHaveBeenCalledWith("budgets", "b1", { monthly_limit: 150 });
     expect(screen.queryByRole("dialog", { name: /edit budgets/i })).toBeNull();
     expect(screen.queryByText("Could not save your budgets.")).toBeNull();
+  });
+
+  it("keeps successful budget updates visible after a mixed save failure", async () => {
+    const db = installMatrixDb(
+      [expense(2, 125, "Groceries")],
+      [{ id: "b1", category: "Groceries", monthly_limit: 100 }],
+    );
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "budgets" && data.category === "Rent") {
+        throw new Error("insert failed");
+      }
+      const id = `${table}-real`;
+      (table === "budgets" ? db.budgets : db.expenses).push({
+        id,
+        created_at: new Date().toISOString(),
+        ...data,
+      });
+      return { id };
+    });
+
+    render(<App />);
+    expect(await screen.findByTestId("over-budget-warning")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /edit budgets/i }));
+    fireEvent.change(screen.getByLabelText("Groceries monthly budget"), { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText("Rent monthly budget"), { target: { value: "200" } });
+    db.find.mockImplementation(async () => new Promise<DbRow[]>(() => undefined));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Could not save your budgets.")).toBeTruthy();
+    expect(screen.queryByTestId("over-budget-warning")).toBeNull();
   });
 
   it("dismisses budget editing with Escape and backdrop clicks", async () => {
