@@ -774,7 +774,7 @@ function App() {
           onClose={() => setSelectedCardId(null)}
           onPatch={(patch) => patchCard(selectedCard.id, patch)}
           onMoveColumn={(columnId) => {
-            const count = board.cards.filter((card) => card.columnId === columnId).length;
+            const count = boardRef.current?.cards.filter((card) => card.columnId === columnId).length ?? 0;
             dropCard(selectedCard.id, columnId, count);
           }}
           onToggleChecklist={(itemId) => toggleChecklist(selectedCard.id, itemId)}
