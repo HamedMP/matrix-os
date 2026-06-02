@@ -18,6 +18,8 @@ import "./styles.css";
 const GAMES_TABLE = "games";
 const LS_KEY = "matrixos.chess.games";
 const PROMOTION_PIECES: PieceType[] = ["q", "r", "b", "n"];
+const STATS_ERROR = "Saved games could not be loaded.";
+const SAVE_ERROR = "This game could not be saved.";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 type GameMode = "two-player" | "vs-computer";
@@ -107,6 +109,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [gamesPlayed, setGamesPlayed] = useState<number>(0);
   const savedResultRef = useRef(false);
+  const errorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    errorRef.current = error;
+  }, [error]);
 
   // AI opponent configuration. `humanColor` is the side the user plays in
   // vs-computer mode; the engine plays the other side. `thinking` disables input
@@ -137,8 +144,12 @@ export default function App() {
   const reloadStats = useCallback(async () => {
     const db = window.MatrixOS?.db;
     try {
-      setError(null);
-      const clearStatsError = () => setSaveState((current) => current === "error" ? "idle" : current);
+      const clearStatsError = () => {
+        if (errorRef.current !== STATS_ERROR) return;
+        errorRef.current = null;
+        setError(null);
+        setSaveState((current) => current === "error" ? "idle" : current);
+      };
       if (db) {
         const n = await db.count(GAMES_TABLE);
         setGamesPlayed(typeof n === "number" ? n : 0);
@@ -157,7 +168,8 @@ export default function App() {
     } catch (err: unknown) {
       console.warn("[chess] could not load game stats:", err instanceof Error ? err.message : String(err));
       setSaveState("error");
-      setError("Saved games could not be loaded.");
+      errorRef.current = STATS_ERROR;
+      setError(STATS_ERROR);
     }
   }, []);
 
@@ -191,7 +203,8 @@ export default function App() {
       } catch (err: unknown) {
         console.warn("[chess] could not save game:", err instanceof Error ? err.message : String(err));
         setSaveState("error");
-        setError("This game could not be saved.");
+        errorRef.current = SAVE_ERROR;
+        setError(SAVE_ERROR);
       }
     },
     [reloadStats],

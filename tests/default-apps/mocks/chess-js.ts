@@ -27,22 +27,30 @@ function startingBoard(): Record<string, Piece> {
 
 let nextBoardState: Record<string, Piece> | null = null;
 let nextTurnColor: Piece["color"] = "w";
+let nextCheckmate = false;
 
 export function __setNextBoard(board: Record<string, Piece>, turn: Piece["color"] = "w") {
   nextBoardState = Object.fromEntries(Object.entries(board).map(([square, piece]) => [square, { ...piece }]));
   nextTurnColor = turn;
 }
 
+export function __setNextCheckmate(value = true) {
+  nextCheckmate = value;
+}
+
 export class Chess {
   private boardState: Record<string, Piece>;
   private turnColor: Piece["color"];
   private moveStack: MoveRecord[] = [];
+  private forceCheckmate: boolean;
 
   constructor() {
     this.boardState = nextBoardState ?? startingBoard();
     this.turnColor = nextTurnColor;
+    this.forceCheckmate = nextCheckmate;
     nextBoardState = null;
     nextTurnColor = "w";
+    nextCheckmate = false;
   }
 
   reset() {
@@ -173,7 +181,7 @@ export class Chess {
     return false;
   }
   isCheckmate() {
-    return false;
+    return this.forceCheckmate && this.moveStack.length > 0;
   }
   isStalemate() {
     return false;

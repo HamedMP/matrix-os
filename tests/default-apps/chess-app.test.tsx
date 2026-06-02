@@ -4,7 +4,12 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findBestMove } from "../../home/apps/games/chess/src/chess-ai";
 
-// vitest.config.ts aliases app-local chess.js to a faithful test double.
+type DbRow = Record<string, unknown>;
+type ChessMockControls = {
+  __setNextBoard(board: Record<string, { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" }>, turn?: "w" | "b"): void;
+  __setNextCheckmate(value?: boolean): void;
+};
+
 let App: React.ComponentType;
 
 vi.mock("../../home/apps/games/chess/src/chess-ai", async (importOriginal) => {
@@ -14,11 +19,6 @@ vi.mock("../../home/apps/games/chess/src/chess-ai", async (importOriginal) => {
     findBestMove: vi.fn(actual.findBestMove),
   };
 });
-
-type DbRow = Record<string, unknown>;
-type ChessMockControls = {
-  __setNextBoard(board: Record<string, { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" }>, turn?: "w" | "b"): void;
-};
 
 function installMatrixDb(rows: DbRow[] = []) {
   const listeners: Array<() => void> = [];
@@ -93,6 +93,34 @@ describe("Chess app", () => {
     await waitFor(() => expect(screen.queryByText("Saved games could not be loaded.")).toBeNull());
     expect(screen.queryByText("Game could not be saved.")).toBeNull();
     expect(screen.getByText("1 game on record")).toBeTruthy();
+  });
+
+  it("keeps a save error visible during stats change reloads", async () => {
+    const { __setNextCheckmate } = await import("chess.js") as unknown as ChessMockControls;
+    __setNextCheckmate();
+    const db = installMatrixDb([]);
+    db.insert.mockRejectedValueOnce(new Error("save failed"));
+    db.count.mockResolvedValue(1);
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e2"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-e4"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("This game could not be saved.")).toBeTruthy();
+
+    await act(async () => {
+      db.emitChange();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("This game could not be saved.")).toBeTruthy();
+    expect(screen.queryByText("1 game on record")).toBeNull();
   });
 
   it("highlights legal destinations when a pawn is selected", async () => {

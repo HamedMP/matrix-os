@@ -2,6 +2,23 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "chess-app-test-mock",
+      enforce: "pre",
+      resolveId(source, importer) {
+        if (source !== "chess.js" || !importer) return null;
+        const normalized = importer.split(path.sep).join("/");
+        if (
+          normalized.endsWith("/tests/default-apps/chess-app.test.tsx") ||
+          normalized.endsWith("/home/apps/games/chess/src/App.tsx")
+        ) {
+          return path.resolve(__dirname, "tests/default-apps/mocks/chess-js.ts");
+        }
+        return null;
+      },
+    },
+  ],
   resolve: {
     conditions: ["node"],
     alias: {
@@ -26,7 +43,6 @@ export default defineConfig({
       react: path.resolve(__dirname, "node_modules/react"),
       "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
       "@aws-sdk/client-s3": path.resolve(__dirname, "node_modules/@aws-sdk/client-s3"),
-      "chess.js": path.resolve(__dirname, "tests/default-apps/mocks/chess-js.ts"),
     },
   },
   test: {
