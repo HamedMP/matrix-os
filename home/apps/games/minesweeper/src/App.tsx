@@ -17,6 +17,12 @@ import {
 
 type Face = "happy" | "scared" | "win" | "dead";
 
+interface GameMeta {
+  id: number;
+  difficulty: Difficulty;
+  spec: DifficultySpec;
+}
+
 const DIFFICULTIES: Array<{ id: Difficulty; label: string }> = [
   { id: "beginner", label: "Beginner" },
   { id: "intermediate", label: "Intermediate" },
@@ -78,12 +84,17 @@ export default function App(): React.ReactElement {
   const [face, setFace] = useState<Face>("happy");
   const [bestTimes, setBestTimes] = useState<Record<string, number>>({});
   const [statusMsg, setStatusMsg] = useState<string>("");
+  const [gameMeta, setGameMeta] = useState<GameMeta>(() => ({
+    id: 0,
+    difficulty: "beginner",
+    spec: difficultyConfig("beginner"),
+  }));
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const savedThisGame = useRef(false);
+  const savedGameId = useRef<number | null>(null);
 
   const spec = useMemo(() => specFor(difficulty, custom), [difficulty, custom]);
-  const bestKey = useMemo(() => bestKeyFor(difficulty, spec), [difficulty, spec.rows, spec.cols, spec.mines]);
+  const bestKey = useMemo(() => bestKeyFor(difficulty, spec), [difficulty, spec]);
 
   // --- Responsive board sizing --------------------------------------------
   // The board area flexes to fill the remaining window space; we measure it
@@ -152,7 +163,6 @@ export default function App(): React.ReactElement {
   const loadBestTimes = useCallback(async () => {
     const db = window.MatrixOS?.db;
     if (!db) {
-      setBestTimes({});
       return;
     }
     try {
@@ -168,7 +178,6 @@ export default function App(): React.ReactElement {
     } catch (err) {
       console.warn("[minesweeper] failed to load best times from DB", err);
       setStatusMsg("Could not load best times");
-      setBestTimes({});
     }
   }, []);
 
@@ -198,8 +207,10 @@ export default function App(): React.ReactElement {
   const persistBestTime = useCallback(
     async (diff: Difficulty, bestSpec: DifficultySpec, secs: number) => {
       const key = bestKeyFor(diff, bestSpec);
+      let previousBest: number | undefined;
       setBestTimes((prev) => {
         const current = prev[key];
+        previousBest = current;
         if (current !== undefined && current <= secs) return prev;
         return { ...prev, [key]: secs };
       });
@@ -237,6 +248,13 @@ export default function App(): React.ReactElement {
       } catch (err) {
         console.warn("[minesweeper] failed to persist best time", err);
         setStatusMsg("Could not save best time");
+        setBestTimes((prev) => {
+          if (prev[key] !== secs) return prev;
+          const next = { ...prev };
+          if (previousBest === undefined) delete next[key];
+          else next[key] = previousBest;
+          return next;
+        });
       }
     },
     [],
@@ -244,38 +262,43 @@ export default function App(): React.ReactElement {
 
   // --- Game lifecycle ------------------------------------------------------
   const newGame = useCallback(
-    (nextSpec: DifficultySpec) => {
+    (nextSpec: DifficultySpec, nextDifficulty: Difficulty = difficulty) => {
       stopTimer();
       setBoard(createBoard(nextSpec));
+      setGameMeta((current) => ({
+        id: current.id + 1,
+        difficulty: nextDifficulty,
+        spec: nextSpec,
+      }));
       setSeconds(0);
       setFace("happy");
       setStatusMsg("");
-      savedThisGame.current = false;
     },
-    [stopTimer],
+    [difficulty, stopTimer],
   );
 
   // Re-create the board when difficulty/custom spec changes.
   useEffect(() => {
-    newGame(spec);
+    newGame(spec, difficulty);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [difficulty, spec.rows, spec.cols, spec.mines]);
 
   useEffect(() => {
     if (board.status === "won") {
       setFace("win");
-      if (!savedThisGame.current) {
-        savedThisGame.current = true;
+      if (savedGameId.current !== gameMeta.id) {
+        savedGameId.current = gameMeta.id;
         const finalSecs = Math.max(1, seconds);
-        const current = bestTimes[bestKey];
+        const gameBestKey = bestKeyFor(gameMeta.difficulty, gameMeta.spec);
+        const current = bestTimes[gameBestKey];
         if (current === undefined || finalSecs < current) {
-          void persistBestTime(difficulty, spec, finalSecs);
+          void persistBestTime(gameMeta.difficulty, gameMeta.spec, finalSecs);
         }
       }
     } else if (board.status === "lost") {
       setFace("dead");
     }
-  }, [bestKey, bestTimes, board.status, difficulty, persistBestTime, seconds, spec]);
+  }, [bestTimes, board.status, gameMeta, persistBestTime, seconds]);
 
   const onReveal = useCallback(
     (r: number, c: number) => {
@@ -319,6 +342,7 @@ export default function App(): React.ReactElement {
   const onMouseDownCell = useCallback(
     (e: React.MouseEvent) => {
       if (board.status === "won" || board.status === "lost") return;
+      if (!pressed.current.left && !pressed.current.right) chordOnClick.current = false;
       if (e.button === 0) pressed.current.left = true;
       if (e.button === 2) pressed.current.right = true;
       if (e.button === 0 || (pressed.current.left && pressed.current.right)) {
@@ -329,7 +353,7 @@ export default function App(): React.ReactElement {
   );
 
   const onMouseUpCell = useCallback((e: React.MouseEvent) => {
-    chordOnClick.current = pressed.current.left && pressed.current.right;
+    if (pressed.current.left && pressed.current.right) chordOnClick.current = true;
     if (e.button === 0) pressed.current.left = false;
     if (e.button === 2) pressed.current.right = false;
   }, []);
@@ -463,7 +487,7 @@ export default function App(): React.ReactElement {
             className="ms-reset"
             data-testid="reset"
             aria-label="New game"
-            onClick={() => newGame(spec)}
+            onClick={() => newGame(spec, difficulty)}
           >
             <span className="ms-face" aria-hidden="true">
               {faceGlyph}
