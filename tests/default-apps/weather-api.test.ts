@@ -68,6 +68,21 @@ describe("weather api proxy", () => {
     })).rejects.toThrow("proxy request failed: unexpected response shape");
   });
 
+  it("rejects empty forecast proxy objects instead of treating them as live data", async () => {
+    Object.defineProperty(window, "MatrixOS", {
+      configurable: true,
+      value: {
+        proxyFetch: vi.fn(async () => ({})),
+      },
+    });
+
+    await expect(fetchForecast({
+      name: "Berlin",
+      latitude: 52.52,
+      longitude: 13.405,
+    })).rejects.toThrow("proxy request failed: unexpected response shape");
+  });
+
   it("drops blank geocode names before returning search results", async () => {
     Object.defineProperty(window, "MatrixOS", {
       configurable: true,

@@ -336,6 +336,7 @@ export default function App() {
         const existing = await readStoredLocations();
         await writeAppData(LOCATIONS_KEY, storedLocations([...existing, candidate]));
         await reloadLocations();
+        setActiveId(candidate.name);
         setError(null);
         return;
       }

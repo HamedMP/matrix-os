@@ -12,7 +12,7 @@ export interface GeoResult {
   admin1?: string;
 }
 
-async function proxyJson<T>(url: string): Promise<T> {
+async function proxyJson<T>(url: string, opts: { allowEmptyObject?: boolean } = {}): Promise<T> {
   const proxy = window.MatrixOS?.proxyFetch;
   if (!proxy) {
     // No bridge (e.g. unit tests / no shell): allow a direct fetch so tests can
@@ -33,7 +33,7 @@ async function proxyJson<T>(url: string): Promise<T> {
     throw new Error(`proxy request failed: ${detail}`);
   }
   const hasExpectedShape =
-    Object.keys(data as Record<string, unknown>).length === 0 ||
+    (opts.allowEmptyObject === true && Object.keys(data as Record<string, unknown>).length === 0) ||
     "current" in data ||
     "hourly" in data ||
     "daily" in data ||
@@ -65,7 +65,7 @@ export async function geocode(query: string): Promise<GeoResult[]> {
   url.searchParams.set("language", "en");
   url.searchParams.set("format", "json");
 
-  const data = await proxyJson<{ results?: GeoResult[] }>(url.toString());
+  const data = await proxyJson<{ results?: GeoResult[] }>(url.toString(), { allowEmptyObject: true });
   const results = Array.isArray(data.results) ? data.results : [];
   return results
     .filter(

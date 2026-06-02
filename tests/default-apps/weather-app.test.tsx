@@ -652,6 +652,47 @@ describe("Weather app", () => {
     });
   });
 
+  it("keeps a newly added fallback location active after storage reload", async () => {
+    installMatrixDataBridge(new Map<string, unknown>([[
+      "matrix-weather-locations",
+      [
+        { name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+      ],
+    ]]));
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("geocoding-api")
+        ? {
+            results: [
+              { name: "Paris", latitude: 48.8566, longitude: 2.3522, country: "France", admin1: "Ile-de-France" },
+            ],
+          }
+        : FORECAST_JSON;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("hero-location").textContent).toContain("Berlin");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add location/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Paris" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("hero-location").textContent).toContain("Paris, Ile-de-France");
+    });
+  });
+
   it("strips optimistic local ids when removing fallback locations", async () => {
     const bridge = installMatrixDataBridge(new Map<string, unknown>([[
       "matrix-weather-locations",
