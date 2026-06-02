@@ -206,6 +206,9 @@ describe("Minesweeper app", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     fireEvent.click(screen.getByTestId("cell-12"));
     await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
       await vi.advanceTimersByTimeAsync(7_000);
     });
     vi.useRealTimers();
@@ -237,12 +240,8 @@ describe("Minesweeper app", () => {
     fireEvent.click(screen.getByRole("button", { name: /new game/i }));
     expect(await screen.findAllByTestId(/^cell-/)).toHaveLength(25);
 
-    vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     fireEvent.click(screen.getByTestId("cell-12"));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(7_000);
-    });
 
     for (let index = 1; index < 25; index += 1) {
       fireEvent.click(screen.getByTestId(`cell-${index}`));
@@ -254,6 +253,8 @@ describe("Minesweeper app", () => {
 
     expect(screen.getByText(/Best time saved; cleanup pending/)).toBeTruthy();
     expect(db.delete).toHaveBeenCalledWith("times", "old-best");
+    // The win completes before a timer tick is committed in this immediate-win
+    // path, so finalSecs clamps the saved best time to 1 second.
     expect(within(screen.getByTestId("best-time")).getByText("1s")).toBeTruthy();
   });
 
