@@ -345,6 +345,10 @@ export function normalizeBoardName(raw: unknown): string {
 
 function toEpochMs(raw: unknown): number {
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (raw instanceof Date) {
+    const ms = raw.getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  }
   if (typeof raw === "string") {
     const ms = Date.parse(raw);
     if (Number.isFinite(ms)) return ms;
@@ -412,6 +416,7 @@ function coerceElement(raw: unknown): SceneElement | null {
           )
           .filter((p): p is Point => p !== null)
       : [];
+    if (points.length === 0) return null;
     return { ...base, kind: "pen", points };
   }
   if (kind === "line" || kind === "arrow") {

@@ -217,6 +217,7 @@ describe("whiteboard model — serialization", () => {
       elements: [
         { id: "ok", kind: "rect", x: 0, y: 0, width: 5, height: 5, stroke: "#000", fill: "transparent", strokeWidth: 2 },
         { id: "bad", kind: "rect", x: "nope", y: 0, width: 5, height: 5 },
+        { id: "ghost", kind: "pen", points: [{ x: "nope", y: 1 }, null] },
         { kind: "mystery" },
       ],
     });
@@ -245,8 +246,8 @@ describe("whiteboard model — board index", () => {
     ) as { storage?: { tables?: { scenes?: { columns?: Record<string, string> } } } };
 
     expect(manifest.storage?.tables?.scenes?.columns).toMatchObject({
-      created_at: "text",
-      updated_at: "text",
+      created_at: "timestamptz",
+      updated_at: "timestamptz",
     });
   });
 
@@ -286,6 +287,14 @@ describe("whiteboard model — board index", () => {
     ]);
     expect(index.map((m) => m.id)).toEqual(["b", "a"]);
     expect(index).toHaveLength(2);
+  });
+
+  it("builds a sorted index from Postgres timestamp objects", () => {
+    const index = boardIndexFromRows([
+      { id: "a", name: "Old", updated_at: new Date("2026-01-01T00:00:00.000Z") },
+      { id: "b", name: "New", updated_at: new Date("2026-03-01T00:00:00.000Z") },
+    ]);
+    expect(index.map((m) => m.id)).toEqual(["b", "a"]);
   });
 
   it("extracts the doc payload from a row", () => {

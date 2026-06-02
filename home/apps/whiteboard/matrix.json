@@ -15,8 +15,8 @@
         "columns": {
           "name": "text",
           "doc": "jsonb",
-          "created_at": "text",
-          "updated_at": "text"
+          "created_at": "timestamptz",
+          "updated_at": "timestamptz"
         }
       }
     }
