@@ -155,6 +155,31 @@ describe("chess-ai engine", () => {
     expect(up).toBeGreaterThan(even);
   });
 
+  it("evaluation treats terminal positions explicitly", () => {
+    expect(evaluatePosition(new MockChess({
+      root: { turn: "w", board: quietBoard, checkmate: true },
+    }))).toBeLessThan(-90_000);
+    expect(evaluatePosition(new MockChess({
+      root: { turn: "w", board: quietBoard, stalemate: true },
+    }))).toBe(0);
+    expect(evaluatePosition(new MockChess({
+      root: { turn: "w", board: quietBoard, draw: true },
+    }))).toBe(0);
+  });
+
+  it("search handles stalemate child nodes as draws", () => {
+    const game = new MockChess({
+      root: {
+        turn: "w",
+        board: quietBoard,
+        moves: [move("a2", "a3", "p")],
+      },
+      a2a3: { turn: "b", board: quietBoard, stalemate: true },
+    });
+
+    expect(findBestMove(game, 2)).toEqual({ from: "a2", to: "a3", promotion: undefined });
+  });
+
   it("is deterministic for a fixed position and depth", () => {
     const nodes = {
       root: { turn: "w" as const, board: quietBoard, moves: [move("a2", "a3", "p"), move("h2", "h3", "p")] },
