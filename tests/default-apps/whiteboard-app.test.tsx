@@ -232,6 +232,20 @@ describe("Whiteboard app — multi-board files", () => {
     expect(typeof inserted.name).toBe("string");
   });
 
+  it("recovers the initial loading state when first board creation fails", async () => {
+    const db = installMatrixDb([]);
+    db.insert.mockRejectedValueOnce(new Error("create failed"));
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not create a board.")).toBeTruthy();
+    expect(screen.getByTestId("whiteboard-empty")).toBeTruthy();
+  });
+
   it("keeps rename editing open when the db update fails", async () => {
     const db = installMatrixDb([
       board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
@@ -358,5 +372,47 @@ describe("Whiteboard app — multi-board files", () => {
     });
 
     expect(db.delete).toHaveBeenCalledWith("scenes", "b2");
+  });
+
+  it("keeps delete confirmation open when deleting a board fails", async () => {
+    const db = installMatrixDb([
+      board("b1", "Keep me", "2026-02-02T00:00:00.000Z"),
+      board("b2", "Delete me", "2026-03-03T00:00:00.000Z"),
+    ]);
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /delete board delete me/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^delete board$/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not delete the board.")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: /delete board/i })).toBeTruthy();
+  });
+
+  it("dismisses delete confirmation with Escape", async () => {
+    installMatrixDb([
+      board("b1", "Keep me", "2026-02-02T00:00:00.000Z"),
+      board("b2", "Delete me", "2026-03-03T00:00:00.000Z"),
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /delete board delete me/i }));
+    expect(screen.getByRole("dialog", { name: /delete board/i })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: /delete board/i })).toBeNull();
   });
 });

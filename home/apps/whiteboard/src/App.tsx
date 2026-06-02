@@ -49,7 +49,6 @@ import {
   moveElement,
   normalizeBoardName,
   redo,
-  rowToBoardMeta,
   serializeScene,
   undo,
   updateElement,
@@ -140,7 +139,8 @@ function loadLocalName(): string {
   try {
     const raw = window.localStorage.getItem(LS_NAME_KEY);
     return normalizeBoardName(raw);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[whiteboard] localStorage name read failed:", err instanceof Error ? err.message : String(err));
     return normalizeBoardName(null);
   }
 }
@@ -303,6 +303,7 @@ export default function App() {
       } catch (err: unknown) {
         console.warn("[whiteboard] create board failed:", err instanceof Error ? err.message : String(err));
         setError("Could not create a board.");
+        setLoadingBoard(false);
         return null;
       }
     },
@@ -343,17 +344,21 @@ export default function App() {
     const doc = serializeScene(toSave);
     if (!db || boardId === LOCAL_BOARD_ID) {
       saveLocal(toSave);
-      setSaveState("saved");
-      dirtyRef.current = false;
+      if (activeIdRef.current === boardId) {
+        setSaveState("saved");
+        dirtyRef.current = false;
+      }
       return;
     }
     if (!boardId) return;
-    setSaveState("saving");
+    if (activeIdRef.current === boardId) setSaveState("saving");
     try {
       await db.update(SCENES_TABLE, boardId, { doc });
-      setSaveState("saved");
-      setError(null);
-      dirtyRef.current = false;
+      if (activeIdRef.current === boardId) {
+        setSaveState("saved");
+        setError(null);
+        dirtyRef.current = false;
+      }
       // Bump this board to the top of the recency-sorted list locally.
       setBoards((prev) =>
         [...prev]
@@ -362,8 +367,10 @@ export default function App() {
       );
     } catch (err: unknown) {
       console.warn("[whiteboard] scene save failed:", err instanceof Error ? err.message : String(err));
-      setSaveState("error");
-      setError("Changes could not be saved.");
+      if (activeIdRef.current === boardId) {
+        setSaveState("error");
+        setError("Changes could not be saved.");
+      }
       saveLocal(toSave);
     }
   }, []);
@@ -431,11 +438,11 @@ export default function App() {
   // -- delete a board -------------------------------------------------------
   const deleteBoard = useCallback(
     async (board: BoardMeta) => {
-      setConfirmDelete(null);
       const db = window.MatrixOS?.db;
       if (!db || board.id === LOCAL_BOARD_ID) {
         saveLocal(emptyScene());
         setHistory(createHistory(emptyScene()));
+        setConfirmDelete(null);
         return;
       }
       try {
@@ -446,6 +453,7 @@ export default function App() {
           if (index.length > 0) await openBoard(index[0].id);
           else await createBoard("Untitled board");
         }
+        setConfirmDelete(null);
       } catch (err: unknown) {
         console.warn("[whiteboard] delete board failed:", err instanceof Error ? err.message : String(err));
         setError("Could not delete the board.");
@@ -760,9 +768,11 @@ export default function App() {
         return;
       }
       if (e.key === "Escape") {
+        e.preventDefault();
         setSelected(new Set());
         setEditing(null);
         setConfirmClear(false);
+        setConfirmDelete(null);
         return;
       }
       const match = TOOLS.find((t) => t.shortcut.toLowerCase() === e.key.toLowerCase());
