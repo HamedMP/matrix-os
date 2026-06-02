@@ -521,10 +521,10 @@ export default function App() {
   // -- rename a board -------------------------------------------------------
   const commitRename = useCallback(async () => {
     const r = renaming;
-    if (!r) return;
+    if (!r) return false;
     const name = normalizeBoardName(r.value);
     const commitKey = `${r.id}:${name}`;
-    if (renameCommitKeyRef.current === commitKey) return;
+    if (renameCommitKeyRef.current === commitKey) return false;
     renameCommitKeyRef.current = commitKey;
     const snapshot = boards;
     setBoards((prev) => prev.map((b) => (b.id === r.id ? { ...b, name } : b)));
@@ -532,11 +532,14 @@ export default function App() {
     if (!db || r.id === LOCAL_BOARD_ID) {
       saveLocalName(name);
       setRenaming(null);
-      return;
+      setError(null);
+      return true;
     }
     try {
       await db.update(SCENES_TABLE, r.id, { name });
       setRenaming(null);
+      setError(null);
+      return true;
     } catch (err: unknown) {
       console.warn("[whiteboard] rename failed:", err instanceof Error ? err.message : String(err));
       renameCommitKeyRef.current = null;
@@ -545,6 +548,7 @@ export default function App() {
       void refreshIndex().then((result) => {
         setError(result.ok ? null : "Could not rename the board.");
       });
+      return false;
     }
   }, [boards, refreshIndex, renaming]);
 
@@ -1359,7 +1363,7 @@ interface BoardSidebarProps {
   onNew: () => void;
   onStartRename: (b: BoardMeta) => void;
   onRenameChange: (value: string) => void;
-  onCommitRename: () => void;
+  onCommitRename: () => Promise<boolean> | boolean | void;
   onCancelRename: () => void;
   onRequestDelete: (b: BoardMeta) => void;
 }
@@ -1387,7 +1391,7 @@ function RenameInput({
   value: string;
   label: string;
   onChange: (v: string) => void;
-  onCommit: () => void;
+  onCommit: () => Promise<boolean> | boolean | void;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLInputElement | null>(null);
@@ -1396,7 +1400,14 @@ function RenameInput({
   const commitOnce = () => {
     if (committedRef.current) return;
     committedRef.current = true;
-    onCommit();
+    void Promise.resolve(onCommit())
+      .then((committed) => {
+        if (committed === false) committedRef.current = false;
+      })
+      .catch((err: unknown) => {
+        console.warn("[whiteboard] rename commit handler failed:", err instanceof Error ? err.message : String(err));
+        committedRef.current = false;
+      });
   };
   // Focus on mount instead of `autoFocus` (which react-doctor flags for a11y).
   useLayoutEffect(() => {
