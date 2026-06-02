@@ -207,6 +207,11 @@ export default function App(): React.ReactElement {
   const persistBestTime = useCallback(
     async (diff: Difficulty, bestSpec: DifficultySpec, secs: number) => {
       const key = bestKeyFor(diff, bestSpec);
+      const db = window.MatrixOS?.db;
+      if (!db) {
+        setStatusMsg("Best time sync unavailable");
+        return;
+      }
       let previousBest: number | undefined;
       setBestTimes((prev) => {
         const current = prev[key];
@@ -215,11 +220,6 @@ export default function App(): React.ReactElement {
         return { ...prev, [key]: secs };
       });
 
-      const db = window.MatrixOS?.db;
-      if (!db) {
-        setStatusMsg("Best time sync unavailable");
-        return;
-      }
       try {
         const inserted = await db.insert("times", {
           difficulty: diff,

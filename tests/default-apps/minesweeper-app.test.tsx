@@ -191,6 +191,32 @@ describe("Minesweeper app", () => {
     expect(within(best).getByText(/42/)).toBeTruthy();
   });
 
+  it("does not keep an optimistic best time when DB sync is unavailable", async () => {
+    render(<App />);
+    await screen.findAllByTestId(/^cell-/);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Custom" }));
+    fireEvent.change(screen.getByLabelText("Width"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Height"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Mines"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(await screen.findAllByTestId(/^cell-/)).toHaveLength(25);
+
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    fireEvent.click(screen.getByTestId("cell-12"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_000);
+    });
+
+    for (let index = 1; index < 25; index += 1) {
+      fireEvent.click(screen.getByTestId(`cell-${index}`));
+    }
+
+    expect(screen.getByText(/Cleared! Best time sync unavailable/)).toBeTruthy();
+    expect(within(screen.getByTestId("best-time")).getByText("—")).toBeTruthy();
+  });
+
   it("works without a DB bridge", async () => {
     // No MatrixOS injected.
     render(<App />);
