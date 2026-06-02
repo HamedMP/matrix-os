@@ -32,4 +32,15 @@ describe("www landing mobile polish", () => {
     expect(landing).toContain("Open skills.md");
     expect(landing).toContain("Developer workflow");
   });
+
+  it("uses tighter landing section spacing than the original blanket rhythm", async () => {
+    const landing = await readRepoFile("www/src/app/page.tsx");
+    const billing = await readRepoFile("www/src/components/landing/LandingBilling.tsx");
+
+    expect(landing).not.toContain("py-32 md:py-44");
+    expect(landing).toContain("py-20 md:py-28");
+    expect(landing).toContain("py-24 md:py-32");
+    expect(billing).not.toContain("min-h-screen");
+    expect(billing).toContain("py-20 md:py-28");
+  });
 });
