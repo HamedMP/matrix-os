@@ -902,8 +902,53 @@ describe("Whiteboard app — multi-board files", () => {
 
     fireEvent.click(screen.getByTitle("Export PNG"));
 
-    expect(ctx.fillText).toHaveBeenCalledWith("First line", 40, 70);
-    expect(ctx.fillText).toHaveBeenCalledWith("Second line", 40, 92);
+    expect(ctx.fillText).toHaveBeenCalledWith("First line", 40, 50);
+    expect(ctx.fillText).toHaveBeenCalledWith("Second line", 40, 77);
+  });
+
+  it("spaces exported text lines from the rendered font size", async () => {
+    installMatrixDb([
+      {
+        ...board("b1", "Sketch", "2026-02-02T00:00:00.000Z"),
+        doc: {
+          version: 1,
+          elements: [
+            { id: "t1", kind: "text", x: 40, y: 50, width: 200, height: 120, stroke: "#111", fill: "transparent", strokeWidth: 8, text: "First line\nSecond line" },
+          ],
+        },
+      },
+    ]);
+    const fonts: string[] = [];
+    const baselines: string[] = [];
+    const ctx = {
+      fillRect: vi.fn(),
+      fillText: vi.fn(),
+      measureText: vi.fn((value: string) => ({ width: value.length * 8 })),
+      translate: vi.fn(),
+      set fillStyle(_value: string) {},
+      set font(value: string) { fonts.push(value); },
+      set lineCap(_value: string) {},
+      set lineJoin(_value: string) {},
+      set lineWidth(_value: number) {},
+      set strokeStyle(_value: string) {},
+      set textBaseline(value: CanvasTextBaseline) { baselines.push(value); },
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,stub");
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTitle("Export PNG"));
+
+    expect(fonts).toContain("34px Inter, system-ui, sans-serif");
+    expect(baselines).toContain("top");
+    expect(ctx.fillText).toHaveBeenCalledWith("First line", 40, 50);
+    expect(ctx.fillText).toHaveBeenCalledWith("Second line", 40, 96);
   });
 
   it("does not reset the active canvas selection for table-wide change notifications", async () => {

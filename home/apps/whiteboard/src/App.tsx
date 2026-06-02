@@ -1766,15 +1766,18 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
     if (b.text) {
       ctx.fillStyle = "#32352E";
       ctx.font = "16px Inter, system-ui, sans-serif";
+      ctx.textBaseline = "alphabetic";
       wrapText(ctx, b.text, x + 10, y + 24, w - 20, 20);
     }
     return;
   }
   if (el.kind === "text") {
     if (b.text) {
+      const fontSize = 18 + el.strokeWidth * 2;
       ctx.fillStyle = el.stroke;
-      ctx.font = `${18 + el.strokeWidth * 2}px Inter, system-ui, sans-serif`;
-      wrapText(ctx, b.text, x, y + 20, Math.max(w, 120), 22);
+      ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
+      ctx.textBaseline = "top";
+      wrapText(ctx, b.text, x, y, Math.max(w, 120), Math.ceil(fontSize * 1.35));
     }
     return;
   }
