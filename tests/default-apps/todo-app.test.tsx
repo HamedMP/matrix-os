@@ -553,4 +553,22 @@ describe("Todo app", () => {
     render(<App />);
     expect(await screen.findByPlaceholderText(/add a task|new task|capture/i)).toBeTruthy();
   });
+
+  it("keeps in-memory tasks after completing one without MatrixOS.db", async () => {
+    render(<App />);
+    const input = await screen.findByPlaceholderText(/add a task|new task|capture/i);
+
+    fireEvent.change(input, { target: { value: "Alpha" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "Beta" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("Alpha")).toBeTruthy();
+    expect(screen.getByText("Beta")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Complete Alpha" }));
+
+    await waitFor(() => expect(screen.queryByText("Alpha")).toBeNull());
+    expect(screen.getByText("Beta")).toBeTruthy();
+  });
 });

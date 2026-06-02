@@ -318,11 +318,11 @@ export default function App() {
               console.warn("[todo] task completion rollback failed:", errMessage(rollbackErr));
             }
           }
-          await reload();
+          if (db) await reload();
           setError("Could not complete task.");
           return;
         }
-        await reload();
+        if (db) await reload();
       } finally {
         inFlightComplete.current.delete(task.id);
       }
@@ -614,6 +614,7 @@ export default function App() {
 
         {selectedId && (
           <Inspector
+            key={selectedTask?.id}
             task={selectedTask}
             onClose={() => setSelectedId(null)}
             onPatch={patchSelectedTask}
