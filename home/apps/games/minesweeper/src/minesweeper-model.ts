@@ -213,9 +213,6 @@ export function reveal(board: Board, r: number, c: number, rng: () => number = M
     working = placeMinesAvoiding(working, r, c, rng);
   }
 
-  const target = working.cells[r][c];
-  if (target.state === CELL.FLAGGED || target.state === CELL.REVEALED) return working;
-
   const cells = cloneCells(working.cells);
   const hit = cells[r][c];
 
