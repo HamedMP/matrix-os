@@ -99,9 +99,10 @@ final human review.
      after fresh current-head Greptile reviews return `5/5`.
    - Before staging, inspect `git status --short --branch` and stage only files
      belonging to the owning branch's fix. Prefer an explicit path-limited
-     `git add <paths>` followed by `gt modify --staged` or
-     `gt modify --commit --staged --message "<conventional commit>"`. Use
-     `--all` only after confirming the worktree contains no unrelated changes.
+     `git add <paths>` followed by `gt modify` or
+     `gt modify --commit --message "<conventional commit>"`. Staged-only is the
+     default Graphite modify behavior; do not pass a `--staged` flag. Use `--all`
+     only after confirming the worktree contains no unrelated changes.
    - Run the narrow relevant tests after the fix. Before submitting, also run
      `git diff --check`; for backend, shell, shared behavior, or scanner-hit
      classes, run the relevant typecheck and `bun run check:patterns` or report
@@ -109,9 +110,12 @@ final human review.
    - If any React `.tsx` or `.jsx` file changed, run
      `npx react-doctor@latest <project-dir>` for each affected React project
      directory that has a `package.json` (for example, `shell`, `packages/ui`,
-     `www`, or the specific app directory). Do not pass individual files to
-     react-doctor. Resolve findings before committing, or report the exact
-     reason the gate could not run.
+     or `www`). Do not pass individual files to react-doctor. For default apps
+     under `home/apps/**`, create a temporary React project, copy the affected
+     app `src/` files plus a minimal React `package.json`, run react-doctor
+     against that temporary directory, then delete the temporary directory.
+     Resolve findings before committing, or report the exact reason the gate
+     could not run.
    - Use Graphite to sync, restack, and submit updates:
      `gt sync`, `gt restack`, and `gt submit --stack --no-edit --no-ai`.
      Run `gt restack` after any `gt modify` that touches a layer below the
