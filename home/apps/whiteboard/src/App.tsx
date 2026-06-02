@@ -263,6 +263,7 @@ export default function App() {
   const draftRef = useRef<SceneElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const pendingSaveRef = useRef<{ scene: Scene; boardId: string | null } | null>(null);
   const dirtyRef = useRef(false);
   const historyRef = useRef<History>(history);
   const renameCommitKeyRef = useRef<string | null>(null);
@@ -414,11 +415,16 @@ export default function App() {
       }
     })();
     const db = window.MatrixOS?.db;
+    let refreshPending = false;
     const unsubscribe = db?.onChange?.(SCENES_TABLE, () => {
       // Reconcile the list without reopening the active board. The bridge
       // notification is table-wide, so reopening would reset viewport,
       // selection, and in-progress edits for unrelated board writes.
-      void refreshIndex({ reportError: false });
+      if (refreshPending) return;
+      refreshPending = true;
+      void refreshIndex({ reportError: false }).finally(() => {
+        refreshPending = false;
+      });
     });
     return () => {
       cancelled = true;
@@ -468,9 +474,11 @@ export default function App() {
     (toSave: Scene, targetBoardId: string | null = activeIdRef.current) => {
       dirtyRef.current = true;
       const boardId = targetBoardId;
+      pendingSaveRef.current = { scene: toSave, boardId };
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
         saveTimerRef.current = null;
+        pendingSaveRef.current = null;
         void persist(toSave, boardId);
       }, AUTOSAVE_MS);
     },
@@ -490,7 +498,10 @@ export default function App() {
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
-        if (dirtyRef.current) void persist(historyRef.current.present, activeIdRef.current);
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        if (pending) void persist(pending.scene, pending.boardId);
+        else if (dirtyRef.current) void persist(historyRef.current.present, activeIdRef.current);
       }
       void openBoard(id);
     },

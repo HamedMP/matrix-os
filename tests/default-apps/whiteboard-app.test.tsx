@@ -993,6 +993,56 @@ describe("Whiteboard app — multi-board files", () => {
     )).toBe(false);
   });
 
+  it("coalesces background index refreshes while one is in flight", async () => {
+    const db = installMatrixDb([
+      {
+        id: "b1",
+        name: "Sketch",
+        doc: { version: 1, elements: [] },
+        created_at: "2026-02-02T00:00:00.000Z",
+        updated_at: "2026-02-02T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const originalFind = db.find.getMockImplementation();
+    let releaseRefresh: (() => void) | null = null;
+    let finishRefresh: (() => void) | null = null;
+    const refreshFinished = new Promise<void>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const refreshStarted = new Promise<void>((resolve) => {
+      db.find.mockImplementationOnce(async (table, opts) => {
+        resolve();
+        await new Promise<void>((release) => {
+          releaseRefresh = release;
+        });
+        const rows = originalFind ? await originalFind(table, opts) : [];
+        finishRefresh?.();
+        return rows;
+      });
+    });
+    db.find.mockClear();
+
+    await act(async () => {
+      db.emitChange();
+      await refreshStarted;
+      db.emitChange();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      expect(db.find).toHaveBeenCalledTimes(1);
+      releaseRefresh?.();
+      await refreshFinished;
+      await Promise.resolve();
+    });
+  });
+
   it("clears a flushed save indicator when switching boards", async () => {
     const db = installMatrixDb([
       board("old-board", "Old board", "2026-02-02T00:00:00.000Z"),
@@ -1048,8 +1098,9 @@ describe("Whiteboard app — multi-board files", () => {
     db.update.mockClear();
 
     await act(async () => {
-      fireEvent.click(screen.getByText("Board B"));
+      // Browsers move focus before dispatching the click target action.
       fireEvent.blur(editor);
+      fireEvent.click(screen.getByText("Board B"));
       await Promise.resolve();
       await Promise.resolve();
     });
