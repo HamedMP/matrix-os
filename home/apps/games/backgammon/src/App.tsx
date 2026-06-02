@@ -28,11 +28,12 @@ interface MatchRecord {
 
 // ---- persistence -----------------------------------------------------------
 
-async function loadMatches(setError: (s: string | null) => void): Promise<MatchRecord[]> {
+async function loadMatches(setError: (s: string | null) => void): Promise<MatchRecord[] | null> {
   const db = window.MatrixOS?.db;
   if (db) {
     try {
       const rows = await db.find(MATCHES_TABLE, { orderBy: { created_at: "desc" }, limit: 50 });
+      setError(null);
       return rows.map((r) => ({
         winner: String(r.winner ?? ""),
         points: Number(r.points ?? 0),
@@ -40,6 +41,7 @@ async function loadMatches(setError: (s: string | null) => void): Promise<MatchR
     } catch (err) {
       console.warn("[backgammon] failed to load matches from DB", err);
       setError("Could not load match history.");
+      return null;
     }
   }
   return [];
@@ -206,14 +208,16 @@ export default function App() {
   useEffect(() => {
     let active = true;
     loadMatches(setError).then((rows) => {
-      if (active) setMatches(rows);
+      if (active && rows) setMatches(rows);
     });
     const db = window.MatrixOS?.db;
     let unsub: (() => void) | undefined;
     if (db) {
       try {
         unsub = db.onChange(MATCHES_TABLE, () => {
-          loadMatches(setError).then((rows) => setMatches(rows));
+          loadMatches(setError).then((rows) => {
+            if (rows) setMatches(rows);
+          });
         });
       } catch (err) {
         console.warn("[backgammon] onChange subscription failed", err);

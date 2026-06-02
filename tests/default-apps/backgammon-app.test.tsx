@@ -7,6 +7,7 @@ import App from "../../home/apps/games/backgammon/src/App";
 type DbRow = Record<string, unknown>;
 
 function installMatrixDb(rows: DbRow[] = []) {
+  let changeCallback: (() => void) | null = null;
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
@@ -14,7 +15,13 @@ function installMatrixDb(rows: DbRow[] = []) {
     update: vi.fn(async () => ({ ok: true })),
     delete: vi.fn(async () => ({ ok: true })),
     count: vi.fn(async () => rows.length),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, callback: () => void) => {
+      changeCallback = callback;
+      return () => {
+        changeCallback = null;
+      };
+    }),
+    triggerChange: () => changeCallback?.(),
   };
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
@@ -76,5 +83,20 @@ describe("Backgammon app", () => {
     render(<App />);
     await screen.findByTestId("board");
     expect(screen.getByTestId("match-count").textContent).toContain("0");
+  });
+
+  it("preserves match history when a live refresh fails", async () => {
+    const db = installMatrixDb([{ winner: "white", points: 2 }]);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTestId("match-count").textContent).toContain("1"));
+
+    db.find.mockRejectedValueOnce(new Error("temporary storage failure"));
+    await act(async () => {
+      db.triggerChange();
+    });
+
+    await waitFor(() => expect(screen.getByText("Could not load match history.")).toBeTruthy());
+    expect(screen.getByTestId("match-count").textContent).toContain("1");
   });
 });
