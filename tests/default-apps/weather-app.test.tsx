@@ -19,7 +19,12 @@ function installMatrixDb(initialRows: DbRow[] = []) {
       changeHandler?.();
       return { id };
     }),
-    update: vi.fn(async () => ({ ok: true })),
+    update: vi.fn(async (_table: string, id: string, data: DbRow) => {
+      const row = rows.find((item) => item.id === id);
+      if (row) Object.assign(row, data);
+      changeHandler?.();
+      return { ok: true };
+    }),
     delete: vi.fn(async (_table: string, id: string) => {
       const index = rows.findIndex((row) => row.id === id);
       if (index >= 0) rows.splice(index, 1);
@@ -258,6 +263,32 @@ describe("Weather app", () => {
       expect(screen.getByText(/location could not be removed/i)).toBeTruthy();
     });
     expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
+  });
+
+  it("promotes the next location when removing the default", async () => {
+    const db = installMatrixDb([
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+      { id: "loc-2", name: "Paris", latitude: 48.8566, longitude: 2.3522, is_default: false },
+    ]);
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Paris").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /remove berlin/i }));
+
+    await vi.waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("locations", "loc-1");
+      expect(db.update).toHaveBeenCalledWith("locations", "loc-2", { is_default: true });
+    });
+    const parisItem = screen.getAllByTestId("location-item").find((item) =>
+      within(item).queryByText("Paris"),
+    );
+    expect(parisItem).toBeTruthy();
+    expect(within(parisItem as HTMLElement).getByText("Default")).toBeTruthy();
   });
 
   it("stores fallback locations through MatrixOS data bridge", async () => {

@@ -61,11 +61,12 @@ export async function geocode(query: string): Promise<GeoResult[]> {
     .filter(
       (r) =>
         typeof r.name === "string" &&
+        r.name.trim().length > 0 &&
         Number.isFinite(r.latitude) &&
         Number.isFinite(r.longitude),
     )
     .map((r) => ({
-      name: r.name,
+      name: r.name.trim(),
       latitude: r.latitude,
       longitude: r.longitude,
       country: r.country,

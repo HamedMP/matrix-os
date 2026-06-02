@@ -331,10 +331,14 @@ export default function App() {
       const key = locationKey(loc);
       pendingRemovalKeys.current = [...pendingRemovalKeys.current, key].slice(-50);
       const remaining = locations.filter((l) => locationKey(l) !== key);
-      setLocations(remaining);
+      const shouldPromoteDefault = loc.is_default === true && !remaining.some((l) => l.is_default);
+      const nextLocations = shouldPromoteDefault && remaining[0]
+        ? remaining.map((item, index) => index === 0 ? { ...item, is_default: true } : item)
+        : remaining;
+      setLocations(nextLocations);
       const db = window.MatrixOS?.db;
       if (!db) {
-        await writeAppData(LOCATIONS_KEY, storedLocations(remaining));
+        await writeAppData(LOCATIONS_KEY, storedLocations(nextLocations));
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         setError(null);
         return;
@@ -345,6 +349,10 @@ export default function App() {
       }
       try {
         await db.delete(LOCATIONS_TABLE, loc.id);
+        const promoted = shouldPromoteDefault ? nextLocations[0] : null;
+        if (promoted?.id && !promoted.id.startsWith("local-")) {
+          await db.update(LOCATIONS_TABLE, promoted.id, { is_default: true });
+        }
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         await reloadLocations();
         setError(null);
