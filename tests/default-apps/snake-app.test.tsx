@@ -82,6 +82,14 @@ describe("Snake app", () => {
     expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("ready");
   });
 
+  it("ignores stale localStorage best scores in the sandbox", async () => {
+    localStorage.setItem("matrix-snake-best", "99");
+    installMatrixDb([]);
+    render(<App />);
+
+    expect((await screen.findByTestId("high-score")).textContent).toContain("0");
+  });
+
   it("starts on a direction key and advances state on ticks", async () => {
     installMatrixDb([]);
     vi.useFakeTimers();

@@ -13,7 +13,6 @@ import {
 } from "./snake-model";
 
 const SCORES_TABLE = "scores";
-const LS_BEST_KEY = "matrix-snake-best";
 const DATA_BEST_KEY = "matrix-snake-best";
 
 type Difficulty = "chill" | "classic" | "fast";
@@ -64,12 +63,7 @@ async function readFallbackBest(): Promise<number> {
       return 0;
     }
   }
-  try {
-    const raw = localStorage.getItem(LS_BEST_KEY);
-    return coercePositiveNumber(raw);
-  } catch {
-    return 0;
-  }
+  return 0;
 }
 
 async function writeFallbackBest(value: number): Promise<void> {
@@ -81,11 +75,6 @@ async function writeFallbackBest(value: number): Promise<void> {
       console.warn("[snake] app data best save failed:", err instanceof Error ? err.message : String(err));
       return;
     }
-  }
-  try {
-    localStorage.setItem(LS_BEST_KEY, String(value));
-  } catch (err: unknown) {
-    console.warn("[snake] local best save failed:", err instanceof Error ? err.message : String(err));
   }
 }
 
