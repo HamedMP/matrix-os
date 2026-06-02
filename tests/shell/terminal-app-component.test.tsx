@@ -138,7 +138,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("places the new-tab control immediately after the first terminal tab", async () => {
+  it("places the new-tab control immediately after the last terminal tab", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -147,12 +147,20 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
     const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
-    const firstTab = screen.getAllByRole("tab")[0];
+    const tabs = screen.getAllByRole("tab");
     const newTabButton = screen.getByRole("button", { name: "New tab" });
 
-    expect(tablist.children[0]).toBe(firstTab);
-    expect(tablist.children[1]).toBe(newTabButton);
+    expect(tabs).toHaveLength(2);
+    expect(tablist.children[0]).toBe(tabs[0]);
+    expect(tablist.children[1]).toBe(tabs[1]);
+    expect(tablist.children[2]).toBe(newTabButton);
   });
 
   it("opens zellij-backed shell sessions from the new-tab control", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, Fragment, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   BotIcon,
   FilesIcon,
@@ -1186,13 +1186,9 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               </button>
             </div>
           );
-          return i === 0 ? (
-            <Fragment key={tab.id}>
-              {tabNode}
-              {newTabButton}
-            </Fragment>
-          ) : tabNode;
+          return tabNode;
         })}
+        {newTabButton}
       </div>
       {!ctx.mobile && (
       <div

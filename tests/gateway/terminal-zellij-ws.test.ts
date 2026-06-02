@@ -114,6 +114,25 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.sent).toContainEqual({ type: "exit", code: 101 });
   });
 
+  it("answers heartbeat pings without forwarding them to zellij", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    session.onMessage(JSON.stringify({ type: "ping" }));
+
+    expect(ws.sent).toContainEqual({ type: "pong" });
+    expect(pty.writes).toEqual([]);
+  });
+
   it("maps live-tail attach to a bounded recent replay window", async () => {
     const pty = new FakePty();
     const secondPty = new FakePty();
