@@ -35,6 +35,25 @@ export async function resolveDefaultAppIconUrl(homePath: string, slug: string): 
   return findDefaultAppIcon(homePath, join(homePath, "apps"), slug);
 }
 
+export async function resolveBundledSystemIconPath(homePath: string, requestedFile: string): Promise<string | null> {
+  const match = requestedFile.match(SAFE_ICON_FILE);
+  if (!match) return null;
+  const [, stem, requestedExt] = match;
+  const candidates = Array.from(new Set([`${stem}.${requestedExt}`, `${stem}.png`, `${stem}.svg`]));
+  for (const candidate of candidates) {
+    const fullPath = join(homePath, "system/icons", candidate);
+    try {
+      const iconStat = await lstat(fullPath);
+      if (iconStat.isFile()) return fullPath;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn("[icons] failed to stat bundled system icon:", err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  return null;
+}
+
 async function findDefaultAppIcon(homePath: string, dir: string, slug: string): Promise<string | null> {
   let entries: string[];
   try {

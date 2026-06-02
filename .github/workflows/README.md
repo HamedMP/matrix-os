@@ -15,6 +15,7 @@ protection is also updated when the shard list changes.
 - `Detect CI-relevant changes`
 - `Type Check`
 - `Pattern Scan`
+- `React Doctor`
 - `Sync Client Package`
 - `Unit Tests`
 - `E2E Tests`
@@ -31,7 +32,6 @@ logs and artifacts.
 | `docker-test.yml` | Legacy/local Docker scenario validation | `ready-for-ci`, ready PRs, merge queue, `main`, nightly, manual | Required when Docker/runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release | Manual CLI release | Required for CLI publishing |
-| `screenshots.yml` | Shell visual snapshot maintenance | PRs when visual files changed or labels force it | Optional unless visual evidence is requested |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `docker.yml` | Legacy Docker image publishing/deploy path | `v*` tags, manual | Legacy only, not the customer runtime path |
 
@@ -49,12 +49,9 @@ The host bundle workflow may skip a dev bundle only for an explicit manual
 maintenance dispatch using `skip_dev_bundle`. Commit-message markers and
 metadata-only path detection are not accepted release skips.
 
-## Optional Visual Jobs
+## Visual Evidence
 
-`Screenshots` is intentionally optional. It is optimized for fast feedback by
-running only when shell visual files change or when a `screenshots`/`visual`
-label forces it. A `skip-screenshots` or `no-screenshots` label can skip the job
-when visual evidence is not relevant.
+Screenshot workflow removed: visual evidence should be attached manually to PRs
+that change shell UI behavior until a cheaper, reliable visual check is added.
 
-For UI PRs, reviewers may still require screenshot evidence in the PR body even
-though the workflow itself is explicitly optional.
+For UI PRs, reviewers may still require screenshot evidence in the PR body.

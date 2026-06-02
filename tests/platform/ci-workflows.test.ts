@@ -10,10 +10,11 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, patterns, sync-client, unit, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, patterns, react-doctor, sync-client, unit, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.patterns.result');
+    expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');
     expect(workflow).toContain('needs.unit.result');
     expect(workflow).toContain('needs.e2e.result');
@@ -29,7 +30,7 @@ describe('CI workflows', () => {
     expect(readme).toContain('branch protection');
     expect(readme).toContain('Host Bundle Release');
     expect(readme).toContain('host bundle release tests are blocking');
-    expect(readme).toContain('Screenshots');
-    expect(readme).toContain('explicitly optional');
+    expect(readme).toContain('React Doctor');
+    expect(readme).toContain('Screenshot workflow removed');
   });
 });

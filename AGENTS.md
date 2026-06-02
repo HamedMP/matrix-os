@@ -239,7 +239,17 @@ Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line
 bun run typecheck           # tsc --noEmit for all packages
 bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
 bun run test                # unit tests
+npx react-doctor@latest     # audit React code — REQUIRED when any React (.tsx/.jsx) file changed
 ```
+
+**React audit (mandatory for React changes)**: whenever you create or modify React
+files (`.tsx`/`.jsx` in `shell/`, `home/apps/**`, `packages/ui/`, `www/`), run
+`npx react-doctor@latest <project-dir>` and resolve its findings **before committing**.
+react-doctor scans a **project directory that has a React `package.json`** (e.g.
+`npx react-doctor@latest shell`), NOT individual files. Root-toolchain default apps under
+`home/apps/**` have no `package.json`, so audit them by copying `src/` into a temp dir with a
+minimal React `package.json` and running react-doctor there. See
+https://github.com/millionco/react-doctor. CI runs this on the project dirs of changed React files.
 
 ### Three Review Passes
 
@@ -294,6 +304,15 @@ Do not request review while still pushing commits. Either declare a review commi
 - No `path.join()` on unvalidated external input -- use `resolveWithinPrefix`
 - No raw error messages or Zod `.issues` in client responses
 - No PR larger than 3000 additions or 50 files without splitting
+- **Run `npx react-doctor@latest` before committing any React (`.tsx`/`.jsx`) change** and resolve its findings — CI enforces this on PRs touching React files (https://github.com/millionco/react-doctor)
+
+### Shell App Data Contract (default apps under `home/apps/**`)
+
+Apps run inside a **sandboxed `srcdoc` iframe with `origin: null`** and CSP `connect-src 'self'`.
+- **Never** call `fetch()` to `/api/bridge/*` or any URL directly from app code — blocked by CORS + CSP.
+- **Never** rely on `localStorage` in the shell — it throws `SecurityError` in the sandbox (guarded test-only fallback is fine).
+- Use the injected `window.MatrixOS` bridge for everything: `db.*` (Postgres), `readData`/`writeData` (KV), `service`/`integrations`, and `proxyFetch(url)` for allowlisted external GETs.
+- `AppViewer` loads runtime apps **only** via the bridged `srcDoc`; do not reintroduce a plain `src=/apps/{slug}/` load (it runs un-bridged and breaks data access).
 
 ## Reference Docs
 

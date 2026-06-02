@@ -64,7 +64,8 @@ test.describe("Visual regression", () => {
 
   test("settings panel", async ({ page }) => {
     const settingsButton = page.getByTestId("dock-settings");
-    await settingsButton.click();
+    await settingsButton.dispatchEvent("click");
+    await page.mouse.move(720, 450);
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("settings-panel.png", {
       maxDiffPixelRatio: 0.01,
@@ -81,7 +82,8 @@ test.describe("Visual regression", () => {
 
   test("mission control", async ({ page }) => {
     const tasksButton = page.getByTestId("dock-tasks");
-    await tasksButton.click();
+    await tasksButton.dispatchEvent("click");
+    await page.mouse.move(720, 450);
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("mission-control.png", {
       maxDiffPixelRatio: 0.01,

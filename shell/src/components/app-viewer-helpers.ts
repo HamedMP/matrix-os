@@ -1,4 +1,4 @@
-import { buildBridgeScript, type ThemeVars } from "@/lib/os-bridge";
+import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "2048",
@@ -55,8 +55,10 @@ export function injectBridgeIntoAppHtml(
     `<script>${bridgeScript}</script>`,
   ].join("");
 
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
+  const rewritten = withCredentialedAssets(html);
+
+  if (/<head[^>]*>/i.test(rewritten)) {
+    return rewritten.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
   }
-  return `<!doctype html><html><head>${injection}</head><body>${html}</body></html>`;
+  return `<!doctype html><html><head>${injection}</head><body>${rewritten}</body></html>`;
 }

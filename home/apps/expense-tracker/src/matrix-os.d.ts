@@ -10,7 +10,7 @@ interface MatrixOSDb {
   update(table: string, id: string, data: Record<string, unknown>): Promise<{ ok: boolean }>;
   delete(table: string, id: string): Promise<{ ok: boolean }>;
   count(table: string, filter?: Record<string, unknown>): Promise<number>;
-  onChange(table: string, callback: (e: { table: string }) => void): () => void;
+  onChange(table: string, callback: (e: { table: string }) => void): (() => void) | undefined;
 }
 interface MatrixOS {
   db?: MatrixOSDb;
