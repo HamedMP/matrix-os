@@ -89,9 +89,14 @@ final human review.
 4. Fix actionable feedback.
    - Cluster findings by branch and behavior.
    - For code behavior changes, add or adjust a focused failing regression
-     before the implementation change. If a focused test cannot be written,
-     record the reason in the status report before editing. For docs-only
-     fixes, keep the edit scoped to the reviewed workflow.
+     before the implementation change. Do not edit behavior code until the
+     regression exists. For docs-only fixes, keep the edit scoped to the
+     reviewed workflow.
+   - Before any edit that will lead to a new push for a PR that currently has
+     `ready-for-ci`, remove the label from that PR and every descendant PR
+     whose head will be rewritten by the next `gt submit --stack`:
+     `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
+     after fresh current-head Greptile reviews return `5/5`.
    - Before staging, inspect `git status --short --branch` and stage only files
      belonging to the owning branch's fix. Prefer an explicit path-limited
      `git add <paths>` followed by `gt modify --staged` or
@@ -150,8 +155,8 @@ final human review.
      the PR yet.
    - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
      until checks pass, fail with actionable output, or are blocked.
-   - If actionable CI failure fixes require a new push after `ready-for-ci` was
-     applied, remove the label before editing:
+   - If any fix requires a new push after `ready-for-ci` was applied, remove the
+     label before editing:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
      a fresh current-head Greptile review returns `5/5` for the new commit.
    - Completion requires every monitored PR to be either:
