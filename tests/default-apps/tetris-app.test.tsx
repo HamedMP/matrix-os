@@ -4,17 +4,38 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App from "../../home/apps/games/tetris/src/App";
+import App, { persistScore } from "../../home/apps/games/tetris/src/App";
 
 type DbRow = Record<string, unknown>;
 
 function installMatrixDb(rows: DbRow[] = []) {
   const db = {
-    find: vi.fn(async () => rows),
+    find: vi.fn(async (_table: string, opts?: { orderBy?: Record<string, "asc" | "desc">; limit?: number }) => {
+      let result = [...rows];
+      if (opts?.orderBy?.score) {
+        result = result.sort((a, b) => {
+          const left = Number(a.score) || 0;
+          const right = Number(b.score) || 0;
+          return opts.orderBy?.score === "desc" ? right - left : left - right;
+        });
+      }
+      return typeof opts?.limit === "number" ? result.slice(0, opts.limit) : result;
+    }),
     findOne: vi.fn(async () => null),
-    insert: vi.fn(async () => ({ id: "score-new" })),
-    update: vi.fn(async () => ({ ok: true })),
-    delete: vi.fn(async () => ({ ok: true })),
+    insert: vi.fn(async (_table: string, data: DbRow) => {
+      rows.push({ id: "score-new", ...data });
+      return { id: "score-new" };
+    }),
+    update: vi.fn(async (_table: string, id: string, data: DbRow) => {
+      const row = rows.find((item) => item.id === id);
+      if (row) Object.assign(row, data);
+      return { ok: true };
+    }),
+    delete: vi.fn(async (_table: string, id: string) => {
+      const index = rows.findIndex((item) => item.id === id);
+      if (index >= 0) rows.splice(index, 1);
+      return { ok: true };
+    }),
     count: vi.fn(async () => rows.length),
     onChange: vi.fn(() => () => undefined),
   };
@@ -64,6 +85,7 @@ describe("Tetris app", () => {
   });
 
   it("renders a 10x20 playfield and loads the best score from Matrix Postgres", async () => {
+    const getItem = vi.spyOn(Storage.prototype, "getItem");
     const db = installMatrixDb([
       { id: "s1", score: 4200, lines: 12, level: 2, created_at: "2026-05-31T10:00:00.000Z" },
     ]);
@@ -77,6 +99,65 @@ describe("Tetris app", () => {
     // Best score loaded from the DB is shown.
     expect(await screen.findByText(/4,?200/)).toBeTruthy();
     expect(db.find).toHaveBeenCalledWith("scores", expect.anything());
+    expect(getItem).not.toHaveBeenCalled();
+  });
+
+  it("does not write localStorage when saving a score through Matrix Postgres", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const db = installMatrixDb([]);
+
+    await persistScore({ score: 1600, lines: 4, level: 1 });
+
+    expect(db.insert).toHaveBeenCalledWith("scores", expect.any(Object));
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("reuses the best score row instead of appending lower scores", async () => {
+    const db = installMatrixDb([
+      { id: "best", score: 3200, lines: 9, level: 2 },
+      { id: "stale", score: 400, lines: 1, level: 1 },
+    ]);
+
+    await persistScore({ score: 1600, lines: 4, level: 1 });
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.delete).toHaveBeenCalledWith("scores", "stale");
+  });
+
+  it("updates the singleton best score row when saving a higher score", async () => {
+    const db = installMatrixDb([
+      { id: "best", score: 3200, lines: 9, level: 2 },
+      { id: "stale", score: 400, lines: 1, level: 1 },
+    ]);
+
+    await persistScore({ score: 6400, lines: 18, level: 3 });
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.update).toHaveBeenCalledWith("scores", "best", {
+      score: 6400,
+      lines: 18,
+      level: 3,
+    });
+    expect(db.delete).toHaveBeenCalledWith("scores", "stale");
+  });
+
+  it("does not fail score persistence when stale score cleanup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const db = installMatrixDb([
+      { id: "best", score: 3200, lines: 9, level: 2 },
+      { id: "stale", score: 400, lines: 1, level: 1 },
+    ]);
+    db.delete.mockRejectedValueOnce(new Error("cleanup failed"));
+
+    await expect(persistScore({ score: 6400, lines: 18, level: 3 })).resolves.toBeUndefined();
+
+    expect(db.update).toHaveBeenCalledWith("scores", "best", {
+      score: 6400,
+      lines: 18,
+      level: 3,
+    });
+    expect(warn).toHaveBeenCalledWith("[tetris] stale score cleanup failed:", "cleanup failed");
   });
 
   it("shows a start overlay and begins the game when the player starts", async () => {

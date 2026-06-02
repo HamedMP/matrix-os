@@ -31,6 +31,12 @@ interface ScoreRow {
   level: number;
 }
 
+function numericScore(row: Record<string, unknown> | undefined): number {
+  if (!row) return 0;
+  const score = typeof row.score === "number" ? row.score : Number(row.score);
+  return Number.isFinite(score) && score > 0 ? score : 0;
+}
+
 function prefersReducedMotion(): boolean {
   try {
     return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -58,25 +64,50 @@ function writeLocalBest(value: number): void {
   }
 }
 
-async function loadBest(): Promise<number> {
+export async function loadBest(): Promise<number> {
   if (!window.MatrixOS?.db) return readLocalBest();
   const rows = await window.MatrixOS.db.find(SCORES_TABLE, {
     orderBy: { score: "desc" },
     limit: 1,
   });
-  const top = rows[0];
-  const dbBest = top && typeof top.score === "number" ? top.score : 0;
-  return Math.max(dbBest, readLocalBest());
+  return numericScore(rows[0]);
 }
 
-async function persistScore(row: ScoreRow): Promise<void> {
-  writeLocalBest(Math.max(readLocalBest(), row.score));
-  if (!window.MatrixOS?.db) return;
-  await window.MatrixOS.db.insert(SCORES_TABLE, {
-    score: row.score,
-    lines: row.lines,
-    level: row.level,
+export async function persistScore(row: ScoreRow): Promise<void> {
+  if (!window.MatrixOS?.db) {
+    writeLocalBest(Math.max(readLocalBest(), row.score));
+    return;
+  }
+  const db = window.MatrixOS.db;
+  const rows = await db.find(SCORES_TABLE, {
+    orderBy: { score: "desc" },
+    limit: 10000,
   });
+  const [bestRow, ...staleRows] = rows;
+  const bestId = typeof bestRow?.id === "string" ? bestRow.id : null;
+  const bestScore = numericScore(bestRow);
+  const nextBest = {
+    score: Math.max(bestScore, row.score),
+    lines: row.score > bestScore ? row.lines : (bestRow?.lines ?? row.lines),
+    level: row.score > bestScore ? row.level : (bestRow?.level ?? row.level),
+  };
+
+  if (bestId) {
+    if (row.score > bestScore) {
+      await db.update(SCORES_TABLE, bestId, nextBest);
+    }
+  } else {
+    await db.insert(SCORES_TABLE, nextBest);
+  }
+
+  await Promise.all(
+    staleRows
+      .map((stale) => (typeof stale.id === "string" ? stale.id : null))
+      .filter((id): id is string => id !== null)
+      .map((id) => db.delete(SCORES_TABLE, id).catch((err: unknown) => {
+        console.warn("[tetris] stale score cleanup failed:", err instanceof Error ? err.message : String(err));
+      })),
+  );
 }
 
 // A small static mini-grid renderer for next / hold previews.
