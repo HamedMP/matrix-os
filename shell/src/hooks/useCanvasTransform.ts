@@ -64,6 +64,13 @@ export const ZOOM_ANIM_MS = 460;
 
 let zoomAnimTimer: ReturnType<typeof setTimeout> | null = null;
 
+function cancelZoomAnimation(): void {
+  if (zoomAnimTimer) {
+    clearTimeout(zoomAnimTimer);
+    zoomAnimTimer = null;
+  }
+}
+
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined"
     && typeof window.matchMedia === "function"
@@ -88,6 +95,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     resetZoom: () => set({ zoom: 1 }),
 
     zoomAtPoint: (newZoom, cx, cy) => {
+      cancelZoomAnimation();
       const clamped = clampZoom(newZoom);
       const rect = get().containerRect;
       const lx = cx - (rect?.left ?? 0);
@@ -96,15 +104,20 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
         zoom: clamped,
         panX: s.panX + lx * (1 / clamped - 1 / s.zoom),
         panY: s.panY + ly * (1 / clamped - 1 / s.zoom),
+        isAnimating: false,
       }));
     },
 
     setPan: (x, y) => set({ panX: x, panY: y }),
 
-    panBy: (dx, dy) => set((s) => ({
-      panX: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panX + dx)),
-      panY: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panY + dy)),
-    })),
+    panBy: (dx, dy) => {
+      cancelZoomAnimation();
+      set((s) => ({
+        panX: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panX + dx)),
+        panY: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panY + dy)),
+        isAnimating: false,
+      }));
+    },
 
     setIsScrolling: (v) => { if (get().isScrolling !== v) set({ isScrolling: v }); },
 
@@ -182,7 +195,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
         set({ zoom, panX, panY, isAnimating: false });
         return;
       }
-      if (zoomAnimTimer) clearTimeout(zoomAnimTimer);
+      cancelZoomAnimation();
       // Flip on the eased transition, then set the target transform in the same
       // commit so React applies both together and the browser animates to it.
       set({ zoom, panX, panY, isAnimating: true });
