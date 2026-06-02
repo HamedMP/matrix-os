@@ -202,4 +202,39 @@ describe("Chess app", () => {
       expect(screen.getByTestId("square-e6").getAttribute("data-legal")).toBe("true");
     });
   });
+
+  it("falls back to local play when the computer returns no move", async () => {
+    installMatrixDb([]);
+    vi.mocked(findBestMove).mockReturnValueOnce(null);
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mode-vs-computer"));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e2"));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e4"));
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(findBestMove)).toHaveBeenCalled();
+      expect(screen.getByTestId("mode-two-player").getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByText("The computer could not find a move. Continuing as local two-player.")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e7"));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("square-e6").getAttribute("data-legal")).toBe("true");
+    });
+  });
 });

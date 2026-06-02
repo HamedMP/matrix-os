@@ -383,8 +383,13 @@ export default function App() {
       const cfg = aiConfigRef.current;
       try {
         const best = findBestMove(gameRef.current as unknown as ChessLike, DIFFICULTY_DEPTH[cfg.difficulty]);
-        if (best && aiRunIdRef.current === runId) {
+        if (aiRunIdRef.current !== runId) return;
+        if (best) {
           applyMove(best.from, best.to, best.promotion);
+        } else {
+          setMode("two-player");
+          setSaveState("error");
+          setError("The computer could not find a move. Continuing as local two-player.");
         }
       } catch (err: unknown) {
         if (aiRunIdRef.current !== runId) return;
