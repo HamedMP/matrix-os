@@ -82,6 +82,7 @@ export default function App({ initialState }: AppProps) {
 
   // ---- Stats persistence -------------------------------------------------
   const persistStats = useCallback(async (next: Stats) => {
+    statsRef.current = next;
     setStats(next);
     const db = window.MatrixOS?.db;
     if (!db) return;
@@ -179,22 +180,25 @@ export default function App({ initialState }: AppProps) {
       return;
     }
     const cur = statsRef.current;
-    void persistStats({ ...cur, games_played: cur.games_played + 1 });
+    const next = { ...cur, games_played: cur.games_played + 1 };
+    statsRef.current = next;
+    void persistStats(next);
   }, [persistStats]);
 
   useEffect(() => {
-    if (!statsLoadedRef.current || pendingGamesPlayedRef.current === 0) return;
-    const pending = pendingGamesPlayedRef.current;
+    if (!statsLoadedRef.current) return;
+    let increment = pendingGamesPlayedRef.current;
     pendingGamesPlayedRef.current = 0;
+    if (!countedInitialGameRef.current) {
+      countedInitialGameRef.current = true;
+      increment += 1;
+    }
+    if (increment === 0) return;
     const cur = statsRef.current;
-    void persistStats({ ...cur, games_played: cur.games_played + pending });
+    const next = { ...cur, games_played: cur.games_played + increment };
+    statsRef.current = next;
+    void persistStats(next);
   }, [persistStats, stats]);
-
-  useEffect(() => {
-    if (countedInitialGameRef.current || !statsLoadedRef.current) return;
-    countedInitialGameRef.current = true;
-    recordGamePlayed();
-  }, [recordGamePlayed, stats]);
 
   // ---- Timer -------------------------------------------------------------
   useEffect(() => {
