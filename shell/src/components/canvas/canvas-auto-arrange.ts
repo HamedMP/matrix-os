@@ -102,7 +102,14 @@ export function computeTiledWindowLayout(
       : chooseBalancedGrid(count, viewportWidth, viewportHeight);
     const cellW = Math.max(MIN_TILE_WIDTH, Math.round((boardW - GAP * (cols - 1)) / cols));
     const cellH = Math.max(MIN_TILE_HEIGHT, Math.round((boardH - GAP * (rows - 1)) / rows));
-    slots = sorted.map((_, i) => slotRect(i % cols, Math.floor(i / cols), 1, 1, cellW, cellH));
+    slots = sorted.map((_, i) => {
+      const row = Math.floor(i / cols);
+      const rowCount = Math.min(cols, count - row * cols);
+      const missingCols = cols - rowCount;
+      const rowOffsetX = missingCols > 0 ? (missingCols * (cellW + GAP)) / 2 : 0;
+      const slot = slotRect(i % cols, row, 1, 1, cellW, cellH);
+      return { ...slot, x: slot.x + rowOffsetX };
+    });
   }
 
   const minX = Math.min(...slots.map((slot) => slot.x));

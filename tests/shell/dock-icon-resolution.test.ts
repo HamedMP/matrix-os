@@ -21,6 +21,16 @@ describe("dock icon resolution", () => {
     expect(source).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\")");
   });
 
+  it("preserves versioned desktop icon URLs when app registration refreshes", async () => {
+    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+
+    expect(source).toContain("function sameIconAsset");
+    expect(source).toContain("const nextIconUrl = iconUrl === undefined");
+    expect(source).toContain("? existing.iconUrl");
+    expect(source).toContain(": sameIconAsset(existing.iconUrl, iconUrl) ? existing.iconUrl : iconUrl");
+    expect(source).toContain("{ ...app, name, iconUrl: nextIconUrl }");
+  });
+
   it("uses the shared icon resolver for mobile dock icons", async () => {
     const source = await readFile("shell/src/components/mobile/MobileShell.tsx", "utf8");
 
@@ -31,9 +41,9 @@ describe("dock icon resolution", () => {
 
   it("keeps the desktop dock as a glass rail with stable icon controls", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
-    const dockStart = source.indexOf("<aside\n          data-dock");
-    const dockEnd = source.indexOf("</aside>", dockStart);
-    const dockSource = source.slice(dockStart, dockEnd);
+    const dockMatch = source.match(/<aside\b[^>]*\bdata-dock\b[\s\S]*?<\/aside>/);
+    expect(dockMatch).not.toBeNull();
+    const dockSource = dockMatch?.[0] ?? "";
 
     expect(dockSource).toContain("bg-card/50");
     expect(dockSource).toContain("backdrop-blur-md");

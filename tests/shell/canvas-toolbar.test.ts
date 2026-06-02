@@ -131,6 +131,31 @@ describe("Canvas Toolbar", () => {
         expect(rect.height).toBeGreaterThanOrEqual(300);
       }
     });
+
+    it("centers incomplete rows in larger tiled grids", () => {
+      const arranged = computeTiledWindowLayout([
+        { id: "a", x: 0, y: 0, width: 640, height: 420 },
+        { id: "b", x: 1000, y: 0, width: 640, height: 420 },
+        { id: "c", x: 2000, y: 0, width: 640, height: 420 },
+        { id: "d", x: 3000, y: 0, width: 640, height: 420 },
+        { id: "e", x: 4000, y: 0, width: 640, height: 420 },
+      ], 1440, 900);
+
+      const rowsByY = new Map<number, typeof arranged>();
+      for (const rect of arranged) {
+        rowsByY.set(rect.y, [...(rowsByY.get(rect.y) ?? []), rect]);
+      }
+      const [topRow, bottomRow] = [...rowsByY.values()].sort((a, b) => a[0].y - b[0].y);
+      const centerOf = (row: typeof arranged) => {
+        const left = Math.min(...row.map((rect) => rect.x));
+        const right = Math.max(...row.map((rect) => rect.x + rect.width));
+        return (left + right) / 2;
+      };
+
+      expect(topRow).toHaveLength(3);
+      expect(bottomRow).toHaveLength(2);
+      expect(centerOf(bottomRow)).toBeCloseTo(centerOf(topRow), 0);
+    });
   });
 
   describe("zoom percentage display", () => {

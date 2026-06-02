@@ -77,6 +77,19 @@ const EMPTY_PINNED_APPS: string[] = [];
 const MATRIX_SHIMMER =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
 
+function iconAssetPath(iconUrl: string | undefined): string | undefined {
+  if (!iconUrl) return undefined;
+  try {
+    return new URL(iconUrl, window.location.origin).pathname;
+  } catch (_err: unknown) {
+    return iconUrl.split("?")[0];
+  }
+}
+
+function sameIconAsset(left: string | undefined, right: string | undefined): boolean {
+  return iconAssetPath(left) === iconAssetPath(right);
+}
+
 const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
   WebkitMaskImage: "url('/matrix-logo.svg')",
   WebkitMaskRepeat: "no-repeat",
@@ -811,8 +824,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     wmSetApps((prev) => {
       const existing = prev.find((a) => a.path === path);
       if (existing) {
-        if (existing.name === name && existing.iconUrl === iconUrl) return prev;
-        return prev.map((app) => app.path === path ? { ...app, name, iconUrl } : app);
+        const nextIconUrl = iconUrl === undefined
+          ? existing.iconUrl
+          : sameIconAsset(existing.iconUrl, iconUrl) ? existing.iconUrl : iconUrl;
+        if (existing.name === name && existing.iconUrl === nextIconUrl) return prev;
+        return prev.map((app) => app.path === path ? { ...app, name, iconUrl: nextIconUrl } : app);
       }
       return [...prev, { name, path, iconUrl }];
     });

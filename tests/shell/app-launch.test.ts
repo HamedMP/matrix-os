@@ -40,6 +40,7 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("pomodoro")).toBe("/icons/pomodoro-timer.png");
     expect(iconUrlForSlug("pomodoro-timer")).toBe("/icons/pomodoro-timer.png");
     expect(iconUrlForSlug("new-generated-app")).toBe("/icons/new-generated-app.png");
+    expect(iconUrlForSlug("matrix_os")).toBe("/icons/matrix_os.png");
   });
 
   it("classifies only the canonical games subtree as game apps", () => {

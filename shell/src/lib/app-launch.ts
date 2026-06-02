@@ -1,5 +1,5 @@
 export const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
-const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 const APP_RASTER_ICON_SLUGS = new Set([
   "calculator",
