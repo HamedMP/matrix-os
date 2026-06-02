@@ -62,9 +62,11 @@ export default function App({ initialState }: AppProps) {
   const [history, setHistory] = useState<GameState[]>([]);
   const [stats, setStats] = useState<Stats>(EMPTY_STATS);
   const statsRef = useRef<Stats>(EMPTY_STATS);
+  const historyRef = useRef<GameState[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(!initialState);
+  const [statsLoaded, setStatsLoaded] = useState(false);
   const [selected, setSelected] = useState<Source | null>(null);
   const gameRef = useRef(game);
   const recordedWinRef = useRef(false);
@@ -72,6 +74,7 @@ export default function App({ initialState }: AppProps) {
   const statsLoadedRef = useRef(false);
   const statsRowIdRef = useRef<string | null>(null);
   const statsInsertRef = useRef<Promise<string> | null>(null);
+  const statsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingGamesPlayedRef = useRef(0);
   const startedAtRef = useRef<number>(Date.now());
 
@@ -85,42 +88,51 @@ export default function App({ initialState }: AppProps) {
     statsRef.current = stats;
   }, [stats]);
 
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
   // ---- Stats persistence -------------------------------------------------
-  const persistStats = useCallback(async (next: Stats) => {
+  const persistStats = useCallback((next: Stats) => {
     statsRef.current = next;
     setStats(next);
     const db = window.MatrixOS?.db;
-    if (!db) return;
-    const payload = {
-      games_played: next.games_played,
-      games_won: next.games_won,
-      best_time: next.best_time,
-      best_moves: next.best_moves,
-    };
-    try {
-      const rowId = next.id ?? statsRowIdRef.current;
-      if (rowId) {
-        statsRowIdRef.current = rowId;
-        await db.update(STATS_TABLE, rowId, payload);
-      } else {
-        if (!statsInsertRef.current) {
-          statsInsertRef.current = db.insert(STATS_TABLE, payload)
-            .then((res) => {
-              statsRowIdRef.current = res.id;
-              setStats((cur) => ({ ...cur, id: res.id }));
-              return res.id;
-            })
-            .finally(() => {
-              statsInsertRef.current = null;
-            });
+    if (!db) return Promise.resolve();
+    const save = async () => {
+      const payload = {
+        games_played: next.games_played,
+        games_won: next.games_won,
+        best_time: next.best_time,
+        best_moves: next.best_moves,
+      };
+      try {
+        const rowId = next.id ?? statsRowIdRef.current;
+        if (rowId) {
+          statsRowIdRef.current = rowId;
+          await db.update(STATS_TABLE, rowId, payload);
+        } else {
+          if (!statsInsertRef.current) {
+            statsInsertRef.current = db.insert(STATS_TABLE, payload)
+              .then((res) => {
+                statsRowIdRef.current = res.id;
+                setStats((cur) => ({ ...cur, id: res.id }));
+                return res.id;
+              })
+              .finally(() => {
+                statsInsertRef.current = null;
+              });
+          }
+          const insertedId = await statsInsertRef.current;
+          await db.update(STATS_TABLE, insertedId, payload);
         }
-        const insertedId = await statsInsertRef.current;
-        await db.update(STATS_TABLE, insertedId, payload);
+      } catch (err: unknown) {
+        console.warn("[solitaire] stats save failed:", err instanceof Error ? err.message : String(err));
+        setError("Stats could not be saved to Matrix Postgres.");
       }
-    } catch (err: unknown) {
-      console.warn("[solitaire] stats save failed:", err instanceof Error ? err.message : String(err));
-      setError("Stats could not be saved to Matrix Postgres.");
-    }
+    };
+    const run = statsSaveQueueRef.current.then(save, save);
+    statsSaveQueueRef.current = run.catch(() => undefined);
+    return run;
   }, []);
 
   const loadStats = useCallback(async () => {
@@ -128,6 +140,7 @@ export default function App({ initialState }: AppProps) {
     if (!db) {
       setStats({ ...EMPTY_STATS });
       statsLoadedRef.current = true;
+      setStatsLoaded(true);
       return;
     }
     try {
@@ -146,6 +159,7 @@ export default function App({ initialState }: AppProps) {
       setStats({ ...EMPTY_STATS });
     }
     statsLoadedRef.current = true;
+    setStatsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -193,7 +207,7 @@ export default function App({ initialState }: AppProps) {
   }, [persistStats]);
 
   useEffect(() => {
-    if (!statsLoadedRef.current) return;
+    if (!statsLoaded) return;
     let increment = pendingGamesPlayedRef.current;
     pendingGamesPlayedRef.current = 0;
     if (!countedInitialGameRef.current) {
@@ -205,7 +219,7 @@ export default function App({ initialState }: AppProps) {
     const next = { ...cur, games_played: cur.games_played + increment };
     statsRef.current = next;
     void persistStats(next);
-  }, [persistStats, stats]);
+  }, [persistStats, statsLoaded]);
 
   // ---- Timer -------------------------------------------------------------
   useEffect(() => {
@@ -220,6 +234,7 @@ export default function App({ initialState }: AppProps) {
   const startNewGame = useCallback(
     (drawCount: 1 | 3 = draw) => {
       setGame(deal(Math.random, drawCount));
+      historyRef.current = [];
       setHistory([]);
       setSelected(null);
       setElapsed(0);
@@ -236,25 +251,36 @@ export default function App({ initialState }: AppProps) {
   const setDrawMode = useCallback((mode: 1 | 3) => {
     if (mode === draw) return;
     setDraw(mode);
-    void window.MatrixOS?.writeData?.(DRAW_PREF_KEY, mode).catch((err: unknown) => {
-      console.warn("[solitaire] draw preference save failed:", err instanceof Error ? err.message : String(err));
-    });
+    const writeData = window.MatrixOS?.writeData;
+    if (writeData) {
+      void writeData(DRAW_PREF_KEY, mode).catch((err: unknown) => {
+        console.warn("[solitaire] draw preference save failed:", err instanceof Error ? err.message : String(err));
+      });
+    }
     startNewGame(mode);
   }, [draw, startNewGame]);
 
   // ---- Move application with history -------------------------------------
   const commit = useCallback((next: GameState) => {
-    setHistory((h) => [...h.slice(-200), game]);
+    const nextHistory = [...historyRef.current.slice(-200), game];
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
     setGame(next);
   }, [game]);
 
   const undo = useCallback(() => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
-    setHistory(history.slice(0, -1));
+    const nextHistory = history.slice(0, -1);
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
     setGame(prev);
+    if (won) {
+      recordedWinRef.current = false;
+      setRunning(true);
+    }
     setSelected(null);
-  }, [history]);
+  }, [history, won]);
 
   const doMove = useCallback(
     (src: Source, dest: Destination) => {
@@ -354,7 +380,9 @@ export default function App({ initialState }: AppProps) {
       guard += 1;
     }
     if (last !== game) {
-      setHistory((h) => [...h.slice(-200), game]);
+      const nextHistory = [...historyRef.current.slice(-200), game];
+      historyRef.current = nextHistory;
+      setHistory(nextHistory);
       setGame(last);
     }
     setSelected(null);
@@ -496,6 +524,7 @@ export default function App({ initialState }: AppProps) {
                   {top ? (
                     <CardView
                       card={top}
+                      selected={sourceEquals(selected, { type: "foundation", pile: f })}
                       draggable
                       onActivate={() => handleCardActivate({ type: "foundation", pile: f })}
                       onDragStart={() => onDragStart({ type: "foundation", pile: f })}

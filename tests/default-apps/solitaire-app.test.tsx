@@ -41,6 +41,23 @@ function seededState(): GameState {
   };
 }
 
+function oneMoveFromWinState(): GameState {
+  const suits = ["spades", "hearts", "diamonds", "clubs"] as const;
+  const foundations = suits.map((suit) =>
+    Array.from({ length: 13 }, (_, r) => ({ id: `${suit}-${r + 1}`, suit, rank: r + 1, faceUp: true })),
+  );
+  const last = foundations[3].pop()!;
+  return {
+    stock: [],
+    waste: [last],
+    foundations,
+    tableau: [[], [], [], [], [], [], []],
+    drawCount: 1,
+    moves: 10,
+    score: 0,
+  };
+}
+
 describe("Solitaire app", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -75,6 +92,25 @@ describe("Solitaire app", () => {
     expect(inFoundation).toBe(true);
   });
 
+  it("records a single undo entry per committed move under StrictMode", async () => {
+    installMatrixDb();
+    render(
+      <React.StrictMode>
+        <App initialState={seededState()} />
+      </React.StrictMode>,
+    );
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-spades-1"));
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+
+    expect(screen.getByTestId("waste").textContent).toContain("A");
+    expect((screen.getByRole("button", { name: /undo/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("does not restart the current game when clicking the active draw mode", async () => {
     installMatrixDb();
     render(<App initialState={seededState()} />);
@@ -84,6 +120,17 @@ describe("Solitaire app", () => {
 
     expect(screen.getByTestId("waste").textContent).toContain("A");
     expect(screen.getByTestId("card-spades-1")).toBeTruthy();
+  });
+
+  it("changes draw mode without throwing when the bridge has no writeData helper", async () => {
+    installMatrixDb();
+    render(<App initialState={seededState()} />);
+    expect(await screen.findByTestId("card-spades-1")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /draw 3/i }));
+
+    expect(screen.getByRole("button", { name: /draw 3/i }).className).toContain("seg--on");
+    expect(screen.queryByText(/draw preference save failed/i)).toBeNull();
   });
 
   it("does not add undo history when drawing from empty stock and waste", async () => {
@@ -130,6 +177,30 @@ describe("Solitaire app", () => {
     expect(card.className).not.toContain("sol-card--selected");
   });
 
+  it("shows when a foundation card is selected", async () => {
+    installMatrixDb();
+    const state: GameState = {
+      stock: [],
+      waste: [],
+      foundations: [
+        [{ id: "hearts-13", suit: "hearts", rank: 13, faceUp: true }],
+        [],
+        [],
+        [],
+      ],
+      tableau: [[], [], [], [], [], [], []],
+      drawCount: 1,
+      moves: 0,
+      score: 0,
+    };
+    render(<App initialState={state} />);
+
+    const card = await screen.findByTestId("card-hearts-13");
+    fireEvent.click(card);
+
+    expect(card.className).toContain("sol-card--selected");
+  });
+
   it("applies saved draw-three preference to the untouched initial deal", async () => {
     installMatrixDb([], { readData: vi.fn(async () => 3) });
     render(<App />);
@@ -166,6 +237,7 @@ describe("Solitaire app", () => {
       "stats-1",
       expect.objectContaining({ games_played: 6 }),
     ));
+    expect(db.update.mock.calls.filter((call) => call[0] === "stats" && (call[2] as DbRow).games_played === 6)).toHaveLength(1);
     expect(db.update.mock.calls.filter((call) => call[0] === "stats" && (call[2] as DbRow).games_played === 7)).toHaveLength(0);
   });
 
@@ -195,23 +267,7 @@ describe("Solitaire app", () => {
 
   it("persists stats to the bridge when a game is won", async () => {
     const db = installMatrixDb([]);
-    // a state one move from a win: 51 cards on foundations, last Ace... build full minus one
-    const suits = ["spades", "hearts", "diamonds", "clubs"] as const;
-    const foundations = suits.map((suit) =>
-      Array.from({ length: 13 }, (_, r) => ({ id: `${suit}-${r + 1}`, suit, rank: r + 1, faceUp: true })),
-    );
-    // remove the last card (clubs King) and place it on the waste
-    const last = foundations[3].pop()!;
-    const winState: GameState = {
-      stock: [],
-      waste: [last],
-      foundations,
-      tableau: [[], [], [], [], [], [], []],
-      drawCount: 1,
-      moves: 10,
-      score: 0,
-    };
-    render(<App initialState={winState} />);
+    render(<App initialState={oneMoveFromWinState()} />);
 
     const kingCard = await screen.findByTestId("card-clubs-13");
     await act(async () => {
@@ -230,6 +286,42 @@ describe("Solitaire app", () => {
         games_won: 1,
         best_moves: 11,
       }));
+    });
+  });
+
+  it("records a second win after undoing from a won game", async () => {
+    const db = installMatrixDb([]);
+    render(<App initialState={oneMoveFromWinState()} />);
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const statPayloads = [
+        ...db.insert.mock.calls.filter((call) => call[0] === "stats").map((call) => call[1] as DbRow),
+        ...db.update.mock.calls.filter((call) => call[0] === "stats").map((call) => call[2] as DbRow),
+      ];
+      expect(statPayloads).toContainEqual(expect.objectContaining({ games_won: 1 }));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const statPayloads = [
+        ...db.insert.mock.calls.filter((call) => call[0] === "stats").map((call) => call[1] as DbRow),
+        ...db.update.mock.calls.filter((call) => call[0] === "stats").map((call) => call[2] as DbRow),
+      ];
+      expect(statPayloads).toContainEqual(expect.objectContaining({ games_won: 2 }));
     });
   });
 });
