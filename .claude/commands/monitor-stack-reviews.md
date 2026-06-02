@@ -160,7 +160,12 @@ final human review.
      actionable comment remains unresolved, or if the PR is draft, do not label
      the PR yet.
    - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
-     until checks pass, fail with actionable output, or are blocked.
+     until checks pass, fail with actionable output, or are blocked. During
+     this CI loop, periodically re-audit review threads and actionable comments
+     with the same thread-aware workflow from Step 3. If any new unresolved
+     human thread, Codex review comment, or actionable issue comment appears,
+     stop treating the PR as complete and return to the Step 3 label audit
+     before declaring success.
    - If any fix requires a new push after `ready-for-ci` was applied, remove the
      label before editing:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
