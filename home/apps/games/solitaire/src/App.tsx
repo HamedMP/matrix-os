@@ -66,6 +66,7 @@ export default function App({ initialState }: AppProps) {
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(!initialState);
   const [selected, setSelected] = useState<Source | null>(null);
+  const gameRef = useRef(game);
   const recordedWinRef = useRef(false);
   const countedInitialGameRef = useRef(Boolean(initialState));
   const statsLoadedRef = useRef(false);
@@ -75,6 +76,10 @@ export default function App({ initialState }: AppProps) {
   const startedAtRef = useRef<number>(Date.now());
 
   const won = isWon(game);
+
+  useEffect(() => {
+    gameRef.current = game;
+  }, [game]);
 
   useEffect(() => {
     statsRef.current = stats;
@@ -158,11 +163,13 @@ export default function App({ initialState }: AppProps) {
         if (value === 1 || value === 3) {
           setDraw(value);
           if (!initialState) {
-            setGame((current) => {
-              if (current.moves !== 0 || current.drawCount === value) return current;
+            const current = gameRef.current;
+            if (current.moves === 0 && current.drawCount !== value) {
+              const next = deal(Math.random, value);
+              gameRef.current = next;
               startedAtRef.current = Date.now();
-              return deal(Math.random, value);
-            });
+              setGame(next);
+            }
           }
         }
       } catch (err: unknown) {

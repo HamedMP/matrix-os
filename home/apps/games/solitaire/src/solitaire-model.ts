@@ -197,7 +197,7 @@ export function drawFromStock(state: GameState): GameState {
   if (s.stock.length === 0) {
     // recycle waste back into stock (reversed, face-down)
     if (s.waste.length === 0) return state; // nothing to do
-    s.stock = s.waste.reverse().map((c) => ({ ...c, faceUp: false }));
+    s.stock = s.waste.slice().reverse().map((c) => ({ ...c, faceUp: false }));
     s.waste = [];
     s.moves += 1;
     return s;
