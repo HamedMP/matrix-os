@@ -86,6 +86,17 @@ describe("weather api proxy", () => {
     ]);
   });
 
+  it("treats empty geocode proxy objects as no matching places", async () => {
+    Object.defineProperty(window, "MatrixOS", {
+      configurable: true,
+      value: {
+        proxyFetch: vi.fn(async () => ({})),
+      },
+    });
+
+    await expect(geocode("no-such-place")).resolves.toEqual([]);
+  });
+
   it("drops out-of-range geocode coordinates", async () => {
     Object.defineProperty(window, "MatrixOS", {
       configurable: true,
