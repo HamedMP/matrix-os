@@ -658,6 +658,15 @@ describe("Task Manager app", () => {
         column_id: "columns-sprint",
       })),
     );
+    const cardInserts = db.insert.mock.calls.filter(([table]) => table === "cards");
+    expect(cardInserts).not.toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining([
+          "cards",
+          expect.objectContaining({ column_id: expect.stringMatching(/^column-/) }),
+        ]),
+      ]),
+    );
   });
 
   it("persists pending new-column cards with their latest live order", async () => {

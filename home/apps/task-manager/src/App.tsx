@@ -286,7 +286,8 @@ function App() {
           resolveCreatedCardId(created.id);
           return;
         }
-        await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
+        const pendingColumnId = liveCard.columnId;
+        let columnId = await (pendingColumnIdsRef.current[pendingColumnId] ?? Promise.resolve(pendingColumnId));
         liveCard = boardRef.current?.cards.find((card) => card.id === created.id);
         if (!liveCard) {
           resolveCreatedCardId(created.id);
@@ -297,7 +298,9 @@ function App() {
           resolveCreatedCardId(created.id);
           return;
         }
-        const columnId = await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
+        if (liveCard.columnId !== pendingColumnId) {
+          columnId = await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
+        }
         const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...liveCard, columnId }, liveCard.order));
         resolveCreatedCardId(result.id);
         pendingCardIdSwapsRef.current[result.id] = created.id;
