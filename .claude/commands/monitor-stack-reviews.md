@@ -144,7 +144,8 @@ final human review.
      polls; normal Matrix OS checks can run longer than several poll intervals.
      Stop and report a blocker only when checks fail with actionable output, the
      expected checks never enter an active state after the push, or an active
-     check exceeds its documented timeout/stuck threshold.
+     check exceeds 30 minutes without progress or its workflow-defined
+     `timeout-minutes`, whichever is shorter.
    - Track the push time and current head SHA for each PR awaiting Greptile. If
      no Greptile comment for that head appears within 30 minutes after the
      push, stop and report `Greptile review not received for <pr> @ <sha>` as a
