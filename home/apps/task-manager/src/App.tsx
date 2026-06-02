@@ -335,9 +335,7 @@ function App() {
       const persistedCardId = await resolveCardId(cardId);
       const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
         ?? boardRef.current?.cards.find((card) => card.id === cardId);
-      const rowCard = liveCard
-        ? { ...updated, columnId: liveCard.columnId, order: liveCard.order, checklist: liveCard.checklist }
-        : updated;
+      const rowCard = liveCard ?? updated;
       const persistedColumnId = await (
         pendingColumnIdsRef.current[rowCard.columnId] ?? Promise.resolve(rowCard.columnId)
       );
