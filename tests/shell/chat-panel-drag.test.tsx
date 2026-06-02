@@ -74,4 +74,27 @@ describe("ChatPanel drag", () => {
 
     expect(screen.getByTestId("chat-panel").style.transform).toBe("");
   });
+
+  it("resets a desktop drag offset when resized to mobile", () => {
+    setViewportWidth(1200);
+    renderChatPanel();
+
+    fireEvent.pointerDown(screen.getByTestId("chat-panel-drag-handle"), {
+      pointerId: 1,
+      clientX: 300,
+      clientY: 40,
+    });
+    fireEvent.pointerMove(window, {
+      pointerId: 1,
+      clientX: 180,
+      clientY: 64,
+    });
+
+    expect(screen.getByTestId("chat-panel").style.transform).toBe("translate3d(-120px, 24px, 0)");
+
+    setViewportWidth(500);
+    fireEvent.resize(window);
+
+    expect(screen.getByTestId("chat-panel").style.transform).toBe("");
+  });
 });

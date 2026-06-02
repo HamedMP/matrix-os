@@ -54,4 +54,27 @@ describe("xterm logger", () => {
     expect(logger.info).toHaveBeenCalledWith("info", 3);
     expect(logger.warn).toHaveBeenCalledWith("warn", 4);
   });
+
+  it("keeps lower-level default logs silent while forwarding non-parser errors", () => {
+    const trace = vi.spyOn(console, "trace").mockImplementation(() => {});
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const xtermLogger = createXtermLogger();
+
+    xtermLogger.trace("trace");
+    xtermLogger.debug("debug");
+    xtermLogger.info("info");
+    xtermLogger.warn("warn");
+    xtermLogger.error("Parsing error: ", { code: 57520 });
+    xtermLogger.error("connection lost");
+
+    expect(trace).not.toHaveBeenCalled();
+    expect(debug).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith("connection lost");
+  });
 });

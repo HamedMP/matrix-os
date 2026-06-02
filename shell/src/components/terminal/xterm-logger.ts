@@ -2,7 +2,17 @@ import type { ILogger } from "@xterm/xterm";
 
 const PARSING_ERROR_PREFIX = "Parsing error";
 
-export function createXtermLogger(base: ILogger = console): ILogger {
+const DEFAULT_BASE: ILogger = {
+  trace() {},
+  debug() {},
+  info() {},
+  warn() {},
+  error(message: string | Error, ...args: unknown[]) {
+    console.error(message, ...args);
+  },
+};
+
+export function createXtermLogger(base: ILogger = DEFAULT_BASE): ILogger {
   return {
     trace(message: string, ...args: unknown[]) {
       base.trace(message, ...args);

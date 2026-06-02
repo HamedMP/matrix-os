@@ -110,6 +110,24 @@ export function ChatPanel({
     };
   }, []);
 
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= CHAT_PANEL_DRAG_BREAKPOINT) return;
+
+      dragRef.current = null;
+      setPanelOffset((current) => (
+        current.x || current.y
+          ? { x: 0, y: 0 }
+          : current
+      ));
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
   const handleDragStart = (event: ReactPointerEvent<HTMLElement>) => {
     if (window.innerWidth < CHAT_PANEL_DRAG_BREAKPOINT) return;
 
