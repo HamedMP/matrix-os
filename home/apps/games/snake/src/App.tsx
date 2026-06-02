@@ -164,7 +164,6 @@ export default function App() {
       await persistScore(finalScore, newBest);
     } catch (err: unknown) {
       console.warn("[snake] score save failed:", err instanceof Error ? err.message : String(err));
-      if (wasNewBest) await writeFallbackBest(newBest);
       setError("Score could not be synced.");
     }
   }, []);
@@ -228,12 +227,25 @@ export default function App() {
   // --- Game loop ---
   useEffect(() => {
     if (game.status !== "running") return undefined;
-    const interval = Math.round(speedForScore(game.score) * DIFFICULTY[difficulty].tickMul);
-    const id = window.setInterval(() => {
+    let cancelled = false;
+    let tickTimer: number | null = null;
+    let scheduleTimer: number | null = null;
+    const schedule = () => {
+      if (cancelled || gameRef.current.status !== "running") return;
+      const interval = Math.round(speedForScore(gameRef.current.score) * DIFFICULTY[difficulty].tickMul);
+      tickTimer = window.setTimeout(tick, interval);
+    };
+    const tick = () => {
       setGame((current) => step(current, rng));
-    }, interval);
-    return () => window.clearInterval(id);
-  }, [game.status, game.score, difficulty]);
+      scheduleTimer = window.setTimeout(schedule, 0);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (tickTimer !== null) window.clearTimeout(tickTimer);
+      if (scheduleTimer !== null) window.clearTimeout(scheduleTimer);
+    };
+  }, [game.status, difficulty]);
 
   // --- Eat pulse + save-on-end side effects ---
   useEffect(() => {

@@ -130,6 +130,42 @@ describe("Snake app", () => {
     expect(writeData).not.toHaveBeenCalled();
   });
 
+  it("does not retry fallback best writes when score sync also fails", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(208 / 397);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const db = installMatrixDb([]);
+    db.insert.mockRejectedValueOnce(new Error("sync failed"));
+    const writeData = vi.fn(async () => {
+      throw new Error("fallback failed");
+    });
+    Object.defineProperty(window, "MatrixOS", {
+      configurable: true,
+      value: {
+        db,
+        readData: vi.fn(async () => 0),
+        writeData,
+      },
+    });
+
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      await vi.advanceTimersByTimeAsync(2_500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalled();
+    expect(writeData).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Score could not be synced.")).toBeTruthy();
+  });
+
   it("pauses and resumes with Space", async () => {
     installMatrixDb([]);
     vi.useFakeTimers();
