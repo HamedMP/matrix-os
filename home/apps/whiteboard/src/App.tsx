@@ -68,6 +68,7 @@ const SCENES_TABLE = "scenes";
 const LS_KEY = "matrix-whiteboard-scene-v1";
 const LS_NAME_KEY = "matrix-whiteboard-name-v1";
 const AUTOSAVE_MS = 800;
+const BOARD_LIST_ERROR = "Could not load your boards.";
 
 const PALETTE = ["#32352E", "#C4342D", "#D06F25", "#3A7D44", "#2D6CDF", "#7A4FD0", "#9A8C66"];
 const STROKE_WIDTHS = [2, 4, 8];
@@ -332,7 +333,7 @@ export default function App() {
   }, []);
 
   // -- refresh the board index (sidebar list) -------------------------------
-  const refreshIndex = useCallback(async (): Promise<BoardIndexResult> => {
+  const refreshIndex = useCallback(async (opts: { reportError?: boolean } = {}): Promise<BoardIndexResult> => {
     const db = window.MatrixOS?.db;
     if (!db) {
       const local: BoardMeta = { id: LOCAL_BOARD_ID, name: loadLocalName(), updatedAt: 0 };
@@ -343,10 +344,11 @@ export default function App() {
       const rows = await db.find(SCENES_TABLE, { orderBy: { created_at: "desc" } });
       const index = boardIndexFromRows(rows);
       setBoards(index);
+      setError((prev) => (prev === BOARD_LIST_ERROR ? null : prev));
       return { boards: index, ok: true };
     } catch (err: unknown) {
       console.warn("[whiteboard] board list failed:", err instanceof Error ? err.message : String(err));
-      setError("Could not load your boards.");
+      if (opts.reportError !== false) setError(BOARD_LIST_ERROR);
       return { boards: [], ok: false };
     }
   }, []);
@@ -416,7 +418,7 @@ export default function App() {
       // Reconcile the list without reopening the active board. The bridge
       // notification is table-wide, so reopening would reset viewport,
       // selection, and in-progress edits for unrelated board writes.
-      void refreshIndex();
+      void refreshIndex({ reportError: false });
     });
     return () => {
       cancelled = true;
@@ -1758,6 +1760,9 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
     ctx.fillStyle = b.fill;
     roundedRectPath(ctx, x, y, w, h, 6);
     ctx.fill();
+    ctx.strokeStyle = "rgba(50,53,46,0.14)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
     if (b.text) {
       ctx.fillStyle = "#32352E";
       ctx.font = "16px Inter, system-ui, sans-serif";

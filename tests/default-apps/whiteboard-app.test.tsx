@@ -212,6 +212,46 @@ describe("Whiteboard app", () => {
     expect(sawRect).toBe(true);
   });
 
+  it("does not let background board refresh failures overwrite save errors", async () => {
+    const db = installMatrixDb([
+      {
+        id: "b1",
+        name: "Sketch",
+        doc: { version: 1, elements: [] },
+        created_at: "2026-02-02T00:00:00.000Z",
+        updated_at: "2026-02-02T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    db.update.mockRejectedValueOnce(new Error("save failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    await act(async () => {
+      fireEvent.pointerDown(canvas, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(canvas, { clientX: 220, clientY: 180, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 220, clientY: 180, pointerId: 1 });
+      await vi.advanceTimersByTimeAsync(1200);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Changes could not be saved.")).toBeTruthy();
+
+    db.find.mockRejectedValueOnce(new Error("background refresh failed"));
+    await act(async () => {
+      db.emitChange();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Changes could not be saved.")).toBeTruthy();
+    expect(screen.queryByText("Could not load your boards.")).toBeNull();
+  });
+
   it("discards in-progress rectangles when the pointer is canceled", async () => {
     const db = installMatrixDb([]);
     render(<App />);
@@ -735,6 +775,52 @@ describe("Whiteboard app — multi-board files", () => {
     expect(ctx.ellipse).toHaveBeenCalled();
     expect(ctx.fill).toHaveBeenCalled();
     expect(ctx.stroke).toHaveBeenCalled();
+  });
+
+  it("strokes sticky note borders when exporting PNGs", async () => {
+    installMatrixDb([
+      {
+        ...board("b1", "Sketch", "2026-02-02T00:00:00.000Z"),
+        doc: {
+          version: 1,
+          elements: [
+            { id: "s1", kind: "sticky", x: 20, y: 30, width: 120, height: 80, stroke: "#000", fill: "#FFE9A8", strokeWidth: 2, text: "" },
+          ],
+        },
+      },
+    ]);
+    const strokeStyles: string[] = [];
+    const lineWidths: number[] = [];
+    const ctx = {
+      beginPath: vi.fn(),
+      fill: vi.fn(),
+      fillRect: vi.fn(),
+      roundRect: vi.fn(),
+      stroke: vi.fn(),
+      translate: vi.fn(),
+      set fillStyle(_value: string) {},
+      set lineCap(_value: string) {},
+      set lineJoin(_value: string) {},
+      set lineWidth(value: number) { lineWidths.push(value); },
+      set strokeStyle(value: string) { strokeStyles.push(value); },
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,stub");
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTitle("Export PNG"));
+
+    expect(ctx.roundRect).toHaveBeenCalled();
+    expect(ctx.fill).toHaveBeenCalled();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(strokeStyles).toContain("rgba(50,53,46,0.14)");
+    expect(lineWidths).toContain(1);
   });
 
   it("fills arrowheads when exporting PNGs", async () => {
