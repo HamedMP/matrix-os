@@ -304,6 +304,9 @@ function App() {
         const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...liveCard, columnId }, liveCard.order));
         resolveCreatedCardId(result.id);
         pendingCardIdSwapsRef.current[result.id] = created.id;
+        window.setTimeout(() => {
+          delete pendingCardIdSwapsRef.current[result.id];
+        }, 0);
         setSelectedCardId((id) => (id === created.id ? result.id : id));
         setBoard((current) => current ? {
           ...current,

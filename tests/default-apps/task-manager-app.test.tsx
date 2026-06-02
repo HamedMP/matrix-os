@@ -18,9 +18,9 @@ function installMatrixDb(initial?: Partial<FakeDb>, legacyBoard?: unknown) {
     cards: initial?.cards ? [...initial.cards] : [],
   };
   let seq = 0;
-  const listeners: Record<string, Array<() => void>> = {};
+  const listeners: Record<string, Array<(event: { table: string }) => void>> = {};
   const emit = (table: string) => {
-    for (const cb of listeners[table] ?? []) cb();
+    for (const cb of listeners[table] ?? []) cb({ table });
   };
 
   const db = {
@@ -61,7 +61,7 @@ function installMatrixDb(initial?: Partial<FakeDb>, legacyBoard?: unknown) {
       return { ok: true };
     }),
     count: vi.fn(async (table: string) => (store[table as keyof FakeDb] ?? []).length),
-    onChange: vi.fn((table: string, cb: () => void) => {
+    onChange: vi.fn((table: string, cb: (event: { table: string }) => void) => {
       (listeners[table] ??= []).push(cb);
       return () => {
         listeners[table] = (listeners[table] ?? []).filter((fn) => fn !== cb);
