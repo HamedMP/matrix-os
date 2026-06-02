@@ -1,6 +1,6 @@
 ---
 name: matrix-os
-version: 0.82.0
+version: 0.83.0
 description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent.
 homepage: https://matrix-os.com
 metadata: {"matrix":{"category":"cloud-computer","app_url":"https://app.matrix-os.com","skill_url":"https://matrix-os.com/skills.md","cli_package":"@finnaai/matrix"}}
@@ -104,10 +104,12 @@ matrix run -it -- claude
 matrix run -it -- codex
 
 # Use a named setup session so the human and web terminal can reattach.
+matrix shell connect -c setup
 matrix run -it --session setup -- gh auth login
 matrix run -it --session setup -- claude
-matrix shell attach setup
 ```
+
+`matrix shell connect -c setup` creates the named session if it does not exist, then connects to it. If the human already has a working web terminal or CLI session, reuse that session instead of requiring a new one named `setup`.
 
 Detach from an interactive session with:
 
@@ -118,8 +120,64 @@ Ctrl-\ Ctrl-\
 Detaching leaves the remote zellij session alive. Reattach with:
 
 ```bash
-matrix shell attach setup
+matrix shell connect setup
 ```
+
+## Terminal Session Fallbacks
+
+If `matrix run -it -- ...`, `matrix shell new`, or `matrix shell attach` returns:
+
+```text
+Error: Request failed (zellij_failed)
+```
+
+do not keep retrying the same command. First list existing sessions:
+
+```bash
+matrix shell ls
+```
+
+Then connect to an existing session:
+
+```bash
+matrix shell connect <session-name>
+```
+
+For setup, prefer an existing human-created session if one is available. If no setup session exists, create-or-connect with:
+
+```bash
+matrix shell connect -c setup
+```
+
+`connect -c <session-name>` creates the session if missing and then connects to it. If creation still fails with `zellij_failed`, ask the human to create or choose a session from the Matrix web terminal, then connect to that existing session:
+
+```bash
+matrix shell ls
+matrix shell connect <existing-session>
+```
+
+Known working example:
+
+```bash
+matrix shell connect nima
+```
+
+`connect` may succeed even when `attach` and `run -it` fail.
+
+After `matrix login`, run:
+
+```bash
+matrix doctor
+```
+
+If the sync daemon fails, run:
+
+```bash
+matrix sync
+matrix doctor
+```
+
+If `matrix doctor` passes but terminal commands still return `zellij_failed`, switch to `matrix shell connect`.
 
 ## GitHub Setup For Coding
 
@@ -203,7 +261,8 @@ matrix instance info
 matrix instance logs
 matrix shell ls
 matrix shell new setup --cmd bash
-matrix shell attach setup
+matrix shell connect setup
+matrix shell connect -c setup
 matrix run -it --session setup -- claude
 matrix run -it --session setup -- codex
 matrix run -it --session setup -- gh auth login
@@ -232,10 +291,16 @@ matrix instance logs
 matrix shell ls
 ```
 
-If an interactive command looks stuck, detach with `Ctrl-\ Ctrl-\`, then reattach:
+If an interactive command looks stuck, detach with `Ctrl-\ Ctrl-\`, then reconnect:
 
 ```bash
-matrix shell attach setup
+matrix shell connect setup
+```
+
+If the named session is missing and should be created, use:
+
+```bash
+matrix shell connect -c setup
 ```
 
 If the VPS is not ready yet, wait for provisioning in `https://app.matrix-os.com`, then retry `matrix login`.

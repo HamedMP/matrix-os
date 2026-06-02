@@ -86,7 +86,7 @@ matrix login
 matrix run -it -- claude
 matrix run -it -- codex
 matrix run -it --session setup -- gh auth login
-matrix shell attach setup
+matrix shell connect -c setup
 ```
 
 `matrix run -it` creates a zellij-backed Matrix shell session, starts the requested command in a pane, and attaches the local terminal over `/ws/terminal`. The local terminal is a dumb TTY: stdin is put in raw mode, Ctrl-C/Ctrl-D are forwarded to the remote process, terminal resizes are forwarded as `resize` frames, and `Ctrl-\ Ctrl-\` detaches without killing the remote session.
@@ -94,10 +94,13 @@ matrix shell attach setup
 Use named sessions for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all reattach the same VPS context:
 
 ```bash
+matrix shell connect -c setup
 matrix run -it --session setup -- gh auth login
 matrix run -it --session setup -- claude
-matrix shell attach setup
+matrix shell connect setup
 ```
+
+If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails with `zellij_failed`, do not keep retrying the same command. Run `matrix shell ls`, then use `matrix shell connect <session-name>` against an existing session. `matrix shell connect -c <session-name>` is the create-if-missing path; if creation fails, ask the human to create or choose a session from the Matrix web terminal and connect to that existing session.
 
 Non-interactive `matrix run -- <command>` should return the remote command exit status once the gateway exposes status-bearing command execution on top of the same zellij session model. Until then, developer setup docs should prefer `matrix run -it -- <interactive-command>`.
 
