@@ -123,6 +123,7 @@ export default function App() {
   const savedForRef = useRef(false); // guard one save per game-over
   const eatPulseRef = useRef(0);
   const prevScoreRef = useRef(0);
+  const bestLoadedRef = useRef(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -130,10 +131,14 @@ export default function App() {
   const reloadBest = useCallback(async () => {
     try {
       setError(null);
-      setBest(await loadBest());
+      const loadedBest = await loadBest();
+      bestLoadedRef.current = true;
+      setBest(loadedBest);
     } catch (err: unknown) {
       console.warn("[snake] best load failed:", err instanceof Error ? err.message : String(err));
-      setBest(await readFallbackBest());
+      const fallbackBest = await readFallbackBest();
+      bestLoadedRef.current = true;
+      setBest(fallbackBest);
       setError("High score could not be loaded.");
     }
   }, []);
@@ -147,8 +152,9 @@ export default function App() {
 
   // --- Persist new high score on game end ---
   const commitScore = useCallback(async (finalScore: number) => {
+    const bestLoaded = bestLoadedRef.current;
     const newBest = Math.max(bestRef.current, finalScore);
-    const wasNewBest = finalScore > bestRef.current;
+    const wasNewBest = bestLoaded && finalScore > bestRef.current;
     setLastGameWasBest(wasNewBest);
     if (wasNewBest) {
       setBest(newBest);

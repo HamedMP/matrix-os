@@ -104,6 +104,32 @@ describe("Snake app", () => {
     expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("running");
   });
 
+  it("does not overwrite fallback best before the initial best load resolves", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(208 / 397);
+    const db = installMatrixDb([]);
+    db.find.mockImplementation(async () => new Promise<DbRow[]>(() => undefined));
+    const writeData = vi.fn(async () => undefined);
+    Object.defineProperty(window, "MatrixOS", {
+      configurable: true,
+      value: {
+        db,
+        readData: vi.fn(async () => 12),
+        writeData,
+      },
+    });
+
+    render(<App />);
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      await vi.advanceTimersByTimeAsync(2_500);
+    });
+
+    expect(db.insert).toHaveBeenCalledWith("scores", expect.objectContaining({ score: expect.any(Number) }));
+    expect(writeData).not.toHaveBeenCalled();
+  });
+
   it("pauses and resumes with Space", async () => {
     installMatrixDb([]);
     vi.useFakeTimers();
