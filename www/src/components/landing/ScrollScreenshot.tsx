@@ -5,6 +5,7 @@ import Image from "next/image";
 
 export function ScrollScreenshot() {
   const [progress, setProgress] = useState(0);
+  const [compactViewport, setCompactViewport] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
 
@@ -19,6 +20,7 @@ export function ScrollScreenshot() {
         const rect = element.getBoundingClientRect();
         const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1;
         const rawProgress = (viewportHeight - rect.top) / (viewportHeight * 0.55);
+        setCompactViewport(window.innerWidth < 640);
         setProgress(Math.max(0, Math.min(1, rawProgress)));
       });
     };
@@ -34,8 +36,8 @@ export function ScrollScreenshot() {
     };
   }, []);
 
-  const screenshotY = 60 * (1 - progress);
-  const screenshotScale = 0.92 + progress * 0.08;
+  const screenshotY = (compactViewport ? 28 : 60) * (1 - progress);
+  const screenshotScale = (compactViewport ? 0.96 : 0.92) + progress * (compactViewport ? 0.04 : 0.08);
 
   return (
     <div ref={wrapperRef} className="screenshot-wrapper" style={{ "--ss-y": `${screenshotY}px`, "--ss-s": screenshotScale } as CSSProperties}>

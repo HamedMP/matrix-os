@@ -269,7 +269,7 @@ export default function LandingPage() {
       <PreviewSection />
       <AboutSection />
 
-      <div className="mx-auto max-w-[1100px] px-8">
+      <div className="mx-auto max-w-[1100px] px-6 sm:px-8">
         <div style={{ height: 1, backgroundColor: c.border }} />
       </div>
 
@@ -287,22 +287,22 @@ export default function LandingPage() {
 
 function AgentSetupSection() {
   return (
-    <section id="developers" className="relative py-16 md:py-20" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
-        <div className="grid gap-8 md:grid-cols-[0.88fr_1.12fr] md:items-stretch">
+    <section id="developers" className="relative py-12 md:py-16 lg:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 sm:px-8">
+        <div className="grid gap-6 md:grid-cols-[0.88fr_1.12fr] md:items-stretch lg:gap-8">
           <div className="flex flex-col justify-center">
-            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>For coding agents</p>
-            <h2 className="mb-5 max-w-xl text-[clamp(1.8rem,4vw,3.2rem)] font-semibold leading-[1.12]" style={{ color: c.forest }}>
+            <p className="mb-4 text-[11px] uppercase tracking-[0.3em] md:mb-5" style={{ color: c.subtle }}>For coding agents</p>
+            <h2 className="mb-4 max-w-xl text-[1.8rem] font-semibold leading-[1.12] md:mb-5 md:text-[2.3rem] lg:text-[3.2rem]" style={{ color: c.forest }}>
               Paste one message. Let your agent install Matrix.
             </h2>
-            <p className="max-w-xl text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+            <p className="max-w-xl text-[14px] leading-[1.75] md:text-[15px] md:leading-[1.9]" style={{ color: c.mutedFg }}>
               Matrix publishes a setup skill at <code>matrix-os.com/skills.md</code>. Give it to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another coding agent so it can install the CLI, guide <code>matrix login</code>, and start work on your cloud computer with <code>matrix run</code>.
             </p>
-            <div className="mt-7 flex flex-wrap gap-3" aria-label="Supported coding agents">
+            <div className="mt-5 flex flex-wrap gap-2 md:mt-7 md:gap-3" aria-label="Supported coding agents">
               {agentBrands.map((brand) => (
                 <div
                   key={brand.name}
-                  className="inline-flex min-h-11 items-center gap-2.5 rounded-full px-3.5 text-[12px] font-medium"
+                  className="inline-flex min-h-9 items-center gap-2 rounded-full px-3 text-[11px] font-medium md:min-h-11 md:gap-2.5 md:px-3.5 md:text-[12px]"
                   style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(250,250,245,0.36)", color: c.forest }}
                 >
                   <img
@@ -311,7 +311,7 @@ function AgentSetupSection() {
                     aria-hidden="true"
                     width={24}
                     height={24}
-                    className="size-6 shrink-0 rounded-md object-contain"
+                    className="size-5 shrink-0 rounded-md object-contain md:size-6"
                   />
                   {brand.name}
                 </div>
@@ -319,22 +319,22 @@ function AgentSetupSection() {
             </div>
           </div>
 
-          <div className="rounded-[16px] p-5 md:p-6" style={{ backgroundColor: "rgba(67,78,63,0.07)", border: `1px solid ${c.border}` }}>
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[11px] uppercase tracking-[0.2em]" style={{ color: c.subtle }}>Copy for your agent</p>
+          <div className="rounded-[16px] p-4 md:p-6" style={{ backgroundColor: "rgba(67,78,63,0.07)", border: `1px solid ${c.border}` }}>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] md:text-[11px] md:tracking-[0.2em]" style={{ color: c.subtle }}>Copy for your agent</p>
               <AgentSetupCopyButton text={COPYABLE_AGENT_SETUP_PROMPT} />
             </div>
-            <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap rounded-[12px] p-4 text-left text-[12px] leading-[1.75]"
+            <pre className="max-h-[210px] overflow-auto whitespace-pre-wrap rounded-[12px] p-3 text-left text-[11px] leading-[1.6] md:max-h-[320px] md:p-4 md:text-[12px] md:leading-[1.75]"
               style={{ backgroundColor: "rgba(250,250,245,0.54)", color: c.forest, border: `1px solid ${c.border}` }}>
               <code>{COPYABLE_AGENT_SETUP_PROMPT}</code>
             </pre>
-            <div className="mt-5 flex flex-wrap gap-3">
+            <div className="mt-4 flex flex-wrap gap-2.5 md:mt-5 md:gap-3">
               {/* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- /skills.md is a static public file, not a Next route; Link would prefetch/client-navigate raw markdown */}
-              <a href="/skills.md" className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80"
+              <a href="/skills.md" className="inline-flex min-h-10 items-center gap-2 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.1em] transition-opacity duration-300 hover:opacity-80 md:px-5 md:py-2.5 md:text-[11px] md:tracking-[0.12em]"
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
                 Open skills.md <ArrowRightIcon className="size-3.5" />
               </a>
-              <Link href="/docs/guide/developer-workflow" className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80"
+              <Link href="/docs/guide/developer-workflow" className="inline-flex min-h-10 items-center gap-2 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.1em] transition-opacity duration-300 hover:opacity-80 md:px-5 md:py-2.5 md:text-[11px] md:tracking-[0.12em]"
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
                 Developer workflow
               </Link>
@@ -412,28 +412,28 @@ function NavIsland() {
 
 function HeroSection() {
   return (
-    <section className="relative min-h-[78svh] overflow-hidden pt-32 pb-20 md:min-h-[82svh] md:pt-28 md:pb-24" style={{ backgroundColor: c.pageBg }}>
-      <div className="relative mx-auto grid min-h-[calc(78svh-13rem)] max-w-[980px] items-center gap-8 px-6 md:min-h-[calc(82svh-13rem)] md:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] md:gap-10 md:px-8 lg:max-w-[1040px] lg:gap-12">
-        <div className="relative z-10 max-w-[22rem] md:max-w-[26rem]">
-          <h1 className="text-[2.65rem] md:text-[3.25rem] leading-[1.1] mb-6" style={{ color: c.forest }}>
+    <section className="relative min-h-[72svh] overflow-hidden pt-24 pb-12 md:min-h-[76svh] md:pt-28 md:pb-16 lg:min-h-[78svh] lg:pb-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="relative mx-auto grid min-h-[calc(72svh-9rem)] max-w-[740px] items-center gap-6 px-6 sm:px-8 md:min-h-[calc(76svh-11rem)] lg:min-h-[calc(78svh-12rem)] lg:max-w-[1040px] lg:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] lg:gap-12">
+        <div className="relative z-10 max-w-[22rem] md:max-w-[28rem] lg:max-w-[26rem]">
+          <h1 className="mb-4 text-[2.28rem] leading-[1.08] md:mb-5 md:text-[3rem] lg:mb-6 lg:text-[3.25rem]" style={{ color: c.forest }}>
             Your computer, in the cloud.
           </h1>
-          <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
+          <p className="mb-6 text-[15px] leading-[1.65] md:mb-7 md:text-[16px] md:leading-[1.75] lg:mb-8 lg:leading-[1.8]" style={{ color: c.mutedFg }}>
             A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready: your apps, your files, your way.
           </p>
           <SignedOut>
-            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="get_started" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="get_started" className="inline-flex min-h-11 items-center gap-2 rounded-full px-7 py-2.5 text-[12px] font-medium uppercase tracking-[0.1em] transition-opacity duration-300 hover:opacity-80 md:px-8 md:py-3 md:text-[13px] md:tracking-[0.12em]"
               style={{ backgroundColor: c.forest, color: c.pageBg }}>
               Get Started <ArrowRightIcon className="size-3.5" />
             </a>
           </SignedOut>
           <SignedIn>
-            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-full px-7 py-2.5 text-[12px] font-medium uppercase tracking-[0.1em] transition-opacity duration-300 hover:opacity-80 md:px-8 md:py-3 md:text-[13px] md:tracking-[0.12em]"
               style={{ backgroundColor: c.forest, color: c.pageBg }}>
               Open Matrix OS <ArrowRightIcon className="size-3.5" />
             </a>
           </SignedIn>
-          <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
+          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 md:mt-7 lg:mt-8">
             <a
               href="https://discord.gg/cSBBQWtPwV"
               target="_blank"
@@ -453,7 +453,7 @@ function HeroSection() {
             </a>
           </div>
         </div>
-        <div className="relative z-0 mx-auto w-full max-w-[340px] md:mx-0 md:max-w-none md:justify-self-end">
+        <div className="relative z-0 mx-auto w-full max-w-[260px] sm:max-w-[320px] md:max-w-[360px] lg:mx-0 lg:max-w-none lg:justify-self-end">
           <video
             autoPlay
             loop
@@ -464,7 +464,7 @@ function HeroSection() {
             preload="metadata"
             controls={false}
             src="/hero-loop.mp4"
-            className="block aspect-[4/3] w-full object-contain object-center md:aspect-[16/11] md:max-w-[420px]"
+            className="block aspect-[4/3] w-full object-contain object-center lg:aspect-[16/11] lg:max-w-[420px]"
             style={{ backgroundColor: c.pageBg }}
           />
         </div>
@@ -475,12 +475,12 @@ function HeroSection() {
 
 function PreviewSection() {
   return (
-    <section id="preview" className="relative py-24 md:py-36 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8">
+    <section id="preview" className="relative overflow-hidden py-16 md:py-24 lg:py-32" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 sm:px-8">
         <ScrollScreenshot />
-        <div className="mt-10 max-w-2xl mx-auto text-center">
+        <div className="mx-auto mt-8 max-w-2xl text-center md:mt-10">
           <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
-          <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+          <p className="text-[14px] leading-[1.75] md:text-[15px] md:leading-[1.9]" style={{ color: c.mutedFg }}>
             Your Matrix instance isn&apos;t just a dashboard: it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
           </p>
         </div>
@@ -491,20 +491,20 @@ function PreviewSection() {
 
 function AboutSection() {
   return (
-    <section id="about" className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8">
-        <div className="grid md:grid-cols-[1fr_1.2fr] gap-16 md:gap-24">
+    <section id="about" className="py-16 md:py-24 lg:py-36" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 sm:px-8">
+        <div className="grid gap-10 md:grid-cols-[1fr_1.2fr] md:gap-16 lg:gap-24">
           <div>
             <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>About</p>
-            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2]" style={{ color: c.forest }}>
+            <h2 className="text-[1.9rem] font-semibold leading-[1.15] md:text-[2.5rem] lg:text-[3rem]" style={{ color: c.forest }}>
               Your computer, in the cloud.
             </h2>
           </div>
-          <div className="flex flex-col gap-6 md:pt-10">
-            <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+          <div className="flex flex-col gap-5 md:gap-6 md:pt-8 lg:pt-10">
+            <p className="text-[14px] leading-[1.75] md:text-[15px] md:leading-[1.9]" style={{ color: c.mutedFg }}>
               Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop: your apps, your files, your settings, ready to go. No installs, no setup, nothing to maintain.
             </p>
-            <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+            <p className="text-[14px] leading-[1.75] md:text-[15px] md:leading-[1.9]" style={{ color: c.mutedFg }}>
               Just tell it what you need. An AI assistant builds your apps, organizes your workspace, and keeps everything running. It works on any device, from anywhere, and picks up right where you left off.
             </p>
           </div>
@@ -540,7 +540,7 @@ const featurePills = [
 
 function FeaturesSection() {
   return (
-    <section id="features" className="relative py-32 md:py-44 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
+    <section id="features" className="relative overflow-hidden py-20 md:py-28 lg:py-36" style={{ backgroundColor: c.pageBg }}>
       <style>{`
         @keyframes net-flow { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
         @keyframes center-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
@@ -569,17 +569,17 @@ function FeaturesSection() {
         .feature-pill:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
       `}</style>
 
-      <div className="mx-auto max-w-[1200px] px-8">
-        <div className="grid md:grid-cols-2 gap-12 md:gap-20 items-center mb-20 md:mb-32">
+      <div className="mx-auto max-w-[1200px] px-6 sm:px-8">
+        <div className="mb-12 grid items-center gap-8 md:mb-20 md:grid-cols-2 md:gap-14 lg:mb-32 lg:gap-20">
           <div>
             <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>The platform</p>
-            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-8" style={{ color: c.forest }}>
+            <h2 className="mb-5 text-[1.9rem] font-semibold leading-[1.15] md:mb-7 md:text-[2.5rem] lg:mb-8 lg:text-[3rem]" style={{ color: c.forest }}>
               Built around you.
             </h2>
-            <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
+            <p className="mb-4 text-[14px] leading-[1.75] md:mb-5 md:text-[15px] md:leading-[1.9]" style={{ color: c.mutedFg }}>
               Your Matrix instance runs 24/7 in the cloud, always on and always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
             </p>
-            <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
+            <p className="text-[14px] leading-[1.75] md:text-[15px] md:leading-[1.9]" style={{ color: c.subtle }}>
               Devices come and go. Your instance never stops. Close your laptop and pick up on your phone, with everything exactly where you left it. No syncing, no waiting, no setup.
             </p>
           </div>
@@ -589,9 +589,9 @@ function FeaturesSection() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {featurePills.map((item) => (
-            <div key={item.title} className="feature-pill rounded-[16px] p-6 h-full"
+            <div key={item.title} className="feature-pill h-full rounded-[16px] p-4 md:p-6"
               style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
-              <item.Icon className="size-5 mb-4" style={{ color: c.ember }} />
+              <item.Icon className="mb-3 size-5 md:mb-4" style={{ color: c.ember }} />
               <h3 className="text-[14px] font-semibold mb-2" style={{ color: c.forest }}>{item.title}</h3>
               <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
             </div>
@@ -604,7 +604,7 @@ function FeaturesSection() {
 
 function FeatureNetworkDiagram() {
   return (
-    <div className="relative w-full" style={{ aspectRatio: "1 / 1", maxWidth: 560, margin: "0 auto" }}>
+    <div className="relative w-full max-w-[280px] sm:max-w-[380px] md:max-w-[500px] lg:max-w-[560px]" style={{ aspectRatio: "1 / 1", margin: "0 auto" }}>
       <svg viewBox="0 0 400 400" className="h-full w-full" style={{ overflow: "visible" }} aria-label="Matrix instance connected to phones, laptops, tablets, and browsers">
         <defs>
           <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
@@ -688,17 +688,17 @@ const howItWorksSteps = [
 
 function HowItWorksSection() {
   return (
-    <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8">
+    <section className="py-16 md:py-24 lg:py-36" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 sm:px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
-        <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] mb-16 md:mb-24" style={{ color: c.forest }}>
+        <h2 className="mb-8 text-[1.9rem] font-semibold leading-[1.15] md:mb-16 md:text-[2.5rem] lg:mb-24 lg:text-[3rem]" style={{ color: c.forest }}>
           Free to start, deliberate when you provision.
         </h2>
 
-        <div className="grid md:grid-cols-3 gap-12 md:gap-16">
+        <div className="grid gap-8 md:grid-cols-3 md:gap-10 lg:gap-16">
           {howItWorksSteps.map((item) => (
             <div key={item.step}>
-              <span className="block text-[clamp(2.5rem,5vw,4rem)] font-bold leading-none mb-5" style={{ color: c.border }}>
+              <span className="mb-4 block text-[2.5rem] font-bold leading-none md:mb-5 md:text-[3.25rem] lg:text-[4rem]" style={{ color: c.border }}>
                 {item.step}
               </span>
               <h3 className="text-[16px] font-semibold mb-3" style={{ color: c.forest }}>{item.title}</h3>
@@ -713,14 +713,14 @@ function HowItWorksSection() {
 
 function FaqSection() {
   return (
-    <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[900px] px-8">
+    <section className="py-16 md:py-24 lg:py-36" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[900px] px-6 sm:px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6 text-center" style={{ color: c.subtle }}>FAQ</p>
         <div className="grid gap-4 md:grid-cols-2">
           {faqItems.map((item) => (
-            <div key={item.q} className="rounded-[16px] p-6" style={{ backgroundColor: "rgba(67,78,63,0.05)", border: `1px solid ${c.border}` }}>
-              <h3 className="text-[14px] font-semibold mb-3" style={{ color: c.forest }}>{item.q}</h3>
-              <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.a}</p>
+            <div key={item.q} className="rounded-[16px] p-4 md:p-6" style={{ backgroundColor: "rgba(67,78,63,0.05)", border: `1px solid ${c.border}` }}>
+              <h3 className="mb-2 text-[14px] font-semibold md:mb-3" style={{ color: c.forest }}>{item.q}</h3>
+              <p className="text-[13px] leading-[1.6] md:leading-[1.7]" style={{ color: c.mutedFg }}>{item.a}</p>
             </div>
           ))}
         </div>
@@ -731,22 +731,22 @@ function FaqSection() {
 
 function FinalCtaSection() {
   return (
-    <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8 text-center">
-        <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6" style={{ color: c.forest }}>
+    <section className="py-16 md:py-24 lg:py-36" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 text-center sm:px-8">
+        <h2 className="mb-5 text-[2.25rem] font-bold leading-[1.08] md:mb-6 md:text-[3.25rem] lg:text-[4.5rem]" style={{ color: c.forest }}>
           Ready to begin?
         </h2>
-        <p className="text-[15px] mb-10 max-w-md mx-auto" style={{ color: c.mutedFg }}>
+        <p className="mx-auto mb-8 max-w-md text-[14px] leading-[1.7] md:mb-10 md:text-[15px]" style={{ color: c.mutedFg }}>
           Your personal cloud computer is waiting. Set up takes less than a minute.
         </p>
         <SignedOut>
-          <a href="https://app.matrix-os.com" className="inline-flex items-center gap-2 rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+          <a href="https://app.matrix-os.com" className="inline-flex min-h-12 items-center gap-2 rounded-full px-8 py-3 text-[12px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80 md:px-10 md:py-4 md:text-[13px] md:tracking-[0.15em]"
             style={{ backgroundColor: c.forest, color: c.pageBg }}>
             Get Started Free <ArrowRightIcon className="size-4" />
           </a>
         </SignedOut>
         <SignedIn>
-          <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+          <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-2 rounded-full px-8 py-3 text-[12px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80 md:px-10 md:py-4 md:text-[13px] md:tracking-[0.15em]"
             style={{ backgroundColor: c.forest, color: c.pageBg }}>
             Go to Dashboard <ArrowRightIcon className="size-4" />
           </a>

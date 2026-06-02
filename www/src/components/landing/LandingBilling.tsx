@@ -47,18 +47,18 @@ function PricingCards() {
       {plans.map((plan) => (
         <div
           key={plan.name}
-          className="rounded-[14px] p-5"
+          className="rounded-[14px] p-3.5 md:p-5"
           style={{
             border: `1px solid ${colors.border}`,
             backgroundColor: plan.name === "Builder" ? "rgba(255,247,236,0.9)" : "rgba(250,250,245,0.72)",
           }}
         >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-[18px] font-semibold" style={{ color: colors.forest }}>
+          <div className="flex flex-wrap items-start justify-between gap-3 md:gap-4">
+            <div className="min-w-[12rem] flex-1">
+              <h3 className="text-[17px] font-semibold md:text-[18px]" style={{ color: colors.forest }}>
                 {plan.name}
               </h3>
-              <p className="mt-1 text-[13px]" style={{ color: colors.mutedFg }}>
+              <p className="mt-1 text-[12px] leading-[1.5] md:text-[13px]" style={{ color: colors.mutedFg }}>
                 {plan.machine} · {plan.specs}
               </p>
             </div>
@@ -71,9 +71,9 @@ function PricingCards() {
               </span>
             )}
           </div>
-          <div className="mt-4 flex items-end justify-between gap-4">
+          <div className="mt-3 flex items-end justify-between gap-3 md:mt-4 md:gap-4">
             <div>
-              <span className="text-[34px] font-semibold leading-none" style={{ color: colors.forest }}>
+              <span className="text-[28px] font-semibold leading-none md:text-[34px]" style={{ color: colors.forest }}>
                 {plan.monthly}
               </span>
               <span className="ml-1 text-[13px]" style={{ color: colors.mutedFg }}>
@@ -84,7 +84,7 @@ function PricingCards() {
               {plan.annual}/yr
             </p>
           </div>
-          <div className="mt-4 flex gap-2 text-[13px] leading-[1.6]" style={{ color: colors.mutedFg }}>
+          <div className="mt-3 flex gap-2 text-[12px] leading-[1.55] md:mt-4 md:text-[13px] md:leading-[1.6]" style={{ color: colors.mutedFg }}>
             <CheckCircle2Icon className="mt-0.5 size-4 shrink-0" style={{ color: colors.ember }} aria-hidden="true" />
             <span>Includes one hosted Matrix computer. Extra machines and storage are add-ons.</span>
           </div>
@@ -121,7 +121,7 @@ export function LandingBilling() {
   return (
     <section
       id="pricing"
-      className="relative flex min-h-screen items-center overflow-hidden py-24 md:py-32"
+      className="relative flex min-h-0 items-center overflow-hidden py-16 md:py-24 lg:min-h-screen lg:py-32"
       style={{ backgroundColor: colors.cream }}
     >
       {/* soft ambient glows */}
@@ -142,10 +142,10 @@ export function LandingBilling() {
         }}
       />
 
-      <div className="relative mx-auto grid w-full max-w-[1140px] items-center gap-14 px-8 md:grid-cols-[0.9fr_1.1fr] lg:gap-20">
+      <div className="relative mx-auto grid w-full max-w-[1140px] items-center gap-8 px-6 sm:px-8 md:grid-cols-[0.9fr_1.1fr] md:gap-12 lg:gap-20">
         <div>
           <span
-            className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em]"
+            className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] md:text-[11px] md:tracking-[0.28em]"
             style={{
               backgroundColor: "rgba(208,111,37,0.10)",
               color: colors.ember,
@@ -156,7 +156,7 @@ export function LandingBilling() {
             Hosted plans
           </span>
           <h2
-            className="mb-6 mt-7 text-[clamp(2rem,4.4vw,3.4rem)] font-semibold leading-[1.05] tracking-[-0.02em]"
+            className="mb-4 mt-5 text-[2rem] font-semibold leading-[1.08] md:mb-6 md:mt-7 md:text-[2.8rem] lg:text-[3.4rem]"
             style={{ color: colors.forest }}
           >
             Build your AI computer.
@@ -164,20 +164,20 @@ export function LandingBilling() {
             <span style={{ color: colors.ember }}>Launch</span> when ready.
           </h2>
           <p
-            className="mb-7 max-w-[48ch] text-[15px] leading-[1.85]"
+            className="mb-5 max-w-[48ch] text-[14px] leading-[1.7] md:mb-7 md:text-[15px] md:leading-[1.85]"
             style={{ color: colors.mutedFg }}
           >
             Choose the hosted Matrix computer you want to run. Billing starts
             before provisioning because each plan maps to a real dedicated VPS.
           </p>
 
-          <div className="mb-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center md:mb-9">
             <a
               href="https://app.matrix-os.com/"
               data-ph-event="marketing_billing_cta_clicked"
               data-ph-location="pricing_section"
               data-ph-target="choose_plan"
-              className="inline-flex h-12 min-w-[180px] items-center justify-center whitespace-nowrap rounded-full px-7 text-[14px] font-semibold transition-all duration-300 hover:-translate-y-0.5 hover:opacity-95"
+              className="inline-flex h-12 w-full items-center justify-center whitespace-nowrap rounded-full px-6 text-[14px] font-semibold transition-all duration-300 hover:-translate-y-0.5 hover:opacity-95 sm:w-auto sm:min-w-[180px] sm:px-7"
               style={{
                 backgroundColor: colors.forest,
                 color: "#FAFAF5",
@@ -186,7 +186,7 @@ export function LandingBilling() {
             >
               Choose a plan
             </a>
-            <span className="text-[13px]" style={{ color: colors.mutedFg }}>
+            <span className="text-[12px] leading-[1.5] md:text-[13px]" style={{ color: colors.mutedFg }}>
               Monthly and annual billing. No hosted runtime trials.
             </span>
           </div>
@@ -211,14 +211,14 @@ export function LandingBilling() {
             ].map((item) => (
               <div
                 key={item.title}
-                className="group flex gap-3.5 rounded-2xl p-4 transition-all duration-300 hover:-translate-y-0.5"
+                className="group flex gap-3 rounded-2xl p-3 transition-all duration-300 hover:-translate-y-0.5 md:gap-3.5 md:p-4"
                 style={{
                   backgroundColor: "rgba(250,250,245,0.55)",
                   border: "1px solid rgba(67,78,63,0.10)",
                 }}
               >
                 <div
-                  className="flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-xl transition-colors md:size-10"
                   style={{
                     backgroundColor: "rgba(208,111,37,0.12)",
                     color: colors.ember,
@@ -234,7 +234,7 @@ export function LandingBilling() {
                     {item.title}
                   </h3>
                   <p
-                    className="mt-1 text-[13px] leading-[1.7]"
+                    className="mt-1 text-[12px] leading-[1.6] md:text-[13px] md:leading-[1.7]"
                     style={{ color: colors.mutedFg }}
                   >
                     {item.text}
@@ -246,7 +246,7 @@ export function LandingBilling() {
         </div>
 
         <div
-          className="overflow-hidden rounded-[24px] p-5 md:p-6"
+          className="overflow-hidden rounded-[20px] p-3.5 md:rounded-[24px] md:p-6"
           style={{
             background:
               "linear-gradient(160deg, rgba(255,255,252,0.92), rgba(250,250,245,0.74))",
@@ -255,7 +255,7 @@ export function LandingBilling() {
               "0 1px 0 rgba(255,255,255,0.6) inset, 0 40px 90px rgba(50,53,46,0.16)",
           }}
         >
-          <div className="mb-5 flex items-center justify-between gap-3 px-1">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 px-1 md:mb-5">
             <div
               className="flex items-center gap-2 text-[12px] font-semibold"
               style={{ color: colors.forest }}
@@ -268,7 +268,7 @@ export function LandingBilling() {
               Private Matrix computer
             </div>
             <span
-              className="rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]"
+              className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] md:px-3 md:tracking-[0.16em]"
               style={{
                 backgroundColor: "rgba(67,78,63,0.08)",
                 color: colors.forest,
