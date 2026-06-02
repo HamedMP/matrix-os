@@ -243,6 +243,39 @@ describe("Chess app", () => {
     expect(within(screen.getByTestId("move-history")).getByText("h6")).toBeTruthy();
   });
 
+  it("renders the selected piece after a pawn promotion", async () => {
+    installMatrixDb([]);
+    const { __setNextBoard } = await import("chess.js") as unknown as ChessMockControls;
+    __setNextBoard({
+      a7: { color: "w", type: "p" },
+      g1: { color: "w", type: "n" },
+      h7: { color: "b", type: "p" },
+    });
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-g1"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-f3"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-h7"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-h6"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-a7"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-a8"));
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTestId("promote-q"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("square-a8").getAttribute("aria-label")).toBe("a8 White q");
+    });
+  });
+
   it("falls back to local play when the computer search fails", async () => {
     installMatrixDb([]);
     vi.mocked(findBestMove).mockImplementationOnce(() => {

@@ -118,7 +118,7 @@ export class Chess {
 
     const capturedPiece = this.boardState[m.to];
     delete this.boardState[m.from];
-    this.boardState[m.to] = piece;
+    this.boardState[m.to] = m.promotion ? { color: piece.color, type: m.promotion as Piece["type"] } : piece;
     const san = piece.type === "p" ? m.to : `${piece.type.toUpperCase()}${m.to}`;
     const record: MoveRecord = {
       from: m.from,
