@@ -322,6 +322,8 @@ export default function App() {
     setLastMove(null);
     setPendingPromotion(null);
     setSaveState("idle");
+    errorRef.current = null;
+    setError(null);
     clearSelection();
     bump();
   }, [bump, cancelAiMove, clearSelection]);

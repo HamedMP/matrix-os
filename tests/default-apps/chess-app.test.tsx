@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findBestMove } from "../../home/apps/games/chess/src/chess-ai";
@@ -56,12 +56,14 @@ describe("Chess app", () => {
   });
 
   afterEach(async () => {
+    cleanup();
     const { __reset } = await import("chess.js") as unknown as ChessMockControls;
     __reset();
     vi.restoreAllMocks();
     vi.mocked(findBestMove).mockClear();
     Reflect.deleteProperty(window, "MatrixOS");
     window.localStorage.clear();
+    vi.resetModules();
   });
 
   it("renders an 8x8 board with 64 squares", async () => {
@@ -125,6 +127,11 @@ describe("Chess app", () => {
 
     expect(screen.getByText("This game could not be saved.")).toBeTruthy();
     expect(screen.queryByText("1 game on record")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+
+    expect(screen.queryByText("This game could not be saved.")).toBeNull();
+    expect(screen.getByText("1 game on record")).toBeTruthy();
   });
 
   it("highlights legal destinations when a pawn is selected", async () => {
