@@ -144,7 +144,7 @@ export default function App({ initialState }: AppProps) {
       return;
     }
     try {
-      const rows = await db.find(STATS_TABLE, { limit: 1, orderBy: { created_at: "desc" } });
+      const rows = await db.find(STATS_TABLE, { limit: 1 });
       if (rows && rows.length > 0) {
         const loaded = coerceStats(rows[0]);
         statsRowIdRef.current = loaded.id ?? null;
