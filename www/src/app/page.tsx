@@ -305,7 +305,7 @@ export default function LandingPage() {
 
 function AgentSetupSection() {
   return (
-    <section id="developers" className="relative py-14 md:py-16" style={{ backgroundColor: c.pageBg }}>
+    <section id="developers" className="relative pt-12 pb-8 md:pt-14 md:pb-10" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-6 md:px-8">
         <div className="grid gap-8 md:grid-cols-[0.88fr_1.12fr] md:items-stretch">
           <div className="flex flex-col justify-center">
@@ -493,7 +493,7 @@ function HeroSection() {
 
 function PreviewSection() {
   return (
-    <section id="preview" className="relative py-20 md:py-28 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
+    <section id="preview" className="relative overflow-hidden pt-8 pb-14 md:pt-12 md:pb-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <ScrollScreenshot />
         <div className="mt-10 max-w-2xl mx-auto text-center">
@@ -509,7 +509,7 @@ function PreviewSection() {
 
 function AboutSection() {
   return (
-    <section id="about" className="py-24 md:py-32" style={{ backgroundColor: c.pageBg }}>
+    <section id="about" className="py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <div className="grid gap-12 md:grid-cols-[1fr_1.2fr] md:gap-16">
           <div>
@@ -558,7 +558,7 @@ const featurePills = [
 
 function FeaturesSection() {
   return (
-    <section id="features" className="relative py-20 md:py-28 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
+    <section id="features" className="relative overflow-hidden py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
       <style>{`
         @keyframes net-flow { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
         @keyframes center-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
@@ -588,7 +588,7 @@ function FeaturesSection() {
       `}</style>
 
       <div className="mx-auto max-w-[1200px] px-8">
-        <div className="mb-12 grid items-center gap-12 md:mb-16 md:grid-cols-2 md:gap-16">
+        <div className="mb-10 grid items-center gap-10 md:mb-14 md:grid-cols-2 md:gap-14">
           <div>
             <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>The platform</p>
             <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-8" style={{ color: c.forest }}>
@@ -706,14 +706,14 @@ const howItWorksSteps = [
 
 function HowItWorksSection() {
   return (
-    <section className="py-20 md:py-28" style={{ backgroundColor: c.pageBg }}>
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
-        <h2 className="mb-10 text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] md:mb-14" style={{ color: c.forest }}>
+        <h2 className="mb-8 text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] md:mb-12" style={{ color: c.forest }}>
           Free to start, deliberate when you provision.
         </h2>
 
-        <div className="grid gap-10 md:grid-cols-3 md:gap-12">
+        <div className="grid gap-8 md:grid-cols-3 md:gap-10">
           {howItWorksSteps.map((item) => (
             <div key={item.step}>
               <span className="block text-[clamp(2.5rem,5vw,4rem)] font-bold leading-none mb-5" style={{ color: c.border }}>
@@ -731,7 +731,7 @@ function HowItWorksSection() {
 
 function FaqSection() {
   return (
-    <section className="py-20 md:py-28" style={{ backgroundColor: c.pageBg }}>
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[900px] px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6 text-center" style={{ color: c.subtle }}>FAQ</p>
         <div className="grid gap-4 md:grid-cols-2">
@@ -749,7 +749,7 @@ function FaqSection() {
 
 function FinalCtaSection() {
   return (
-    <section className="py-20 md:py-28" style={{ backgroundColor: c.pageBg }}>
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8 text-center">
         <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6" style={{ color: c.forest }}>
           Ready to begin?

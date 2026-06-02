@@ -121,7 +121,7 @@ export function LandingBilling() {
   return (
     <section
       id="pricing"
-      className="relative flex items-center overflow-hidden py-20 md:py-28"
+      className="relative flex items-center overflow-hidden py-16 md:py-24"
       style={{ backgroundColor: colors.cream }}
     >
       {/* soft ambient glows */}
@@ -142,7 +142,7 @@ export function LandingBilling() {
         }}
       />
 
-      <div className="relative mx-auto grid w-full max-w-[1140px] items-center gap-10 px-8 md:grid-cols-[0.9fr_1.1fr] lg:gap-16">
+      <div className="relative mx-auto grid w-full max-w-[1140px] items-center gap-8 px-8 md:grid-cols-[0.9fr_1.1fr] lg:gap-14">
         <div>
           <span
             className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em]"

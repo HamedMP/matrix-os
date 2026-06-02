@@ -38,9 +38,14 @@ describe("www landing mobile polish", () => {
     const billing = await readRepoFile("www/src/components/landing/LandingBilling.tsx");
 
     expect(landing).not.toContain("py-32 md:py-44");
-    expect(landing).toContain("py-20 md:py-28");
-    expect(landing).toContain("py-24 md:py-32");
+    expect(landing).not.toContain("py-20 md:py-28");
+    expect(landing).not.toContain("py-24 md:py-32");
+    expect(landing).toContain("pt-12 pb-8 md:pt-14 md:pb-10");
+    expect(landing).toContain("pt-8 pb-14 md:pt-12 md:pb-20");
+    expect(landing).toContain("py-14 md:py-20");
+    expect(landing).toContain("py-16 md:py-24");
     expect(billing).not.toContain("min-h-screen");
-    expect(billing).toContain("py-20 md:py-28");
+    expect(billing).not.toContain("py-20 md:py-28");
+    expect(billing).toContain("py-16 md:py-24");
   });
 });
