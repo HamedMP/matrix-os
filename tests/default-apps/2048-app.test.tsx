@@ -163,14 +163,41 @@ describe("2048 app", () => {
   });
 
   it("persists a zero live score when starting a new game", async () => {
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValue(0.1);
     const db = installMatrixDb([{ id: "s1", score: 1234, best: 5000, created_at: "2026-05-31T00:00:00.000Z" }]);
     render(<App />);
     await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("5000"));
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("score").textContent).toBe("4"));
     db.update.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /new game/i }));
 
     await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+  });
+
+  it("does not persist the previous live score when starting a new game", async () => {
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValue(0.1);
+    const db = installMatrixDb([{ id: "s1", score: 0, best: 0, created_at: "2026-05-31T00:00:00.000Z" }]);
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("score").textContent).toBe("4"));
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 4 }));
+    db.update.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+    expect(db.update).not.toHaveBeenCalledWith("scores", "s1", { score: 4 });
   });
 
   it("creates the initial DB score row with the latest early-move score", async () => {
