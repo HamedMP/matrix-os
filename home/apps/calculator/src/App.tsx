@@ -60,6 +60,11 @@ function writeLocal(rows: HistoryRow[]): void {
   }
 }
 
+function carriedExpressionForResult(value: number, formatted: string): string {
+  if (Number.isFinite(value) && Math.abs(value) >= 1e15) return String(value);
+  return formatted.replace(/,/g, "");
+}
+
 // --- Keypad definitions ----------------------------------------------------
 
 interface KeyDef {
@@ -110,7 +115,7 @@ const SCIENTIFIC_KEYS: KeyDef[] = [
   { label: "ln", insert: "ln(", kind: "fn" },
   { label: "log", insert: "log(", kind: "fn" },
   { label: "√", insert: "sqrt(", kind: "fn", aria: "square root" },
-  { label: "e", insert: "e", kind: "fn" },
+  { label: "e", insert: "* e", kind: "fn" },
   { label: "x²", insert: "^2", kind: "fn", aria: "squared" },
   { label: "xʸ", insert: "^", kind: "fn", aria: "power" },
   { label: "x!", insert: "!", kind: "fn", aria: "factorial" },
@@ -203,7 +208,7 @@ export default function App() {
     };
     setHistory((current) => [optimistic, ...current].slice(0, MAX_HISTORY));
     // Carry the result forward as the new working value, Numi-style.
-    setExpr(formatted.replace(/,/g, ""));
+    setExpr(carriedExpressionForResult(result.value, formatted));
 
     const db = window.MatrixOS?.db;
     if (!db) {
@@ -220,7 +225,10 @@ export default function App() {
       await reload();
     } catch (err: unknown) {
       console.warn("[calculator] history save failed:", err instanceof Error ? err.message : String(err));
-      setHistory((current) => current.filter((row) => row.id !== optimistic.id));
+      const status = await reload();
+      if (status === "error") {
+        setHistory((current) => current.filter((row) => row.id !== optimistic.id));
+      }
       setError("Result could not be saved.");
     } finally {
       committingRef.current = false;
@@ -327,6 +335,7 @@ export default function App() {
     }
     const seen = new Set<string>();
     try {
+      let fullyCleared = false;
       for (let page = 0; page < MAX_CLEAR_PAGES; page += 1) {
         const pageRows = await db.find(HISTORY_TABLE, {
           orderBy: { created_at: "desc" },
@@ -337,11 +346,28 @@ export default function App() {
           .filter((r): r is HistoryRow => r !== null)
           .map((row) => row.id)
           .filter((id) => !id.startsWith("local-") && !seen.has(id));
-        if (ids.length === 0) break;
+        if (ids.length === 0) {
+          fullyCleared = true;
+          break;
+        }
         ids.forEach((id) => seen.add(id));
         const results = await Promise.all(ids.map((id) => db.delete(HISTORY_TABLE, id)));
         const failed = results.filter((result) => result.ok === false);
         if (failed.length > 0) throw new Error(`${failed.length} row(s) could not be deleted`);
+        if (ids.length < MAX_HISTORY) {
+          fullyCleared = true;
+          break;
+        }
+      }
+      if (!fullyCleared) {
+        const remainingRows = await db.find(HISTORY_TABLE, {
+          orderBy: { created_at: "desc" },
+          limit: 1,
+        });
+        const hasRemainingPersistedRow = remainingRows
+          .map(coerceRow)
+          .some((row) => row && !row.id.startsWith("local-"));
+        if (hasRemainingPersistedRow) throw new Error("History clear reached the safety limit");
       }
       await reload();
       writeLocal([]);

@@ -100,6 +100,34 @@ describe("Calculator app", () => {
     expect(historyRail.textContent).toContain("42");
   });
 
+  it("keeps large carried results precise when committing again", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+    const input = (await screen.findByTestId("calc-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1234567890123456" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(db.insert).toHaveBeenCalledTimes(1));
+    expect(input.value).toBe("1234567890123456");
+
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(db.insert).toHaveBeenLastCalledWith(
+        "history",
+        expect.objectContaining({
+          expression: "1234567890123456",
+          result: "1.234568e+15",
+        }),
+      );
+    });
+  });
+
   it("removes the optimistic history row when db insert fails", async () => {
     const db = installMatrixDb([]);
     db.insert.mockRejectedValueOnce(new Error("insert failed"));
@@ -150,6 +178,38 @@ describe("Calculator app", () => {
       expect(db.delete).toHaveBeenCalledTimes(150);
     });
     expect(localStorage.getItem("matrixos.calculator.history.v1")).toBe("[]");
+  });
+
+  it("reports incomplete clears when the pagination safety cap is exhausted", async () => {
+    const db = installMatrixDb([
+      { id: "seed", expression: "1 + 1", result: "2", created_at: "2026-05-31T10:00:00.000Z" },
+    ]);
+    render(<App />);
+
+    await screen.findByText("Clear");
+    let page = 0;
+    db.find.mockImplementation(async (_table: string, opts?: { limit?: number }) => {
+      if (opts?.limit === 1) {
+        return [{ id: "remaining", expression: "left", result: "left", created_at: "2026-05-31T11:00:00.000Z" }];
+      }
+      const rows = Array.from({ length: 100 }, (_, index) => ({
+        id: `bulk-${page}-${index}`,
+        expression: `${page}-${index}`,
+        result: String(index),
+        created_at: `2026-05-31T10:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      }));
+      page += 1;
+      return rows;
+    });
+    db.delete.mockResolvedValue({ ok: true });
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+    fireEvent.click(clearHistory!);
+
+    expect(await screen.findByText("History could not be cleared.")).toBeTruthy();
+    expect(db.delete).toHaveBeenCalledTimes(100 * 100);
   });
 
   it("reports non-throwing delete failures without restoring attempted local fallback rows", async () => {
@@ -350,6 +410,20 @@ describe("Calculator app", () => {
     await screen.findByTestId("calc-input");
     fireEvent.click(screen.getByRole("button", { name: /scientific/i }));
     expect(screen.getByRole("button", { name: /sin/i })).toBeTruthy();
+  });
+
+  it("inserts the e constant without colliding with scientific notation", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await screen.findByTestId("calc-input");
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: /scientific/i }));
+    fireEvent.click(screen.getByRole("button", { name: "e" }));
+
+    const input = screen.getByTestId("calc-input") as HTMLInputElement;
+    const live = await screen.findByTestId("live-result");
+    expect(input.value).toBe("2* e");
+    expect(Number(live.textContent?.replace(/,/g, ""))).toBeCloseTo(2 * Math.E, 9);
   });
 
   it("marks the degree/radian toggle as pressed for assistive tech", async () => {

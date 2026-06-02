@@ -5,7 +5,6 @@ import { parseAppManifest } from "../../packages/gateway/src/app-manifest.js";
 
 const APPS_DIR = join(__dirname, "../../home/apps");
 const SHARED_RENDERER = join(__dirname, "../../home/apps/_shared/default-apps.tsx");
-
 const UTILITY_APPS = [
   { slug: "calculator", name: "Calculator", category: "utility" },
   { slug: "clock", name: "Clock", category: "utility" },
@@ -20,8 +19,20 @@ function expectViteApp(appDir: string, appId: string) {
   expect(existsSync(join(appDir, "vite.config.ts"))).toBe(true);
 
   const source = readFileSync(join(appDir, "src/main.tsx"), "utf-8");
-  expect(source).toContain("renderDefaultApp");
-  expect(source).toContain(`"${appId}"`);
+  expect(source).toMatch(/createRoot|renderDefaultApp/);
+  if (source.includes("renderDefaultApp")) {
+    expect(source).toContain(`"${appId}"`);
+  } else {
+    expect(source).toContain("./App");
+  }
+}
+
+function appOrSharedSource(slug: string): string {
+  const appSourcePath = join(APPS_DIR, slug, "src", "App.tsx");
+  if (existsSync(appSourcePath)) {
+    return readFileSync(appSourcePath, "utf-8");
+  }
+  return readFileSync(SHARED_RENDERER, "utf-8");
 }
 
 describe("T1430-T1433: Core utility apps", () => {
@@ -45,39 +56,39 @@ describe("T1430-T1433: Core utility apps", () => {
         expect(manifest.build.output).toBe("dist");
       });
 
-      it("is a Vite app wired to the shared renderer", () => {
+      it("is a Vite app wired to a React renderer", () => {
         expectViteApp(appDir, app.slug);
       });
     });
   }
 
   describe("calculator specifics", () => {
-    const shared = () => readFileSync(SHARED_RENDERER, "utf-8");
+    const appSource = () => appOrSharedSource("calculator");
 
     it("ships a scientific keypad and compact history", () => {
-      expect(shared().toLowerCase()).toContain("scientific");
-      expect(shared().toLowerCase()).toContain("history");
+      expect(appSource().toLowerCase()).toContain("scientific");
+      expect(appSource().toLowerCase()).toContain("history");
     });
 
     it("has calculator operations", () => {
-      expect(shared()).toContain("÷");
-      expect(shared()).toContain("×");
-      expect(shared()).toContain("sqrt(144)");
+      expect(appSource()).toContain("÷");
+      expect(appSource()).toContain("×");
+      expect(appSource()).toContain("sqrt(");
     });
   });
 
   describe("clock specifics", () => {
-    const shared = () => readFileSync(SHARED_RENDERER, "utf-8");
+    const appSource = () => appOrSharedSource("clock");
 
     it("has local time and focus timer surfaces", () => {
-      expect(shared().toLowerCase()).toContain("time-card");
-      expect(shared()).toContain("Local time");
-      expect(shared().toLowerCase()).toContain("focus timer");
+      expect(appSource().toLowerCase()).toContain("time-card");
+      expect(appSource()).toContain("Local time");
+      expect(appSource().toLowerCase()).toContain("focus timer");
     });
 
     it("has timer functionality", () => {
-      expect(shared().toLowerCase()).toContain("timer");
-      expect(shared()).toContain("25:00");
+      expect(appSource().toLowerCase()).toContain("timer");
+      expect(appSource()).toContain("25:00");
     });
   });
 });
