@@ -482,6 +482,7 @@ describe("Expense Tracker app", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /edit budgets/i }));
     fireEvent.change(screen.getByLabelText("Rent monthly budget"), { target: { value: "200" } });
+    db.find.mockClear();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /save budgets/i }));
       await Promise.resolve();
@@ -489,6 +490,7 @@ describe("Expense Tracker app", () => {
     });
 
     expect(await screen.findByText("Could not save your budgets.")).toBeTruthy();
+    await waitFor(() => expect(db.find.mock.calls.some((call) => call[0] === "budgets")).toBe(true));
     expect(db.insert.mock.calls.filter((call) => call[0] === "budgets")).toHaveLength(1);
 
     await act(async () => {

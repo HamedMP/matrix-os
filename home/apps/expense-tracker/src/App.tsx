@@ -137,6 +137,35 @@ export default function App() {
   const budgetDuplicatesRef = useRef<Map<string, BudgetRow[]>>(new Map());
   const currency = useMemo(() => currencyForLocale(navigator.language), []);
 
+  const refreshBudgets = useCallback(async () => {
+    const db = window.MatrixOS?.db;
+    if (!db) return;
+    try {
+      const rawBudgets = await findAllRows(db, BUDGETS_TABLE);
+      const coercedBudgets = rawBudgets
+        .map(coerceBudget)
+        .filter((row): row is BudgetRow => row !== null);
+      const duplicates = new Map<string, BudgetRow[]>();
+      const seen = new Set<string>();
+      for (const budget of coercedBudgets) {
+        if (!seen.has(budget.category)) {
+          seen.add(budget.category);
+          continue;
+        }
+        const rows = duplicates.get(budget.category) ?? [];
+        rows.push(budget);
+        duplicates.set(budget.category, rows);
+      }
+      budgetDuplicatesRef.current = duplicates;
+      setBudgets(dedupeBudgets(coercedBudgets));
+    } catch (err: unknown) {
+      console.warn(
+        "[expense-tracker] budget refresh failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }, []);
+
   const reload = useCallback(async () => {
     const db = window.MatrixOS?.db;
     if (!db) {
@@ -412,6 +441,7 @@ export default function App() {
           ? dedupeBudgets([...rollbackBase, ...insertedBudgets])
           : rollbackBase,
       );
+      void refreshBudgets();
       setBudgetEditor(true);
       setError("Could not save your budgets.");
       return;
@@ -422,7 +452,7 @@ export default function App() {
       );
     }
     void reload();
-  }, [budgetDraft, budgets, reload]);
+  }, [budgetDraft, budgets, refreshBudgets, reload]);
 
   const isEmpty = loadState === "ready" && expenses.length === 0 && budgets.length === 0;
   const maxCategoryTotal = summary.breakdown[0]?.total ?? 0;
