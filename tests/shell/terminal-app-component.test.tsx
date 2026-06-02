@@ -1296,6 +1296,69 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: "Copy attach command for main" })).toBeNull();
   });
 
+  it("does not clobber a concurrent Shells refresh when delete rollback runs", async () => {
+    let shellList = [{ name: "main", status: "active" }];
+    let resolveDelete: ((value: { ok: boolean; status: number; json: () => Promise<object> }) => void) | undefined;
+    const deletePromise = new Promise<{ ok: boolean; status: number; json: () => Promise<object> }>((resolve) => {
+      resolveDelete = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions/main?force=1") && init?.method === "DELETE") {
+        return deletePromise;
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: shellList }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Copy attach command for main" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /delete main/i }));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("button", { name: "Copy attach command for main" })).toBeNull();
+
+    await act(async () => {
+      shellList = [{ name: "bench", status: "active" }];
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("bench")).toBeTruthy();
+
+    await act(async () => {
+      resolveDelete?.({ ok: false, status: 503, json: async () => ({ ok: false }) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("bench")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy attach command for main" })).toBeTruthy();
+    expect(screen.getByText("Failed to remove shell")).toBeTruthy();
+  });
+
   it("surfaces shell creation failures in the Shells sidebar", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

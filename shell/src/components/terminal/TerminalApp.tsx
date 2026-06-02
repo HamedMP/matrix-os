@@ -1584,6 +1584,7 @@ function LocalTerminalSidebar() {
     setDeletingShellNames(Array.from(deletingShellsRef.current!));
     setShellsError(null);
     const previousShells = shells;
+    const deletedShell = previousShells.find((shell) => shell.name === name);
     setShells((prev) => prev.filter((shell) => shell.name !== name));
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async delete flow is correct as written
     try {
@@ -1593,14 +1594,14 @@ function LocalTerminalSidebar() {
       });
       if (!res.ok) {
         setShellsError("Failed to remove shell");
-        setShells((prev) => prev.some((shell) => shell.name === name) ? prev : previousShells);
+        setShells((prev) => prev.some((shell) => shell.name === name) || !deletedShell ? prev : [...prev, deletedShell]);
         return;
       }
       await fetchShells({ silent: true });
     } catch (err: unknown) {
       console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
       setShellsError("Could not remove shell");
-      setShells((prev) => prev.some((shell) => shell.name === name) ? prev : previousShells);
+      setShells((prev) => prev.some((shell) => shell.name === name) || !deletedShell ? prev : [...prev, deletedShell]);
     } finally {
       deletingShellsRef.current!.delete(name);
       setDeletingShellNames(Array.from(deletingShellsRef.current!));
