@@ -829,6 +829,38 @@ describe("Task Manager app", () => {
     );
   });
 
+  it("reloads checklist state when a DB checklist update fails", async () => {
+    const { db } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [
+        {
+          id: "card-1",
+          column_id: "col-1",
+          title: "Verify rollback",
+          description: "",
+          labels: "",
+          assignee: "",
+          priority: "medium",
+          due: null,
+          checklist: [{ id: "item-1", text: "Persist me", done: false }],
+          position: 0,
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    });
+    db.update.mockRejectedValueOnce(new Error("update failed"));
+
+    render(<App />);
+    fireEvent.click(await screen.findByText("Verify rollback"));
+    const checklistItem = within(await screen.findByRole("dialog")).getByRole("button", { name: /persist me/i });
+    fireEvent.click(checklistItem);
+
+    expect(await screen.findByText(/checklist could not be saved/i)).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByText("Checklist").parentElement?.textContent).toContain("0/1"),
+    );
+  });
+
   it("clears draft label and checklist inputs when switching selected cards", async () => {
     installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],

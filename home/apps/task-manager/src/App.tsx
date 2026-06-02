@@ -235,9 +235,14 @@ function App() {
       await action();
     } catch (err: unknown) {
       console.warn(`[task-manager] ${failure}:`, errMessage(err));
+      try {
+        await reload();
+      } catch (reloadErr: unknown) {
+        console.warn(`[task-manager] ${failure} recovery reload failed:`, errMessage(reloadErr));
+      }
       setError(`${failure}. Reopen the board to refresh.`);
     }
-  }, []);
+  }, [reload]);
 
   const resolveCardId = useCallback((cardId: string): Promise<string> => {
     return pendingCardIdsRef.current[cardId] ?? Promise.resolve(cardId);
