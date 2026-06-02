@@ -247,6 +247,22 @@ describe("2048 app", () => {
     await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
   });
 
+  it("preserves a localStorage best score when creating the first DB score row", async () => {
+    window.localStorage.setItem("matrixos.2048.best", "7777");
+    const db = installMatrixDb([]);
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await waitFor(() =>
+      expect(db.insert).toHaveBeenCalledWith(
+        "scores",
+        expect.objectContaining({ best: 7777 }),
+      ),
+    );
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
+  });
+
   it("logs unexpected localStorage read failures", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {

@@ -256,7 +256,11 @@ export default function App() {
     const fromLocal = () => {
       try {
         const raw = window.localStorage.getItem(BEST_KEY);
-        if (raw && active) setBest(Number(raw) || 0);
+        if (raw && active) {
+          const localBest = Number(raw) || 0;
+          pendingBestRef.current = Math.max(pendingBestRef.current, localBest);
+          setBest(localBest);
+        }
       } catch (err) {
         if (!(err instanceof DOMException && err.name === "SecurityError")) {
           console.warn("[2048] unexpected localStorage read error", err);
