@@ -246,6 +246,40 @@ describe("Whiteboard app — multi-board files", () => {
     expect(screen.getByTestId("whiteboard-empty")).toBeTruthy();
   });
 
+  it("does not create a first board when loading the board index fails", async () => {
+    const db = installMatrixDb([]);
+    db.find.mockRejectedValueOnce(new Error("list failed"));
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not load your boards.")).toBeTruthy();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("reports a create failure when the bridge insert omits the new board id", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    db.insert.mockResolvedValueOnce({} as { id: string });
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /new board/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not create a board.")).toBeTruthy();
+  });
+
   it("keeps rename editing open when the db update fails", async () => {
     const db = installMatrixDb([
       board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
@@ -273,6 +307,31 @@ describe("Whiteboard app — multi-board files", () => {
     fireEvent.keyDown(screen.getByDisplayValue("Launch plan"), { key: "Escape" });
     expect(screen.getAllByText("Sprint plan").length).toBeGreaterThan(0);
     expect(screen.queryByText("Launch plan")).toBeNull();
+  });
+
+  it("clears the rename error after a recovery refresh succeeds", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    db.update.mockRejectedValueOnce(new Error("rename failed"));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
+    const input = screen.getByLabelText(/rename sprint plan/i);
+    fireEvent.change(input, { target: { value: "Launch plan" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /confirm rename/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Could not rename the board.")).toBeNull();
+    expect(screen.getAllByText("Sprint plan").length).toBeGreaterThan(0);
   });
 
   it("loads the active board's doc when switching boards", async () => {

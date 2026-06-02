@@ -109,6 +109,11 @@ interface DragState {
   baseScene?: Scene;
 }
 
+interface BoardIndexResult {
+  boards: BoardMeta[];
+  ok: boolean;
+}
+
 function reduceMotion(): boolean {
   try {
     return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -205,12 +210,17 @@ export default function App() {
   const activeIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const dirtyRef = useRef(false);
+  const historyRef = useRef<History>(history);
 
   // Keep a ref of the active board id so debounced/async saves target the
   // board that was active when the edit happened, not a stale closure value.
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
 
   const scene = history.present;
   const elements = scene.elements;
@@ -239,7 +249,9 @@ export default function App() {
 
     if (!db || id === LOCAL_BOARD_ID) {
       const local = loadLocal();
-      setHistory(createHistory(local ?? emptyScene()));
+      const nextHistory = createHistory(local ?? emptyScene());
+      historyRef.current = nextHistory;
+      setHistory(nextHistory);
       setLoadingBoard(false);
       return;
     }
@@ -250,7 +262,9 @@ export default function App() {
       const row = rows[0] ?? null;
       // Ignore the result if the user switched away while we were loading.
       if (activeIdRef.current !== id) return;
-      setHistory(createHistory(deserializeScene(docFromRow(row))));
+      const nextHistory = createHistory(deserializeScene(docFromRow(row)));
+      historyRef.current = nextHistory;
+      setHistory(nextHistory);
     } catch (err: unknown) {
       console.warn("[whiteboard] board load failed:", err instanceof Error ? err.message : String(err));
       if (activeIdRef.current === id) setError("Could not load that board.");
@@ -260,22 +274,22 @@ export default function App() {
   }, []);
 
   // -- refresh the board index (sidebar list) -------------------------------
-  const refreshIndex = useCallback(async (): Promise<BoardMeta[]> => {
+  const refreshIndex = useCallback(async (): Promise<BoardIndexResult> => {
     const db = window.MatrixOS?.db;
     if (!db) {
       const local: BoardMeta = { id: LOCAL_BOARD_ID, name: loadLocalName(), updatedAt: 0 };
       setBoards([local]);
-      return [local];
+      return { boards: [local], ok: true };
     }
     try {
       const rows = await db.find(SCENES_TABLE, { orderBy: { created_at: "desc" } });
       const index = boardIndexFromRows(rows);
       setBoards(index);
-      return index;
+      return { boards: index, ok: true };
     } catch (err: unknown) {
       console.warn("[whiteboard] board list failed:", err instanceof Error ? err.message : String(err));
       setError("Could not load your boards.");
-      return [];
+      return { boards: [], ok: false };
     }
   }, []);
 
@@ -298,7 +312,13 @@ export default function App() {
         const res = await db.insert(SCENES_TABLE, { name: boardName, doc });
         const id = res && typeof res.id === "string" ? res.id : null;
         await refreshIndex();
-        if (id) await openBoard(id);
+        if (!id) {
+          console.warn("[whiteboard] create board response did not include an id");
+          setError("Could not create a board.");
+          setLoadingBoard(false);
+          return null;
+        }
+        await openBoard(id);
         return id;
       } catch (err: unknown) {
         console.warn("[whiteboard] create board failed:", err instanceof Error ? err.message : String(err));
@@ -316,8 +336,10 @@ export default function App() {
     void (async () => {
       const index = await refreshIndex();
       if (cancelled) return;
-      if (index.length > 0) {
-        await openBoard(index[0].id);
+      if (!index.ok) {
+        setLoadingBoard(false);
+      } else if (index.boards.length > 0) {
+        await openBoard(index.boards[0].id);
       } else if (window.MatrixOS?.db) {
         await createBoard("Untitled board");
       } else {
@@ -401,11 +423,11 @@ export default function App() {
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
-        if (dirtyRef.current) void persist(history.present, activeIdRef.current);
+        if (dirtyRef.current) void persist(historyRef.current.present, activeIdRef.current);
       }
       void openBoard(id);
     },
-    [history, openBoard, persist],
+    [openBoard, persist],
   );
 
   // -- rename a board -------------------------------------------------------
@@ -431,7 +453,9 @@ export default function App() {
       console.warn("[whiteboard] rename failed:", err instanceof Error ? err.message : String(err));
       if (snapshot) setBoards(snapshot);
       setError("Could not rename the board.");
-      void refreshIndex().finally(() => setError("Could not rename the board."));
+      void refreshIndex().then((result) => {
+        setError(result.ok ? null : "Could not rename the board.");
+      });
     }
   }, [refreshIndex, renaming]);
 
@@ -441,7 +465,9 @@ export default function App() {
       const db = window.MatrixOS?.db;
       if (!db || board.id === LOCAL_BOARD_ID) {
         saveLocal(emptyScene());
-        setHistory(createHistory(emptyScene()));
+        const nextHistory = createHistory(emptyScene());
+        historyRef.current = nextHistory;
+        setHistory(nextHistory);
         setConfirmDelete(null);
         return;
       }
@@ -450,8 +476,13 @@ export default function App() {
         await db.delete(SCENES_TABLE, board.id);
         const index = await refreshIndex();
         if (board.id === activeIdRef.current) {
-          if (index.length > 0) await openBoard(index[0].id);
-          else await createBoard("Untitled board");
+          if (!index.ok) {
+            setLoadingBoard(false);
+          } else if (index.boards.length > 0) {
+            await openBoard(index.boards[0].id);
+          } else {
+            await createBoard("Untitled board");
+          }
         }
         setConfirmDelete(null);
       } catch (err: unknown) {
@@ -465,7 +496,11 @@ export default function App() {
   // -- commit + autosave wrapper -------------------------------------------
   const apply = useCallback(
     (next: Scene) => {
-      setHistory((h) => commit(h, next));
+      setHistory((h) => {
+        const nextHistory = commit(h, next);
+        historyRef.current = nextHistory;
+        return nextHistory;
+      });
       scheduleSave(next);
     },
     [scheduleSave],
@@ -607,7 +642,11 @@ export default function App() {
         const dy = p.y - drag.startScene.y;
         let next = drag.baseScene;
         for (const id of drag.movedIds) next = moveElement(next, id, dx, dy);
-        setHistory((h) => ({ ...h, present: next }));
+        setHistory((h) => {
+          const nextHistory = { ...h, present: next };
+          historyRef.current = nextHistory;
+          return nextHistory;
+        });
         drag.lastScene = p;
         return;
       }
@@ -676,14 +715,14 @@ export default function App() {
         return;
       }
       if (drag.mode === "move") {
-        setHistory((h) => {
-          if (drag.baseScene && h.present !== drag.baseScene) {
-            const moved = h.present;
-            scheduleSave(moved);
-            return commit({ ...h, present: drag.baseScene }, moved);
-          }
-          return h;
-        });
+        const current = historyRef.current;
+        if (drag.baseScene && current.present !== drag.baseScene) {
+          const moved = current.present;
+          const nextHistory = commit({ ...current, present: drag.baseScene }, moved);
+          historyRef.current = nextHistory;
+          setHistory(nextHistory);
+          scheduleSave(moved);
+        }
         return;
       }
       if (drag.mode === "marquee") {
@@ -711,22 +750,22 @@ export default function App() {
   }, [apply, scene, selected]);
 
   const doUndo = useCallback(() => {
-    setHistory((h) => {
-      if (!canUndo(h)) return h;
-      const next = undo(h);
-      scheduleSave(next.present);
-      return next;
-    });
+    const current = historyRef.current;
+    if (!canUndo(current)) return;
+    const next = undo(current);
+    historyRef.current = next;
+    setHistory(next);
+    scheduleSave(next.present);
     setSelected(new Set());
   }, [scheduleSave]);
 
   const doRedo = useCallback(() => {
-    setHistory((h) => {
-      if (!canRedo(h)) return h;
-      const next = redo(h);
-      scheduleSave(next.present);
-      return next;
-    });
+    const current = historyRef.current;
+    if (!canRedo(current)) return;
+    const next = redo(current);
+    historyRef.current = next;
+    setHistory(next);
+    scheduleSave(next.present);
     setSelected(new Set());
   }, [scheduleSave]);
 
