@@ -243,16 +243,22 @@ describe("Whiteboard app — multi-board files", () => {
       await Promise.resolve();
     });
 
+    db.find.mockRejectedValueOnce(new Error("list failed"));
     fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
     const input = screen.getByLabelText(/rename sprint plan/i);
     fireEvent.change(input, { target: { value: "Launch plan" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /confirm rename/i }));
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(screen.getByText("Could not rename the board.")).toBeTruthy();
     expect(screen.getByDisplayValue("Launch plan")).toBeTruthy();
+    fireEvent.keyDown(screen.getByDisplayValue("Launch plan"), { key: "Escape" });
+    expect(screen.getAllByText("Sprint plan").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Launch plan")).toBeNull();
   });
 
   it("loads the active board's doc when switching boards", async () => {

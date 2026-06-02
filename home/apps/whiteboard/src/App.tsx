@@ -406,7 +406,11 @@ export default function App() {
     const r = renaming;
     if (!r) return;
     const name = normalizeBoardName(r.value);
-    setBoards((prev) => prev.map((b) => (b.id === r.id ? { ...b, name } : b)));
+    let snapshot: BoardMeta[] | null = null;
+    setBoards((prev) => {
+      snapshot = prev;
+      return prev.map((b) => (b.id === r.id ? { ...b, name } : b));
+    });
     const db = window.MatrixOS?.db;
     if (!db || r.id === LOCAL_BOARD_ID) {
       saveLocalName(name);
@@ -418,8 +422,9 @@ export default function App() {
       setRenaming(null);
     } catch (err: unknown) {
       console.warn("[whiteboard] rename failed:", err instanceof Error ? err.message : String(err));
+      if (snapshot) setBoards(snapshot);
       setError("Could not rename the board.");
-      void refreshIndex();
+      void refreshIndex().finally(() => setError("Could not rename the board."));
     }
   }, [refreshIndex, renaming]);
 
