@@ -66,6 +66,25 @@ function installMatrixDb(rows: DbRow[] = []) {
   return db;
 }
 
+function persistedElementTypes(db: ReturnType<typeof installMatrixDb>) {
+  const calls = [...db.insert.mock.calls, ...db.update.mock.calls] as Array<unknown[]>;
+  return calls.flatMap((call) => {
+    const data = call.at(-1);
+    const doc = typeof data === "object" && data !== null && "doc" in data
+      ? (data as { doc?: unknown }).doc
+      : null;
+    const elements = typeof doc === "object" && doc !== null && "elements" in doc
+      ? (doc as { elements?: unknown }).elements
+      : null;
+    if (!Array.isArray(elements)) return [];
+    return elements
+      .map((element) => typeof element === "object" && element !== null && "kind" in element
+        ? (element as { kind?: unknown }).kind
+        : null)
+      .filter((kind): kind is string => typeof kind === "string");
+  });
+}
+
 // jsdom lacks these canvas/SVG APIs the app touches defensively.
 beforeEach(() => {
   vi.useFakeTimers();
@@ -208,9 +227,7 @@ describe("Whiteboard app", () => {
     // update for the drawn rect) — never via a raw fetch.
     const persisted = db.insert.mock.calls.length + db.update.mock.calls.length;
     expect(persisted).toBeGreaterThan(0);
-    const allCalls = [...db.insert.mock.calls, ...db.update.mock.calls];
-    const sawRect = allCalls.some((call) => JSON.stringify(call).includes("rect"));
-    expect(sawRect).toBe(true);
+    expect(persistedElementTypes(db)).toContain("rect");
   });
 
   it("keeps a local backup of pending autosaves on unmount", async () => {
@@ -310,9 +327,7 @@ describe("Whiteboard app", () => {
       await vi.advanceTimersByTimeAsync(1200);
     });
 
-    const allCalls = [...db.insert.mock.calls, ...db.update.mock.calls];
-    const sawRect = allCalls.some((call) => JSON.stringify(call).includes("rect"));
-    expect(sawRect).toBe(false);
+    expect(persistedElementTypes(db)).not.toContain("rect");
   });
 
   it("matches the text editor font metrics to rendered text", async () => {
