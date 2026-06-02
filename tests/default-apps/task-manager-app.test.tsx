@@ -500,6 +500,40 @@ describe("Task Manager app", () => {
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
+  it("reloads away a phantom card when its insert fails", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let rejectCardInsert: ((error: Error) => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "cards" && data.title === "Ghost card") {
+        await new Promise<never>((_resolve, reject) => {
+          rejectCardInsert = reject;
+        });
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    const input = await screen.findByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Ghost card" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("Ghost card")).toBeTruthy();
+    await act(async () => {
+      rejectCardInsert?.(new Error("insert failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText(/card could not be saved/i)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Ghost card")).toBeNull());
+    expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
+  });
+
   it("filters cards by text query", async () => {
     installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],

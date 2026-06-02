@@ -252,12 +252,17 @@ function App() {
         } : current);
       } catch (err) {
         rejectCreatedCardId(err);
+        try {
+          await reload();
+        } catch (reloadErr: unknown) {
+          console.warn("[task-manager] card recovery reload failed:", errMessage(reloadErr));
+        }
         throw err;
       } finally {
         delete pendingCardIdsRef.current[created.id];
       }
     }, "Card could not be saved");
-  }, [persist]);
+  }, [persist, reload]);
 
   const patchCard = useCallback((cardId: string, patch: Partial<Omit<Card, "id" | "createdAt">>) => {
     const current = boardRef.current;
