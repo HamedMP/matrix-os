@@ -20,10 +20,15 @@ const ShellWsDetachSchema = z.object({
   type: z.literal("detach"),
 });
 
+const ShellWsPingSchema = z.object({
+  type: z.literal("ping"),
+});
+
 const ShellWsClientMessageSchema = z.union([
   ShellWsInputSchema,
   ShellWsResizeSchema,
   ShellWsDetachSchema,
+  ShellWsPingSchema,
 ]);
 
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
@@ -216,6 +221,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         }
 
         const msg = result.data;
+        if (msg.type === "ping") {
+          sendJson(ws, { type: "pong" });
+          return;
+        }
         if (msg.type === "detach") {
           closeSession();
           ws.close?.();

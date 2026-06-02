@@ -57,6 +57,22 @@ agent skills tap add HamedMP/matrix-os
 agent skills browse matrix
 ```
 
+## Codex Plugin
+
+Matrix also exposes a repo-scoped Codex plugin marketplace at `.agents/plugins/marketplace.json`.
+Install it from a Matrix checkout when Codex should guide the whole onboarding flow, including
+GitHub auth, Matrix login, preferred coding-agent login, repo clone, Matrix shell setup, and preview.
+
+```bash
+codex plugin marketplace add "$(pwd)"
+```
+
+After Codex refreshes the marketplace, enable the `matrix-onboarding` plugin and ask:
+
+```text
+Help me onboard this repo into Matrix OS.
+```
+
 ## Preconfigure Agent In Matrix
 
 Recommended target state:
@@ -86,7 +102,7 @@ matrix login
 matrix run -it -- claude
 matrix run -it -- codex
 matrix run -it --session setup -- gh auth login
-matrix shell attach setup
+matrix shell connect -c setup
 ```
 
 `matrix run -it` creates a zellij-backed Matrix shell session, starts the requested command in a pane, and attaches the local terminal over `/ws/terminal`. The local terminal is a dumb TTY: stdin is put in raw mode, Ctrl-C/Ctrl-D are forwarded to the remote process, terminal resizes are forwarded as `resize` frames, and `Ctrl-\ Ctrl-\` detaches without killing the remote session.
@@ -94,10 +110,13 @@ matrix shell attach setup
 Use named sessions for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all reattach the same VPS context:
 
 ```bash
+matrix shell connect -c setup
 matrix run -it --session setup -- gh auth login
 matrix run -it --session setup -- claude
-matrix shell attach setup
+matrix shell connect setup
 ```
+
+If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails with `zellij_failed`, do not keep retrying the same command. Run `matrix shell ls`, then use `matrix shell connect <session-name>` against an existing session. `matrix shell connect -c <session-name>` is the create-if-missing path; if creation fails, ask the human to create or choose a session from the Matrix web terminal and connect to that existing session.
 
 Non-interactive `matrix run -- <command>` should return the remote command exit status once the gateway exposes status-bearing command execution on top of the same zellij session model. Until then, developer setup docs should prefer `matrix run -it -- <interactive-command>`.
 
@@ -106,9 +125,12 @@ Non-interactive `matrix run -- <command>` should return the remote command exit 
 The bootstrap step should run after the Matrix runtime user exists and before the shell is presented as ready:
 
 ```bash
-su - matrix -c 'cd /home/matrix/projects/matrix-os && ./scripts/install-agent-matrix-skills.sh'
+su - matrix -c 'if test -x /home/matrix/projects/matrix-os/scripts/install-agent-matrix-skills.sh; then cd /home/matrix/projects/matrix-os && ./scripts/install-agent-matrix-skills.sh; else echo "Matrix skills checkout not present; skipping local skill install"; fi'
 su - matrix -c 'agent config set skills.config.matrix.gateway_url http://localhost:4000'
 ```
+
+If the checkout is not present in `/home/matrix/projects/matrix-os`, skip the first command and install
+the Matrix skills from the published source or the release-bundled skill path instead.
 
 If Agent is not installed yet, install it into a user-writable prefix owned by `matrix`, not a root-owned global npm prefix.
 
