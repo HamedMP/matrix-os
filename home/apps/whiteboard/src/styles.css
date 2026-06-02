@@ -602,11 +602,8 @@ body {
   border: 2px solid var(--app-accent);
   border-radius: 8px;
   background: var(--app-card);
-  color: var(--app-fg);
   font-family: var(--app-font);
-  font-size: 15px;
-  line-height: 1.35;
-  padding: 6px 8px;
+  padding: 0;
   resize: none;
   outline: none;
   box-shadow: 0 8px 22px rgba(50, 53, 46, 0.18);

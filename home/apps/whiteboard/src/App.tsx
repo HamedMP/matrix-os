@@ -240,6 +240,7 @@ export default function App() {
   const openBoard = useCallback(async (id: string) => {
     const db = window.MatrixOS?.db;
     dirtyRef.current = false;
+    setSaveState("idle");
     setActiveId(id);
     activeIdRef.current = id;
     setSelected(new Set());
@@ -1511,13 +1512,14 @@ function TextEditorOverlay({
   const top = element.y * viewport.zoom + viewport.y;
   const width = Math.max(Math.abs(element.width) * viewport.zoom, 120);
   const height = Math.max(Math.abs(element.height) * viewport.zoom, 36);
+  const fontSize = (18 + element.strokeWidth * 2) * viewport.zoom;
   return (
     <textarea
       ref={ref}
       className="wb-text-editor"
       aria-label="Edit text"
       value={editing.value}
-      style={{ left, top, width, height }}
+      style={{ left, top, width, height, color: element.stroke, fontSize, lineHeight: 1.35 }}
       onChange={(e) => onChange(e.target.value)}
       onBlur={onCommit}
       onKeyDown={(e) => {

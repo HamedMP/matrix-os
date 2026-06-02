@@ -232,6 +232,28 @@ describe("Whiteboard app", () => {
     const sawRect = allCalls.some((call) => JSON.stringify(call).includes("rect"));
     expect(sawRect).toBe(false);
   });
+
+  it("matches the text editor font metrics to rendered text", async () => {
+    installMatrixDb([]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Text (T)" }));
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    await act(async () => {
+      fireEvent.pointerDown(canvas, { clientX: 120, clientY: 100, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(canvas, { clientX: 260, clientY: 150, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 260, clientY: 150, pointerId: 1 });
+      await Promise.resolve();
+    });
+
+    const editor = screen.getByLabelText("Edit text") as HTMLTextAreaElement;
+    expect(editor.style.fontSize).toBe("22px");
+    expect(editor.style.lineHeight).toBe("1.35");
+  });
 });
 
 describe("Whiteboard app — multi-board files", () => {
@@ -428,6 +450,36 @@ describe("Whiteboard app — multi-board files", () => {
     );
     const loadedOne = db.findOne.mock.calls.some(([table, id]) => table === "scenes" && id === "b1");
     expect(loadedById || loadedOne).toBe(true);
+  });
+
+  it("clears a flushed save indicator when switching boards", async () => {
+    const db = installMatrixDb([
+      board("old-board", "Old board", "2026-02-02T00:00:00.000Z"),
+      board("new-board", "New board", "2026-04-04T00:00:00.000Z"),
+    ]);
+    db.update.mockImplementationOnce(async () => new Promise(() => undefined));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    await act(async () => {
+      fireEvent.pointerDown(canvas, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(canvas, { clientX: 200, clientY: 160, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 200, clientY: 160, pointerId: 1 });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Old board"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Saving…")).toBeNull();
   });
 
   it("autosaves edits to the ACTIVE board's row via db.update", async () => {
