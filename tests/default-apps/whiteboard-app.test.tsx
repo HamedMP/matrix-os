@@ -202,6 +202,36 @@ describe("Whiteboard app", () => {
     const sawRect = allCalls.some((call) => JSON.stringify(call).includes("rect"));
     expect(sawRect).toBe(true);
   });
+
+  it("discards in-progress rectangles when the pointer is canceled", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
+
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    await act(async () => {
+      fireEvent.pointerDown(canvas, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(canvas, { clientX: 220, clientY: 180, pointerId: 1 });
+      fireEvent.pointerCancel(canvas, { clientX: 220, clientY: 180, pointerId: 1 });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("whiteboard-empty")).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1200);
+    });
+
+    const allCalls = [...db.insert.mock.calls, ...db.update.mock.calls];
+    const sawRect = allCalls.some((call) => JSON.stringify(call).includes("rect"));
+    expect(sawRect).toBe(false);
+  });
 });
 
 describe("Whiteboard app — multi-board files", () => {

@@ -742,6 +742,24 @@ export default function App() {
     [finishDraft, scene, scheduleSave, updateDraft],
   );
 
+  const onPointerCancel = useCallback(
+    (e: React.PointerEvent<SVGSVGElement>) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
+      updateDraft(null);
+      setMarquee(null);
+      if (drag?.mode === "move" && drag.baseScene) {
+        setHistory((current) => {
+          const nextHistory = { ...current, present: drag.baseScene as Scene };
+          historyRef.current = nextHistory;
+          return nextHistory;
+        });
+      }
+    },
+    [updateDraft],
+  );
+
   // -- selection ops --------------------------------------------------------
   const deleteSelected = useCallback(() => {
     if (selected.size === 0) return;
@@ -956,7 +974,7 @@ export default function App() {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+          onPointerCancel={onPointerCancel}
           onWheel={onWheel}
           style={{ cursor: tool === "select" ? "default" : "crosshair" }}
         >
