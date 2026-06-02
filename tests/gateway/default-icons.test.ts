@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../../packages/gateway/src/default-icons.js";
+import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../../packages/gateway/src/default-icons.js";
 
 describe("default app icons", () => {
   it("resolves shipped manifest icons for default apps", async () => {
@@ -29,6 +29,21 @@ describe("default app icons", () => {
       await writeFile(join(homePath, "system/icons/game-center.png"), "png");
 
       await expect(resolveSystemIconUrl(homePath, "missing-game.png")).resolves.toBe("/files/system/icons/game-center.png");
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves bundled system icons by safe filename", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-icons-"));
+    try {
+      await mkdir(join(homePath, "system/icons"), { recursive: true });
+      await writeFile(join(homePath, "system/icons/game-center.png"), "png");
+
+      await expect(resolveBundledSystemIconPath(homePath, "game-center.png")).resolves.toBe(
+        join(homePath, "system/icons/game-center.png"),
+      );
+      await expect(resolveBundledSystemIconPath(homePath, "../game-center.png")).resolves.toBeNull();
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }

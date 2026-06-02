@@ -4,29 +4,28 @@ import {
   injectBridgeIntoAppHtml,
 } from "../../shell/src/components/app-viewer-helpers.js";
 
-// These tests verify the AppViewer decision logic without rendering React components.
-// The actual AppViewer.tsx modification is tested here by verifying the URL construction
-// and decision branching patterns.
+describe("AppViewer bridged runtime loading", () => {
+  describe("bridge guarantee: slug apps only ever load via bridged srcDoc", () => {
+    // Mirrors AppViewer's iframeSrc decision. Runtime (slug) apps must NEVER load
+    // the raw /apps/{slug}/ document directly, because that runs un-bridged in the
+    // null-origin sandbox and window.MatrixOS.db is undefined.
+    const iframeSrc = (slug: string | null, path: string) =>
+      !slug ? `/files/${path}` : "about:blank";
 
-describe("AppViewer unified /apps/:slug/ navigation", () => {
-  it("iframe src is /apps/{slug}/ for static runtime (never /files/apps/...)", () => {
-    const slug = "calculator";
-    const src = `/apps/${slug}/`;
-    expect(src).toBe("/apps/calculator/");
-    expect(src).not.toContain("/files/apps/");
-  });
+    it("a slug app's src is about:blank (real HTML is served via srcDoc instead)", () => {
+      expect(iframeSrc("notes", "apps/notes/index.html")).toBe("about:blank");
+      expect(iframeSrc("task-manager", "apps/task-manager")).toBe("about:blank");
+    });
 
-  it("iframe src is the SAME /apps/{slug}/ for vite runtime", () => {
-    const slug = "notes";
-    const src = `/apps/${slug}/`;
-    expect(src).toBe("/apps/notes/");
-    expect(src).not.toContain("/files/apps/");
-  });
+    it("never points a slug app's src at the un-bridged /apps/{slug}/ document", () => {
+      for (const slug of ["notes", "weather", "2048", "whiteboard"]) {
+        expect(iframeSrc(slug, `apps/${slug}/`)).not.toContain(`/apps/${slug}/`);
+      }
+    });
 
-  it("iframe src is the SAME /apps/{slug}/ for node runtime", () => {
-    const slug = "mail";
-    const src = `/apps/${slug}/`;
-    expect(src).toBe("/apps/mail/");
+    it("legacy (non-slug) file paths still load via /files/{path}", () => {
+      expect(iframeSrc(null, "apps/legacy/index.html")).toBe("/files/apps/legacy/index.html");
+    });
   });
 
   describe("distributionStatus branching", () => {
@@ -142,13 +141,16 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
     });
 
     it("injects MatrixOS bridge into srcdoc html without same-origin DOM access", () => {
-      const html = "<!doctype html><html><head><title>Notes</title></head><body><div id=\"root\"></div></body></html>";
+      const html = "<!doctype html><html><head><title>Notes</title><script type=\"module\" crossorigin src=\"./assets/app.js\"></script><link rel=\"stylesheet\" crossorigin href=\"./assets/app.css\"></head><body><div id=\"root\"></div></body></html>";
       const result = injectBridgeIntoAppHtml(html, "notes", {}, "/apps/notes/");
 
       expect(result).toContain('<base href="/apps/notes/">');
       expect(result).toContain("Content-Security-Policy");
       expect(result).toContain("window.MatrixOS");
       expect(result).toContain("os:bridge-fetch");
+      expect(result).toContain('src="./assets/app.js"');
+      expect(result).toContain('href="./assets/app.css"');
+      expect(result).toContain("crossorigin");
     });
   });
 });

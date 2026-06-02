@@ -1054,7 +1054,7 @@ Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`
 
 For customer VPSes, `/icons/<slug>.png` is the system-icon compatibility path. It should redirect to `/files/system/icons/<candidate>` for known icon filenames. The shell should not automatically POST `/api/apps/:slug/icon` on every missing icon, because VPS hosts may intentionally run without `GEMINI_API_KEY`; missing Gemini should return a stable fallback instead of a browser-visible 503 loop.
 
-Default app manifests must only reference shipped icons in `home/system/icons/`. The default game apps share `game-center`, `social` uses `social`, `pomodoro` uses `pomodoro-timer`, and `whiteboard` uses `document` until a dedicated icon is added. `tests/gateway/apps.test.ts` enforces this so new VPS homes and restored user homes do not depend on runtime icon generation for first paint.
+Default app manifests must only reference shipped icons in `home/system/icons/`. The preferred raster style is light iOS/macOS skeuomorphic app icon artwork: refined Apple-like product rendering, a bright light background, glossy ceramic/glass objects, no text/logos, no transparent background, and no separate visible icon frame baked into the artwork. Built-ins use their own concrete icons (`terminal`, `workspace`, `files`, `chat`); games use distinct concrete icons (`2048`, `backgammon`, `chess`, `minesweeper`, `snake`, `solitaire`, `tetris`) instead of sharing `game-center`; `pomodoro` uses `pomodoro-timer`, `symphony` uses `code`, and `whiteboard` uses `whiteboard`. The default-app manifest/icon tests enforce this so new VPS homes and restored user homes do not depend on runtime icon generation for first paint.
 
 ### Browser console shows stale production bundle errors
 

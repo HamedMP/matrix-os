@@ -21,6 +21,12 @@ export function buildIconPrompt(slug: string, style: string): string {
   return `App icon for '${name}': ${style}, no text, 1:1 square`;
 }
 
+export interface IconTarget {
+  slug: string;
+  icon?: string;
+  name?: string;
+}
+
 export interface IconBatchResult {
   generated: number;
   failed: string[];
@@ -28,7 +34,7 @@ export interface IconBatchResult {
 
 export async function generateIconBatch(
   apiKey: string,
-  slugs: string[],
+  targets: Array<string | IconTarget>,
   iconStyle: string,
   iconsDir: string,
   opts?: { skipExisting?: boolean },
@@ -36,13 +42,16 @@ export async function generateIconBatch(
   const client = createImageClient(apiKey);
   let generated = 0;
   const failed: string[] = [];
-  for (const slug of slugs) {
-    if (opts?.skipExisting && existsSync(join(iconsDir, `${slug}.png`))) continue;
+  for (const target of targets) {
+    const slug = typeof target === "string" ? target : target.slug;
+    const fileStem = typeof target === "string" ? target : target.icon ?? target.slug;
+    const promptSubject = typeof target === "string" ? target : target.name ?? target.slug;
+    if (opts?.skipExisting && existsSync(join(iconsDir, `${fileStem}.png`))) continue;
     try {
-      await client.generateImage(buildIconPrompt(slug, iconStyle), {
+      await client.generateImage(buildIconPrompt(promptSubject, iconStyle), {
         aspectRatio: "1:1",
         imageDir: iconsDir,
-        saveAs: `${slug}.png`,
+        saveAs: `${fileStem}.png`,
       });
       generated++;
     } catch (err) {

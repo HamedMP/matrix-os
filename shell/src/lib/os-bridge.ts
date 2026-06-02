@@ -105,6 +105,25 @@ function buildThemeStyleBlock(themeVars: ThemeVars): string {
   return `:root {\n${entries}\n  }`;
 }
 
+export function withCredentialedAssets(html: string): string {
+  const credentialScript = (tag: string) => {
+    if (!/\bsrc\s*=/i.test(tag)) return tag;
+    return /\bcrossorigin\b/i.test(tag)
+      ? tag.replace(/\bcrossorigin(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/i, 'crossorigin="use-credentials"')
+      : tag.replace(/>$/, ' crossorigin="use-credentials">');
+  };
+  const credentialStylesheet = (tag: string) => {
+    if (!/\bhref\s*=/i.test(tag) || !/\brel\s*=\s*(?:"stylesheet"|'stylesheet'|stylesheet)/i.test(tag)) return tag;
+    return /\bcrossorigin\b/i.test(tag)
+      ? tag.replace(/\bcrossorigin(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/i, 'crossorigin="use-credentials"')
+      : tag.replace(/>$/, ' crossorigin="use-credentials">');
+  };
+
+  return html
+    .replace(/<script\b[^>]*>/gi, credentialScript)
+    .replace(/<link\b[^>]*>/gi, credentialStylesheet);
+}
+
 export function buildBridgeScript(appName: string, themeVars?: ThemeVars): string {
   const themeJson = JSON.stringify(themeVars ?? {});
   const initialCss = themeVars ? buildThemeStyleBlock(themeVars) : "";
@@ -238,6 +257,15 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 	        headers: { "Content-Type": "application/json" },
 	        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label })
 	      }, 35000).then(function(r) { return r.json(); });
+	    },
+
+	    proxyFetch: function(url) {
+	      return parentFetch("/api/bridge/proxy?url=" + encodeURIComponent(url), {}, 12000)
+	        .then(function(r) { return r.json(); })
+	        .then(function(d) {
+	          if (d && d.data !== undefined) return d.data;
+	          throw new Error(d && d.error ? d.error : "proxy request failed");
+	        });
 	    },
 
 	    db: {
