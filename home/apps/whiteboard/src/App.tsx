@@ -306,6 +306,7 @@ export default function App() {
     setRenaming(null);
     setDraft(null);
     setViewport({ x: 0, y: 0, zoom: 1 });
+    setError(null);
 
     if (!db || id === LOCAL_BOARD_ID) {
       const local = loadLocal();
@@ -317,7 +318,6 @@ export default function App() {
     }
     setLoadingBoard(true);
     try {
-      setError(null);
       const rows = await db.find(SCENES_TABLE, { where: { id }, limit: 1 });
       const row = rows[0] ?? null;
       // Ignore the result if the user switched away while we were loading.
@@ -342,7 +342,7 @@ export default function App() {
       return { boards: [local], ok: true };
     }
     try {
-      const rows = await db.find(SCENES_TABLE, { orderBy: { created_at: "desc" } });
+      const rows = await db.find(SCENES_TABLE, { orderBy: { updated_at: "desc" } });
       const index = boardIndexFromRows(rows);
       setBoards(index);
       setError((prev) => (prev === BOARD_LIST_ERROR ? null : prev));
@@ -487,7 +487,17 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const pending = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      if (pending) {
+        saveLocal(pending.scene);
+      } else if (dirtyRef.current) {
+        saveLocal(historyRef.current.present);
+      }
     };
   }, []);
 
@@ -924,6 +934,7 @@ export default function App() {
         e.preventDefault();
         setSelected(new Set());
         setEditing(null);
+        setRenaming(null);
         setConfirmClear(false);
         setConfirmDelete(null);
         return;

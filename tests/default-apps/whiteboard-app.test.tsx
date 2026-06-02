@@ -40,7 +40,7 @@ function installMatrixDb(rows: DbRow[] = []) {
     }),
     update: vi.fn(async (_table: string, id: string, data: Record<string, unknown>) => {
       const row = store.find((r) => r.id === id);
-      if (row) Object.assign(row, data);
+      if (row) Object.assign(row, data, { updated_at: new Date().toISOString() });
       return { ok: true };
     }),
     delete: vi.fn(async (_table: string, id: string) => {
@@ -84,6 +84,7 @@ afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  window.localStorage.clear();
   Reflect.deleteProperty(window, "MatrixOS");
 });
 
@@ -210,6 +211,36 @@ describe("Whiteboard app", () => {
     const allCalls = [...db.insert.mock.calls, ...db.update.mock.calls];
     const sawRect = allCalls.some((call) => JSON.stringify(call).includes("rect"));
     expect(sawRect).toBe(true);
+  });
+
+  it("keeps a local backup of pending autosaves on unmount", async () => {
+    installMatrixDb([
+      {
+        id: "b1",
+        name: "Sketch",
+        doc: { version: 1, elements: [] },
+        created_at: "2026-02-02T00:00:00.000Z",
+        updated_at: "2026-02-02T00:00:00.000Z",
+      },
+    ]);
+    const { unmount } = render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
+    const canvas = screen.getByTestId("whiteboard-canvas");
+    await act(async () => {
+      fireEvent.pointerDown(canvas, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(canvas, { clientX: 220, clientY: 180, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 220, clientY: 180, pointerId: 1 });
+      await Promise.resolve();
+    });
+
+    unmount();
+
+    expect(window.localStorage.getItem("matrix-whiteboard-scene-v1")).toContain("\"kind\":\"rect\"");
   });
 
   it("does not let background board refresh failures overwrite save errors", async () => {
@@ -420,6 +451,33 @@ describe("Whiteboard app — multi-board files", () => {
     expect(screen.getAllByText("Wireframe").length).toBeGreaterThan(0);
   });
 
+  it("requests the board index in last-edited order", async () => {
+    const db = installMatrixDb([
+      {
+        ...board("old-created", "Edited recently", "2026-04-04T00:00:00.000Z"),
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        ...board("new-created", "Created recently", "2026-02-02T00:00:00.000Z"),
+        created_at: "2026-05-05T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      db.find.mock.calls.some(
+        ([table, opts]) =>
+          table === "scenes" &&
+          (opts as { orderBy?: Record<string, string> } | undefined)?.orderBy?.updated_at === "desc",
+      ),
+    ).toBe(true);
+    expect(screen.getAllByText("Edited recently").length).toBeGreaterThan(0);
+  });
+
   it("scrolls the active board into view after selection", async () => {
     const originalScrollIntoView = Element.prototype.scrollIntoView;
     const scrollIntoView = vi.fn();
@@ -575,6 +633,7 @@ describe("Whiteboard app — multi-board files", () => {
     fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
     const input = screen.getByLabelText(/rename sprint plan/i);
     fireEvent.change(input, { target: { value: "Launch plan" } });
+    db.find.mockRejectedValueOnce(new Error("list failed"));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /confirm rename/i }));
       await Promise.resolve();
@@ -587,6 +646,67 @@ describe("Whiteboard app — multi-board files", () => {
     fireEvent.keyDown(screen.getByDisplayValue("Launch plan"), { key: "Escape" });
     expect(screen.getAllByText("Sprint plan").length).toBeGreaterThan(0);
     expect(screen.queryByText("Launch plan")).toBeNull();
+  });
+
+  it("dismisses a failed rename row with global Escape", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    db.update.mockRejectedValueOnce(new Error("rename failed"));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
+    const input = screen.getByLabelText(/rename sprint plan/i);
+    fireEvent.change(input, { target: { value: "Launch plan" } });
+    db.find.mockRejectedValueOnce(new Error("list failed"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /confirm rename/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not rename the board.")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByDisplayValue("Launch plan")).toBeNull();
+    expect(screen.getAllByText("Sprint plan").length).toBeGreaterThan(0);
+  });
+
+  it("clears stale errors when switching to the local board path", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    db.update.mockRejectedValueOnce(new Error("rename failed"));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
+    const input = screen.getByLabelText(/rename sprint plan/i);
+    fireEvent.change(input, { target: { value: "Launch plan" } });
+    db.find.mockRejectedValueOnce(new Error("list failed"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /confirm rename/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Could not rename the board.")).toBeTruthy();
+
+    Reflect.deleteProperty(window, "MatrixOS");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /new board/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Could not rename the board.")).toBeNull();
   });
 
   it("clears a failed rename editor when switching boards", async () => {
