@@ -32,7 +32,7 @@ final human review.
   or convert draft PRs to ready. This command is for monitoring and fixing an
   existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
 - Do not add `ready-for-ci` before the latest trusted Greptile review for that
-  PR is `5/5`, unless the requester explicitly overrides this gate.
+  PR is `5/5`. There is no command-level override for this gate.
 - If the `ready-for-ci` label is missing from the repository, stop and report
   the blocker instead of creating a label silently.
 - Never force-push over remote work outside Graphite-managed stack branches
@@ -84,13 +84,23 @@ final human review.
 
 4. Fix actionable feedback.
    - Cluster findings by branch and behavior.
-   - For each actionable finding, edit the owning branch, add/adjust focused
-     tests where practical, and rerun the narrow relevant tests.
-   - Use Graphite to modify/restack and submit updates:
-     `gt modify --all` or `gt modify --commit --all --message "<conventional commit>"`,
-     `gt restack` when needed, and `gt submit --stack --no-edit --no-ai`.
+   - For code behavior changes, add or adjust a focused failing regression
+     before the implementation change. If a focused test cannot be written,
+     record the reason in the status report before editing. For docs-only
+     fixes, keep the edit scoped to the reviewed workflow.
    - Before staging, inspect `git status --short --branch` and stage only files
-     belonging to the owning branch's fix. Before submitting, verify the
+     belonging to the owning branch's fix. Prefer an explicit path-limited
+     `git add <paths>` followed by `gt modify --staged` or
+     `gt modify --commit --staged --message "<conventional commit>"`. Use
+     `--all` only after confirming the worktree contains no unrelated changes.
+   - Run the narrow relevant tests after the fix. Before submitting, also run
+     `git diff --check`; for backend, shell, shared behavior, or scanner-hit
+     classes, run the relevant typecheck and `bun run check:patterns` or report
+     the exact reason a broad gate was skipped.
+   - Use Graphite to sync, restack, and submit updates:
+     `gt sync`, `gt restack` when needed, and
+     `gt submit --stack --no-edit --no-ai`.
+   - Before submitting, verify the
      current remote head for every branch that will be rewritten still matches
      the head recorded for this edit iteration; if it changed unexpectedly,
      stop and report the remote-work conflict.
@@ -99,9 +109,9 @@ final human review.
      monitored PR before entering another fix loop. Graphite's successful
      submit intentionally rewrites stack branch SHAs; those new SHAs become the
      next iteration's conflict baseline.
-   - Run `git diff --check` and the narrow relevant tests before submitting.
-     For backend, shell, or shared behavior, also run the relevant typecheck or
-     pattern scanner when practical and report any skipped broad gate.
+   - After every successful restack or submit, re-run the Step 3 label audit
+     for the edited PR and all descendants, removing any `ready-for-ci` label
+     that is no longer backed by a current-head `5/5` Greptile review.
    - If a finding is ambiguous or conflicts with the product intent, draft a
      concise response and ask before changing behavior.
 
@@ -121,7 +131,9 @@ final human review.
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
      a fresh current-head Greptile review returns `5/5` for the new commit.
    - Completion requires every monitored PR to be either:
-     - latest trusted Greptile `5/5`, or
+     - latest trusted Greptile `5/5` with no unresolved human review threads,
+       unresolved Codex review comments, or unresolved actionable issue
+       comments, or
      - explicitly deferred with the reason and follow-up.
    - For non-deferred PRs with Greptile `5/5`, completion also requires the
      `ready-for-ci` label to be present and CI to be passing or explicitly
