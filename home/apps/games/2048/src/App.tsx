@@ -376,6 +376,7 @@ export default function App() {
 
   // Persist the current score onto the score row too (so DB.score is live).
   useEffect(() => {
+    if (state.score === 0 && !dbRowId.current) return;
     persistScore(state.score);
   }, [persistScore, state.score]);
 

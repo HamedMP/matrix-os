@@ -177,7 +177,7 @@ describe("2048 app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /new game/i }));
 
-    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", expect.objectContaining({ score: 0 })));
   });
 
   it("does not persist the previous live score when starting a new game", async () => {
@@ -196,7 +196,7 @@ describe("2048 app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /new game/i }));
 
-    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", expect.objectContaining({ score: 0 })));
     expect(db.update).not.toHaveBeenCalledWith("scores", "s1", { score: 4 });
   });
 
@@ -227,7 +227,9 @@ describe("2048 app", () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith("scores", "s1", expect.objectContaining({ score: 0 })),
+    );
     expect(db.update).not.toHaveBeenCalledWith("scores", "s1", { score: 4 });
   });
 
@@ -305,20 +307,50 @@ describe("2048 app", () => {
     await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
   });
 
-  it("preserves a localStorage best score when creating the first DB score row", async () => {
+  it("waits for actual play before creating the first DB score row", async () => {
+    const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
+    vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);
     window.localStorage.setItem("matrixos.2048.best", "7777");
     const db = installMatrixDb([]);
 
     render(<App />);
     await screen.findByTestId("board");
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
+    expect(db.insert).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     await waitFor(() =>
       expect(db.insert).toHaveBeenCalledWith(
         "scores",
-        expect.objectContaining({ best: 7777 }),
+        expect.objectContaining({ score: 4, best: 7777 }),
       ),
     );
-    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
+  });
+
+  it("does not create a best-zero score row after fast unmount", async () => {
+    window.localStorage.setItem("matrixos.2048.best", "7777");
+    const db = installMatrixDb([]);
+    let resolveFind: (rows: DbRow[]) => void = () => undefined;
+    db.find.mockImplementation(async () => new Promise<DbRow[]>((resolve) => {
+      resolveFind = resolve;
+    }));
+
+    const { unmount } = render(<App />);
+    await screen.findByTestId("board");
+
+    unmount();
+    await act(async () => {
+      resolveFind([]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).not.toHaveBeenCalled();
   });
 
   it("logs unexpected localStorage read failures", async () => {
