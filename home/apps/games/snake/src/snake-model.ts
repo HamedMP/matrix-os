@@ -50,6 +50,7 @@ export function nextDirection(current: Direction, requested: Direction): Directi
 }
 
 export function queuedDirection(current: Direction, queued: Direction, requested: Direction): Direction {
+  if (requested === current) return queued;
   if (isOpposite(current, requested) || isOpposite(queued, requested)) return queued;
   return requested;
 }

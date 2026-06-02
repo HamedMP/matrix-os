@@ -42,6 +42,11 @@ describe("snake-model: direction", () => {
     expect(queuedDirection("right", "up", "left")).toBe("up");
     expect(queuedDirection("right", "right", "up")).toBe("up");
   });
+
+  it("does not clobber an already queued turn with the current heading", () => {
+    expect(queuedDirection("right", "up", "right")).toBe("up");
+    expect(queuedDirection("up", "left", "up")).toBe("left");
+  });
 });
 
 describe("snake-model: createGame", () => {
