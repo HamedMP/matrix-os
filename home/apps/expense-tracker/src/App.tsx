@@ -577,7 +577,7 @@ export default function App() {
                 aria-label="Amount"
                 inputMode="decimal"
                 type="number"
-                min="0"
+                min="0.01"
                 step="0.01"
                 placeholder="0.00"
                 value={draft.amount}

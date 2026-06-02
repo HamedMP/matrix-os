@@ -237,7 +237,10 @@ describe("Expense Tracker app", () => {
       await Promise.resolve();
     });
 
-    fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "25.50" } });
+    const amountInput = screen.getByLabelText(/amount/i) as HTMLInputElement;
+    expect(amountInput.min).toBe("0.01");
+    expect(amountInput.step).toBe("0.01");
+    fireEvent.change(amountInput, { target: { value: "25.50" } });
     fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "Coffee beans" } });
 
     await act(async () => {
