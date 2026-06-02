@@ -349,20 +349,27 @@ export default function App() {
       }
       try {
         await db.delete(LOCATIONS_TABLE, loc.id);
-        const promoted = shouldPromoteDefault ? nextLocations[0] : null;
-        if (promoted?.id && !promoted.id.startsWith("local-")) {
-          await db.update(LOCATIONS_TABLE, promoted.id, { is_default: true });
-        }
-        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
-        await reloadLocations();
-        setError(null);
       } catch (err: unknown) {
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         console.warn("[weather] location delete failed:", errMsg(err));
         setError("Location could not be removed.");
         setLocations(previousLocations);
         setActiveId(previousActiveId);
+        return;
       }
+      let promotionFailed = false;
+      const promoted = shouldPromoteDefault ? nextLocations[0] : null;
+      if (promoted?.id && !promoted.id.startsWith("local-")) {
+        try {
+          await db.update(LOCATIONS_TABLE, promoted.id, { is_default: true });
+        } catch (err: unknown) {
+          promotionFailed = true;
+          console.warn("[weather] default location promotion failed:", errMsg(err));
+        }
+      }
+      pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+      await reloadLocations();
+      setError(promotionFailed ? "Default location could not be updated." : null);
     },
     [activeId, locations, reloadLocations],
   );

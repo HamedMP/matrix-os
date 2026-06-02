@@ -291,6 +291,32 @@ describe("Weather app", () => {
     expect(within(parisItem as HTMLElement).getByText("Default")).toBeTruthy();
   });
 
+  it("keeps the removed location deleted when default promotion fails", async () => {
+    const db = installMatrixDb([
+      { id: "loc-1", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+      { id: "loc-2", name: "Paris", latitude: 48.8566, longitude: 2.3522, is_default: false },
+    ]);
+    db.update.mockRejectedValueOnce(new Error("update failed"));
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Paris").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /remove berlin/i }));
+
+    await vi.waitFor(() => {
+      expect(db.delete).toHaveBeenCalledWith("locations", "loc-1");
+      expect(db.update).toHaveBeenCalledWith("locations", "loc-2", { is_default: true });
+      expect(screen.getByText(/default location could not be updated/i)).toBeTruthy();
+    });
+    expect(screen.queryByText(/location could not be removed/i)).toBeNull();
+    expect(screen.queryByText("Berlin")).toBeNull();
+    expect(screen.getAllByText("Paris").length).toBeGreaterThan(0);
+  });
+
   it("stores fallback locations through MatrixOS data bridge", async () => {
     const bridge = installMatrixDataBridge();
     globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
