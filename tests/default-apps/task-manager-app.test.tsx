@@ -103,7 +103,7 @@ describe("Task Manager app", () => {
     expect(board.cards[0].updatedAt).toBe("2026-05-02T00:00:00.000Z");
   });
 
-  it("round-trips labels containing commas through text storage", () => {
+  it("round-trips labels containing commas through structured storage", () => {
     const row = cardToRow({
       id: "card-1",
       projectId: "project-default",
@@ -121,7 +121,7 @@ describe("Task Manager app", () => {
       updatedAt: "2026-05-01T00:00:00.000Z",
     }, 0);
 
-    expect(row.labels).toBe(JSON.stringify(["bug, ui", "release"]));
+    expect(row.labels).toEqual(["bug, ui", "release"]);
 
     const board = boardFromRows(
       [{ id: "col-1", title: "To do", color: "#7A7768", position: 0 }],

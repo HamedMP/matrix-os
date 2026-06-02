@@ -165,7 +165,7 @@ export function cardToRow(card: Card, position: number): Record<string, unknown>
     column_id: card.columnId,
     title: card.title,
     description: card.description,
-    labels: JSON.stringify(card.labels),
+    labels: card.labels,
     assignee: card.assignee,
     priority: card.priority,
     due: card.dueDate ? card.dueDate : null,

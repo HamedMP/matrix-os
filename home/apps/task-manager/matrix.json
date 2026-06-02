@@ -24,7 +24,7 @@
           "column_id": "text",
           "title": "text",
           "description": "text",
-          "labels": "text",
+          "labels": "jsonb",
           "assignee": "text",
           "priority": "text",
           "due": "date",
