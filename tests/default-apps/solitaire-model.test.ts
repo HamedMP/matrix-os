@@ -258,10 +258,7 @@ describe("auto-complete + win", () => {
     const s = emptyState();
     const suits: Suit[] = ["spades", "hearts", "diamonds", "clubs"];
     s.foundations = suits.map((suit) => Array.from({ length: 11 }, (_, r) => card(suit, r + 1)));
-    suits.forEach((suit, i) => {
-      s.tableau[i] = [card(suit, 12), card(suit, 13)].reverse(); // K on top of Q? fix below
-    });
-    // Lay Q then K so Q is promotable first (Q at top), then K.
+    // K at index 0, Q on top (index 1) so Q is promotable first, then K.
     suits.forEach((suit, i) => {
       s.tableau[i] = [card(suit, 13, true), card(suit, 12, true)];
     });

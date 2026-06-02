@@ -380,6 +380,8 @@ export default function App({ initialState }: AppProps) {
       guard += 1;
     }
     if (last !== game) {
+      // Commit the whole auto-complete chain as one undo step so Undo returns
+      // to the user's pre-auto-complete board instead of each forced move.
       const nextHistory = [...historyRef.current.slice(-200), game];
       historyRef.current = nextHistory;
       setHistory(nextHistory);
