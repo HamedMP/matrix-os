@@ -8,6 +8,7 @@ type DbRow = Record<string, unknown>;
 type ChessMockControls = {
   __setNextBoard(board: Record<string, { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" }>, turn?: "w" | "b"): void;
   __setNextCheckmate(value?: boolean): void;
+  Chess: new () => { moves(opts: { square: string }): string[] };
 };
 
 let App: React.ComponentType;
@@ -139,6 +140,29 @@ describe("Chess app", () => {
       expect(screen.getByTestId("square-e3").getAttribute("data-legal")).toBe("true");
       expect(screen.getByTestId("square-e4").getAttribute("data-legal")).toBe("true");
     });
+  });
+
+  it("mock chess legal moves cover sliding pieces and kings", async () => {
+    const { Chess, __setNextBoard } = await import("chess.js") as unknown as ChessMockControls;
+
+    __setNextBoard({
+      d4: { color: "w", type: "r" },
+      d6: { color: "b", type: "p" },
+      f4: { color: "w", type: "p" },
+    });
+    const rookMoves = new Chess().moves({ square: "d4" });
+    expect(rookMoves).toEqual(expect.arrayContaining(["d5", "d6", "c4", "e4"]));
+    expect(rookMoves).not.toContain("d7");
+    expect(rookMoves).not.toContain("g4");
+
+    __setNextBoard({ d4: { color: "w", type: "b" } });
+    expect(new Chess().moves({ square: "d4" })).toEqual(expect.arrayContaining(["e5", "f6", "c5", "e3"]));
+
+    __setNextBoard({ d4: { color: "w", type: "q" } });
+    expect(new Chess().moves({ square: "d4" })).toEqual(expect.arrayContaining(["d5", "e4", "e5", "c3"]));
+
+    __setNextBoard({ d4: { color: "w", type: "k" } });
+    expect(new Chess().moves({ square: "d4" })).toEqual(expect.arrayContaining(["d5", "e5", "e4", "c3"]));
   });
 
   it("records a legal move in the SAN history", async () => {

@@ -28,6 +28,7 @@ function startingBoard(): Record<string, Piece> {
 let nextBoardState: Record<string, Piece> | null = null;
 let nextTurnColor: Piece["color"] = "w";
 let nextCheckmate = false;
+const FILES = "abcdefgh";
 
 export function __setNextBoard(board: Record<string, Piece>, turn: Piece["color"] = "w") {
   nextBoardState = Object.fromEntries(Object.entries(board).map(([square, piece]) => [square, { ...piece }]));
@@ -73,7 +74,30 @@ export class Chess {
       if (!piece || piece.color !== this.turnColor) return [];
       const file = opts.square[0];
       const rank = Number(opts.square[1]);
+      const fileIdx = FILES.indexOf(file);
       const out: Omit<VerboseMove, "san">[] = [];
+      const addTarget = (targetFileIdx: number, targetRank: number): boolean => {
+        const targetFile = FILES[targetFileIdx];
+        if (!targetFile || targetRank < 1 || targetRank > 8) return false;
+        const target = `${targetFile}${targetRank}`;
+        const occupant = this.boardState[target];
+        if (!occupant) {
+          out.push({ from: opts.square as string, to: target, piece: piece.type, color: piece.color });
+          return true;
+        }
+        if (occupant.color !== piece.color) {
+          out.push({ from: opts.square as string, to: target, piece: piece.type, color: piece.color });
+        }
+        return false;
+      };
+      const addRay = (dr: number, dc: number) => {
+        let nextFileIdx = fileIdx + dc;
+        let nextRank = rank + dr;
+        while (addTarget(nextFileIdx, nextRank)) {
+          nextFileIdx += dc;
+          nextRank += dr;
+        }
+      };
       if (piece.type === "p") {
         const dir = piece.color === "w" ? 1 : -1;
         const one = `${file}${rank + dir}`;
@@ -85,7 +109,6 @@ export class Chess {
         }
       }
       if (piece.type === "n") {
-        const fileIdx = "abcdefgh".indexOf(file);
         const knightDeltas = [
           [-2, -1],
           [-2, 1],
@@ -104,6 +127,17 @@ export class Chess {
           if (!this.boardState[target] || this.boardState[target]!.color !== piece.color) {
             out.push({ from: opts.square, to: target, piece: "n", color: piece.color });
           }
+        }
+      }
+      if (piece.type === "b" || piece.type === "q") {
+        for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) addRay(dr, dc);
+      }
+      if (piece.type === "r" || piece.type === "q") {
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) addRay(dr, dc);
+      }
+      if (piece.type === "k") {
+        for (const [dr, dc] of [[1, 1], [1, 0], [1, -1], [0, 1], [0, -1], [-1, 1], [-1, 0], [-1, -1]]) {
+          addTarget(fileIdx + dc, rank + dr);
         }
       }
       return opts.verbose ? out : out.map((move) => move.to);
