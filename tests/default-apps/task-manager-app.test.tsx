@@ -150,6 +150,43 @@ describe("Task Manager app", () => {
     });
   });
 
+  it("migrates local fallback board data when the DB bridge becomes available", async () => {
+    const localBoard = {
+      version: 1,
+      projects: [{ id: "project-default", name: "Local", color: "#434E3F", description: "" }],
+      columns: [{ id: "local-col", title: "Local Queue", color: "#7A7768" }],
+      cards: [{
+        id: "local-card",
+        projectId: "project-default",
+        columnId: "local-col",
+        title: "Recovered local card",
+        description: "",
+        priority: "medium",
+        labels: [],
+        assignee: "",
+        dueDate: "",
+        checklist: [],
+        delegation: null,
+        order: 0,
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    localStorage.setItem("task-manager:board", JSON.stringify(localBoard));
+    const { db } = installMatrixDb();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(db.insert).toHaveBeenCalledWith("columns", expect.objectContaining({ title: "Local Queue" }));
+      expect(db.insert).toHaveBeenCalledWith("cards", expect.objectContaining({
+        title: "Recovered local card",
+        column_id: "columns-1",
+      }));
+    });
+  });
+
   it("loads existing columns + cards from Postgres", async () => {
     installMatrixDb({
       columns: [
@@ -586,6 +623,31 @@ describe("Task Manager app", () => {
     await waitFor(() =>
       expect(db.update).toHaveBeenCalledWith("cards", "card-1", expect.objectContaining({ title: "Edited title" })),
     );
+  });
+
+  it("clears draft label and checklist inputs when switching selected cards", async () => {
+    installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Alpha", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "card-2", column_id: "col-1", title: "Beta", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Alpha"));
+    let dialog = await screen.findByRole("dialog");
+    const labelInput = within(dialog).getByLabelText("Add label") as HTMLInputElement;
+    const checklistInput = within(dialog).getByLabelText("Add checklist item") as HTMLInputElement;
+    fireEvent.change(labelInput, { target: { value: "bug" } });
+    fireEvent.change(checklistInput, { target: { value: "verify" } });
+
+    fireEvent.click(screen.getByText("Beta"));
+
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByDisplayValue("Beta")).toBeTruthy();
+    expect((within(dialog).getByLabelText("Add label") as HTMLInputElement).value).toBe("");
+    expect((within(dialog).getByLabelText("Add checklist item") as HTMLInputElement).value).toBe("");
   });
 
   it("does not persist card reorders while a filter is active", async () => {

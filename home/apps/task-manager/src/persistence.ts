@@ -139,16 +139,17 @@ function parseStoredBoard(value: unknown): Board | null {
 
 export async function loadBridgeBoard(): Promise<Board | null> {
   const readData = window.MatrixOS?.readData;
-  if (!readData) return null;
-  for (const key of LEGACY_BRIDGE_KEYS) {
-    try {
-      const board = parseStoredBoard(await readData(key));
-      if (board && board.columns.length > 0) return board;
-    } catch (err: unknown) {
-      console.warn("[task-manager] legacy board load failed:", err instanceof Error ? err.message : String(err));
+  if (readData) {
+    for (const key of LEGACY_BRIDGE_KEYS) {
+      try {
+        const board = parseStoredBoard(await readData(key));
+        if (board && board.columns.length > 0) return board;
+      } catch (err: unknown) {
+        console.warn("[task-manager] legacy board load failed:", err instanceof Error ? err.message : String(err));
+      }
     }
   }
-  return null;
+  return loadLocalBoard();
 }
 
 /** Serialize a card's app-shaped fields into DB column values. */

@@ -935,10 +935,14 @@ function CardDetail({
   const previousCardRef = useRef(card);
   useEffect(() => {
     const previous = previousCardRef.current;
-    const sameCard = previous.createdAt === card.createdAt;
+    const sameCard = previous.id === card.id || (previous.createdAt === card.createdAt && previous.title === card.title);
     if (!sameCard || title === previous.title) setTitle(card.title);
     if (!sameCard || description === previous.description) setDescription(card.description);
     if (!sameCard || assignee === previous.assignee) setAssignee(card.assignee);
+    if (!sameCard) {
+      setLabelInput("");
+      setChecklistInput("");
+    }
     previousCardRef.current = card;
   }, [assignee, card, description, title]);
 
