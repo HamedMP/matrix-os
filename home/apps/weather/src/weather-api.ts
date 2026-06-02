@@ -32,6 +32,10 @@ async function proxyJson<T>(url: string): Promise<T> {
     const detail = String((data as Record<string, unknown>).error);
     throw new Error(`proxy request failed: ${detail}`);
   }
+  const hasExpectedShape = "current" in data || "hourly" in data || "daily" in data || "results" in data;
+  if (!hasExpectedShape) {
+    throw new Error("proxy request failed: unexpected response shape");
+  }
   return data as T;
 }
 

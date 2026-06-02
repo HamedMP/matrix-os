@@ -598,6 +598,7 @@ describe("Weather app", () => {
     await vi.waitFor(() => {
       expect(screen.getByTestId("search-result")).toBeTruthy();
     });
+    bridge.readData.mockClear();
     fireEvent.click(screen.getByTestId("search-result"));
 
     await vi.waitFor(() => {
@@ -606,6 +607,7 @@ describe("Weather app", () => {
     const stored = bridge.writeData.mock.calls.find(([key]) => key === "matrix-weather-locations")?.[1] as Array<Record<string, unknown>>;
     expect(stored).toEqual([expect.objectContaining({ name: "Berlin" })]);
     expect(String(stored[0].id ?? "")).not.toMatch(/^local-/);
+    expect(bridge.readData.mock.calls.filter(([key]) => key === "matrix-weather-locations").length).toBeGreaterThanOrEqual(2);
   });
 
   it("does not persist duplicates or optimistic local ids when adding fallback locations repeatedly", async () => {

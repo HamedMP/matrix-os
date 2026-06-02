@@ -335,6 +335,7 @@ export default function App() {
       if (!db) {
         const existing = await readStoredLocations();
         await writeAppData(LOCATIONS_KEY, storedLocations([...existing, candidate]));
+        await reloadLocations();
         setError(null);
         return;
       }
@@ -415,7 +416,13 @@ export default function App() {
         setError(null);
         return;
       }
-      if (!loc.id || loc.id.startsWith("local-")) {
+      if (!loc.id) {
+        pendingLocations.clearRemoved(key);
+        pendingLocations.clearDefaultPromotion(key);
+        return;
+      }
+      if (loc.id.startsWith("local-")) {
+        // Keep the removal key so the in-flight insert path can delete the resolved DB row.
         pendingLocations.clearDefaultPromotion(key);
         return;
       }
