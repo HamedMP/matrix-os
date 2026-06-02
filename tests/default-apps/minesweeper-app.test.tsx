@@ -257,6 +257,46 @@ describe("Minesweeper app", () => {
     expect(within(screen.getByTestId("best-time")).getByText("1s")).toBeTruthy();
   });
 
+  it("saves best time under the completed game key when difficulty changes after win", async () => {
+    const db = installMatrixDb([]);
+    render(<App />);
+    await screen.findAllByTestId(/^cell-/);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Custom" }));
+    fireEvent.change(screen.getByLabelText("Width"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Height"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Mines"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(await screen.findAllByTestId(/^cell-/)).toHaveLength(25);
+
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    fireEvent.click(screen.getByTestId("cell-12"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    await act(async () => {
+      for (let index = 1; index < 25; index += 1) {
+        fireEvent.click(screen.getByTestId(`cell-${index}`));
+      }
+      fireEvent.click(screen.getByRole("tab", { name: "Beginner" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalledWith(
+      "times",
+      expect.objectContaining({
+        difficulty: "custom",
+        rows: 5,
+        cols: 5,
+        mines: 1,
+        seconds: expect.any(Number),
+      }),
+    );
+  });
+
   it("works without a DB bridge", async () => {
     // No MatrixOS injected.
     render(<App />);

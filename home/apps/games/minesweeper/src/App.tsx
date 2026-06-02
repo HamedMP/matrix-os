@@ -294,6 +294,10 @@ export default function App(): React.ReactElement {
       setFace("win");
       if (savedGameId.current !== gameMeta.id) {
         savedGameId.current = gameMeta.id;
+        // Persist against the game metadata from the render that observed the
+        // win. A difficulty/custom change can schedule a reset effect in the
+        // same commit; using live difficulty/spec here would save the completed
+        // game's time under the next board's key.
         const finalSecs = Math.max(1, latestSecondsRef.current);
         const gameBestKey = bestKeyFor(gameMeta.difficulty, gameMeta.spec);
         const current = bestTimesRef.current[gameBestKey];
