@@ -1276,6 +1276,7 @@ function RenameInput({
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLInputElement | null>(null);
+  const cancelledRef = useRef(false);
   // Focus on mount instead of `autoFocus` (which react-doctor flags for a11y).
   useLayoutEffect(() => {
     ref.current?.focus();
@@ -1288,13 +1289,20 @@ function RenameInput({
       value={value}
       aria-label={label}
       onChange={(e) => onChange(e.target.value)}
-      onBlur={onCommit}
+      onBlur={() => {
+        if (cancelledRef.current) {
+          cancelledRef.current = false;
+          return;
+        }
+        onCommit();
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
           onCommit();
         } else if (e.key === "Escape") {
           e.preventDefault();
+          cancelledRef.current = true;
           onCancel();
         }
       }}

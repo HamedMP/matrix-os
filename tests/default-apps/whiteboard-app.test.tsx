@@ -384,6 +384,30 @@ describe("Whiteboard app — multi-board files", () => {
     expect(screen.queryByText("Launch plan")).toBeNull();
   });
 
+  it("does not commit a cancelled board rename when Escape is followed by blur", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
+    const input = screen.getByLabelText(/rename sprint plan/i);
+    fireEvent.change(input, { target: { value: "Launch plan" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.blur(input);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(db.update).not.toHaveBeenCalledWith("scenes", "b1", expect.objectContaining({ name: "Launch plan" }));
+    expect(screen.getAllByText("Sprint plan").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Launch plan")).toBeNull();
+  });
+
   it("clears the rename error after a recovery refresh succeeds", async () => {
     const db = installMatrixDb([
       board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
