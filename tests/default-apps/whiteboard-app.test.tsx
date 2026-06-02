@@ -334,7 +334,11 @@ describe("Whiteboard app — multi-board files", () => {
       board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
     ]);
     db.update.mockRejectedValueOnce(new Error("rename failed"));
-    render(<App />);
+    render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>,
+    );
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
