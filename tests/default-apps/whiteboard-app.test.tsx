@@ -731,6 +731,45 @@ describe("Whiteboard app — multi-board files", () => {
     expect(screen.queryByText("Could not rename the board.")).toBeNull();
   });
 
+  it("allows a failed board rename submitted with Enter to be retried", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    db.update.mockRejectedValueOnce(new Error("rename failed"));
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /rename board sprint plan/i }));
+    const input = screen.getByLabelText(/rename sprint plan/i);
+    fireEvent.change(input, { target: { value: "Launch plan" } });
+    db.find.mockRejectedValueOnce(new Error("list failed"));
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Could not rename the board.")).toBeTruthy();
+    expect(screen.getByDisplayValue("Launch plan")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.keyDown(screen.getByDisplayValue("Launch plan"), { key: "Enter" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const renameCalls = db.update.mock.calls.filter(
+      ([table, id, data]) => table === "scenes" && id === "b1" && data.name === "Launch plan",
+    );
+    expect(renameCalls).toHaveLength(2);
+    expect(screen.queryByDisplayValue("Launch plan")).toBeNull();
+    expect(screen.queryByText("Could not rename the board.")).toBeNull();
+  });
+
   it("clears stale errors when switching to the local board path", async () => {
     const db = installMatrixDb([
       board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),

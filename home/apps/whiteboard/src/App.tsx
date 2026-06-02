@@ -1080,7 +1080,7 @@ export default function App() {
             setRenaming({ id: b.id, value: b.name });
           }}
           onRenameChange={(value) => setRenaming((r) => (r ? { ...r, value } : r))}
-          onCommitRename={() => void commitRename()}
+          onCommitRename={() => commitRename()}
           onCancelRename={() => setRenaming(null)}
           onRequestDelete={(b) => setConfirmDelete(b)}
         />
