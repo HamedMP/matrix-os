@@ -156,10 +156,10 @@ matrix shell ls
 matrix shell connect <existing-session>
 ```
 
-Known working example:
+Known working pattern:
 
 ```bash
-matrix shell connect nima
+matrix shell connect <existing-session>
 ```
 
 `connect` may succeed even when `attach` and `run -it` fail.
