@@ -2,9 +2,18 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { findBestMove } from "../../home/apps/games/chess/src/chess-ai";
 
 // vitest.config.ts aliases app-local chess.js to a faithful test double.
 let App: React.ComponentType;
+
+vi.mock("../../home/apps/games/chess/src/chess-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../home/apps/games/chess/src/chess-ai")>();
+  return {
+    ...actual,
+    findBestMove: vi.fn(actual.findBestMove),
+  };
+});
 
 type DbRow = Record<string, unknown>;
 
@@ -33,6 +42,7 @@ describe("Chess app", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(findBestMove).mockClear();
     Reflect.deleteProperty(window, "MatrixOS");
     window.localStorage.clear();
   });
@@ -153,6 +163,43 @@ describe("Chess app", () => {
     await waitFor(() => {
       expect(screen.getByTestId("square-e2").getAttribute("aria-label")).toBe("e2 White p");
       expect(screen.getByTestId("square-e4").getAttribute("aria-label")).toBe("e4 empty");
+    });
+  });
+
+  it("falls back to local play when the computer search fails", async () => {
+    installMatrixDb([]);
+    vi.mocked(findBestMove).mockImplementationOnce(() => {
+      throw new Error("engine down");
+    });
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mode-vs-computer"));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e2"));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e4"));
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(findBestMove)).toHaveBeenCalled();
+      expect(screen.getByTestId("mode-two-player").getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByText("The computer could not find a move. Continuing as local two-player.")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e7"));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("square-e6").getAttribute("data-legal")).toBe("true");
     });
   });
 });

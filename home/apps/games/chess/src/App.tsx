@@ -387,8 +387,11 @@ export default function App() {
           applyMove(best.from, best.to, best.promotion);
         }
       } catch (err: unknown) {
+        if (aiRunIdRef.current !== runId) return;
         console.warn("[chess] AI search failed:", err instanceof Error ? err.message : String(err));
-        setError("The computer could not find a move.");
+        setMode("two-player");
+        setSaveState("error");
+        setError("The computer could not find a move. Continuing as local two-player.");
       } finally {
         if (aiRunIdRef.current === runId) setThinking(false);
       }
