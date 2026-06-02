@@ -211,6 +211,8 @@ export default function App() {
   const saveTimerRef = useRef<number | null>(null);
   const dirtyRef = useRef(false);
   const historyRef = useRef<History>(history);
+  const renameCommitKeyRef = useRef<string | null>(null);
+  const editingCommitIdRef = useRef<string | null>(null);
 
   // Keep a ref of the active board id so debounced/async saves target the
   // board that was active when the edit happened, not a stale closure value.
@@ -245,6 +247,7 @@ export default function App() {
     activeIdRef.current = id;
     setSelected(new Set());
     setEditing(null);
+    setRenaming(null);
     setDraft(null);
     setViewport({ x: 0, y: 0, zoom: 1 });
 
@@ -349,10 +352,10 @@ export default function App() {
     })();
     const db = window.MatrixOS?.db;
     const unsubscribe = db?.onChange?.(SCENES_TABLE, () => {
-      // Reconcile the list; reload the active board only when not mid-edit.
+      // Reconcile the list without reopening the active board. The bridge
+      // notification is table-wide, so reopening would reset viewport,
+      // selection, and in-progress edits for unrelated board writes.
       void refreshIndex();
-      const id = activeIdRef.current;
-      if (id && !dirtyRef.current) void openBoard(id);
     });
     return () => {
       cancelled = true;
@@ -399,9 +402,9 @@ export default function App() {
   }, []);
 
   const scheduleSave = useCallback(
-    (toSave: Scene) => {
+    (toSave: Scene, targetBoardId: string | null = activeIdRef.current) => {
       dirtyRef.current = true;
-      const boardId = activeIdRef.current;
+      const boardId = targetBoardId;
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
         saveTimerRef.current = null;
@@ -436,6 +439,9 @@ export default function App() {
     const r = renaming;
     if (!r) return;
     const name = normalizeBoardName(r.value);
+    const commitKey = `${r.id}:${name}`;
+    if (renameCommitKeyRef.current === commitKey) return;
+    renameCommitKeyRef.current = commitKey;
     const snapshot = boards;
     setBoards((prev) => prev.map((b) => (b.id === r.id ? { ...b, name } : b)));
     const db = window.MatrixOS?.db;
@@ -449,6 +455,7 @@ export default function App() {
       setRenaming(null);
     } catch (err: unknown) {
       console.warn("[whiteboard] rename failed:", err instanceof Error ? err.message : String(err));
+      renameCommitKeyRef.current = null;
       setBoards(snapshot);
       setError("Could not rename the board.");
       void refreshIndex().then((result) => {
@@ -493,13 +500,13 @@ export default function App() {
 
   // -- commit + autosave wrapper -------------------------------------------
   const apply = useCallback(
-    (next: Scene) => {
+    (next: Scene, targetBoardId: string | null = activeIdRef.current) => {
       setHistory((h) => {
         const nextHistory = commit(h, next);
         historyRef.current = nextHistory;
         return nextHistory;
       });
-      scheduleSave(next);
+      scheduleSave(next, targetBoardId);
     },
     [scheduleSave],
   );
@@ -692,6 +699,7 @@ export default function App() {
       }
       apply(addElement(scene, final));
       if (final.kind === "text" || final.kind === "sticky") {
+        editingCommitIdRef.current = null;
         setEditing({ id: final.id, value: (final as BoxElement).text ?? "" });
       }
       if (tool !== "pen") setTool("select");
@@ -747,6 +755,9 @@ export default function App() {
       (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
       updateDraft(null);
       setMarquee(null);
+      if (drag?.mode === "draw" && tool !== "pen") {
+        setTool("select");
+      }
       if (drag?.mode === "move" && drag.baseScene) {
         setHistory((current) => {
           const nextHistory = { ...current, present: drag.baseScene as Scene };
@@ -755,7 +766,7 @@ export default function App() {
         });
       }
     },
-    [updateDraft],
+    [tool, updateDraft],
   );
 
   // -- selection ops --------------------------------------------------------
@@ -793,9 +804,11 @@ export default function App() {
 
   const commitEditing = useCallback(() => {
     if (!editing) return;
-    apply(updateElement(scene, editing.id, { text: editing.value } as Partial<BoxElement>));
+    if (editingCommitIdRef.current === editing.id) return;
+    editingCommitIdRef.current = editing.id;
+    apply(updateElement(scene, editing.id, { text: editing.value } as Partial<BoxElement>), activeId);
     setEditing(null);
-  }, [apply, editing, scene]);
+  }, [activeId, apply, editing, scene]);
 
   // -- keyboard shortcuts ---------------------------------------------------
   useEffect(() => {
@@ -955,7 +968,10 @@ export default function App() {
           renaming={renaming}
           onSelect={switchBoard}
           onNew={() => void createBoard()}
-          onStartRename={(b) => setRenaming({ id: b.id, value: b.name })}
+          onStartRename={(b) => {
+            renameCommitKeyRef.current = null;
+            setRenaming({ id: b.id, value: b.name });
+          }}
           onRenameChange={(value) => setRenaming((r) => (r ? { ...r, value } : r))}
           onCommitRename={() => void commitRename()}
           onCancelRename={() => setRenaming(null)}
@@ -1277,6 +1293,12 @@ function RenameInput({
 }) {
   const ref = useRef<HTMLInputElement | null>(null);
   const cancelledRef = useRef(false);
+  const committedRef = useRef(false);
+  const commitOnce = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    onCommit();
+  };
   // Focus on mount instead of `autoFocus` (which react-doctor flags for a11y).
   useLayoutEffect(() => {
     ref.current?.focus();
@@ -1294,12 +1316,13 @@ function RenameInput({
           cancelledRef.current = false;
           return;
         }
-        onCommit();
+        if (committedRef.current) return;
+        commitOnce();
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          onCommit();
+          commitOnce();
         } else if (e.key === "Escape") {
           e.preventDefault();
           cancelledRef.current = true;
@@ -1511,6 +1534,13 @@ function TextEditorOverlay({
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
+  const cancelledRef = useRef(false);
+  const committedRef = useRef(false);
+  const commitOnce = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    onCommit();
+  };
   useLayoutEffect(() => {
     ref.current?.focus();
     ref.current?.select();
@@ -1529,15 +1559,23 @@ function TextEditorOverlay({
       value={editing.value}
       style={{ left, top, width, height, color: element.stroke, fontSize, lineHeight: 1.35 }}
       onChange={(e) => onChange(e.target.value)}
-      onBlur={onCommit}
+      onBlur={() => {
+        if (cancelledRef.current) {
+          cancelledRef.current = false;
+          return;
+        }
+        if (committedRef.current) return;
+        commitOnce();
+      }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.preventDefault();
+          cancelledRef.current = true;
           onCancel();
         }
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          onCommit();
+          commitOnce();
         }
       }}
       placeholder="Type…"
@@ -1599,6 +1637,10 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
   if (el.kind === "ellipse") {
     ctx.beginPath();
     ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    if (el.fill !== "transparent") {
+      ctx.fillStyle = el.fill;
+      ctx.fill();
+    }
     ctx.stroke();
     return;
   }
