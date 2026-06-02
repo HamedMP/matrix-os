@@ -13,12 +13,25 @@ interface FakeStore {
 
 function installMatrixDb(store: FakeStore) {
   const db = {
-    find: vi.fn(async (table: string, opts?: { where?: Record<string, unknown>; limit?: number }) => {
-      let rows = table === "zones" ? store.zones : store.alarms;
+    find: vi.fn(async (table: string, opts?: { where?: Record<string, unknown>; limit?: number; orderBy?: Record<string, "asc" | "desc"> }) => {
+      let rows = [...(table === "zones" ? store.zones : store.alarms)];
       if (opts?.where) {
         rows = rows.filter((row) =>
           Object.entries(opts.where ?? {}).every(([key, value]) => row[key] === value),
         );
+      }
+      if (opts?.orderBy) {
+        const [key, dir] = Object.entries(opts.orderBy)[0] ?? [];
+        if (key) {
+          rows.sort((a, b) => {
+            const av = a[key];
+            const bv = b[key];
+            const cmp = typeof av === "number" && typeof bv === "number"
+              ? av - bv
+              : String(av ?? "").localeCompare(String(bv ?? ""));
+            return dir === "desc" ? -cmp : cmp;
+          });
+        }
       }
       return typeof opts?.limit === "number" ? rows.slice(0, opts.limit) : rows;
     }),
@@ -244,7 +257,7 @@ describe("Clock app", () => {
     expect(screen.getByRole("button", { name: /remove zone/i })).toBeTruthy();
   });
 
-  it("rings alarms while another tab is active, disables one-shot alarms, and snoozes", async () => {
+  it("rings alarms while another tab is active and does not re-ring snoozed one-shot alarms", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
     const db = installMatrixDb({
@@ -272,7 +285,26 @@ describe("Clock app", () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
     });
 
-    expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /snooze/i })).toBeNull();
+  });
+
+  it("renders alarms in bridge order by time", async () => {
+    installMatrixDb({
+      zones: [],
+      alarms: [
+        { id: "alarm-late", time: "09:00", label: "Late", repeat: "", enabled: true },
+        { id: "alarm-early", time: "06:00", label: "Early", repeat: "", enabled: true },
+      ],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("tab", { name: /alarms/i }));
+
+    const toggles = await screen.findAllByRole("switch");
+    expect(toggles.map((toggle) => toggle.getAttribute("aria-label"))).toEqual([
+      "Disable alarm 06:00",
+      "Disable alarm 09:00",
+    ]);
   });
 
   it("clears snoozed alarms when they are disabled", async () => {

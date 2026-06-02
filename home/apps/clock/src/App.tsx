@@ -666,8 +666,11 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     const dueSnooze = snoozedRef.current.find((entry) => now.getTime() >= entry.dueAt);
     if (dueSnooze) {
       snoozedRef.current = snoozedRef.current.filter((entry) => entry !== dueSnooze);
-      queueRing(dueSnooze.alarm);
-      beep(3);
+      const currentAlarm = alarms.find((alarm) => alarm.id === dueSnooze.alarm.id);
+      if (currentAlarm?.enabled) {
+        queueRing(currentAlarm);
+        beep(3);
+      }
     }
 
     const key = alarmMinuteKey(now);
