@@ -644,14 +644,18 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     setRingQueue(rest);
   }, [ringQueue, ringing]);
 
-  const persistAlarmEnabled = useCallback(
-    async (alarm: AlarmModel, enabled: boolean, next: AlarmModel[]) => {
+  const persistAutoDisabledAlarms = useCallback(
+    async (disabledAlarms: AlarmModel[], next: AlarmModel[]) => {
       if (!window.MatrixOS?.db) {
         await persistLocal(next);
         return;
       }
       try {
-        await window.MatrixOS.db.update(ALARMS_TABLE, alarm.id, { enabled });
+        await Promise.all(
+          disabledAlarms.map((alarm) =>
+            window.MatrixOS!.db!.update(ALARMS_TABLE, alarm.id, { enabled: false }),
+          ),
+        );
       } catch (err: unknown) {
         console.warn("[clock] alarm auto-disable failed:", err instanceof Error ? err.message : String(err));
         setError("Alarm could not be updated.");
@@ -674,6 +678,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     }
 
     const key = alarmMinuteKey(now);
+    const oneShotAlarmsToDisable: AlarmModel[] = [];
     for (const alarm of alarms) {
       const guard = `${alarm.id}@${key}`;
       if (firedRef.current.has(guard)) continue;
@@ -685,13 +690,17 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         queueRing(alarm);
         beep(3);
         if (alarm.repeat.length === 0) {
-          const next = alarms.map((a) => (a.id === alarm.id ? { ...a, enabled: false } : a));
-          setAlarms(next);
-          void persistAlarmEnabled(alarm, false, next);
+          oneShotAlarmsToDisable.push(alarm);
         }
       }
     }
-  }, [alarms, now, persistAlarmEnabled, queueRing]);
+    if (oneShotAlarmsToDisable.length > 0) {
+      const disabledIds = new Set(oneShotAlarmsToDisable.map((alarm) => alarm.id));
+      const next = alarms.map((alarm) => (disabledIds.has(alarm.id) ? { ...alarm, enabled: false } : alarm));
+      setAlarms(next);
+      void persistAutoDisabledAlarms(oneShotAlarmsToDisable, next);
+    }
+  }, [alarms, now, persistAutoDisabledAlarms, queueRing]);
 
   const addAlarm = useCallback(async () => {
     const draft: AlarmModel = {

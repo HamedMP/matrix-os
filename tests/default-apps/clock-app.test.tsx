@@ -336,6 +336,41 @@ describe("Clock app", () => {
     expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
   });
 
+  it("disables all same-minute one-shot alarms when using bridge storage", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
+    const bridgeData = new Map<string, unknown>([
+      [
+        "clock.alarms",
+        [
+          { id: "alarm-1", time: "07:00", label: "Morning", repeat: "", enabled: true },
+          { id: "alarm-2", time: "07:00", label: "Standup", repeat: "", enabled: true },
+        ],
+      ],
+    ]);
+    const bridge = installMatrixDataBridge(bridgeData);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getAllByText("Synced to device storage")).not.toHaveLength(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+    });
+
+    const lastWrite = bridge.writeData.mock.calls.at(-1);
+    expect(lastWrite?.[0]).toBe("clock.alarms");
+    expect(lastWrite?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "alarm-1", enabled: false }),
+        expect.objectContaining({ id: "alarm-2", enabled: false }),
+      ]),
+    );
+  });
+
   it("renders alarms in bridge order by time", async () => {
     installMatrixDb({
       zones: [],
