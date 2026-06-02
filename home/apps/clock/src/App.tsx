@@ -46,6 +46,7 @@ import {
 const ZONES_TABLE = "zones";
 const ALARMS_TABLE = "alarms";
 const SNOOZE_MS = 5 * 60_000;
+const MAX_BEEPED_TIMERS = 200;
 
 type TabId = "world" | "alarms" | "timers" | "stopwatch";
 
@@ -390,6 +391,10 @@ function WorldClock({ now }: { now: Date }) {
       const fromIdx = zones.findIndex((z) => z.id === fromId);
       const toIdx = zones.findIndex((z) => z.id === toId);
       if (fromIdx < 0 || toIdx < 0) return;
+      if (window.MatrixOS?.db && zones.some((zone) => zone.id.startsWith("local-"))) {
+        setError("Wait for the city to finish saving before reordering.");
+        return;
+      }
       const next = [...zones];
       const [moved] = next.splice(fromIdx, 1);
       next.splice(toIdx, 0, moved);
@@ -589,6 +594,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
   const [draftLabel, setDraftLabel] = useState("");
   const [draftDays, setDraftDays] = useState<WeekDay[]>([]);
   const [ringing, setRinging] = useState<AlarmModel | null>(null);
+  const [ringQueue, setRingQueue] = useState<AlarmModel[]>([]);
   const firedRef = useRef<Set<string>>(new Set());
   const snoozedRef = useRef<Array<{ alarm: AlarmModel; dueAt: number }>>([]);
   const persistenceLabel = storageLabel();
@@ -621,6 +627,23 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     );
   }, []);
 
+  const queueRing = useCallback((alarm: AlarmModel) => {
+    setRingQueue((current) => current.some((queued) => queued.id === alarm.id) ? current : [...current, alarm]);
+  }, []);
+
+  const clearAlarmRuntime = useCallback((alarmId: string) => {
+    snoozedRef.current = snoozedRef.current.filter((entry) => entry.alarm.id !== alarmId);
+    setRingQueue((current) => current.filter((alarm) => alarm.id !== alarmId));
+    setRinging((current) => current?.id === alarmId ? null : current);
+  }, []);
+
+  useEffect(() => {
+    if (ringing || ringQueue.length === 0) return;
+    const [next, ...rest] = ringQueue;
+    setRinging(next);
+    setRingQueue(rest);
+  }, [ringQueue, ringing]);
+
   const persistAlarmEnabled = useCallback(
     async (alarm: AlarmModel, enabled: boolean, next: AlarmModel[]) => {
       if (!window.MatrixOS?.db) {
@@ -643,7 +666,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     const dueSnooze = snoozedRef.current.find((entry) => now.getTime() >= entry.dueAt);
     if (dueSnooze) {
       snoozedRef.current = snoozedRef.current.filter((entry) => entry !== dueSnooze);
-      setRinging(dueSnooze.alarm);
+      queueRing(dueSnooze.alarm);
       beep(3);
     }
 
@@ -656,7 +679,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         if (firedRef.current.size > 200) {
           firedRef.current = new Set([...firedRef.current].slice(-100));
         }
-        setRinging(alarm);
+        queueRing(alarm);
         beep(3);
         if (alarm.repeat.length === 0) {
           const next = alarms.map((a) => (a.id === alarm.id ? { ...a, enabled: false } : a));
@@ -665,7 +688,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         }
       }
     }
-  }, [alarms, now, persistAlarmEnabled]);
+  }, [alarms, now, persistAlarmEnabled, queueRing]);
 
   const addAlarm = useCallback(async () => {
     const draft: AlarmModel = {
@@ -706,6 +729,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
       const enabled = !alarm.enabled;
       const next = alarms.map((a) => (a.id === alarm.id ? { ...a, enabled } : a));
       setAlarms(next);
+      if (!enabled) clearAlarmRuntime(alarm.id);
       if (!window.MatrixOS?.db) {
         await persistLocal(next);
         return;
@@ -718,13 +742,14 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         void reload();
       }
     },
-    [alarms, persistLocal, reload],
+    [alarms, clearAlarmRuntime, persistLocal, reload],
   );
 
   const removeAlarm = useCallback(
     async (alarm: AlarmModel) => {
       const next = alarms.filter((a) => a.id !== alarm.id);
       setAlarms(next);
+      clearAlarmRuntime(alarm.id);
       if (!window.MatrixOS?.db) {
         await persistLocal(next);
         return;
@@ -737,7 +762,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         void reload();
       }
     },
-    [alarms, persistLocal, reload],
+    [alarms, clearAlarmRuntime, persistLocal, reload],
   );
 
   const snooze = useCallback(() => {
@@ -939,6 +964,9 @@ function Timers() {
     for (const timer of timers) {
       if (timer.done && !beepedTimersRef.current.has(timer.id)) {
         beepedTimersRef.current.add(timer.id);
+        if (beepedTimersRef.current.size > MAX_BEEPED_TIMERS) {
+          beepedTimersRef.current = new Set([...beepedTimersRef.current].slice(-100));
+        }
         beep(3);
       }
     }

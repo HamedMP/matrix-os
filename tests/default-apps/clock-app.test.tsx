@@ -170,6 +170,44 @@ describe("Clock app", () => {
     });
   });
 
+  it("does not persist reorders while a zone id is still optimistic", async () => {
+    const db = installMatrixDb({
+      zones: [{ id: "zone-london", tz: "Europe/London", position: 0 }],
+      alarms: [],
+    });
+    let resolveInsert: (() => void) | undefined;
+    db.insert.mockImplementation(async (table: string) => {
+      await new Promise<void>((resolve) => {
+        resolveInsert = resolve;
+      });
+      return { id: `${table}-saved` };
+    });
+    render(<App />);
+
+    expect(await screen.findByText(/london/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /add city/i }));
+    const search = await screen.findByPlaceholderText(/search cities/i);
+    fireEvent.change(search, { target: { value: "Tokyo" } });
+    const option = await screen.findByRole("option", { name: /tokyo/i });
+    fireEvent.click(option);
+
+    const tokyo = (await screen.findByText(/tokyo/i)).closest("li");
+    const london = (await screen.findByText(/london/i)).closest("li");
+    expect(tokyo).toBeTruthy();
+    expect(london).toBeTruthy();
+    if (!tokyo || !london) throw new Error("Expected zone rows to render");
+
+    fireEvent.dragStart(tokyo);
+    fireEvent.dragOver(london);
+    fireEvent.drop(london);
+
+    expect(db.bulkUpdate).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveInsert?.();
+      await Promise.resolve();
+    });
+  });
+
   it("uses the MatrixOS data bridge when app DB is unavailable", async () => {
     const bridge = installMatrixDataBridge();
     render(<App />);
@@ -235,6 +273,58 @@ describe("Clock app", () => {
     });
 
     expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
+  });
+
+  it("clears snoozed alarms when they are disabled", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
+    installMatrixDb({
+      zones: [],
+      alarms: [{ id: "alarm-1", time: "07:00", label: "Standup", repeat: "1", enabled: true }],
+    });
+
+    render(<App />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /snooze/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /alarms/i }));
+    fireEvent.click(screen.getByRole("switch", { name: /disable alarm 07:00/i }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+    });
+
+    expect(screen.queryByRole("button", { name: /snooze/i })).toBeNull();
+  });
+
+  it("queues alarms that fire in the same tick", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
+    installMatrixDb({
+      zones: [],
+      alarms: [
+        { id: "alarm-1", time: "07:00", label: "First", repeat: "", enabled: true },
+        { id: "alarm-2", time: "07:00", label: "Second", repeat: "", enabled: true },
+      ],
+    });
+
+    render(<App />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("First")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Second")).toBeTruthy();
   });
 
   it("shows feedback for invalid custom timer input", async () => {
