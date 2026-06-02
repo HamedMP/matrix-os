@@ -8,6 +8,7 @@ type DbRow = Record<string, unknown>;
 type ChessMockControls = {
   __setNextBoard(board: Record<string, { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" }>, turn?: "w" | "b"): void;
   __setNextCheckmate(value?: boolean): void;
+  __reset(): void;
   Chess: new () => { moves(opts: { square: string }): string[] };
 };
 
@@ -54,7 +55,9 @@ describe("Chess app", () => {
     ({ default: App } = await import("../../home/apps/games/chess/src/App"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { __reset } = await import("chess.js") as unknown as ChessMockControls;
+    __reset();
     vi.restoreAllMocks();
     vi.mocked(findBestMove).mockClear();
     Reflect.deleteProperty(window, "MatrixOS");

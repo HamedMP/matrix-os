@@ -39,6 +39,12 @@ export function __setNextCheckmate(value = true) {
   nextCheckmate = value;
 }
 
+export function __reset() {
+  nextBoardState = null;
+  nextTurnColor = "w";
+  nextCheckmate = false;
+}
+
 export class Chess {
   private boardState: Record<string, Piece>;
   private turnColor: Piece["color"];

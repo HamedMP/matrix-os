@@ -393,16 +393,17 @@ export default function App() {
   // resets or undoes while a search is queued.
   useEffect(() => {
     if (!aiToMove) return undefined;
+    let active = true;
     const runId = aiRunIdRef.current;
     setThinking(true);
     aiTimerRef.current = setTimeout(() => {
       aiTimerRef.current = null;
       // Bail if a reset/undo invalidated this run while it was queued.
-      if (aiRunIdRef.current !== runId) return;
+      if (!active || aiRunIdRef.current !== runId) return;
       const cfg = aiConfigRef.current;
       try {
         const best = findBestMove(gameRef.current as unknown as ChessLike, DIFFICULTY_DEPTH[cfg.difficulty]);
-        if (aiRunIdRef.current !== runId) return;
+        if (!active || aiRunIdRef.current !== runId) return;
         if (best) {
           applyMove(best.from, best.to, best.promotion);
         } else {
@@ -411,16 +412,17 @@ export default function App() {
           setError("The computer could not find a move. Continuing as local two-player.");
         }
       } catch (err: unknown) {
-        if (aiRunIdRef.current !== runId) return;
+        if (!active || aiRunIdRef.current !== runId) return;
         console.warn("[chess] AI search failed:", err instanceof Error ? err.message : String(err));
         setMode("two-player");
         setSaveState("error");
         setError("The computer could not find a move. Continuing as local two-player.");
       } finally {
-        if (aiRunIdRef.current === runId) setThinking(false);
+        if (active && aiRunIdRef.current === runId) setThinking(false);
       }
     }, 220);
     return () => {
+      active = false;
       if (aiTimerRef.current !== null) {
         clearTimeout(aiTimerRef.current);
         aiTimerRef.current = null;
