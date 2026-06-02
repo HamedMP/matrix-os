@@ -205,22 +205,48 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [keepPlaying, setKeepPlaying] = useState(false);
   const dbRowId = useRef<string | null>(null);
-  const dbRowInsertRef = useRef<Promise<string> | null>(null);
+  const scoreRowEnsureRef = useRef<Promise<string> | null>(null);
   const dbInitialLoadRef = useRef<Promise<void> | null>(null);
   const pendingBestRef = useRef(0);
+  const latestScoreRef = useRef(0);
   const boardRef = useRef<HTMLDivElement | null>(null);
+  latestScoreRef.current = state.score;
+
+  const ensureScoreRow = useCallback(async (db: MatrixOSDb, scoreHint: number): Promise<string> => {
+    if (dbRowId.current) return dbRowId.current;
+    if (dbInitialLoadRef.current) {
+      await dbInitialLoadRef.current;
+    }
+    if (dbRowId.current) return dbRowId.current;
+    if (!scoreRowEnsureRef.current) {
+      scoreRowEnsureRef.current = db.insert(SCORES_TABLE, {
+        score: Math.max(scoreHint, latestScoreRef.current),
+        best: Math.max(pendingBestRef.current, latestScoreRef.current),
+        created_at: new Date().toISOString(),
+      })
+        .then((res) => {
+          dbRowId.current = res.id;
+          return res.id;
+        })
+        .finally(() => {
+          scoreRowEnsureRef.current = null;
+        });
+    }
+    return scoreRowEnsureRef.current;
+  }, []);
 
   const persistScore = useCallback((score: number) => {
     const db = window.MatrixOS?.db;
-    if (!db || !dbRowId.current) return;
+    if (!db) return;
     (async () => {
       try {
-        await db.update(SCORES_TABLE, dbRowId.current as string, { score });
+        const id = await ensureScoreRow(db, score);
+        await db.update(SCORES_TABLE, id, { score: Math.max(score, latestScoreRef.current) });
       } catch (err) {
         console.warn("[2048] failed to update current score", err);
       }
     })();
-  }, []);
+  }, [ensureScoreRow]);
 
   // ---- Load best score: DB first, localStorage fallback -------------------
   useEffect(() => {
@@ -288,6 +314,7 @@ export default function App() {
             const row = rows[0];
             if (row) {
               dbRowId.current = (row.id as string) ?? dbRowId.current;
+              pendingBestRef.current = Math.max(pendingBestRef.current, Number(row.best) || 0);
               setBest((prev) => Math.max(prev, Number(row.best) || 0));
               setError(null);
             }
@@ -319,36 +346,18 @@ export default function App() {
     pendingBestRef.current = Math.max(pendingBestRef.current, newBest);
     (async () => {
       try {
-        if (!dbRowId.current && dbInitialLoadRef.current) {
-          await dbInitialLoadRef.current;
-        }
-        if (dbRowId.current) {
-          await db.update(SCORES_TABLE, dbRowId.current, { best: Math.max(newBest, pendingBestRef.current) });
-        } else {
-          if (!dbRowInsertRef.current) {
-            dbRowInsertRef.current = db.insert(SCORES_TABLE, {
-              score: newBest,
-              best: pendingBestRef.current,
-              created_at: new Date().toISOString(),
-            })
-              .then((res) => {
-                if (!dbRowId.current) dbRowId.current = res.id;
-                return res.id;
-              })
-              .finally(() => {
-                dbRowInsertRef.current = null;
-              });
-          }
-          const id = await dbRowInsertRef.current;
-          await db.update(SCORES_TABLE, dbRowId.current ?? id, { best: Math.max(newBest, pendingBestRef.current) });
-        }
+        const id = await ensureScoreRow(db, newBest);
+        await db.update(SCORES_TABLE, id, {
+          score: latestScoreRef.current,
+          best: Math.max(newBest, pendingBestRef.current),
+        });
         setError(null);
       } catch (err) {
         console.warn("[2048] failed to persist best score", err);
         setError("Best score saved locally; sync failed.");
       }
     })();
-  }, []);
+  }, [ensureScoreRow]);
 
   // Update best whenever current score beats it.
   useEffect(() => {

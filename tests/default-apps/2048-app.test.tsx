@@ -173,6 +173,40 @@ describe("2048 app", () => {
     await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
   });
 
+  it("creates the initial DB score row with the latest early-move score", async () => {
+    const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
+    vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);
+    const db = installMatrixDb([]);
+    let resolveFind: (rows: DbRow[]) => void = () => undefined;
+    db.find.mockImplementation(async () => new Promise<DbRow[]>((resolve) => {
+      resolveFind = resolve;
+    }));
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.insert).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveFind([]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(db.insert).toHaveBeenCalledWith(
+        "scores",
+        expect.objectContaining({ score: 4, best: 4 }),
+      ),
+    );
+  });
+
   it("waits for the initial score row before persisting an early best", async () => {
     const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
     vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);
