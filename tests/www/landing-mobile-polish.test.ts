@@ -23,4 +23,13 @@ describe("www landing mobile polish", () => {
     expect(landing).not.toContain("grid-template-columns: minmax(0, 1fr) auto");
     expect(landing).not.toContain("justify-content: space-between");
   });
+
+  it("keeps the agent setup links in a compact two-column row on phones", async () => {
+    const landing = await readRepoFile("www/src/app/page.tsx");
+
+    expect(landing).toContain('aria-label="Agent setup resources"');
+    expect(landing).toContain("grid grid-cols-2");
+    expect(landing).toContain("Open skills.md");
+    expect(landing).toContain("Developer workflow");
+  });
 });
