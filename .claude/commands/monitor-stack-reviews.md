@@ -98,6 +98,12 @@ final human review.
      `git diff --check`; for backend, shell, shared behavior, or scanner-hit
      classes, run the relevant typecheck and `bun run check:patterns` or report
      the exact reason a broad gate was skipped.
+   - If any React `.tsx` or `.jsx` file changed, run
+     `npx react-doctor@latest <project-dir>` for each affected React project
+     directory that has a `package.json` (for example, `shell`, `packages/ui`,
+     `www`, or the specific app directory). Do not pass individual files to
+     react-doctor. Resolve findings before committing, or report the exact
+     reason the gate could not run.
    - Use Graphite to sync, restack, and submit updates:
      `gt sync`, `gt restack`, and `gt submit --stack --no-edit --no-ai`.
      Run `gt restack` after any `gt modify` that touches a layer below the
