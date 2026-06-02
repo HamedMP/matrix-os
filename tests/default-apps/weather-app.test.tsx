@@ -200,6 +200,18 @@ describe("Weather app", () => {
     expect(payload).toMatchObject({ name: "Berlin", latitude: 52.52, longitude: 13.405 });
     expect(typeof payload.created_at).toBe("string");
     expect(Number.isNaN(Date.parse(payload.created_at as string))).toBe(false);
+
+    db.insert.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /add location/i }));
+    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "Berlin" } });
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("search-result")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("search-result"));
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("location-item")).toHaveLength(1);
   });
 
   it("rolls back optimistic add when DB insert fails", async () => {
@@ -273,7 +285,7 @@ describe("Weather app", () => {
     expect(String(stored[0].id ?? "")).not.toMatch(/^local-/);
   });
 
-  it("does not persist optimistic local ids when adding fallback locations repeatedly", async () => {
+  it("does not persist duplicates or optimistic local ids when adding fallback locations repeatedly", async () => {
     const bridge = installMatrixDataBridge();
     globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
 
@@ -310,7 +322,33 @@ describe("Weather app", () => {
         ([key]) => key === "matrix-weather-locations",
       );
       const stored = writes.at(-1)?.[1] as Array<Record<string, unknown>> | undefined;
-      expect(stored?.length).toBe(2);
+      expect(stored?.length).toBe(1);
+      expect(stored?.some((loc) => String(loc.id ?? "").startsWith("local-"))).toBe(false);
+    });
+  });
+
+  it("strips optimistic local ids when removing fallback locations", async () => {
+    const bridge = installMatrixDataBridge(new Map<string, unknown>([[
+      "matrix-weather-locations",
+      [
+        { id: "local-stale", name: "Paris", latitude: 48.8566, longitude: 2.3522 },
+        { id: "stored-berlin", name: "Berlin", latitude: 52.52, longitude: 13.405, is_default: true },
+      ],
+    ]]));
+    globalThis.fetch = mockFetchOk() as unknown as typeof fetch;
+
+    render(<App />);
+    await vi.waitFor(() => {
+      expect(screen.getAllByText("Berlin").length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /remove berlin/i }));
+
+    await vi.waitFor(() => {
+      const writes = bridge.writeData.mock.calls.filter(
+        ([key]) => key === "matrix-weather-locations",
+      );
+      const stored = writes.at(-1)?.[1] as Array<Record<string, unknown>> | undefined;
+      expect(stored).toEqual([expect.objectContaining({ name: "Paris" })]);
       expect(stored?.some((loc) => String(loc.id ?? "").startsWith("local-"))).toBe(false);
     });
   });

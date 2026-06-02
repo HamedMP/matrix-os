@@ -75,6 +75,24 @@ function locationKey(loc: SavedLocation): string {
   return loc.id ?? `${loc.name}:${loc.latitude}:${loc.longitude}`;
 }
 
+function sameCoordinates(a: Pick<SavedLocation, "latitude" | "longitude">, b: Pick<SavedLocation, "latitude" | "longitude">): boolean {
+  return a.latitude === b.latitude && a.longitude === b.longitude;
+}
+
+function stripLocalId(loc: SavedLocation): SavedLocation {
+  if (!loc.id?.startsWith("local-")) return loc;
+  return {
+    name: loc.name,
+    latitude: loc.latitude,
+    longitude: loc.longitude,
+    is_default: loc.is_default,
+  };
+}
+
+function storedLocations(locations: SavedLocation[]): SavedLocation[] {
+  return locations.map(stripLocalId);
+}
+
 function sameLocations(a: SavedLocation[], b: SavedLocation[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((loc, index) => {
@@ -112,6 +130,7 @@ export default function App() {
     if (!db) {
       const stored = await readStoredLocations();
       setLocations((current) => (sameLocations(current, stored) ? current : stored));
+      setError(null);
       return;
     }
     try {
@@ -122,6 +141,7 @@ export default function App() {
         .filter((l): l is SavedLocation => l !== null)
         .filter((l) => !pending.includes(locationKey(l)));
       setLocations((current) => (sameLocations(current, parsed) ? current : parsed));
+      setError(null);
     } catch (err: unknown) {
       console.warn("[weather] location load failed:", errMsg(err));
       setError("Saved locations could not be loaded.");
@@ -248,6 +268,15 @@ export default function App() {
   const addLocation = useCallback(
     async (geo: GeoResult) => {
       const previousActiveId = activeId;
+      const duplicate = locations.find((loc) => sameCoordinates(loc, geo));
+      if (duplicate) {
+        setActiveId(duplicate.id ?? duplicate.name);
+        setSearchOpen(false);
+        setQuery("");
+        setResults([]);
+        setSearchError(null);
+        return;
+      }
       const label = geo.admin1 && geo.admin1 !== geo.name ? `${geo.name}, ${geo.admin1}` : geo.name;
       const candidate: SavedLocation = {
         name: label,
@@ -266,7 +295,8 @@ export default function App() {
       const db = window.MatrixOS?.db;
       if (!db) {
         const existing = await readStoredLocations();
-        await writeAppData(LOCATIONS_KEY, [...existing, candidate]);
+        await writeAppData(LOCATIONS_KEY, storedLocations([...existing, candidate]));
+        setError(null);
         return;
       }
       try {
@@ -283,6 +313,7 @@ export default function App() {
         );
         setActiveId(id);
         await reloadLocations();
+        setError(null);
       } catch (err: unknown) {
         console.warn("[weather] location save failed:", errMsg(err));
         setError("Location could not be saved.");
@@ -303,8 +334,9 @@ export default function App() {
       setLocations(remaining);
       const db = window.MatrixOS?.db;
       if (!db) {
-        await writeAppData(LOCATIONS_KEY, remaining);
+        await writeAppData(LOCATIONS_KEY, storedLocations(remaining));
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+        setError(null);
         return;
       }
       if (!loc.id || loc.id.startsWith("local-")) {
@@ -315,6 +347,7 @@ export default function App() {
         await db.delete(LOCATIONS_TABLE, loc.id);
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         await reloadLocations();
+        setError(null);
       } catch (err: unknown) {
         pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
         console.warn("[weather] location delete failed:", errMsg(err));
