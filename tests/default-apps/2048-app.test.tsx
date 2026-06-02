@@ -109,6 +109,28 @@ describe("2048 app", () => {
     expect(survivor).toMatchObject({ id: 3, value: 4, merged: false });
   });
 
+  it("keeps same-value survivor identities within their slide line", () => {
+    const tiles = tilesFromBoard(
+      [
+        [2, 2, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+      ],
+      [
+        { id: 1, value: 2, row: 3, col: 0 },
+        { id: 2, value: 2, row: 0, col: 1 },
+      ],
+      null,
+      new Set(),
+      new Set(),
+      "up",
+    );
+
+    expect(tiles.find((tile) => tile.row === 0 && tile.col === 0)).toMatchObject({ id: 1 });
+    expect(tiles.find((tile) => tile.row === 0 && tile.col === 1)).toMatchObject({ id: 2 });
+  });
+
   it("does not mark unmatched fallback tiles as merged", () => {
     const tiles = tilesFromBoard(
       [

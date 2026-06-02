@@ -84,6 +84,7 @@ export function tilesFromBoard(
   spawned: { row: number; col: number; value: number } | null = null,
   mergedCells = new Set<string>(),
   consumedCells = new Set<string>(),
+  direction?: Direction,
 ): Tile[] {
   const tiles: Tile[] = [];
   const used = new Set(
@@ -102,12 +103,27 @@ export function tilesFromBoard(
           tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: true });
           continue;
         }
+        const lineMatch = direction
+          ? previous
+            .filter((tile) =>
+              tile.value === board[r][c] &&
+              !used.has(tile.id) &&
+              (direction === "left" || direction === "right" ? tile.row === r : tile.col === c),
+            )
+            .sort((a, b) => (direction === "left" || direction === "right" ? a.col - b.col : a.row - b.row))[0]
+          : null;
         const match = previous
           .filter((tile) => tile.value === board[r][c] && !used.has(tile.id))
-          .sort((a, b) => Math.abs(a.row - r) + Math.abs(a.col - c) - (Math.abs(b.row - r) + Math.abs(b.col - c)))[0];
-        if (match) {
-          used.add(match.id);
-          tiles.push({ ...match, row: r, col: c, spawned: false, merged: false });
+          .sort((a, b) => {
+            const distance = Math.abs(a.row - r) + Math.abs(a.col - c) - (Math.abs(b.row - r) + Math.abs(b.col - c));
+            if (distance !== 0) return distance;
+            if (a.row !== b.row) return a.row - b.row;
+            return a.col - b.col;
+          })[0];
+        const resolved = lineMatch ?? match;
+        if (resolved) {
+          used.add(resolved.id);
+          tiles.push({ ...resolved, row: r, col: c, spawned: false, merged: false });
         } else {
           tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: false });
         }
@@ -163,7 +179,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const nextBoard = spawn.board;
       const nextScore = state.score + result.gained;
       const animationCells = animationCellsForMove(state.board, action.direction);
-      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned, animationCells.merged, animationCells.consumed);
+      const tiles = tilesFromBoard(nextBoard, state.tiles, spawn.spawned, animationCells.merged, animationCells.consumed, action.direction);
 
       return {
         board: nextBoard,
@@ -285,9 +301,15 @@ export default function App() {
         const row = rows[0];
         if (row) {
           const loadedBest = Number(row.best) || 0;
-          dbRowId.current = (row.id as string) ?? null;
+          const rowId = (row.id as string) ?? null;
+          dbRowId.current = rowId;
           pendingBestRef.current = Math.max(pendingBestRef.current, loadedBest);
           setBest((prev) => Math.max(prev, loadedBest));
+          if (rowId && latestScoreRef.current === 0) {
+            void db.update(SCORES_TABLE, rowId, { score: 0 }).catch((err) => {
+              console.warn("[2048] failed to sync loaded score row", err);
+            });
+          }
         } else {
           fromLocal();
         }
@@ -351,9 +373,11 @@ export default function App() {
     const db = window.MatrixOS?.db;
     if (!db) return;
     pendingBestRef.current = Math.max(pendingBestRef.current, newBest);
+    const session = sessionRef.current;
     (async () => {
       try {
         const id = await ensureScoreRow(db, newBest);
+        if (session !== sessionRef.current) return;
         await db.update(SCORES_TABLE, id, {
           score: latestScoreRef.current,
           best: Math.max(newBest, pendingBestRef.current),
