@@ -3,6 +3,7 @@ import {
   buildDaily,
   buildHourly,
   coerceLocation,
+  dailyTemperatureBar,
   demoForecast,
   formatDay,
   formatHour,
@@ -136,6 +137,16 @@ describe("buildDaily + tempSpan", () => {
     const span = tempSpan(buildDaily(FORECAST));
     expect(span.min).toBe(9);
     expect(span.max).toBe(24);
+  });
+
+  it("keeps minimum daily bar width inside the track", () => {
+    const bar = dailyTemperatureBar(
+      { date: "2026-06-03", highC: 39, lowC: 38, code: 0 },
+      { min: 25, max: 39 },
+    );
+    expect(bar.width).toBe(8);
+    expect(bar.left + bar.width).toBeLessThanOrEqual(100);
+    expect(bar.left).toBe(92);
   });
 });
 

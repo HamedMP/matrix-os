@@ -12,6 +12,7 @@ import {
   buildDaily,
   buildHourly,
   coerceLocation,
+  dailyTemperatureBar,
   DEMO_LOCATION,
   demoForecast,
   formatDay,
@@ -577,9 +578,7 @@ export default function App() {
               <h3 className="panel__title">7-day forecast</h3>
               <div className="daily-list" data-testid="daily-list">
                 {daily.map((d) => {
-                  const range = span.max - span.min || 1;
-                  const left = ((d.lowC - span.min) / range) * 100;
-                  const width = ((d.highC - d.lowC) / range) * 100;
+                  const bar = dailyTemperatureBar(d, span);
                   return (
                     <div className="daily-row" data-testid="daily-row" key={d.date}>
                       <span className="daily-row__day">{formatDay(d.date, nowIso)}</span>
@@ -590,7 +589,7 @@ export default function App() {
                       <span className="daily-row__bar">
                         <span
                           className="daily-row__bar-fill"
-                          style={{ left: `${left}%`, width: `${Math.max(8, width)}%` }}
+                          style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
                         />
                       </span>
                       <span className="daily-row__high">{formatTemp(d.highC, unit)}</span>

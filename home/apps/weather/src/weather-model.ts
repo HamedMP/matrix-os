@@ -294,6 +294,18 @@ export function tempSpan(days: DayPoint[]): { min: number; max: number } {
   return { min, max };
 }
 
+/** Compute a bounded range-bar position for daily high/low temperatures. */
+export function dailyTemperatureBar(day: DayPoint, span: { min: number; max: number }): { left: number; width: number } {
+  const range = span.max - span.min || 1;
+  const rawLeft = ((day.lowC - span.min) / range) * 100;
+  const rawWidth = ((day.highC - day.lowC) / range) * 100;
+  const width = Math.min(100, Math.max(8, rawWidth));
+  return {
+    left: Math.min(100 - width, Math.max(0, rawLeft)),
+    width,
+  };
+}
+
 export interface SavedLocation {
   id?: string;
   name: string;
