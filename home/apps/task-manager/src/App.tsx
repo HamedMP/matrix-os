@@ -270,7 +270,8 @@ function App() {
       const bridge = db();
       if (!bridge) return;
       const persistedCardId = await resolveCardId(cardId);
-      const liveCard = boardRef.current?.cards.find((card) => card.id === cardId);
+      const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+        ?? boardRef.current?.cards.find((card) => card.id === cardId);
       const rowCard = liveCard
         ? { ...updated, columnId: liveCard.columnId, order: liveCard.order }
         : updated;

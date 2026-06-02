@@ -309,6 +309,18 @@ describe("Task Manager app", () => {
         }),
       ),
     );
+    const cardUpdates = db.update.mock.calls.filter(
+      (call) => call[0] === "cards" && call[1] === "cards-created",
+    );
+    expect(cardUpdates.at(-1)?.[2]).toMatchObject({
+      column_id: "col-2",
+      position: 0,
+    });
+    expect(store.cards.find((card) => card.id === "cards-created")).toMatchObject({
+      title: "Moved card",
+      column_id: "col-2",
+      position: 0,
+    });
   });
 
   it("persists a card created in a new column with the resolved DB column id", async () => {
