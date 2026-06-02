@@ -98,15 +98,16 @@ final human review.
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
      after fresh current-head Greptile reviews return `5/5`.
    - Before staging, inspect `git status --short --branch` and stage only files
-     belonging to the owning branch's fix. Prefer an explicit path-limited
-     `git add <paths>` followed by `gt modify` or
+     belonging to the owning branch's fix with explicit paths:
+     `git add <paths>`. Then run `gt modify` or
      `gt modify --commit --message "<conventional commit>"`. Staged-only is the
-     default Graphite modify behavior; do not pass a `--staged` flag. Use `--all`
-     only after confirming the worktree contains no unrelated changes.
+     default Graphite modify behavior; do not pass a `--staged` flag, and do not
+     use `--all` in this workflow.
    - Run the narrow relevant tests after the fix. Before submitting, also run
-     `git diff --check`; for backend, shell, shared behavior, or scanner-hit
-     classes, run the relevant typecheck and `bun run check:patterns` or report
-     the exact reason a broad gate was skipped.
+     `git diff --check`, `bun run typecheck`, `bun run check:patterns`, and
+     `bun run test`. If an external outage or existing repo-wide blocker makes a
+     mandatory gate impossible to complete, stop and report the exact blocker
+     instead of submitting.
    - If any React `.tsx` or `.jsx` file changed, run
      `npx react-doctor@latest <project-dir>` for each affected React project
      directory that has a `package.json` (for example, `shell`, `packages/ui`,
