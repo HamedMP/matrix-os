@@ -34,7 +34,7 @@
   "apps/games/backgammon/index.html": "c99ae8f3cd68ea93da15f9d5c083d44322c21afdb3de97ae25c31cc887d2e2d1",
   "apps/games/backgammon/matrix.json": "d4511a2eb829ecc19bf912c9c458c57062a353f3c334612138c38f87577b26b2",
   "apps/games/chess/index.html": "6a29bb619257b55485ff6a300dee6415b62a580da74933fc8f478af524acc8a5",
-  "apps/games/chess/matrix.json": "84fa73cefa8364634e731e7227dc1510a803fc6d61b20b54da79af7fcb00a8ac",
+  "apps/games/chess/matrix.json": "6508cf470d3f11ef1367fa8a1383641c04b6638c67eb55308f8dac09ef84a735",
   "apps/games/index.html": "5f41943bf1244390ca1ac78ea1bd647eb1fd680ab8cdae27e2738c170b456153",
   "apps/games/matrix.json": "b4e01e0780cb5d5bfbd742dcd9c350cf65c7d99ced8711c6569a995d65b12a8e",
   "apps/games/minesweeper/index.html": "14c82d3a7f7d83fff9029a3d14a7af42c5a19dea1e11d85362da0cea1e6a430f",
@@ -112,4 +112,3 @@
   "apps/_shared/default-apps.tsx": "10f6a540ac219424769732b5952b586bcc0029674915eb22af7bb1b5cc9864d9",
   "apps/_shared/theme.css": "382355577a00e4744b823fda818f1c4cdb40d782609eb90adc9950492bccaa5b"
 }
-
