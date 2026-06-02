@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   ArrowUpRight,
@@ -74,6 +75,15 @@ const STICKY_FILL = "#FFE9A8";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+const MODAL_FOCUS_SELECTOR = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "a[href]",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
 interface ToolDef {
   kind: ToolKind;
   label: string;
@@ -120,6 +130,48 @@ function reduceMotion(): boolean {
   } catch {
     return false;
   }
+}
+
+function ModalDialog({ label, children }: { label: string; children: ReactNode }) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const first = cardRef.current?.querySelector<HTMLElement>(MODAL_FOCUS_SELECTOR);
+    first?.focus();
+  }, []);
+
+  return (
+    <div className="wb-modal" role="dialog" aria-modal="true" aria-label={label}>
+      <div
+        ref={cardRef}
+        className="wb-modal__card"
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const card = cardRef.current;
+          if (!card) return;
+          const focusable = Array.from(card.querySelectorAll<HTMLElement>(MODAL_FOCUS_SELECTOR)).filter(
+            (element) => element.tabIndex !== -1,
+          );
+          if (focusable.length === 0) {
+            event.preventDefault();
+            return;
+          }
+          const active = document.activeElement;
+          const activeIndex = focusable.findIndex((element) => element === active);
+          event.preventDefault();
+          if (event.shiftKey) {
+            const previousIndex = activeIndex <= 0 ? focusable.length - 1 : activeIndex - 1;
+            focusable[previousIndex]?.focus();
+            return;
+          }
+          const nextIndex = activeIndex < 0 || activeIndex === focusable.length - 1 ? 0 : activeIndex + 1;
+          focusable[nextIndex]?.focus();
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
 }
 
 const LOCAL_BOARD_ID = "__local__";
@@ -1084,8 +1136,7 @@ export default function App() {
       </div>
 
       {confirmClear && (
-        <div className="wb-modal" role="dialog" aria-modal="true" aria-label="Clear board">
-          <div className="wb-modal__card">
+        <ModalDialog label="Clear board">
             <h3>Clear the whole board?</h3>
             <p>This removes every element. You can undo right after.</p>
             <div className="wb-modal__actions">
@@ -1096,13 +1147,11 @@ export default function App() {
                 Clear board
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       )}
 
       {confirmDelete && (
-        <div className="wb-modal" role="dialog" aria-modal="true" aria-label="Delete board">
-          <div className="wb-modal__card">
+        <ModalDialog label="Delete board">
             <h3>Delete “{confirmDelete.name}”?</h3>
             <p>This permanently removes the board and everything on it. This cannot be undone.</p>
             <div className="wb-modal__actions">
@@ -1117,8 +1166,7 @@ export default function App() {
                 Delete board
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       )}
     </div>
   );
@@ -1347,6 +1395,13 @@ function BoardSidebar(props: BoardSidebarProps) {
     open, boards, activeId, renaming,
     onSelect, onNew, onStartRename, onRenameChange, onCommitRename, onCancelRename, onRequestDelete,
   } = props;
+  const activeItemRef = useRef<HTMLLIElement | null>(null);
+
+  useEffect(() => {
+    if (!open || !activeId) return;
+    activeItemRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeId, open]);
+
   if (!open) return null;
   return (
     <aside className="wb-sidebar" aria-label="Boards">
@@ -1370,7 +1425,11 @@ function BoardSidebar(props: BoardSidebarProps) {
             const active = b.id === activeId;
             const isRenaming = renaming?.id === b.id;
             return (
-              <li key={b.id} className={active ? "wb-boarditem wb-boarditem--active" : "wb-boarditem"}>
+              <li
+                key={b.id}
+                ref={active ? activeItemRef : undefined}
+                className={active ? "wb-boarditem wb-boarditem--active" : "wb-boarditem"}
+              >
                 {isRenaming ? (
                   <RenameInput
                     value={renaming.value}

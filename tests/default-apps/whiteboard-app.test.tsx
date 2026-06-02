@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/whiteboard/src/App";
@@ -347,6 +347,39 @@ describe("Whiteboard app — multi-board files", () => {
     // the toolbar, so use getAllByText for the active one).
     expect(screen.getByText("Sprint plan")).toBeTruthy();
     expect(screen.getAllByText("Wireframe").length).toBeGreaterThan(0);
+  });
+
+  it("scrolls the active board into view after selection", async () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+      board("b2", "Wireframe", "2026-03-03T00:00:00.000Z"),
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    scrollIntoView.mockClear();
+
+    const sprintButton = screen.getByText("Sprint plan").closest("button");
+    if (!sprintButton) throw new Error("Expected Sprint plan board button");
+    fireEvent.click(sprintButton);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    if (originalScrollIntoView) {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    } else {
+      Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    }
   });
 
   it("creates a new board via db.insert when New board is clicked", async () => {
@@ -955,6 +988,34 @@ describe("Whiteboard app — multi-board files", () => {
 
     expect(screen.getByText("Could not delete the board.")).toBeTruthy();
     expect(screen.getByRole("dialog", { name: /delete board/i })).toBeTruthy();
+  });
+
+  it("traps keyboard focus inside delete confirmation", async () => {
+    installMatrixDb([
+      board("b1", "Keep me", "2026-02-02T00:00:00.000Z"),
+      board("b2", "Delete me", "2026-03-03T00:00:00.000Z"),
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /delete board delete me/i }));
+    const dialog = screen.getByRole("dialog", { name: /delete board/i });
+    const cancel = within(dialog).getByRole("button", { name: /cancel/i });
+    const confirm = within(dialog).getByRole("button", { name: /^delete board$/i });
+
+    expect(document.activeElement).toBe(cancel);
+
+    fireEvent.keyDown(cancel, { key: "Tab" });
+    expect(document.activeElement).toBe(confirm);
+
+    fireEvent.keyDown(confirm, { key: "Tab" });
+    expect(document.activeElement).toBe(cancel);
+
+    fireEvent.keyDown(cancel, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirm);
   });
 
   it("dismisses delete confirmation with Escape", async () => {
