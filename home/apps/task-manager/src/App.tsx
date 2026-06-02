@@ -150,6 +150,7 @@ function App() {
   boardRef.current = board;
   const pendingColumnIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
   const pendingCardIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
+  const deletingColumnIdsRef = useRef<Set<string>>(new Set());
   const usingDbRef = useRef(false);
   const suppressReloadRef = useRef(false);
 
@@ -161,7 +162,7 @@ function App() {
       const next = local && local.columns?.length ? local : createSeedBoard();
       setBoard(next);
       if (!local) saveLocalBoard(next);
-      return;
+      return true;
     }
     usingDbRef.current = true;
     try {
@@ -179,7 +180,7 @@ function App() {
             suppressReloadRef.current = false;
           }
           setError(null);
-          return;
+          return true;
         }
         // First run: seed the default workflow columns into Postgres.
         const seed = emptyBoard();
@@ -190,13 +191,15 @@ function App() {
           suppressReloadRef.current = false;
         }
         setError(null);
-        return;
+        return true;
       }
       setBoard(boardFromRows(columnRows, cardRows));
       setError(null);
+      return true;
     } catch (err: unknown) {
       console.warn("[task-manager] load failed:", errMessage(err));
       setError("Board could not be loaded. Retrying may help.");
+      return false;
     }
   }, []);
 
@@ -235,12 +238,8 @@ function App() {
       await action();
     } catch (err: unknown) {
       console.warn(`[task-manager] ${failure}:`, errMessage(err));
-      try {
-        await reload();
-      } catch (reloadErr: unknown) {
-        console.warn(`[task-manager] ${failure} recovery reload failed:`, errMessage(reloadErr));
-      }
-      setError(`${failure}. Reopen the board to refresh.`);
+      const refreshed = await reload();
+      setError(refreshed ? `${failure}. The board has been refreshed.` : `${failure}. Reopen the board to refresh.`);
     }
   }, [reload]);
 
@@ -253,10 +252,12 @@ function App() {
   const createCard = useCallback((columnId: string, title: string) => {
     const current = boardRef.current;
     if (!current || !title.trim()) return;
+    if (deletingColumnIdsRef.current.has(columnId)) return;
     const projectId = current.projects[0]?.id ?? "project-default";
     const existing = new Set(current.cards.map((card) => card.id));
     const next = addCard(current, { columnId, projectId, title });
     setBoard(next);
+    boardRef.current = next;
     const created = next.cards.find((card) => !existing.has(card.id));
     if (!created) return;
     let resolveCreatedCardId: (id: string) => void = () => undefined;
@@ -273,11 +274,30 @@ function App() {
         resolveCreatedCardId(created.id);
         return;
       }
-      const liveColumnId = boardRef.current?.cards.find((card) => card.id === created.id)?.columnId ?? created.columnId;
-      const columnId = await (pendingColumnIdsRef.current[liveColumnId] ?? Promise.resolve(liveColumnId));
       try {
-        const liveOrder = boardRef.current?.cards.find((card) => card.id === created.id)?.order ?? created.order;
-        const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...created, columnId }, liveOrder));
+        let liveCard = boardRef.current?.cards.find((card) => card.id === created.id);
+        if (!liveCard) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        const liveColumnExists = boardRef.current?.columns.some((column) => column.id === liveCard.columnId) ?? false;
+        if (!liveColumnExists) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
+        liveCard = boardRef.current?.cards.find((card) => card.id === created.id);
+        if (!liveCard) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        const latestColumnExists = boardRef.current?.columns.some((column) => column.id === liveCard.columnId) ?? false;
+        if (!latestColumnExists) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        const columnId = await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
+        const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...liveCard, columnId }, liveCard.order));
         resolveCreatedCardId(result.id);
         setSelectedCardId((id) => (id === created.id ? result.id : id));
         setBoard((current) => current ? {
@@ -286,11 +306,6 @@ function App() {
         } : current);
       } catch (err) {
         rejectCreatedCardId(err);
-        try {
-          await reload();
-        } catch (reloadErr: unknown) {
-          console.warn("[task-manager] card recovery reload failed:", errMessage(reloadErr));
-        }
         throw err;
       } finally {
         delete pendingCardIdsRef.current[created.id];
@@ -303,6 +318,7 @@ function App() {
     if (!current) return;
     const next = updateCard(current, cardId, patch);
     setBoard(next);
+    boardRef.current = next;
     const updated = next.cards.find((card) => card.id === cardId);
     if (!updated) return;
     void persist(async () => {
@@ -312,7 +328,7 @@ function App() {
       const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
         ?? boardRef.current?.cards.find((card) => card.id === cardId);
       const rowCard = liveCard
-        ? { ...updated, columnId: liveCard.columnId, order: liveCard.order }
+        ? { ...updated, columnId: liveCard.columnId, order: liveCard.order, checklist: liveCard.checklist }
         : updated;
       const persistedColumnId = await (
         pendingColumnIdsRef.current[rowCard.columnId] ?? Promise.resolve(rowCard.columnId)
@@ -328,30 +344,25 @@ function App() {
   const removeCard = useCallback((cardId: string) => {
     const current = boardRef.current;
     if (!current) return;
-    setBoard(deleteCard(current, cardId));
+    const next = deleteCard(current, cardId);
+    setBoard(next);
+    boardRef.current = next;
     setSelectedCardId((id) => (id === cardId ? null : id));
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      try {
-        await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
-      } catch (err) {
-        try {
-          await reload();
-        } catch (reloadErr: unknown) {
-          console.warn("[task-manager] card delete recovery reload failed:", errMessage(reloadErr));
-        }
-        throw err;
-      }
+      await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
     }, "Card could not be deleted");
-  }, [persist, reload, resolveCardId]);
+  }, [persist, resolveCardId]);
 
   const dropCard = useCallback((cardId: string, targetColumnId: string, targetIndex: number) => {
     const current = boardRef.current;
     if (!current) return;
+    if (deletingColumnIdsRef.current.has(targetColumnId)) return;
     const before = current.cards.find((card) => card.id === cardId);
     const next = moveCard(current, cardId, targetColumnId, targetIndex);
     setBoard(next);
+    boardRef.current = next;
     // Persist new column + position for every card in affected columns.
     const affected = new Set([before?.columnId, targetColumnId].filter(Boolean) as string[]);
     void persist(async () => {
@@ -382,12 +393,16 @@ function App() {
     if (!current) return;
     const next = toggleChecklistItem(current, cardId, itemId);
     setBoard(next);
+    boardRef.current = next;
     const updated = next.cards.find((card) => card.id === cardId);
     if (!updated) return;
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.update(CARDS_TABLE, await resolveCardId(cardId), { checklist: updated.checklist });
+      const persistedCardId = await resolveCardId(cardId);
+      const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+        ?? boardRef.current?.cards.find((card) => card.id === cardId);
+      await bridge.update(CARDS_TABLE, persistedCardId, { checklist: liveCard?.checklist ?? updated.checklist });
     }, "Checklist could not be saved");
   }, [persist, resolveCardId]);
 
@@ -396,12 +411,16 @@ function App() {
     if (!current || !text.trim()) return;
     const next = addChecklistItem(current, cardId, text);
     setBoard(next);
+    boardRef.current = next;
     const updated = next.cards.find((card) => card.id === cardId);
     if (!updated) return;
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      await bridge.update(CARDS_TABLE, await resolveCardId(cardId), { checklist: updated.checklist });
+      const persistedCardId = await resolveCardId(cardId);
+      const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+        ?? boardRef.current?.cards.find((card) => card.id === cardId);
+      await bridge.update(CARDS_TABLE, persistedCardId, { checklist: liveCard?.checklist ?? updated.checklist });
     }, "Checklist could not be saved");
   }, [persist, resolveCardId]);
 
@@ -413,6 +432,7 @@ function App() {
     const existing = new Set(current.columns.map((column) => column.id));
     const next = addColumn(current, title);
     setBoard(next);
+    boardRef.current = next;
     const created = next.columns.find((column) => !existing.has(column.id));
     if (!created) return;
     const position = next.columns.findIndex((column) => column.id === created.id);
@@ -438,11 +458,16 @@ function App() {
       try {
         const result = await bridge.insert(COLUMNS_TABLE, columnToRow(created, position));
         resolveColumnId(result.id);
-        setBoard((current) => current ? {
-          ...current,
-          columns: current.columns.map((column) => column.id === created.id ? { ...column, id: result.id } : column),
-          cards: current.cards.map((card) => card.columnId === created.id ? { ...card, columnId: result.id } : card),
-        } : current);
+        const latest = boardRef.current;
+        if (latest) {
+          const next = {
+            ...latest,
+            columns: latest.columns.map((column) => column.id === created.id ? { ...column, id: result.id } : column),
+            cards: latest.cards.map((card) => card.columnId === created.id ? { ...card, columnId: result.id } : card),
+          };
+          boardRef.current = next;
+          setBoard(next);
+        }
       } catch (err) {
         rejectColumnId(err);
         console.warn("[task-manager] Column could not be created:", errMessage(err));
@@ -473,24 +498,43 @@ function App() {
     const removedCards = current.cards.filter((card) => card.columnId === columnId).map((card) => card.id);
     const bridge = db();
     if (!usingDbRef.current || !bridge) {
-      setBoard((latest) => (latest ? deleteColumn(latest, columnId) : latest));
+      setBoard((latest) => {
+        if (!latest) return latest;
+        const next = deleteColumn(latest, columnId);
+        boardRef.current = next;
+        return next;
+      });
       return;
     }
+    deletingColumnIdsRef.current.add(columnId);
     suppressReloadRef.current = true;
     void (async () => {
+      let persistedDeleteColumnId: string | null = null;
       try {
         for (const cardId of removedCards) {
           await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
         }
         const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
+        persistedDeleteColumnId = persistedColumnId;
+        deletingColumnIdsRef.current.add(persistedColumnId);
         await bridge.delete(COLUMNS_TABLE, persistedColumnId);
         setError(null);
-        setBoard((latest) => (latest ? deleteColumn(latest, columnId) : latest));
+        setBoard((latest) => {
+          if (!latest) return latest;
+          const deleteId = latest.columns.some((column) => column.id === persistedColumnId)
+            ? persistedColumnId
+            : columnId;
+          const next = deleteColumn(latest, deleteId);
+          boardRef.current = next;
+          return next;
+        });
       } catch (err: unknown) {
         console.warn("[task-manager] Column could not be deleted:", errMessage(err));
         await reload();
         setError("Column could not be deleted. Reopen the board to refresh.");
       } finally {
+        deletingColumnIdsRef.current.delete(columnId);
+        if (persistedDeleteColumnId) deletingColumnIdsRef.current.delete(persistedDeleteColumnId);
         suppressReloadRef.current = false;
       }
     })();
@@ -501,12 +545,21 @@ function App() {
     if (!current) return;
     const next = moveColumn(current, columnId, targetIndex);
     setBoard(next);
+    boardRef.current = next;
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      for (let i = 0; i < next.columns.length; i += 1) {
-        const persistedColumnId = await (pendingColumnIdsRef.current[next.columns[i].id] ?? Promise.resolve(next.columns[i].id));
-        await bridge.update(COLUMNS_TABLE, persistedColumnId, { position: i });
+      const columnIds = next.columns.map((column) => column.id);
+      for (const originalColumnId of columnIds) {
+        const persistedColumnId = await (
+          pendingColumnIdsRef.current[originalColumnId] ?? Promise.resolve(originalColumnId)
+        );
+        const liveColumns = boardRef.current?.columns ?? next.columns;
+        const liveIndex = liveColumns.findIndex((column) =>
+          column.id === persistedColumnId || column.id === originalColumnId,
+        );
+        if (liveIndex < 0) continue;
+        await bridge.update(COLUMNS_TABLE, persistedColumnId, { position: liveIndex });
       }
     }, "Column order could not be saved");
   }, [persist]);
@@ -805,7 +858,11 @@ function BoardColumnView(props: ColumnViewProps) {
         {isEditing ? (
           <form
             className="column__rename"
-            onSubmit={(event) => { event.preventDefault(); onRename(renameValue); }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              skipNextRenameBlurRef.current = true;
+              onRename(renameValue);
+            }}
           >
             <input
               autoFocus
@@ -1039,7 +1096,7 @@ function CardDetail({
           className="detail-title"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          onBlur={() => { if (title.trim() && title !== card.title) onPatch({ title: title.trim() }); else setTitle(card.title); }}
+          onBlur={() => { if (title.trim() && title.trim() !== card.title) onPatch({ title: title.trim() }); else setTitle(card.title); }}
           aria-label="Card title"
         />
 

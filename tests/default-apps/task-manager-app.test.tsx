@@ -249,6 +249,55 @@ describe("Task Manager app", () => {
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
+  it("does not claim the board refreshed when failed persistence cannot reload", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Write the spec", description: "", labels: "", assignee: "", priority: "high", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Write the spec"));
+    db.update.mockRejectedValueOnce(new Error("offline"));
+    db.find.mockRejectedValue(new Error("still offline"));
+
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Write the spec");
+    fireEvent.change(titleInput, { target: { value: "Offline edit" } });
+    fireEvent.blur(titleInput);
+
+    expect(await screen.findByText("Card could not be updated. Reopen the board to refresh.")).toBeTruthy();
+  });
+
+  it("does not persist a title edit that only changes whitespace", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Write the spec", description: "", labels: "", assignee: "", priority: "high", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Write the spec"));
+    db.update.mockClear();
+
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Write the spec");
+    fireEvent.change(titleInput, { target: { value: "  Write the spec  " } });
+    fireEvent.blur(titleInput);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.update).not.toHaveBeenCalled();
+    expect(within(dialog).getByDisplayValue("Write the spec")).toBeTruthy();
+  });
+
   it("adds a card via Enter and persists it to Postgres", async () => {
     const { db } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -329,6 +378,57 @@ describe("Task Manager app", () => {
         expect.objectContaining({ title: "Resolved card" }),
       ),
     );
+  });
+
+  it("persists pending checklist changes with the latest live checklist", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let resolveCardInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "cards") {
+        await new Promise<void>((resolve) => {
+          resolveCardInsert = resolve;
+        });
+        const id = "cards-created";
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    const input = await screen.findByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Checklist pending" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    fireEvent.click(await screen.findByText("Checklist pending"));
+    const dialog = await screen.findByRole("dialog");
+    const checklistInput = within(dialog).getByLabelText("Add checklist item");
+    fireEvent.change(checklistInput, { target: { value: "first" } });
+    fireEvent.submit(checklistInput.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(within(dialog).getByText("first")).toBeTruthy());
+    fireEvent.change(checklistInput, { target: { value: "second" } });
+    fireEvent.submit(checklistInput.closest("form") as HTMLFormElement);
+
+    await act(async () => {
+      resolveCardInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const checklistUpdates = db.update.mock.calls.filter(
+        ([table, id, data]) => table === "cards" && id === "cards-created" && Array.isArray(data.checklist),
+      );
+      expect(checklistUpdates.at(-1)?.[2].checklist).toEqual([
+        expect.objectContaining({ text: "first" }),
+        expect.objectContaining({ text: "second" }),
+      ]);
+    });
   });
 
   it("persists pending card edits with the latest live column and order", async () => {
@@ -684,6 +784,24 @@ describe("Task Manager app", () => {
     expect(screen.getByRole("heading", { name: "To do" })).toBeTruthy();
   });
 
+  it("does not duplicate column rename writes when Enter submission blurs the input", async () => {
+    const { db } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+
+    render(<App />);
+    const heading = await screen.findByRole("heading", { name: "To do" });
+    fireEvent.click(heading.closest("button")!);
+    const renameInput = screen.getByDisplayValue("To do");
+    fireEvent.change(renameInput, { target: { value: "Ready" } });
+    fireEvent.submit(renameInput.closest("form")!);
+    fireEvent.blur(renameInput);
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledTimes(1));
+    expect(db.update).toHaveBeenCalledWith("columns", "col-1", { title: "Ready" });
+  });
+
   it("does not persist an empty column title on rename", async () => {
     const { db } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
@@ -827,6 +945,92 @@ describe("Task Manager app", () => {
     await waitFor(() =>
       expect(db.update).toHaveBeenCalledWith("cards", "card-1", expect.objectContaining({ title: "Edited title" })),
     );
+  });
+
+  it("preserves live checklist state when saving a title edit", async () => {
+    const { db } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [
+        {
+          id: "card-1",
+          column_id: "col-1",
+          title: "Checklist race",
+          description: "",
+          labels: "",
+          assignee: "",
+          priority: "medium",
+          due: null,
+          checklist: [{ id: "item-1", text: "Persist me", done: false }],
+          position: 0,
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Checklist race"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /persist me/i }));
+    const titleInput = within(dialog).getByDisplayValue("Checklist race");
+    fireEvent.change(titleInput, { target: { value: "Checklist title" } });
+    fireEvent.blur(titleInput);
+
+    await waitFor(() => {
+      const titleUpdate = db.update.mock.calls.find(
+        ([table, id, data]) => table === "cards" && id === "card-1" && data.title === "Checklist title",
+      );
+      expect(titleUpdate?.[2]).toEqual(expect.objectContaining({
+        checklist: [expect.objectContaining({ id: "item-1", done: true })],
+      }));
+    });
+  });
+
+  it("keeps a deleted column deleted when a stale card update resolves later", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [
+        { id: "col-a", title: "Doing", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-b", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-a", column_id: "col-a", title: "Race card", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    const baseUpdate = db.update.getMockImplementation();
+    let releaseCardUpdate: (() => void) | null = null;
+    db.update.mockImplementation(async (table: string, id: string, data: DbRow) => {
+      if (table === "cards" && id === "card-a" && data.title === "Edited while deleting") {
+        await new Promise<void>((resolve) => {
+          releaseCardUpdate = resolve;
+        });
+      }
+      return baseUpdate?.(table, id, data) ?? { ok: true };
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByText("Race card"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = within(dialog).getByDisplayValue("Race card");
+    fireEvent.change(titleInput, { target: { value: "Edited while deleting" } });
+    fireEvent.blur(titleInput);
+
+    await waitFor(() =>
+      expect(db.update).toHaveBeenCalledWith("cards", "card-a", expect.objectContaining({ title: "Edited while deleting" })),
+    );
+
+    const doingColumn = screen.getByRole("heading", { name: "Doing" }).closest("section");
+    fireEvent.click(within(doingColumn as HTMLElement).getByTitle("Delete column"));
+    await waitFor(() => expect(db.delete).toHaveBeenCalledWith("cards", "card-a"));
+    await waitFor(() => expect(db.delete).toHaveBeenCalledWith("columns", "col-a"));
+
+    await act(async () => {
+      releaseCardUpdate?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store.columns.some((column) => column.id === "col-a")).toBe(false);
+    expect(store.cards.some((card) => card.id === "card-a")).toBe(false);
+    expect(screen.queryByRole("heading", { name: "Doing" })).toBeNull();
   });
 
   it("reloads checklist state when a DB checklist update fails", async () => {
@@ -1036,6 +1240,89 @@ describe("Task Manager app", () => {
     expect(screen.getByText("Concurrent card")).toBeTruthy();
   });
 
+  it("does not add cards to a column while its deletion is in flight", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [],
+    });
+    let resolveColumnDelete: (() => void) | null = null;
+    db.delete.mockImplementation(async (table: string, id: string) => {
+      if (table === "columns" && id === "col-1") {
+        await new Promise<void>((resolve) => {
+          resolveColumnDelete = resolve;
+        });
+      }
+      return { ok: true };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "To do" })).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle("Delete column")[0]);
+
+    const input = screen.getByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Late card" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(screen.queryByText("Late card")).toBeNull();
+    expect(db.insert).not.toHaveBeenCalledWith("cards", expect.objectContaining({ title: "Late card" }));
+
+    await act(async () => {
+      resolveColumnDelete?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
+  it("does not move cards into a column while its deletion is in flight", async () => {
+    const { db } = installMatrixDb({
+      columns: [
+        { id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" },
+        { id: "col-2", title: "Done", color: "#3A7D44", position: 1, created_at: "2026-05-01T00:00:00Z" },
+      ],
+      cards: [
+        { id: "card-1", column_id: "col-1", title: "Stay put", description: "", labels: "", assignee: "", priority: "medium", due: null, checklist: [], position: 0, created_at: "2026-05-01T00:00:00Z" },
+      ],
+    });
+    let resolveColumnDelete: (() => void) | null = null;
+    db.delete.mockImplementation(async (table: string, id: string) => {
+      if (table === "columns" && id === "col-2") {
+        await new Promise<void>((resolve) => {
+          resolveColumnDelete = resolve;
+        });
+      }
+      return { ok: true };
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Done" })).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle("Delete column")[1]);
+
+    const card = screen.getByText("Stay put").closest(".task-card");
+    if (!card) throw new Error("Expected task card");
+    fireEvent.dragStart(card);
+    fireEvent.drop(screen.getByLabelText("Done"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(within(screen.getByLabelText("To do")).getByText("Stay put")).toBeTruthy();
+    expect(db.update).not.toHaveBeenCalledWith(
+      "cards",
+      "card-1",
+      expect.objectContaining({ column_id: "col-2" }),
+    );
+
+    await act(async () => {
+      resolveColumnDelete?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   it("waits for a pending column insert before deleting the column row", async () => {
     const { db, store } = installMatrixDb({
       columns: [
@@ -1080,6 +1367,7 @@ describe("Task Manager app", () => {
     });
 
     await waitFor(() => expect(db.delete).toHaveBeenCalledWith("columns", "columns-sprint"));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Sprint" })).toBeNull());
   });
 
   it("waits for a pending column insert before persisting reordered positions", async () => {

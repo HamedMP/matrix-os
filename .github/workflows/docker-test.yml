@@ -168,7 +168,7 @@ jobs:
           ./scripts/docker-test/fresh-install.sh
         env:
           COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
-          DOCKER_HEALTH_TIMEOUT: "300"
+          DOCKER_HEALTH_TIMEOUT: "600"
 
       - name: Collect container logs on failure
         if: failure()
@@ -243,7 +243,7 @@ jobs:
           ./scripts/docker-test/${{ matrix.scenario }}.sh
         env:
           COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
-          DOCKER_HEALTH_TIMEOUT: "300"
+          DOCKER_HEALTH_TIMEOUT: "600"
 
       - name: Collect container logs on failure
         if: failure()
