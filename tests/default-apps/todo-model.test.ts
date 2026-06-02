@@ -185,15 +185,19 @@ describe("nextRecurrence", () => {
 
   it("weekdays skips weekend (Fri -> Mon)", () => {
     // 2026-06-05 is a Friday
-    expect(nextRecurrence("weekdays", new Date("2026-06-05T09:00:00.000Z"))).toBe(
-      "2026-06-08T09:00:00.000Z",
+    const friday = new Date("2026-06-05T09:00:00");
+    const monday = new Date("2026-06-08T09:00:00").toISOString();
+    expect(nextRecurrence("weekdays", friday)).toBe(
+      monday,
     );
   });
 
   it("weekdays Sunday -> Monday", () => {
     // 2026-05-31 is a Sunday
-    expect(nextRecurrence("weekdays", new Date("2026-05-31T09:00:00.000Z"))).toBe(
-      "2026-06-01T09:00:00.000Z",
+    const sunday = new Date("2026-05-31T09:00:00");
+    const monday = new Date("2026-06-01T09:00:00").toISOString();
+    expect(nextRecurrence("weekdays", sunday)).toBe(
+      monday,
     );
   });
 

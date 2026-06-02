@@ -98,11 +98,25 @@ describe("Todo app", () => {
     await waitFor(() => {
       expect(db.insert).toHaveBeenCalledWith(
         "tasks",
-        expect.objectContaining({ title: "Buy groceries", status: "open" }),
+        expect.objectContaining({ title: "Buy groceries", status: "open", priority: "0" }),
       );
     });
     // optimistic render
     expect(screen.getByText("Buy groceries")).toBeTruthy();
+  });
+
+  it("serializes priority updates as text for the bridge schema", async () => {
+    const db = installMatrixDb([
+      { id: "t1", title: "Prioritize", status: "open", priority: 0, due: null },
+    ]);
+
+    render(<App />);
+    await screen.findByText("Prioritize");
+    fireEvent.click(screen.getByRole("button", { name: /priority for prioritize/i }));
+
+    await waitFor(() => {
+      expect(db.update).toHaveBeenCalledWith("tasks", "t1", { priority: "1" });
+    });
   });
 
   it("adds tasks captured from Upcoming with a future due date", async () => {

@@ -99,6 +99,12 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function taskWritePatch(patch: Partial<Task>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...patch };
+  if (typeof out.priority === "number") out.priority = String(out.priority);
+  return out;
+}
+
 // --- formatting -------------------------------------------------------------
 
 function toDateInputValue(iso: string | null): string {
@@ -229,7 +235,7 @@ export default function App() {
         title,
         notes: "",
         due: optimistic.due,
-        priority: 0,
+        priority: "0",
         project,
         status: "open",
         recur: null,
@@ -248,7 +254,7 @@ export default function App() {
       const db = getDb();
       if (!db) return;
       try {
-        await db.update(TASKS_TABLE, id, patch as Record<string, unknown>);
+        await db.update(TASKS_TABLE, id, taskWritePatch(patch));
       } catch (err: unknown) {
         console.warn("[todo] task update failed:", errMessage(err));
         await reload();
@@ -296,7 +302,7 @@ export default function App() {
                 title: task.title,
                 notes: task.notes,
                 due: nextDue,
-                priority: task.priority,
+                priority: String(task.priority),
                 project: task.project,
                 status: "open",
                 recur: task.recur,
