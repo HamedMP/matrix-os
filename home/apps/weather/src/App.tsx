@@ -33,6 +33,7 @@ import "./styles.css";
 const LOCATIONS_TABLE = "locations";
 const LOCATIONS_KEY = "matrix-weather-locations";
 const UNIT_KEY = "matrix-weather-unit";
+const MAX_PENDING_REMOVALS = 50;
 
 type LoadStatus = "loading" | "live" | "demo";
 
@@ -109,6 +110,44 @@ function sameLocations(a: SavedLocation[], b: SavedLocation[]): boolean {
   });
 }
 
+function planLocationRemoval(locations: SavedLocation[], key: string, wasDefault: boolean) {
+  const remaining = locations.filter((l) => locationKey(l) !== key);
+  const shouldPromoteDefault = wasDefault && !remaining.some((l) => l.is_default);
+  const nextLocations = shouldPromoteDefault && remaining[0]
+    ? remaining.map((item, index) => index === 0 ? { ...item, is_default: true } : item)
+    : remaining;
+  const promotedKey = shouldPromoteDefault && remaining[0] ? locationKey(remaining[0]) : null;
+  return { nextLocations, promotedKey };
+}
+
+function usePendingLocationOps() {
+  const removalKeys = useRef<string[]>([]);
+  const defaultPromotionKeys = useRef<Set<string>>(new Set());
+
+  return useMemo(() => ({
+    hiddenRemovalKeys: () => removalKeys.current,
+    markRemoved: (key: string) => {
+      removalKeys.current = [...removalKeys.current.filter((k) => k !== key), key].slice(-MAX_PENDING_REMOVALS);
+    },
+    clearRemoved: (...keys: string[]) => {
+      const cleared = new Set(keys);
+      removalKeys.current = removalKeys.current.filter((k) => !cleared.has(k));
+    },
+    isRemoved: (key: string) => removalKeys.current.includes(key),
+    markDefaultPromotion: (key: string) => {
+      defaultPromotionKeys.current.add(key);
+    },
+    clearDefaultPromotion: (key: string) => {
+      defaultPromotionKeys.current.delete(key);
+    },
+    consumeDefaultPromotion: (key: string) => {
+      const marked = defaultPromotionKeys.current.has(key);
+      if (marked) defaultPromotionKeys.current.delete(key);
+      return marked;
+    },
+  }), []);
+}
+
 export default function App() {
   const [locations, setLocations] = useState<SavedLocation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -124,8 +163,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchSeq = useRef(0);
-  const pendingRemovalKeys = useRef<string[]>([]);
-  const pendingDefaultPromotionKeys = useRef<Set<string>>(new Set());
+  const pendingLocations = usePendingLocationOps();
 
   const reloadLocations = useCallback(async () => {
     const db = window.MatrixOS?.db;
@@ -137,11 +175,10 @@ export default function App() {
     }
     try {
       const rows = await db.find(LOCATIONS_TABLE, { orderBy: { created_at: "asc" } });
-      const pending = pendingRemovalKeys.current;
       const parsed = rows
         .map(coerceLocation)
         .filter((l): l is SavedLocation => l !== null)
-        .filter((l) => !pending.includes(locationKey(l)));
+        .filter((l) => !pendingLocations.hiddenRemovalKeys().includes(locationKey(l)));
       setLocations((current) => (sameLocations(current, parsed) ? current : parsed));
       setError(null);
     } catch (err: unknown) {
@@ -150,7 +187,7 @@ export default function App() {
       const stored = await readStoredLocations();
       setLocations((current) => (sameLocations(current, stored) ? current : stored));
     }
-  }, []);
+  }, [pendingLocations]);
 
   useEffect(() => {
     void reloadLocations();
@@ -309,7 +346,7 @@ export default function App() {
           is_default: candidate.is_default ?? false,
           created_at: new Date().toISOString(),
         });
-        if (pendingRemovalKeys.current.includes(optimistic.id!)) {
+        if (pendingLocations.isRemoved(optimistic.id!)) {
           try {
             await db.delete(LOCATIONS_TABLE, id);
             setError(null);
@@ -317,23 +354,21 @@ export default function App() {
             console.warn("[weather] pending removed location cleanup failed:", errMsg(err));
             setError("Location could not be removed.");
           } finally {
-            pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== optimistic.id && k !== id);
-            pendingDefaultPromotionKeys.current.delete(optimistic.id!);
+            pendingLocations.clearRemoved(optimistic.id!, id);
+            pendingLocations.clearDefaultPromotion(optimistic.id!);
           }
           await reloadLocations();
           return;
         }
         let savedIsDefault = candidate.is_default ?? false;
         let promotionFailed = false;
-        if (pendingDefaultPromotionKeys.current.has(optimistic.id!)) {
+        if (pendingLocations.consumeDefaultPromotion(optimistic.id!)) {
           try {
             await db.update(LOCATIONS_TABLE, id, { is_default: true });
             savedIsDefault = true;
           } catch (err: unknown) {
             promotionFailed = true;
             console.warn("[weather] default location promotion failed:", errMsg(err));
-          } finally {
-            pendingDefaultPromotionKeys.current.delete(optimistic.id!);
           }
         }
         const saved: SavedLocation = { ...candidate, id, is_default: savedIsDefault };
@@ -355,11 +390,11 @@ export default function App() {
         setError("Location could not be saved.");
         setLocations((curr) => curr.filter((loc) => locationKey(loc) !== optimistic.id));
         setActiveId(previousActiveId);
-        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== optimistic.id);
-        pendingDefaultPromotionKeys.current.delete(optimistic.id!);
+        pendingLocations.clearRemoved(optimistic.id!);
+        pendingLocations.clearDefaultPromotion(optimistic.id!);
       }
     },
-    [activeId, locations, reloadLocations],
+    [activeId, locations, pendingLocations, reloadLocations],
   );
 
   const removeLocation = useCallback(
@@ -367,33 +402,28 @@ export default function App() {
       const previousLocations = locations;
       const previousActiveId = activeId;
       const key = locationKey(loc);
-      pendingRemovalKeys.current = [...pendingRemovalKeys.current, key].slice(-50);
-      const remaining = locations.filter((l) => locationKey(l) !== key);
-      const shouldPromoteDefault = loc.is_default === true && !remaining.some((l) => l.is_default);
-      const nextLocations = shouldPromoteDefault && remaining[0]
-        ? remaining.map((item, index) => index === 0 ? { ...item, is_default: true } : item)
-        : remaining;
-      const promotedLocalKey = shouldPromoteDefault && remaining[0] ? locationKey(remaining[0]) : null;
-      if (promotedLocalKey?.startsWith("local-")) {
-        pendingDefaultPromotionKeys.current.add(promotedLocalKey);
+      pendingLocations.markRemoved(key);
+      const { nextLocations, promotedKey } = planLocationRemoval(locations, key, loc.is_default === true);
+      if (promotedKey?.startsWith("local-")) {
+        pendingLocations.markDefaultPromotion(promotedKey);
       }
       setLocations(nextLocations);
       const db = window.MatrixOS?.db;
       if (!db) {
         await writeAppData(LOCATIONS_KEY, storedLocations(nextLocations));
-        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+        pendingLocations.clearRemoved(key);
         setError(null);
         return;
       }
       if (!loc.id || loc.id.startsWith("local-")) {
-        pendingDefaultPromotionKeys.current.delete(key);
+        pendingLocations.clearDefaultPromotion(key);
         return;
       }
       try {
         await db.delete(LOCATIONS_TABLE, loc.id);
       } catch (err: unknown) {
-        pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
-        if (promotedLocalKey) pendingDefaultPromotionKeys.current.delete(promotedLocalKey);
+        pendingLocations.clearRemoved(key);
+        if (promotedKey) pendingLocations.clearDefaultPromotion(promotedKey);
         console.warn("[weather] location delete failed:", errMsg(err));
         setError("Location could not be removed.");
         setLocations(previousLocations);
@@ -401,7 +431,7 @@ export default function App() {
         return;
       }
       let promotionFailed = false;
-      const promoted = shouldPromoteDefault ? nextLocations[0] : null;
+      const promoted = promotedKey ? nextLocations[0] : null;
       if (promoted?.id && !promoted.id.startsWith("local-")) {
         try {
           await db.update(LOCATIONS_TABLE, promoted.id, { is_default: true });
@@ -410,14 +440,14 @@ export default function App() {
           console.warn("[weather] default location promotion failed:", errMsg(err));
         }
       }
-      if (promotedLocalKey && !promotedLocalKey.startsWith("local-")) {
-        pendingDefaultPromotionKeys.current.delete(promotedLocalKey);
+      if (promotedKey && !promotedKey.startsWith("local-")) {
+        pendingLocations.clearDefaultPromotion(promotedKey);
       }
-      pendingRemovalKeys.current = pendingRemovalKeys.current.filter((k) => k !== key);
+      pendingLocations.clearRemoved(key);
       await reloadLocations();
       setError(promotionFailed ? "Default location could not be updated." : null);
     },
-    [activeId, locations, reloadLocations],
+    [activeId, locations, pendingLocations, reloadLocations],
   );
 
   const nowIso = forecast?.current?.time;
