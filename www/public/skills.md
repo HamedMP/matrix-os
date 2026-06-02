@@ -156,12 +156,6 @@ matrix shell ls
 matrix shell connect <existing-session>
 ```
 
-Known working pattern:
-
-```bash
-matrix shell connect <existing-session>
-```
-
 `connect` may succeed even when `attach` and `run -it` fail.
 
 After `matrix login`, run:

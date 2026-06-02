@@ -1437,7 +1437,7 @@ function LocalTerminalSidebar() {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the shell-session list when the Shells tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     void fetchShells({ signal: controller.signal });
     const refreshTimer = window.setInterval(() => {
-      void fetchShells({ silent: true });
+      void fetchShells({ silent: true, signal: controller.signal });
     }, SHELLS_REFRESH_INTERVAL_MS);
     return () => {
       controller.abort();
