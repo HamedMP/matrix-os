@@ -259,6 +259,10 @@ export default function App({ initialState }: AppProps) {
       // If a source is already selected, attempt to use this click as a destination.
       if (selected) {
         // clicking the same selection clears it
+        if (sourceEquals(selected, src)) {
+          setSelected(null);
+          return;
+        }
         const dest = sourceToDestination(src);
         if (dest) {
           if (doMove(selected, dest)) return;

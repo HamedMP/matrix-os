@@ -87,6 +87,35 @@ describe("Solitaire app", () => {
     expect(undoButton.disabled).toBe(true);
   });
 
+  it("clears a selected tableau card when it is clicked again", async () => {
+    installMatrixDb();
+    const state: GameState = {
+      stock: [],
+      waste: [],
+      foundations: [[], [], [], []],
+      tableau: [
+        [{ id: "spades-5", suit: "spades", rank: 5, faceUp: true }],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+      ],
+      drawCount: 1,
+      moves: 0,
+      score: 0,
+    };
+    render(<App initialState={state} />);
+
+    const card = await screen.findByTestId("card-spades-5");
+    fireEvent.click(card);
+    expect(card.className).toContain("sol-card--selected");
+
+    fireEvent.click(card);
+    expect(card.className).not.toContain("sol-card--selected");
+  });
+
   it("persists stats to the bridge when a game is won", async () => {
     const db = installMatrixDb([]);
     // a state one move from a win: 51 cards on foundations, last Ace... build full minus one
