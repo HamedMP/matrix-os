@@ -125,7 +125,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const usingDbRef = useRef(false);
   const committingRef = useRef(false);
   const clearingRef = useRef(false);
 
@@ -133,11 +132,9 @@ export default function App() {
   const reload = useCallback(async (): Promise<LoadState> => {
     const db = window.MatrixOS?.db;
     if (!db) {
-      usingDbRef.current = false;
       setHistory(readLocal());
       return "ok";
     }
-    usingDbRef.current = true;
     try {
       const rows = await db.find(HISTORY_TABLE, {
         orderBy: { created_at: "desc" },
@@ -223,6 +220,7 @@ export default function App() {
       await reload();
     } catch (err: unknown) {
       console.warn("[calculator] history save failed:", err instanceof Error ? err.message : String(err));
+      setHistory((current) => current.filter((row) => row.id !== optimistic.id));
       setError("Result could not be saved.");
     } finally {
       committingRef.current = false;
@@ -314,6 +312,10 @@ export default function App() {
 
   const clearHistory = useCallback(async () => {
     if (clearingRef.current) return;
+    if (committingRef.current) {
+      setError("Wait for result to finish saving.");
+      return;
+    }
     clearingRef.current = true;
     const rows = history;
     setHistory([]);

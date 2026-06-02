@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluate, tokenize } from "../../home/apps/calculator/src/calc-engine";
+import { evaluate, formatResult, tokenize } from "../../home/apps/calculator/src/calc-engine";
 
 function ok(expr: string, opts?: { degrees?: boolean }): number {
   const r = evaluate(expr, opts);
@@ -32,6 +32,7 @@ describe("calc-engine tokenizer", () => {
   it("tokenizes decimals and scientific-ish floats", () => {
     expect(tokenize("3.14").map((t) => t.value)).toEqual(["3.14"]);
     expect(tokenize("0.5 + .5").length).toBe(3);
+    expect(tokenize("1.2e+15 + 3e-2").map((t) => t.value)).toEqual(["1.2e+15", "+", "3e-2"]);
   });
 
   it("recognizes function and constant identifiers", () => {
@@ -114,6 +115,11 @@ describe("calc-engine evaluation", () => {
     expect(ok("2 * pi")).toBeCloseTo(2 * Math.PI, 10);
   });
 
+  it("evaluates scientific notation number literals", () => {
+    expect(ok("1e+15 + 5")).toBe(1_000_000_000_000_005);
+    expect(ok("3e-2 + 0.2")).toBeCloseTo(0.23, 10);
+  });
+
   it("evaluates factorial", () => {
     expect(ok("5!")).toBe(120);
     expect(ok("0!")).toBe(1);
@@ -161,5 +167,11 @@ describe("calc-engine evaluation", () => {
     for (const i of inputs) {
       expect(() => evaluate(i)).not.toThrow();
     }
+  });
+});
+
+describe("calc-engine formatting", () => {
+  it("preserves exact safe integers without precision rounding", () => {
+    expect(formatResult(999_999_999_999_999)).toBe("999,999,999,999,999");
   });
 });

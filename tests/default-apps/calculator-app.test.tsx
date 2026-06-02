@@ -10,8 +10,12 @@ function installMatrixDb(rows: DbRow[] = []) {
   const store = [...rows];
   const listeners = new Set<() => void>();
   const db = {
-    find: vi.fn(async (_table: string, opts?: { limit?: number }) => {
-      const ordered = [...store].reverse();
+    find: vi.fn(async (_table: string, opts?: { orderBy?: Record<string, "asc" | "desc">; limit?: number }) => {
+      const ordered = [...store].sort((a, b) => {
+        const aTime = String(a.created_at ?? "");
+        const bTime = String(b.created_at ?? "");
+        return opts?.orderBy?.created_at === "asc" ? aTime.localeCompare(bTime) : bTime.localeCompare(aTime);
+      });
       return typeof opts?.limit === "number" ? ordered.slice(0, opts.limit) : ordered;
     }),
     findOne: vi.fn(async (_t: string, id: string) => store.find((r) => r.id === id) ?? null),
@@ -94,6 +98,24 @@ describe("Calculator app", () => {
     const historyRail = await screen.findByTestId("history-rail");
     expect(historyRail.textContent).toContain("6 * 7");
     expect(historyRail.textContent).toContain("42");
+  });
+
+  it("removes the optimistic history row when db insert fails", async () => {
+    const db = installMatrixDb([]);
+    db.insert.mockRejectedValueOnce(new Error("insert failed"));
+    render(<App />);
+    const input = (await screen.findByTestId("calc-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "6 * 7" } });
+
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Result could not be saved.")).toBeTruthy();
+    const historyRail = await screen.findByTestId("history-rail");
+    expect(historyRail.textContent).not.toContain("6 * 7");
+    expect(historyRail.textContent).not.toContain("42");
   });
 
   it("loads existing history from the database", async () => {
@@ -236,6 +258,42 @@ describe("Calculator app", () => {
     expect(db.insert).not.toHaveBeenCalled();
     expect(await screen.findByText("Wait for history to finish clearing.")).toBeTruthy();
     resolveDelete?.();
+  });
+
+  it("does not clear history while a result save is in flight", async () => {
+    const rows = [
+      { id: "h1", expression: "1 + 1", result: "2", created_at: "2026-05-31T10:00:00.000Z" },
+    ];
+    const db = installMatrixDb(rows);
+    let resolveInsert: (() => void) | undefined;
+    db.insert.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveInsert = () => resolve({ id: "new-2" });
+        }),
+    );
+    render(<App />);
+
+    const input = (await screen.findByTestId("calc-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "6 * 7" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(db.insert).toHaveBeenCalled());
+
+    const clearHistory = screen
+      .getAllByRole("button", { name: /clear/i })
+      .find((button) => button.textContent?.includes("Clear"));
+    expect(clearHistory).toBeTruthy();
+    fireEvent.click(clearHistory!);
+
+    expect(db.delete).not.toHaveBeenCalled();
+    expect(await screen.findByText("Wait for result to finish saving.")).toBeTruthy();
+    await act(async () => {
+      resolveInsert?.();
+      await Promise.resolve();
+    });
   });
 
   it("shows an onboarding empty state when history is empty", async () => {

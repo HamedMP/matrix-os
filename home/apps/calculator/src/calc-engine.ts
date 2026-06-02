@@ -61,6 +61,15 @@ export function tokenize(input: string): Token[] {
           break;
         }
       }
+      if (src[j] === "e" || src[j] === "E") {
+        let k = j + 1;
+        if (src[k] === "+" || src[k] === "-") k += 1;
+        if (src[k] >= "0" && src[k] <= "9") {
+          k += 1;
+          while (src[k] >= "0" && src[k] <= "9") k += 1;
+          j = k;
+        }
+      }
       tokens.push({ type: "number", value: src.slice(i, j) });
       i = j;
       continue;
@@ -404,6 +413,9 @@ export function formatResult(value: number): string {
   if (!Number.isFinite(value)) return "Error";
   if (value === 0) return "0";
   const abs = Math.abs(value);
+  if (Number.isSafeInteger(value) && abs < 1e15) {
+    return value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  }
   if (abs >= 1e15 || (abs < 1e-9 && abs > 0)) {
     return value.toExponential(6).replace(/\.?0+e/, "e");
   }
