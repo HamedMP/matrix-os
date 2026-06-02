@@ -160,6 +160,8 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       parseSafeName(schema, "schema");
       parseSafeName(table, "table");
       if (updates.length === 0) return;
+      // Parameter count scales with row count and changed column count
+      // (up to 2 * rows * columns + rows), so keep this cap conservative.
       if (updates.length > 200) throw new Error("bulkUpdate: too many rows");
       const seenIds = new Set<string>();
       for (const update of updates) {
@@ -172,10 +174,10 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         seenIds.add(update.id);
       }
 
-      const cols = Array.from(new Set(updates.flatMap((update) => Object.keys(update.data)))).filter((col) => {
+      const cols = Array.from(new Set(updates.flatMap((update) => Object.keys(update.data))));
+      for (const col of cols) {
         parseSafeName(col, "column");
-        return true;
-      });
+      }
       if (cols.length === 0) throw new Error("bulkUpdate: data must have at least one column");
 
       const params: unknown[] = [];

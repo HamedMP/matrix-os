@@ -17,7 +17,9 @@
           "position": "integer"
         },
         "indexes": [
-          "position",
+          "position"
+        ],
+        "uniqueIndexes": [
           "tz"
         ]
       },
@@ -27,7 +29,10 @@
           "label": "text",
           "repeat": "text",
           "enabled": "boolean"
-        }
+        },
+        "indexes": [
+          "time"
+        ]
       }
     }
   },

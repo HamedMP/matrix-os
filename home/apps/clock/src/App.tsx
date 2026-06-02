@@ -277,7 +277,7 @@ export default function App() {
           <Timers />
         </div>
         <div hidden={tab !== "stopwatch"}>
-          <Stopwatch />
+          <Stopwatch active={tab === "stopwatch"} />
         </div>
       </section>
     </main>
@@ -361,6 +361,7 @@ function WorldClock({ now }: { now: Date }) {
         console.warn("[clock] zone save failed:", err instanceof Error ? err.message : String(err));
         setError("City could not be saved.");
         setZones((cur) => cur.filter((z) => z.id !== optimistic.id));
+        void reload().finally(() => setError("City could not be saved."));
       }
     },
     [persistLocal, reload, zones],
@@ -412,9 +413,8 @@ function WorldClock({ now }: { now: Date }) {
         );
       } catch (err: unknown) {
         console.warn("[clock] reorder failed:", err instanceof Error ? err.message : String(err));
-        setError("New order could not be saved.");
         setZones(previous);
-        void reload();
+        void reload().finally(() => setError("New order could not be saved."));
       }
     },
     [persistLocal, reload, zones],
@@ -596,7 +596,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
   const [ringing, setRinging] = useState<AlarmModel | null>(null);
   const [ringQueue, setRingQueue] = useState<AlarmModel[]>([]);
   const firedRef = useRef<Set<string>>(new Set());
-  const snoozedRef = useRef<Array<{ alarm: AlarmModel; dueAt: number }>>([]);
+  const snoozedRef = useRef<Array<{ alarm: AlarmModel; dueAt: number; ringWhenDisabled: boolean }>>([]);
   const persistenceLabel = storageLabel();
 
   const reload = useCallback(async () => {
@@ -667,8 +667,8 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     if (dueSnooze) {
       snoozedRef.current = snoozedRef.current.filter((entry) => entry !== dueSnooze);
       const currentAlarm = alarms.find((alarm) => alarm.id === dueSnooze.alarm.id);
-      if (currentAlarm?.enabled) {
-        queueRing(currentAlarm);
+      if (currentAlarm && (currentAlarm.enabled || dueSnooze.ringWhenDisabled)) {
+        queueRing(currentAlarm.enabled ? currentAlarm : dueSnooze.alarm);
         beep(3);
       }
     }
@@ -724,6 +724,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
       console.warn("[clock] alarm save failed:", err instanceof Error ? err.message : String(err));
       setError("Alarm could not be saved.");
       setAlarms((cur) => cur.filter((a) => a.id !== draft.id));
+      void reload().finally(() => setError("Alarm could not be saved."));
     }
   }, [alarms, draftDays, draftLabel, draftTime, persistLocal, reload]);
 
@@ -772,7 +773,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
     if (ringing) {
       snoozedRef.current = [
         ...snoozedRef.current.filter((entry) => entry.alarm.id !== ringing.id),
-        { alarm: ringing, dueAt: now.getTime() + SNOOZE_MS },
+        { alarm: ringing, dueAt: now.getTime() + SNOOZE_MS, ringWhenDisabled: ringing.repeat.length === 0 },
       ];
     }
     setRinging(null);
@@ -1139,7 +1140,7 @@ function swReducer(s: SwState, a: SwAction): SwState {
   }
 }
 
-function Stopwatch() {
+function Stopwatch({ active }: { active: boolean }) {
   const [state, dispatch] = useReducer(swReducer, {
     running: false,
     elapsed: 0,
@@ -1153,6 +1154,10 @@ function Stopwatch() {
       setDisplay(state.elapsed);
       return undefined;
     }
+    if (!active) {
+      setDisplay(nowElapsed(state, performance.now()));
+      return undefined;
+    }
     let raf = 0;
     const tick = () => {
       setDisplay(nowElapsed(state, performance.now()));
@@ -1160,7 +1165,7 @@ function Stopwatch() {
     };
     raf = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(raf);
-  }, [state]);
+  }, [active, state]);
 
   const laps = useMemo(() => computeLaps(state.marks), [state.marks]);
   const ext = useMemo(() => lapExtremes(laps), [laps]);

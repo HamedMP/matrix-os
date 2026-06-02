@@ -13,6 +13,7 @@ export interface AppDb {
     table: string,
     columns: Record<string, string>,
     indexes?: string[],
+    uniqueIndexes?: string[],
   ): Promise<void>;
   raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   destroy(): Promise<void>;
@@ -110,6 +111,7 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
       table: string,
       columns: Record<string, string>,
       indexes?: string[],
+      uniqueIndexes?: string[],
     ): Promise<void> {
       parseAppSlug(schema);
       if (!isSafeName(table)) throw new Error(`Invalid table name: ${table}`);
@@ -155,11 +157,23 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
 
       if (indexes) {
         for (const col of indexes) {
-          if (!isSafeName(col)) continue;
+          if (!isSafeName(col)) throw new Error(`Invalid index column name: ${col}`);
           const idxName = `idx_${schema}_${table}_${col}`.replace(/-/g, "_");
           await sql
             .raw(
               `CREATE INDEX IF NOT EXISTS "${idxName}" ON ${fullTable} ("${col}")`,
+            )
+            .execute(kysely);
+        }
+      }
+
+      if (uniqueIndexes) {
+        for (const col of uniqueIndexes) {
+          if (!isSafeName(col)) throw new Error(`Invalid unique index column name: ${col}`);
+          const idxName = `uidx_${schema}_${table}_${col}`.replace(/-/g, "_");
+          await sql
+            .raw(
+              `CREATE UNIQUE INDEX IF NOT EXISTS "${idxName}" ON ${fullTable} ("${col}")`,
             )
             .execute(kysely);
         }

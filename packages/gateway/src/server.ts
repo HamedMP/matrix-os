@@ -721,7 +721,7 @@ export async function createGateway(config: GatewayConfig) {
         }
         shouldCacheProvisionAttempt = true;
         const tables = manifest.storage?.tables as
-          | Record<string, { columns: Record<string, string>; indexes?: string[] }>
+          | Record<string, { columns: Record<string, string>; indexes?: string[]; uniqueIndexes?: string[] }>
           | undefined;
         if (tables && Object.keys(tables).length > 0) {
           await registry.register({
@@ -848,7 +848,10 @@ export async function createGateway(config: GatewayConfig) {
               version: manifest.version,
               author: manifest.author,
               category: manifest.category,
-              tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
+              tables: manifest.storage.tables as Record<
+                string,
+                { columns: Record<string, string>; indexes?: string[]; uniqueIndexes?: string[] }
+              >,
             });
             registered++;
             rememberProvisionedAppSlug(storageSlug);

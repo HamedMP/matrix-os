@@ -152,6 +152,32 @@ describe("Clock app", () => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
+  it("reloads saved zones after a failed optimistic zone insert", async () => {
+    const store = { zones: [] as DbRow[], alarms: [] as DbRow[] };
+    const db = installMatrixDb(store);
+    db.insert.mockImplementationOnce(async () => {
+      store.zones.push({ id: "zone-paris", tz: "Europe/Paris", position: 0 });
+      throw new Error("insert failed");
+    });
+    render(<App />);
+
+    expect(await screen.findByText(/no cities yet/i)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: /add city/i })[0]);
+    const search = await screen.findByPlaceholderText(/search cities/i);
+    fireEvent.change(search, { target: { value: "Tokyo" } });
+    const option = await screen.findByRole("option", { name: /tokyo/i });
+
+    await act(async () => {
+      fireEvent.click(option);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("City could not be saved.")).toBeTruthy();
+    expect(await screen.findByText(/paris/i)).toBeTruthy();
+    expect(screen.queryByText(/tokyo/i)).toBeNull();
+  });
+
   it("persists world-clock zone reorders with bulkUpdate", async () => {
     const db = installMatrixDb({
       zones: [
@@ -181,6 +207,28 @@ describe("Clock app", () => {
         ]),
       );
     });
+  });
+
+  it("keeps the reorder failure banner visible after recovery reload", async () => {
+    const db = installMatrixDb({
+      zones: [
+        { id: "zone-tokyo", tz: "Asia/Tokyo", position: 0 },
+        { id: "zone-london", tz: "Europe/London", position: 1 },
+      ],
+      alarms: [],
+    });
+    db.bulkUpdate.mockRejectedValueOnce(new Error("bulk update failed"));
+    render(<App />);
+
+    const tokyo = (await screen.findByText(/tokyo/i)).closest("li");
+    const london = (await screen.findByText(/london/i)).closest("li");
+    if (!tokyo || !london) throw new Error("Expected zone rows to render");
+
+    fireEvent.dragStart(london);
+    fireEvent.dragOver(tokyo);
+    fireEvent.drop(tokyo);
+
+    expect(await screen.findByText("New order could not be saved.")).toBeTruthy();
   });
 
   it("does not persist reorders while a zone id is still optimistic", async () => {
@@ -257,7 +305,7 @@ describe("Clock app", () => {
     expect(screen.getByRole("button", { name: /remove zone/i })).toBeTruthy();
   });
 
-  it("rings alarms while another tab is active and does not re-ring snoozed one-shot alarms", async () => {
+  it("rings alarms while another tab is active and re-rings snoozed one-shot alarms", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
     const db = installMatrixDb({
@@ -285,7 +333,7 @@ describe("Clock app", () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
     });
 
-    expect(screen.queryByRole("button", { name: /snooze/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /snooze/i })).toBeTruthy();
   });
 
   it("renders alarms in bridge order by time", async () => {
@@ -305,6 +353,30 @@ describe("Clock app", () => {
       "Disable alarm 06:00",
       "Disable alarm 09:00",
     ]);
+  });
+
+  it("reloads saved alarms after a failed optimistic alarm insert", async () => {
+    const store = { zones: [] as DbRow[], alarms: [] as DbRow[] };
+    const db = installMatrixDb(store);
+    db.insert.mockImplementationOnce(async () => {
+      store.alarms.push({ id: "alarm-existing", time: "09:00", label: "Existing", repeat: "", enabled: true });
+      throw new Error("insert failed");
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("tab", { name: /alarms/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /new alarm/i })[0]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save alarm/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Alarm could not be saved.")).toBeTruthy();
+    await waitFor(() => {
+      expect(db.find.mock.calls.filter(([table]) => table === "alarms").length).toBeGreaterThan(1);
+    });
   });
 
   it("clears snoozed alarms when they are disabled", async () => {
@@ -406,5 +478,23 @@ describe("Clock app", () => {
     fireEvent.click(screen.getByRole("tab", { name: /world clock/i }));
     fireEvent.click(screen.getByRole("tab", { name: /stopwatch/i }));
     expect(readout.textContent).not.toBe("00:00.00");
+  });
+
+  it("stops the stopwatch animation loop when the panel is hidden", async () => {
+    installMatrixDb({ zones: [], alarms: [] });
+    vi.useFakeTimers();
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame");
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame");
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /stopwatch/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^start$/i }));
+    expect(requestFrame).toHaveBeenCalled();
+    requestFrame.mockClear();
+
+    fireEvent.click(screen.getByRole("tab", { name: /world clock/i }));
+
+    expect(cancelFrame).toHaveBeenCalled();
+    expect(requestFrame).not.toHaveBeenCalled();
   });
 });

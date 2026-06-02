@@ -28,6 +28,7 @@ export const AppManifestSchema = z.object({
         z.object({
           columns: z.record(z.string(), z.string()),
           indexes: z.array(z.string()).optional(),
+          uniqueIndexes: z.array(z.string()).optional(),
         }),
       ).default({}),
     })

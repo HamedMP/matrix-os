@@ -166,6 +166,23 @@ describe("QueryEngine", () => {
     expect(rows.map((row) => row.title)).toEqual(["B", "A"]);
   });
 
+  it("bulk-updates sparse row data without changing omitted columns", async () => {
+    const first = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+    const second = await engine.insert("todo", "tasks", { title: "B", done: false, priority: 2 });
+
+    await engine.bulkUpdate("todo", "tasks", [
+      { id: first.id, data: { priority: 3 } },
+      { id: second.id, data: { priority: 4, done: true } },
+    ]);
+
+    const firstRow = await engine.findOne("todo", "tasks", first.id);
+    const secondRow = await engine.findOne("todo", "tasks", second.id);
+    expect(firstRow!.priority).toBe(3);
+    expect(firstRow!.done).toBe(false);
+    expect(secondRow!.priority).toBe(4);
+    expect(secondRow!.done).toBe(true);
+  });
+
   it("rejects duplicate ids in bulk updates", async () => {
     const { id } = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
 
