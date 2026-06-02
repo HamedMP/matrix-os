@@ -113,6 +113,16 @@ export class Chess {
         if (rank === homeRank && !this.boardState[one] && !this.boardState[two]) {
           out.push({ from: opts.square, to: two, piece: "p", color: piece.color });
         }
+        for (const dc of [-1, 1]) {
+          const targetFile = FILES[fileIdx + dc];
+          const targetRank = rank + dir;
+          if (!targetFile || targetRank < 1 || targetRank > 8) continue;
+          const target = `${targetFile}${targetRank}`;
+          const occupant = this.boardState[target];
+          if (occupant && occupant.color !== piece.color) {
+            out.push({ from: opts.square, to: target, piece: "p", color: piece.color, captured: occupant.type });
+          }
+        }
       }
       if (piece.type === "n") {
         const knightDeltas = [

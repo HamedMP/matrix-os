@@ -173,6 +173,24 @@ describe("Chess app", () => {
 
     __setNextBoard({ d4: { color: "w", type: "k" } });
     expect(new Chess().moves({ square: "d4" })).toEqual(expect.arrayContaining(["d5", "e5", "e4", "c3"]));
+
+    __setNextBoard({
+      e4: { color: "w", type: "p" },
+      d5: { color: "b", type: "p" },
+      f5: { color: "w", type: "p" },
+    });
+    const whitePawnMoves = new Chess().moves({ square: "e4" });
+    expect(whitePawnMoves).toEqual(expect.arrayContaining(["e5", "d5"]));
+    expect(whitePawnMoves).not.toContain("f5");
+
+    __setNextBoard({
+      d5: { color: "b", type: "p" },
+      e4: { color: "w", type: "p" },
+      c4: { color: "b", type: "p" },
+    }, "b");
+    const blackPawnMoves = new Chess().moves({ square: "d5" });
+    expect(blackPawnMoves).toEqual(expect.arrayContaining(["d4", "e4"]));
+    expect(blackPawnMoves).not.toContain("c4");
   });
 
   it("records a legal move in the SAN history", async () => {
