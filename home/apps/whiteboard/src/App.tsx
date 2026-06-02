@@ -166,9 +166,10 @@ function saveLocalName(name: string): void {
   }
 }
 
-function nextUntitledName(boards: readonly BoardMeta[]): string {
+function nextUntitledName(boards: readonly BoardMeta[], reservedNames: ReadonlySet<string> = new Set()): string {
   const base = "Untitled board";
   const taken = new Set(boards.map((b) => b.name.toLowerCase()));
+  for (const name of reservedNames) taken.add(name.toLowerCase());
   if (!taken.has(base.toLowerCase())) return base;
   for (let i = 2; i < 1000; i += 1) {
     const candidate = `${base} ${i}`;
@@ -212,6 +213,7 @@ export default function App() {
   const dirtyRef = useRef(false);
   const historyRef = useRef<History>(history);
   const renameCommitKeyRef = useRef<string | null>(null);
+  const pendingBoardNamesRef = useRef<Set<string>>(new Set());
   const editingCommitIdRef = useRef<string | null>(null);
 
   // Keep a ref of the active board id so debounced/async saves target the
@@ -301,34 +303,41 @@ export default function App() {
   const createBoard = useCallback(
     async (name?: string): Promise<string | null> => {
       const db = window.MatrixOS?.db;
-      const boardName = normalizeBoardName(name ?? nextUntitledName(boards));
+      const isGeneratedName = name == null;
+      const boardName = normalizeBoardName(name ?? nextUntitledName(boards, pendingBoardNamesRef.current));
+      const reservedName = isGeneratedName ? boardName.toLowerCase() : null;
+      if (reservedName) pendingBoardNamesRef.current.add(reservedName);
       const doc = serializeScene(emptyScene());
-      if (!db) {
-        // No DB: a single local board only.
-        saveLocal(emptyScene());
-        saveLocalName(boardName);
-        await refreshIndex();
-        await openBoard(LOCAL_BOARD_ID);
-        return LOCAL_BOARD_ID;
-      }
       try {
-        setError(null);
-        const res = await db.insert(SCENES_TABLE, { name: boardName, doc });
-        const id = res && typeof res.id === "string" ? res.id : null;
-        await refreshIndex();
-        if (!id) {
-          console.warn("[whiteboard] create board response did not include an id");
+        if (!db) {
+          // No DB: a single local board only.
+          saveLocal(emptyScene());
+          saveLocalName(boardName);
+          await refreshIndex();
+          await openBoard(LOCAL_BOARD_ID);
+          return LOCAL_BOARD_ID;
+        }
+        try {
+          setError(null);
+          const res = await db.insert(SCENES_TABLE, { name: boardName, doc });
+          const id = res && typeof res.id === "string" ? res.id : null;
+          await refreshIndex();
+          if (!id) {
+            console.warn("[whiteboard] create board response did not include an id");
+            setError("Could not create a board.");
+            setLoadingBoard(false);
+            return null;
+          }
+          await openBoard(id);
+          return id;
+        } catch (err: unknown) {
+          console.warn("[whiteboard] create board failed:", err instanceof Error ? err.message : String(err));
           setError("Could not create a board.");
           setLoadingBoard(false);
           return null;
         }
-        await openBoard(id);
-        return id;
-      } catch (err: unknown) {
-        console.warn("[whiteboard] create board failed:", err instanceof Error ? err.message : String(err));
-        setError("Could not create a board.");
-        setLoadingBoard(false);
-        return null;
+      } finally {
+        if (reservedName) pendingBoardNamesRef.current.delete(reservedName);
       }
     },
     [boards, openBoard, refreshIndex],
@@ -1620,12 +1629,17 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
     if (el.kind === "arrow") {
       const angle = Math.atan2(l.y2 - l.y1, l.x2 - l.x1);
       const size = 8 + el.strokeWidth;
+      const leftX = l.x2 - size * Math.cos(angle - Math.PI / 6);
+      const leftY = l.y2 - size * Math.sin(angle - Math.PI / 6);
+      const rightX = l.x2 - size * Math.cos(angle + Math.PI / 6);
+      const rightY = l.y2 - size * Math.sin(angle + Math.PI / 6);
       ctx.beginPath();
       ctx.moveTo(l.x2, l.y2);
-      ctx.lineTo(l.x2 - size * Math.cos(angle - Math.PI / 6), l.y2 - size * Math.sin(angle - Math.PI / 6));
-      ctx.moveTo(l.x2, l.y2);
-      ctx.lineTo(l.x2 - size * Math.cos(angle + Math.PI / 6), l.y2 - size * Math.sin(angle + Math.PI / 6));
-      ctx.stroke();
+      ctx.lineTo(leftX, leftY);
+      ctx.lineTo(rightX, rightY);
+      ctx.closePath();
+      ctx.fillStyle = el.stroke;
+      ctx.fill();
     }
     return;
   }
@@ -1705,18 +1719,26 @@ function wrapText(
   maxWidth: number,
   lineHeight: number,
 ): void {
-  const words = text.split(/\s+/);
-  let line = "";
   let cursorY = y;
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
+  const paragraphs = text.replace(/\r\n/g, "\n").split("\n");
+  for (const [index, paragraph] of paragraphs.entries()) {
+    const words = paragraph.split(/[ \t]+/).filter((word) => word.length > 0);
+    let line = "";
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        ctx.fillText(line, x, cursorY);
+        line = word;
+        cursorY += lineHeight;
+      } else {
+        line = test;
+      }
+    }
+    if (line) {
       ctx.fillText(line, x, cursorY);
-      line = word;
+    }
+    if (index < paragraphs.length - 1 || !line) {
       cursorY += lineHeight;
-    } else {
-      line = test;
     }
   }
-  if (line) ctx.fillText(line, x, cursorY);
 }

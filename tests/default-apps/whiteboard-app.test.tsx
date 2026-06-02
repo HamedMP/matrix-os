@@ -371,6 +371,39 @@ describe("Whiteboard app — multi-board files", () => {
     expect(typeof inserted.name).toBe("string");
   });
 
+  it("reserves generated board names during rapid consecutive creates", async () => {
+    const db = installMatrixDb([
+      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+    ]);
+    const resolvers: Array<() => void> = [];
+    db.insert.mockImplementation(async (_table: string, data: Record<string, unknown>) => {
+      const id = `scene-new-${resolvers.length + 1}`;
+      await new Promise<void>((resolve) => {
+        resolvers.push(resolve);
+      });
+      return { id, ...data };
+    });
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    db.insert.mockClear();
+
+    const newBtn = screen.getByRole("button", { name: /new board/i });
+    fireEvent.click(newBtn);
+    fireEvent.click(newBtn);
+
+    expect(db.insert).toHaveBeenNthCalledWith(1, "scenes", expect.objectContaining({ name: "Untitled board" }));
+    expect(db.insert).toHaveBeenNthCalledWith(2, "scenes", expect.objectContaining({ name: "Untitled board 2" }));
+
+    await act(async () => {
+      for (const resolve of resolvers) resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   it("recovers the initial loading state when first board creation fails", async () => {
     const db = installMatrixDb([]);
     db.insert.mockRejectedValueOnce(new Error("create failed"));
@@ -638,6 +671,89 @@ describe("Whiteboard app — multi-board files", () => {
     expect(ctx.ellipse).toHaveBeenCalled();
     expect(ctx.fill).toHaveBeenCalled();
     expect(ctx.stroke).toHaveBeenCalled();
+  });
+
+  it("fills arrowheads when exporting PNGs", async () => {
+    installMatrixDb([
+      {
+        ...board("b1", "Sketch", "2026-02-02T00:00:00.000Z"),
+        doc: {
+          version: 1,
+          elements: [
+            { id: "a1", kind: "arrow", x1: 20, y1: 30, x2: 100, y2: 90, stroke: "#000", strokeWidth: 2 },
+          ],
+        },
+      },
+    ]);
+    const ctx = {
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
+      fill: vi.fn(),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      stroke: vi.fn(),
+      translate: vi.fn(),
+      set fillStyle(_value: string) {},
+      set lineCap(_value: string) {},
+      set lineJoin(_value: string) {},
+      set lineWidth(_value: number) {},
+      set strokeStyle(_value: string) {},
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,stub");
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTitle("Export PNG"));
+
+    expect(ctx.closePath).toHaveBeenCalled();
+    expect(ctx.fill).toHaveBeenCalled();
+  });
+
+  it("preserves explicit text newlines when exporting PNGs", async () => {
+    installMatrixDb([
+      {
+        ...board("b1", "Sketch", "2026-02-02T00:00:00.000Z"),
+        doc: {
+          version: 1,
+          elements: [
+            { id: "t1", kind: "text", x: 40, y: 50, width: 200, height: 80, stroke: "#111", fill: "transparent", strokeWidth: 1, text: "First line\nSecond line" },
+          ],
+        },
+      },
+    ]);
+    const ctx = {
+      fillRect: vi.fn(),
+      fillText: vi.fn(),
+      measureText: vi.fn((value: string) => ({ width: value.length * 8 })),
+      translate: vi.fn(),
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set lineCap(_value: string) {},
+      set lineJoin(_value: string) {},
+      set lineWidth(_value: number) {},
+      set strokeStyle(_value: string) {},
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,stub");
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTitle("Export PNG"));
+
+    expect(ctx.fillText).toHaveBeenCalledWith("First line", 40, 70);
+    expect(ctx.fillText).toHaveBeenCalledWith("Second line", 40, 92);
   });
 
   it("does not reset the active canvas selection for table-wide change notifications", async () => {
