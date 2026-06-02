@@ -545,7 +545,7 @@ export default function App() {
       renameCommitKeyRef.current = null;
       setBoards(snapshot);
       setError("Could not rename the board.");
-      void refreshIndex().then((result) => {
+      void refreshIndex({ reportError: false }).then((result) => {
         setError(result.ok ? null : "Could not rename the board.");
       });
       return false;
@@ -1797,10 +1797,11 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, el: SceneElement): void {
     ctx.lineWidth = 1;
     ctx.stroke();
     if (b.text) {
+      const stickyFontSize = 15;
       ctx.fillStyle = "#32352E";
-      ctx.font = "16px Inter, system-ui, sans-serif";
-      ctx.textBaseline = "alphabetic";
-      wrapText(ctx, b.text, x + 10, y + 24, w - 20, 20);
+      ctx.font = `${stickyFontSize}px Inter, system-ui, sans-serif`;
+      ctx.textBaseline = "top";
+      wrapText(ctx, b.text, x + 10, y + 8, w - 20, Math.ceil(stickyFontSize * 1.35));
     }
     return;
   }
