@@ -334,6 +334,7 @@ export default function App() {
   );
 
   const undo = useCallback(() => {
+    if (pendingPromotion) return;
     cancelAiMove();
     // In vs-computer mode an "undo" should take back the full human+AI pair so
     // the human is the side to move again (unless only one ply exists).
@@ -348,7 +349,7 @@ export default function App() {
     setLastMove(null);
     clearSelection();
     bump();
-  }, [bump, cancelAiMove, clearSelection]);
+  }, [bump, cancelAiMove, clearSelection, pendingPromotion]);
 
   // Keyboard: Esc clears selection / dismisses promotion, Cmd/Ctrl+Z undoes.
   useEffect(() => {
@@ -358,7 +359,7 @@ export default function App() {
         else clearSelection();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        undo();
+        if (!pendingPromotion) undo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -602,7 +603,7 @@ export default function App() {
             type="button"
             className="secondary-action"
             onClick={undo}
-            disabled={sanHistory.length === 0 || thinking}
+            disabled={sanHistory.length === 0 || thinking || Boolean(pendingPromotion)}
           >
             <RotateCcw size={16} /> Undo
           </button>

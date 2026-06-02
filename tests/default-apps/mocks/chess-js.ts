@@ -25,10 +25,25 @@ function startingBoard(): Record<string, Piece> {
   return board;
 }
 
+let nextBoardState: Record<string, Piece> | null = null;
+let nextTurnColor: Piece["color"] = "w";
+
+export function __setNextBoard(board: Record<string, Piece>, turn: Piece["color"] = "w") {
+  nextBoardState = Object.fromEntries(Object.entries(board).map(([square, piece]) => [square, { ...piece }]));
+  nextTurnColor = turn;
+}
+
 export class Chess {
-  private boardState: Record<string, Piece> = startingBoard();
-  private turnColor: Piece["color"] = "w";
+  private boardState: Record<string, Piece>;
+  private turnColor: Piece["color"];
   private moveStack: MoveRecord[] = [];
+
+  constructor() {
+    this.boardState = nextBoardState ?? startingBoard();
+    this.turnColor = nextTurnColor;
+    nextBoardState = null;
+    nextTurnColor = "w";
+  }
 
   reset() {
     this.boardState = startingBoard();

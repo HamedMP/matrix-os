@@ -16,6 +16,9 @@ vi.mock("../../home/apps/games/chess/src/chess-ai", async (importOriginal) => {
 });
 
 type DbRow = Record<string, unknown>;
+type ChessMockControls = {
+  __setNextBoard(board: Record<string, { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" }>, turn?: "w" | "b"): void;
+};
 
 function installMatrixDb(rows: DbRow[] = []) {
   const listeners: Array<() => void> = [];
@@ -201,6 +204,43 @@ describe("Chess app", () => {
       expect(screen.getByTestId("square-e2").getAttribute("aria-label")).toBe("e2 White p");
       expect(screen.getByTestId("square-e4").getAttribute("aria-label")).toBe("e4 empty");
     });
+  });
+
+  it("keeps undo disabled while a promotion choice is pending", async () => {
+    installMatrixDb([]);
+    const { __setNextBoard } = await import("chess.js") as unknown as ChessMockControls;
+    __setNextBoard({
+      a7: { color: "w", type: "p" },
+      g1: { color: "w", type: "n" },
+      h7: { color: "b", type: "p" },
+    });
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-g1"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-f3"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-h7"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-h6"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-a7"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-a8"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("dialog", { name: /choose promotion piece/i })).toBeTruthy();
+    const undoButton = screen.getByRole("button", { name: /undo/i }) as HTMLButtonElement;
+    expect(undoButton.disabled).toBe(true);
+
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+
+    expect(screen.getByRole("dialog", { name: /choose promotion piece/i })).toBeTruthy();
+    expect(within(screen.getByTestId("move-history")).getByText("Nf3")).toBeTruthy();
+    expect(within(screen.getByTestId("move-history")).getByText("h6")).toBeTruthy();
   });
 
   it("falls back to local play when the computer search fails", async () => {
