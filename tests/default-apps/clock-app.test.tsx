@@ -256,6 +256,21 @@ describe("Clock app", () => {
     expect(await screen.findByText("New order could not be saved.")).toBeTruthy();
   });
 
+  it("keeps the remove-zone failure banner visible after recovery reload", async () => {
+    const db = installMatrixDb({
+      zones: [{ id: "zone-london", tz: "Europe/London", position: 0 }],
+      alarms: [],
+    });
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+    render(<App />);
+
+    expect(await screen.findByText(/london/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /remove london/i }));
+
+    expect(await screen.findByText("City could not be removed.")).toBeTruthy();
+    expect(await screen.findByText(/london/i)).toBeTruthy();
+  });
+
   it("does not persist reorders while a zone id is still optimistic", async () => {
     const db = installMatrixDb({
       zones: [{ id: "zone-london", tz: "Europe/London", position: 0 }],
@@ -465,6 +480,36 @@ describe("Clock app", () => {
     await waitFor(() => {
       expect(db.find.mock.calls.filter(([table]) => table === "alarms").length).toBeGreaterThan(1);
     });
+  });
+
+  it("keeps the alarm-toggle failure banner visible after recovery reload", async () => {
+    const db = installMatrixDb({
+      zones: [],
+      alarms: [{ id: "alarm-1", time: "07:00", label: "Standup", repeat: "", enabled: true }],
+    });
+    db.update.mockRejectedValueOnce(new Error("update failed"));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("tab", { name: /alarms/i }));
+    fireEvent.click(await screen.findByRole("switch", { name: /disable alarm 07:00/i }));
+
+    expect(await screen.findByText("Alarm could not be updated.")).toBeTruthy();
+    expect(await screen.findByRole("switch", { name: /disable alarm 07:00/i })).toBeTruthy();
+  });
+
+  it("keeps the alarm-delete failure banner visible after recovery reload", async () => {
+    const db = installMatrixDb({
+      zones: [],
+      alarms: [{ id: "alarm-1", time: "07:00", label: "Standup", repeat: "", enabled: true }],
+    });
+    db.delete.mockRejectedValueOnce(new Error("delete failed"));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("tab", { name: /alarms/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /delete alarm 07:00/i }));
+
+    expect(await screen.findByText("Alarm could not be removed.")).toBeTruthy();
+    expect(await screen.findByText("07:00")).toBeTruthy();
   });
 
   it("clears snoozed alarms when they are disabled", async () => {

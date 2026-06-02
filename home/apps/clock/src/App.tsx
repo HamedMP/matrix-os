@@ -364,7 +364,6 @@ function WorldClock({ now }: { now: Date }) {
           await reload();
           return;
         }
-        setError("City could not be saved.");
         setZones((cur) => cur.filter((z) => z.id !== optimistic.id));
         void reload().finally(() => setError("City could not be saved."));
       }
@@ -384,8 +383,7 @@ function WorldClock({ now }: { now: Date }) {
         await window.MatrixOS.db.delete(ZONES_TABLE, zone.id);
       } catch (err: unknown) {
         console.warn("[clock] zone delete failed:", err instanceof Error ? err.message : String(err));
-        setError("City could not be removed.");
-        void reload();
+        void reload().finally(() => setError("City could not be removed."));
       }
     },
     [persistLocal, reload, zones],
@@ -666,8 +664,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         );
       } catch (err: unknown) {
         console.warn("[clock] alarm auto-disable failed:", err instanceof Error ? err.message : String(err));
-        setError("Alarm could not be updated.");
-        void reload();
+        void reload().finally(() => setError("Alarm could not be updated."));
       }
     },
     [persistLocal, reload],
@@ -739,7 +736,6 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
       await reload();
     } catch (err: unknown) {
       console.warn("[clock] alarm save failed:", err instanceof Error ? err.message : String(err));
-      setError("Alarm could not be saved.");
       setAlarms((cur) => cur.filter((a) => a.id !== draft.id));
       void reload().finally(() => setError("Alarm could not be saved."));
     }
@@ -759,8 +755,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         await window.MatrixOS.db.update(ALARMS_TABLE, alarm.id, { enabled });
       } catch (err: unknown) {
         console.warn("[clock] alarm toggle failed:", err instanceof Error ? err.message : String(err));
-        setError("Alarm could not be updated.");
-        void reload();
+        void reload().finally(() => setError("Alarm could not be updated."));
       }
     },
     [alarms, clearAlarmRuntime, persistLocal, reload],
@@ -779,8 +774,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         await window.MatrixOS.db.delete(ALARMS_TABLE, alarm.id);
       } catch (err: unknown) {
         console.warn("[clock] alarm delete failed:", err instanceof Error ? err.message : String(err));
-        setError("Alarm could not be removed.");
-        void reload();
+        void reload().finally(() => setError("Alarm could not be removed."));
       }
     },
     [alarms, clearAlarmRuntime, persistLocal, reload],
