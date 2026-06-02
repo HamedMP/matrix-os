@@ -138,20 +138,25 @@ export default function App() {
     const db = window.MatrixOS?.db;
     try {
       setError(null);
+      const clearStatsError = () => setSaveState((current) => current === "error" ? "idle" : current);
       if (db) {
         const n = await db.count(GAMES_TABLE);
         setGamesPlayed(typeof n === "number" ? n : 0);
+        clearStatsError();
         return;
       }
       if (window.MatrixOS) {
         setGamesPlayed(0);
+        clearStatsError();
         return;
       }
       const raw = window.localStorage.getItem(LS_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
       setGamesPlayed(Array.isArray(parsed) ? parsed.length : 0);
+      clearStatsError();
     } catch (err: unknown) {
       console.warn("[chess] could not load game stats:", err instanceof Error ? err.message : String(err));
+      setSaveState("error");
       setError("Saved games could not be loaded.");
     }
   }, []);

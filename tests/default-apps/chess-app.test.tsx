@@ -18,6 +18,7 @@ vi.mock("../../home/apps/games/chess/src/chess-ai", async (importOriginal) => {
 type DbRow = Record<string, unknown>;
 
 function installMatrixDb(rows: DbRow[] = []) {
+  const listeners: Array<() => void> = [];
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
@@ -25,7 +26,16 @@ function installMatrixDb(rows: DbRow[] = []) {
     update: vi.fn(async () => ({ ok: true })),
     delete: vi.fn(async () => ({ ok: true })),
     count: vi.fn(async () => rows.length),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, cb: () => void) => {
+      listeners.push(cb);
+      return () => {
+        const index = listeners.indexOf(cb);
+        if (index >= 0) listeners.splice(index, 1);
+      };
+    }),
+    emitChange: () => {
+      for (const cb of [...listeners]) cb();
+    },
   };
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
@@ -53,6 +63,33 @@ describe("Chess app", () => {
     const board = await screen.findByTestId("board");
     expect(board.querySelectorAll("[data-square]").length).toBe(64);
     expect(within(board).getAllByRole("gridcell").length).toBe(64);
+  });
+
+  it("shows a save-strip error when saved game stats fail to load", async () => {
+    const db = installMatrixDb([]);
+    db.count.mockRejectedValueOnce(new Error("count failed"));
+
+    render(<App />);
+
+    expect(await screen.findByText("Saved games could not be loaded.")).toBeTruthy();
+  });
+
+  it("clears a stats load error after a successful db change reload", async () => {
+    const db = installMatrixDb([{}]);
+    db.count.mockRejectedValueOnce(new Error("count failed")).mockResolvedValueOnce(1);
+
+    render(<App />);
+
+    expect(await screen.findByText("Saved games could not be loaded.")).toBeTruthy();
+
+    await act(async () => {
+      db.emitChange();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.queryByText("Saved games could not be loaded.")).toBeNull());
+    expect(screen.queryByText("Game could not be saved.")).toBeNull();
+    expect(screen.getByText("1 game on record")).toBeTruthy();
   });
 
   it("highlights legal destinations when a pawn is selected", async () => {
