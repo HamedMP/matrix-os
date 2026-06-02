@@ -1231,6 +1231,27 @@ describe("Whiteboard app — multi-board files", () => {
     expect(document.activeElement).toBe(confirm);
   });
 
+  it("does not switch tools from shortcuts while delete confirmation is open", async () => {
+    installMatrixDb([
+      board("b1", "Keep me", "2026-02-02T00:00:00.000Z"),
+      board("b2", "Delete me", "2026-03-03T00:00:00.000Z"),
+    ]);
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /delete board delete me/i }));
+    const dialog = screen.getByRole("dialog", { name: /delete board/i });
+    const cancel = within(dialog).getByRole("button", { name: /cancel/i });
+
+    fireEvent.keyDown(cancel, { key: "r" });
+
+    expect(screen.getByRole("button", { name: "Select (V)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Rectangle (R)" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("dismisses delete confirmation with Escape", async () => {
     installMatrixDb([
       board("b1", "Keep me", "2026-02-02T00:00:00.000Z"),

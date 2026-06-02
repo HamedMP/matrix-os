@@ -928,14 +928,14 @@ export default function App() {
         setConfirmDelete(null);
         return;
       }
-      if (!mod) {
+      if (!mod && !confirmClear && !confirmDelete) {
         const match = TOOLS.find((t) => t.shortcut.toLowerCase() === e.key.toLowerCase());
         if (match) setTool(match.kind);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [deleteSelected, doRedo, doUndo, selected]);
+  }, [confirmClear, confirmDelete, deleteSelected, doRedo, doUndo, selected]);
 
   // -- zoom -----------------------------------------------------------------
   const zoomBy = useCallback((factor: number) => {
