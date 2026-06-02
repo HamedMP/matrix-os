@@ -155,6 +155,7 @@ jobs:
               environment:
                 MATRIX_DOCKER_CHOWN_SOURCE: "true"
                 MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
+                MATRIX_SKIP_DEFAULT_APP_BUILD: "true"
           EOF
 
       - name: Create external volumes
@@ -232,6 +233,7 @@ jobs:
               environment:
                 MATRIX_DOCKER_CHOWN_SOURCE: "true"
                 MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
+                MATRIX_SKIP_DEFAULT_APP_BUILD: "true"
           EOF
 
       - name: Create external volumes
