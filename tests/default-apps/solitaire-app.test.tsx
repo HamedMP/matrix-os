@@ -57,7 +57,7 @@ describe("Solitaire app", () => {
     expect(screen.getAllByTestId("tableau-pile").length).toBe(7);
   });
 
-  it("double-clicking an exposed Ace sends it to a foundation (a legal move)", async () => {
+  it("clicking an exposed Ace sends it to a foundation (a legal move)", async () => {
     installMatrixDb();
     render(<App initialState={seededState()} />);
 
@@ -65,7 +65,7 @@ describe("Solitaire app", () => {
     expect(screen.getByTestId("waste").textContent).toContain("A");
 
     await act(async () => {
-      fireEvent.doubleClick(aceCard);
+      fireEvent.click(aceCard);
       await Promise.resolve();
     });
 
@@ -73,6 +73,17 @@ describe("Solitaire app", () => {
     const foundations = screen.getAllByTestId("foundation");
     const inFoundation = foundations.some((f) => within(f).queryByTestId("card-spades-1"));
     expect(inFoundation).toBe(true);
+  });
+
+  it("does not restart the current game when clicking the active draw mode", async () => {
+    installMatrixDb();
+    render(<App initialState={seededState()} />);
+    expect(await screen.findByTestId("card-spades-1")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /draw 1/i }));
+
+    expect(screen.getByTestId("waste").textContent).toContain("A");
+    expect(screen.getByTestId("card-spades-1")).toBeTruthy();
   });
 
   it("does not add undo history when drawing from empty stock and waste", async () => {
@@ -204,14 +215,21 @@ describe("Solitaire app", () => {
 
     const kingCard = await screen.findByTestId("card-clubs-13");
     await act(async () => {
-      fireEvent.doubleClick(kingCard);
+      fireEvent.click(kingCard);
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(screen.getByTestId("win-banner")).toBeTruthy();
-    expect(db.insert).toHaveBeenCalled();
-    const tableArg = db.insert.mock.calls[0][0];
-    expect(tableArg).toBe("stats");
+    await waitFor(() => {
+      const statPayloads = [
+        ...db.insert.mock.calls.filter((call) => call[0] === "stats").map((call) => call[1] as DbRow),
+        ...db.update.mock.calls.filter((call) => call[0] === "stats").map((call) => call[2] as DbRow),
+      ];
+      expect(statPayloads).toContainEqual(expect.objectContaining({
+        games_won: 1,
+        best_moves: 11,
+      }));
+    });
   });
 });

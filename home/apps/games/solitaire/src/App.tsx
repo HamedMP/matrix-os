@@ -234,12 +234,13 @@ export default function App({ initialState }: AppProps) {
   );
 
   const setDrawMode = useCallback((mode: 1 | 3) => {
+    if (mode === draw) return;
     setDraw(mode);
     void window.MatrixOS?.writeData?.(DRAW_PREF_KEY, mode).catch((err: unknown) => {
       console.warn("[solitaire] draw preference save failed:", err instanceof Error ? err.message : String(err));
     });
     startNewGame(mode);
-  }, [startNewGame]);
+  }, [draw, startNewGame]);
 
   // ---- Move application with history -------------------------------------
   const commit = useCallback((next: GameState) => {
