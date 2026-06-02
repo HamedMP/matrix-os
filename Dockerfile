@@ -219,6 +219,7 @@ COPY --from=builder /app/skills ./skills
 COPY --from=builder /app/scripts/build-default-apps.mjs ./scripts/build-default-apps.mjs
 COPY --from=builder /app/scripts/install-hermes-matrix-skills.sh ./scripts/install-hermes-matrix-skills.sh
 COPY --from=builder /app/scripts/sync-matrix-agent-skills.sh ./scripts/sync-matrix-agent-skills.sh
+COPY scripts/cloudflared-ws-watchdog.mjs ./scripts/cloudflared-ws-watchdog.mjs
 COPY --from=builder /app/package.json ./
 COPY distro/customer-vps /app/distro/customer-vps
 COPY distro/zshrc /app/distro/zshrc

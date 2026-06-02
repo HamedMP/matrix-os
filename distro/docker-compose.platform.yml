@@ -68,6 +68,39 @@ services:
     networks:
       - matrixos-net
 
+  cloudflared-watchdog:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+        - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+        - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+        - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+        - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
+    entrypoint: ["node"]
+    command: ["scripts/cloudflared-ws-watchdog.mjs"]
+    environment:
+      - PLATFORM_INTERNAL_URL=http://platform:9000
+      - PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL:-https://app.matrix-os.com}
+      - PLATFORM_SECRET=${PLATFORM_SECRET}
+      - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET}
+      - CLOUDFLARED_WATCHDOG_INTERVAL_MS=${CLOUDFLARED_WATCHDOG_INTERVAL_MS:-60000}
+      - CLOUDFLARED_WATCHDOG_PROBE_TIMEOUT_MS=${CLOUDFLARED_WATCHDOG_PROBE_TIMEOUT_MS:-10000}
+      - CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=${CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD:-3}
+      - CLOUDFLARED_WATCHDOG_RESTART_COOLDOWN_MS=${CLOUDFLARED_WATCHDOG_RESTART_COOLDOWN_MS:-300000}
+      - CLOUDFLARED_WATCHDOG_TERMINAL_SESSION=${CLOUDFLARED_WATCHDOG_TERMINAL_SESSION:-main}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      platform:
+        condition: service_healthy
+      cloudflared:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - matrixos-net
+
   platform:
     build:
       context: ..
