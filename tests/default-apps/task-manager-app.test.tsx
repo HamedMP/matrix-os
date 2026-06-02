@@ -323,6 +323,51 @@ describe("Task Manager app", () => {
     });
   });
 
+  it("keeps card detail drafts when a pending card id resolves", async () => {
+    const { db, store } = installMatrixDb({
+      columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],
+      cards: [],
+    });
+    let resolveCardInsert: (() => void) | null = null;
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "cards") {
+        await new Promise<void>((resolve) => {
+          resolveCardInsert = resolve;
+        });
+        const id = "cards-created";
+        store.cards.push({ id, created_at: new Date().toISOString(), ...data });
+        return { id };
+      }
+      const id = `${table}-fallback`;
+      store[table as keyof FakeDb].push({ id, created_at: new Date().toISOString(), ...data });
+      return { id };
+    });
+
+    render(<App />);
+    const input = await screen.findByPlaceholderText("Add a card to To do");
+    fireEvent.change(input, { target: { value: "Draft card" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    fireEvent.click(await screen.findByText("Draft card"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Card title"), { target: { value: "Unsaved title" } });
+    fireEvent.change(within(dialog).getByPlaceholderText("Add more detail…"), {
+      target: { value: "Unsaved details" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("Unassigned"), { target: { value: "Morgan" } });
+
+    await act(async () => {
+      resolveCardInsert?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const updatedDialog = await screen.findByRole("dialog");
+    expect(within(updatedDialog).getByDisplayValue("Unsaved title")).toBeTruthy();
+    expect(within(updatedDialog).getByDisplayValue("Unsaved details")).toBeTruthy();
+    expect(within(updatedDialog).getByDisplayValue("Morgan")).toBeTruthy();
+  });
+
   it("persists a card created in a new column with the resolved DB column id", async () => {
     const { db, store } = installMatrixDb({
       columns: [{ id: "col-1", title: "To do", color: "#7A7768", position: 0, created_at: "2026-05-01T00:00:00Z" }],

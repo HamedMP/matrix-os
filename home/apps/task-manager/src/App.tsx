@@ -302,14 +302,19 @@ function App() {
     void persist(async () => {
       const bridge = db();
       if (!bridge) return;
-      const toWrite = next.cards.filter((card) => affected.has(card.columnId));
-      for (const card of toWrite) {
+      const cardIds = next.cards.filter((card) => affected.has(card.columnId)).map((card) => card.id);
+      for (const cardId of cardIds) {
+        const persistedCardId = await resolveCardId(cardId);
+        const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+          ?? boardRef.current?.cards.find((card) => card.id === cardId)
+          ?? next.cards.find((card) => card.id === cardId);
+        if (!liveCard) continue;
         const persistedColumnId = await (
-          pendingColumnIdsRef.current[card.columnId] ?? Promise.resolve(card.columnId)
+          pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId)
         );
-        await bridge.update(CARDS_TABLE, await resolveCardId(card.id), {
+        await bridge.update(CARDS_TABLE, persistedCardId, {
           column_id: persistedColumnId,
-          position: card.order,
+          position: liveCard.order,
         });
       }
     }, "Card order could not be saved");
@@ -922,9 +927,15 @@ function CardDetail({
   const [assignee, setAssignee] = useState(card.assignee);
   const [labelInput, setLabelInput] = useState("");
   const [checklistInput, setChecklistInput] = useState("");
-  useEffect(() => { setTitle(card.title); }, [card.id, card.title]);
-  useEffect(() => { setDescription(card.description); }, [card.id, card.description]);
-  useEffect(() => { setAssignee(card.assignee); }, [card.id, card.assignee]);
+  const previousCardRef = useRef(card);
+  useEffect(() => {
+    const previous = previousCardRef.current;
+    const sameCard = previous.createdAt === card.createdAt;
+    if (!sameCard || title === previous.title) setTitle(card.title);
+    if (!sameCard || description === previous.description) setDescription(card.description);
+    if (!sameCard || assignee === previous.assignee) setAssignee(card.assignee);
+    previousCardRef.current = card;
+  }, [assignee, card, description, title]);
 
   const progress = checklistProgress(card.checklist);
 
