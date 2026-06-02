@@ -1016,6 +1016,25 @@ sudo systemctl status cloudflared.service
 ls /etc/cloudflared/credentials.json
 ```
 
+### Shell reconnects while HTTP stays healthy
+
+Split the incident by layer before changing runtime code: direct customer VPS
+health, local platform websocket upgrade, then public `app.matrix-os.com`
+websocket upgrade. Public `/ws` or `/ws/terminal/session` failures while direct
+origin probes succeed usually mean the Cloudflare tunnel is wedged.
+
+The production platform compose runs `cloudflared-watchdog`, which polls
+`/vps/fleet`, selects a healthy running customer VPS, mints a short-lived
+websocket token, and probes public `/ws` plus `/ws/terminal/session`. After
+three consecutive public websocket failures it restarts only the Cloudflared
+container through the Docker socket, then resumes probing. Tune it with:
+
+```bash
+CLOUDFLARED_WATCHDOG_INTERVAL_MS=60000
+CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=3
+CLOUDFLARED_WATCHDOG_RESTART_COOLDOWN_MS=300000
+```
+
 ### Customer VPS provisioning fails
 
 ```bash
