@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { createContext, Fragment, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   BotIcon,
   FilesIcon,
@@ -985,8 +985,9 @@ interface ToolbarBtnProps {
   title: string;
   children: React.ReactNode;
   variant?: "default" | "primary" | "success";
+  ariaLabel?: string;
 }
-function ToolbarBtn({ onClick, title, children, variant = "default" }: ToolbarBtnProps) {
+function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }: ToolbarBtnProps) {
   const colors =
     variant === "success"
       ? { bg: "var(--success)", color: "white", border: "transparent" }
@@ -1023,6 +1024,7 @@ function ToolbarBtn({ onClick, title, children, variant = "default" }: ToolbarBt
       }}
       onClick={onClick}
       title={title}
+      aria-label={ariaLabel}
     >
       {children}
     </button>
@@ -1067,6 +1069,15 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const dragIndexRef = useRef<number | null>(null);
 
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
+  const newTabButton = (
+    <ToolbarBtn
+      onClick={() => ctx.addTab(getCwd())}
+      title="New tab (Ctrl+Shift+T)"
+      ariaLabel="New tab"
+    >
+      <IconPlus />
+    </ToolbarBtn>
+  );
 
   return (
     <div
@@ -1077,7 +1088,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
         height: ctx.mobile ? 50 : 44,
         padding: "4px 6px",
         gap: 4,
-        gridTemplateColumns: ctx.mobile ? "1fr auto" : "minmax(0, 1fr) auto",
+        gridTemplateColumns: ctx.mobile ? "1fr" : "minmax(0, 1fr) auto",
         minWidth: 0,
       }}
     >
@@ -1119,7 +1130,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
             );
             tabs[nextIndex]?.focus();
           };
-          return (
+          const tabNode = (
             <div
               key={tab.id}
               role="tab"
@@ -1173,8 +1184,15 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               </button>
             </div>
           );
+          return i === 0 ? (
+            <Fragment key={tab.id}>
+              {tabNode}
+              {newTabButton}
+            </Fragment>
+          ) : tabNode;
         })}
       </div>
+      {!ctx.mobile && (
       <div
         className="flex items-center shrink-0"
         style={{
@@ -1184,14 +1202,6 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
           minWidth: 0,
         }}
       >
-        {ctx.mobile ? (
-          <ToolbarBtn
-            onClick={() => ctx.addTab(getCwd())}
-            title="New tab (Ctrl+Shift+T)"
-          >
-            <IconPlus />
-          </ToolbarBtn>
-        ) : (
           <>
             <ToolbarBtn
               onClick={() => ctx.addTab(getCwd(), "Claude Code", true)}
@@ -1220,17 +1230,11 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
             >
               <IconSplitV />
             </ToolbarBtn>
-            <ToolbarBtn
-              onClick={() => ctx.addTab(getCwd())}
-              title="New tab (Ctrl+Shift+T)"
-            >
-              <IconPlus />
-            </ToolbarBtn>
             <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
             <ThemePickerButton />
           </>
-        )}
       </div>
+      )}
     </div>
   );
 }
@@ -1326,7 +1330,7 @@ function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: Workspac
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
-  const [tab, setTab] = useState<SidebarTab>("projects");
+  const [tab, setTab] = useState<SidebarTab>("sessions");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -1443,7 +1447,7 @@ function LocalTerminalSidebar() {
   }, []);
 
   useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the workspace-session list when the Agents tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the workspace-session list when the Sessions tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "sessions") void fetchSessions();
   }, [fetchSessions, tab]);
 
@@ -1661,9 +1665,9 @@ function LocalTerminalSidebar() {
           background: "color-mix(in srgb, var(--background) 62%, var(--card))",
         }}
       >
+        <SidebarRailButton label="Sessions" icon={<BotIcon size={16} strokeWidth={1.8} />} active={tab === "sessions"} onClick={() => selectSidebarTab("sessions")} />
         <SidebarRailButton label="Projects" icon={<FolderIcon size={16} strokeWidth={1.8} />} active={tab === "projects"} onClick={() => selectSidebarTab("projects")} />
         <SidebarRailButton label="Shells" icon={<TerminalIcon size={16} strokeWidth={1.8} />} active={tab === "shells"} onClick={() => selectSidebarTab("shells")} />
-        <SidebarRailButton label="Agents" icon={<BotIcon size={16} strokeWidth={1.8} />} active={tab === "sessions"} onClick={() => selectSidebarTab("sessions")} />
         <SidebarRailButton label="Files" icon={<FilesIcon size={16} strokeWidth={1.8} />} active={tab === "files"} onClick={() => selectSidebarTab("files")} />
         <div style={{ flex: 1 }} />
         <button
@@ -1704,7 +1708,7 @@ function LocalTerminalSidebar() {
                   lineHeight: 1.1,
                 }}
               >
-                {tab === "projects" ? "Projects" : tab === "shells" ? "Shells" : tab === "sessions" ? "Agents" : "Files"}
+                {tab === "projects" ? "Projects" : tab === "shells" ? "Shells" : tab === "sessions" ? "Sessions" : "Files"}
               </div>
               <div
                 className="truncate"
@@ -1737,10 +1741,10 @@ function LocalTerminalSidebar() {
           </div>
           <div className="flex items-center gap-1.5">
             <input
-              aria-label={`Search ${tab === "sessions" ? "agents" : tab}`}
+              aria-label={`Search ${tab}`}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder={tab === "shells" ? "Find shell..." : tab === "sessions" ? "Find agent..." : tab === "files" ? "Find file..." : "Find project..."}
+              placeholder={tab === "shells" ? "Find shell..." : tab === "sessions" ? "Find session..." : tab === "files" ? "Find file..." : "Find project..."}
               className="min-w-0 flex-1 text-[11px] outline-none"
               style={{
                 height: 28,

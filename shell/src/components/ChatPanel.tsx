@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -45,6 +46,16 @@ interface ConversationMeta {
   updatedAt: number;
 }
 
+interface ChatPanelDragState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  originX: number;
+  originY: number;
+}
+
+const CHAT_PANEL_DRAG_BREAKPOINT = 768;
+
 export interface ChatPanelProps {
   messages: ChatMessage[];
   sessionId: string | undefined;
@@ -70,9 +81,85 @@ export function ChatPanel({
   onSubmit,
   inputBar,
 }: ChatPanelProps) {
+  const [panelOffset, setPanelOffset] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<ChatPanelDragState | null>(null);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+
+      setPanelOffset({
+        x: drag.originX + event.clientX - drag.startX,
+        y: drag.originY + event.clientY - drag.startY,
+      });
+    };
+    const handlePointerUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      dragRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= CHAT_PANEL_DRAG_BREAKPOINT) return;
+
+      dragRef.current = null;
+      setPanelOffset((current) => (
+        current.x || current.y
+          ? { x: 0, y: 0 }
+          : current
+      ));
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  const handleDragStart = (event: ReactPointerEvent<HTMLElement>) => {
+    if (window.innerWidth < CHAT_PANEL_DRAG_BREAKPOINT) return;
+
+    const target = event.target as HTMLElement;
+    if (target.closest("button,a,input,textarea,select,[role='combobox']")) return;
+
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: panelOffset.x,
+      originY: panelOffset.y,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  };
+  const panelTransform = panelOffset.x || panelOffset.y
+    ? `translate3d(${panelOffset.x}px, ${panelOffset.y}px, 0)`
+    : undefined;
+
   return (
-    <aside className="flex fixed inset-0 z-50 w-full flex-col border-l border-border bg-card md:inset-y-0 md:left-auto md:right-0 md:w-[400px] md:shadow-2xl">
-      <header className="flex items-center justify-between px-4 py-3">
+    <aside
+      data-testid="chat-panel"
+      className="flex fixed inset-0 z-50 w-full flex-col border-l border-border bg-card md:inset-y-0 md:left-auto md:right-0 md:w-[400px] md:shadow-2xl"
+      style={{ transform: panelTransform }}
+    >
+      <header
+        data-testid="chat-panel-drag-handle"
+        className="flex items-center justify-between px-4 py-3"
+        onPointerDown={handleDragStart}
+        style={{ cursor: "move", touchAction: "none" }}
+      >
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">History</span>
           {conversations.length > 1 && (

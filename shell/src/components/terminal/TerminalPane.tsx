@@ -23,6 +23,7 @@ import {
   isLegacyPtySessionId,
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
+import { createXtermLogger } from "./xterm-logger";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -534,6 +535,7 @@ export function TerminalPane({
           cursorStyle: terminalCursorStyle,
           smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
           allowProposedApi: true,
+          logger: createXtermLogger(),
           fontSize: terminalFontSize,
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           theme: xtermTheme,
