@@ -660,16 +660,13 @@ function Inspector({
     originalNotes: task?.notes ?? "",
     originalProject: task?.project ?? null,
   });
-
-  useEffect(() => {
-    latestDraftRef.current = {
-      taskId: task?.id ?? null,
-      notesDraft,
-      projectDraft,
-      originalNotes: task?.notes ?? "",
-      originalProject: task?.project ?? null,
-    };
-  }, [notesDraft, projectDraft, task?.id, task?.notes, task?.project]);
+  latestDraftRef.current = {
+    taskId: task?.id ?? null,
+    notesDraft,
+    projectDraft,
+    originalNotes: task?.notes ?? "",
+    originalProject: task?.project ?? null,
+  };
 
   const flushDrafts = useCallback(() => {
     const current = latestDraftRef.current;
