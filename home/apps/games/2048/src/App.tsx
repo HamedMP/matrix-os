@@ -440,8 +440,8 @@ export default function App() {
 
   const newGameClick = useCallback(() => {
     setKeepPlaying(false);
-    persistScore(0);
     dispatch({ type: "reset" });
+    persistScore(0);
   }, [persistScore]);
 
   return (
