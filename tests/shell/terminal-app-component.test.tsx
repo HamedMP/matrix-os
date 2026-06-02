@@ -138,6 +138,46 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("places the new-tab control immediately after the first terminal tab", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
+    const firstTab = screen.getAllByRole("tab")[0];
+    const newTabButton = screen.getByRole("button", { name: "New tab" });
+
+    expect(tablist.children[0]).toBe(firstTab);
+    expect(tablist.children[1]).toBe(newTabButton);
+  });
+
+  it("opens the left terminal panel on Sessions first", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const railButtons = screen.getAllByRole("button", {
+      name: /^(Sessions|Projects|Shells|Files)$/,
+    });
+
+    expect(railButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Sessions",
+      "Projects",
+      "Shells",
+      "Files",
+    ]);
+    expect(screen.getByText("Sessions")).toBeTruthy();
+    expect(screen.getByLabelText("Search sessions")).toBeTruthy();
+  });
+
   it("fully removes the sidebar from layout flow when hidden", async () => {
     render(<TerminalApp />);
 
@@ -706,7 +746,6 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Agents" }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -715,7 +754,7 @@ describe("TerminalApp", () => {
     expect(screen.getByText("running health")).toBeTruthy();
     expect(screen.getByText("zellij attach matrix-sess_abc123")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "task_abc123" } });
+    fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "task_abc123" } });
     expect(screen.getByText("sess_abc123")).toBeTruthy();
 
     await act(async () => {
@@ -860,6 +899,12 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
     expect(screen.getByText("matrix-os")).toBeTruthy();
 
     await act(async () => {
@@ -918,6 +963,12 @@ describe("TerminalApp", () => {
 
     await act(async () => {
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Projects" }));
       await Promise.resolve();
       await Promise.resolve();
     });
