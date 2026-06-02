@@ -92,6 +92,11 @@ export default function App(): React.ReactElement {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const savedGameId = useRef<number | null>(null);
+  const bestTimesRef = useRef(bestTimes);
+
+  useEffect(() => {
+    bestTimesRef.current = bestTimes;
+  }, [bestTimes]);
 
   const spec = useMemo(() => specFor(difficulty, custom), [difficulty, custom]);
   const bestKey = useMemo(() => bestKeyFor(difficulty, spec), [difficulty, spec]);
@@ -290,7 +295,7 @@ export default function App(): React.ReactElement {
         savedGameId.current = gameMeta.id;
         const finalSecs = Math.max(1, seconds);
         const gameBestKey = bestKeyFor(gameMeta.difficulty, gameMeta.spec);
-        const current = bestTimes[gameBestKey];
+        const current = bestTimesRef.current[gameBestKey];
         if (current === undefined || finalSecs < current) {
           void persistBestTime(gameMeta.difficulty, gameMeta.spec, finalSecs);
         }
@@ -298,7 +303,7 @@ export default function App(): React.ReactElement {
     } else if (board.status === "lost") {
       setFace("dead");
     }
-  }, [bestTimes, board.status, gameMeta, persistBestTime, seconds]);
+  }, [board.status, gameMeta, persistBestTime, seconds]);
 
   const onReveal = useCallback(
     (r: number, c: number) => {

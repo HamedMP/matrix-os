@@ -260,7 +260,7 @@ export function chord(board: Board, r: number, c: number, rng: () => number = Ma
     const ncell = working.cells[nr][nc];
     if (ncell.state === CELL.HIDDEN) {
       working = reveal(working, nr, nc, rng);
-      if (working.status === "lost") return working;
+      if (working.status === "lost" || working.status === "won") return working;
     }
   }
   return working;
