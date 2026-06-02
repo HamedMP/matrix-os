@@ -56,12 +56,13 @@ const TAB_ITEM_BASE_STYLE: CSSProperties = {
 const TAB_CLOSE_BUTTON_STYLE: CSSProperties = {
   width: 16,
   height: 16,
+  flexShrink: 0,
   borderRadius: 3,
   border: "none",
   background: "transparent",
   color: "var(--muted-foreground)",
   opacity: 0.5,
-  marginLeft: 2,
+  marginLeft: "auto",
 };
 
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
@@ -818,7 +819,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
-      case "T": e.preventDefault(); addTab(getCwd()); break;
+      case "T": e.preventDefault(); void createShellSessionTab("Zellij", getCwd()); break;
       case "W": e.preventDefault(); if (focusedPaneId) closePane(focusedPaneId); break;
       case "D": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "horizontal"); break;
       case "E": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "vertical"); break;
@@ -888,7 +889,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   type="button"
                   className="text-xs px-3 py-1.5 rounded cursor-pointer"
                   style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
-                  onClick={() => addTab(DEFAULT_CWD)}
+                  onClick={() => { void createShellSessionTab("Zellij", DEFAULT_CWD); }}
                 >
                   New Terminal
                 </button>
@@ -1071,7 +1072,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
   const newTabButton = (
     <ToolbarBtn
-      onClick={() => ctx.addTab(getCwd())}
+      onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
       title="New tab (Ctrl+Shift+T)"
       ariaLabel="New tab"
     >
@@ -1158,6 +1159,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
                 style={{
                   width: 6,
                   height: 6,
+                  flexShrink: 0,
                   borderRadius: "50%",
                   background: active ? "var(--success)" : "var(--muted-foreground)",
                   opacity: active ? 1 : 0.5,
@@ -1165,7 +1167,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               />
               <span
                 className="min-w-0 truncate"
-                style={{ overflow: "hidden" }}
+                style={{ flex: "1 1 auto", overflow: "hidden" }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
               </span>
@@ -1807,7 +1809,7 @@ function LocalTerminalSidebar() {
               <ProjectCard
                 key={p.path}
                 project={p}
-                onOpenShell={() => ctx.addTab(p.path, p.name)}
+                onOpenShell={() => { void ctx.createShellSessionTab(p.name, p.path); }}
                 onOpenClaude={() => ctx.addTab(p.path, `${p.name} · claude`, true)}
                 onOpenZellij={() => { void ctx.createShellSessionTab(`${p.name} · zellij`, p.path); }}
                 onSelect={() => ctx.setSidebarSelectedPath(p.path)}
@@ -1899,7 +1901,7 @@ function LocalTerminalSidebar() {
                 selectedPath={ctx.sidebarSelectedPath}
                 onToggle={toggleExpand}
                 onSelect={(n) => { if (n.type === "directory") ctx.setSidebarSelectedPath(n.path); }}
-                onOpenTerminal={(path) => ctx.addTab(path)}
+                onOpenTerminal={(path) => { void ctx.createShellSessionTab("Zellij", path); }}
               />
             ))}
             {filteredTree.length === 0 && (

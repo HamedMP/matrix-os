@@ -155,6 +155,52 @@ describe("TerminalApp", () => {
     expect(tablist.children[1]).toBe(newTabButton);
   });
 
+  it("opens zellij-backed shell sessions from the new-tab control", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const createCalls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([input, init]: [RequestInfo | URL, RequestInit | undefined]) => (
+        String(input).endsWith("/api/terminal/sessions") &&
+        init?.method === "POST" &&
+        typeof init.body === "string"
+      ))
+      .map(([, init]: [RequestInfo | URL, RequestInit]) => JSON.parse(String(init.body)) as { name: string });
+
+    expect(createCalls.some((body) => /^zellij-/.test(body.name))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^zellij-/),
+      },
+    });
+  });
+
+  it("keeps the tab close button pinned to the tab edge for short labels", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const closeButton = screen.getByRole("button", { name: "Close tab" });
+
+    expect(closeButton.style.marginLeft).toBe("auto");
+    expect(closeButton.style.flexShrink).toBe("0");
+  });
+
   it("opens the left terminal panel on Sessions first", async () => {
     render(<TerminalApp />);
 
@@ -191,6 +237,60 @@ describe("TerminalApp", () => {
     const openButton = screen.getByTitle("Open sidebar (Ctrl+Shift+B)");
     expect(openButton.parentElement?.className).toContain("absolute");
     expect(openButton.parentElement?.style.width).not.toBe("44px");
+  });
+
+  it("opens zellij-backed shell sessions from Ctrl+Shift+T", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("application", { name: "Terminal" }), {
+        key: "T",
+        ctrlKey: true,
+        shiftKey: true,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^zellij-/),
+      },
+    });
+  });
+
+  it("opens zellij-backed shell sessions from the empty terminal state", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New Terminal" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^zellij-/),
+      },
+    });
   });
 
   it("copies a local CLI attach command when clicking a shell session name", async () => {
