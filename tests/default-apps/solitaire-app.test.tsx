@@ -289,6 +289,45 @@ describe("Solitaire app", () => {
     });
   });
 
+  it("preserves queued win and new-game stats when bridge updates resolve slowly", async () => {
+    const db = installMatrixDb([{ id: "stats-1", games_played: 5, games_won: 0, best_time: 0, best_moves: 0 }]);
+    const payloads: DbRow[] = [];
+    const releaseUpdates: Array<() => void> = [];
+    db.update.mockImplementation(async (_table: string, _id: string, payload: DbRow) => {
+      payloads.push(payload);
+      await new Promise<void>((resolve) => {
+        releaseUpdates.push(resolve);
+      });
+      return { ok: true };
+    });
+
+    render(<App initialState={oneMoveFromWinState()} />);
+    await screen.findByTestId("card-clubs-13");
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+      await Promise.resolve();
+    });
+
+    expect(payloads).toHaveLength(1);
+
+    for (let i = 0; i < 2; i += 1) {
+      await waitFor(() => expect(releaseUpdates.length).toBeGreaterThan(0));
+      const release = releaseUpdates.shift();
+      expect(release).toBeDefined();
+      await act(async () => {
+        release?.();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(payloads).toContainEqual(expect.objectContaining({ games_played: 5, games_won: 1, best_moves: 11 }));
+    expect(payloads).toContainEqual(expect.objectContaining({ games_played: 6, games_won: 1 }));
+  });
+
   it("records a second win after undoing from a won game", async () => {
     const db = installMatrixDb([]);
     render(<App initialState={oneMoveFromWinState()} />);
