@@ -179,6 +179,13 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         parseSafeName(col, "column");
       }
       if (cols.length === 0) throw new Error("bulkUpdate: data must have at least one column");
+      for (const update of updates) {
+        for (const col of Object.keys(update.data)) {
+          if (update.data[col] === undefined) {
+            throw new Error(`bulkUpdate: value for column "${col}" in id "${update.id}" must not be undefined`);
+          }
+        }
+      }
 
       const params: unknown[] = [];
       const setClauses = cols.map((col) => {

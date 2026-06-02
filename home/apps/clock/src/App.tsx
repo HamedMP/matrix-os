@@ -358,7 +358,12 @@ function WorldClock({ now }: { now: Date }) {
         await window.MatrixOS.db.insert(ZONES_TABLE, { tz, position });
         await reload();
       } catch (err: unknown) {
-        console.warn("[clock] zone save failed:", err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[clock] zone save failed:", message);
+        if (/duplicate|unique/i.test(message)) {
+          await reload();
+          return;
+        }
         setError("City could not be saved.");
         setZones((cur) => cur.filter((z) => z.id !== optimistic.id));
         void reload().finally(() => setError("City could not be saved."));

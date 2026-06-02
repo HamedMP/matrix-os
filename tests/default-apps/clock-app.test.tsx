@@ -152,6 +152,31 @@ describe("Clock app", () => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
+  it("treats concurrent duplicate zone inserts as an idempotent reload", async () => {
+    const store = { zones: [] as DbRow[], alarms: [] as DbRow[] };
+    const db = installMatrixDb(store);
+    db.insert.mockImplementationOnce(async () => {
+      store.zones.push({ id: "zone-tokyo", tz: "Asia/Tokyo", position: 0 });
+      throw new Error("unique constraint violated");
+    });
+    render(<App />);
+
+    expect(await screen.findByText(/no cities yet/i)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: /add city/i })[0]);
+    const search = await screen.findByPlaceholderText(/search cities/i);
+    fireEvent.change(search, { target: { value: "Tokyo" } });
+    const option = await screen.findByRole("option", { name: /tokyo/i });
+
+    await act(async () => {
+      fireEvent.click(option);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.queryByText("City could not be saved.")).toBeNull());
+    expect(await screen.findByText(/tokyo/i)).toBeTruthy();
+  });
+
   it("reloads saved zones after a failed optimistic zone insert", async () => {
     const store = { zones: [] as DbRow[], alarms: [] as DbRow[] };
     const db = installMatrixDb(store);

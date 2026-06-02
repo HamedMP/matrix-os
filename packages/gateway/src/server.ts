@@ -3171,6 +3171,9 @@ export async function createGateway(config: GatewayConfig) {
         if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
           return c.json({ error: "updates entries require data" }, 400);
         }
+        if (Object.keys(candidate.data).length === 0) {
+          return c.json({ error: "updates entries require at least one data field" }, 400);
+        }
       }
     }
 

@@ -194,6 +194,16 @@ describe("QueryEngine", () => {
     ).rejects.toThrow(/duplicate id/i);
   });
 
+  it("rejects undefined values in bulk updates", async () => {
+    const { id } = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+
+    await expect(
+      engine.bulkUpdate("todo", "tasks", [
+        { id, data: { priority: undefined } },
+      ]),
+    ).rejects.toThrow(/must not be undefined/i);
+  });
+
   it("deletes a row by id", async () => {
     const { id } = await engine.insert("todo", "tasks", { title: "Delete me", done: false });
     await engine.delete("todo", "tasks", id);
