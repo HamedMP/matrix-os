@@ -346,7 +346,7 @@ function AgentSetupSection() {
               style={{ backgroundColor: "rgba(250,250,245,0.54)", color: c.forest, border: `1px solid ${c.border}` }}>
               <code>{COPYABLE_AGENT_SETUP_PROMPT}</code>
             </pre>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" aria-label="Agent setup resources">
+            <nav className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" aria-label="Agent setup resources">
               {/* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- /skills.md is a static public file, not a Next route; Link would prefetch/client-navigate raw markdown */}
               <a href="/skills.md" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.08em] transition-opacity duration-300 hover:opacity-80 sm:px-4 sm:text-[11px] sm:tracking-[0.12em]"
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
@@ -356,7 +356,7 @@ function AgentSetupSection() {
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
                 Developer workflow
               </Link>
-            </div>
+            </nav>
           </div>
         </div>
       </div>

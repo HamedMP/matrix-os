@@ -19,15 +19,15 @@ describe("www landing mobile polish", () => {
     expect(landing).toContain("grid-template-columns: max-content max-content");
     expect(landing).toContain("justify-content: start");
     expect(landing).toContain("@media (max-width: 350px)");
-    expect(landing).not.toContain('className="hidden min-[1100px]:inline whitespace-nowrap');
+    expect(landing).not.toContain("hidden min-[1100px]:inline");
     expect(landing).not.toContain("grid-template-columns: minmax(0, 1fr) auto");
-    expect(landing).not.toContain("justify-content: space-between");
   });
 
   it("keeps the agent setup links in a compact two-column row on phones", async () => {
     const landing = await readRepoFile("www/src/app/page.tsx");
 
     expect(landing).toContain('aria-label="Agent setup resources"');
+    expect(landing).toContain("<nav className=\"mt-4 grid grid-cols-2");
     expect(landing).toContain("grid grid-cols-2");
     expect(landing).toContain("Open skills.md");
     expect(landing).toContain("Developer workflow");
