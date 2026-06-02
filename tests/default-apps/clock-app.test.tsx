@@ -371,6 +371,34 @@ describe("Clock app", () => {
     );
   });
 
+  it("uses one atomic bulk update for same-minute one-shot alarms in DB storage", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
+    const db = installMatrixDb({
+      zones: [],
+      alarms: [
+        { id: "alarm-1", time: "07:00", label: "Morning", repeat: "", enabled: true },
+        { id: "alarm-2", time: "07:00", label: "Standup", repeat: "", enabled: true },
+      ],
+    });
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+    });
+
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.bulkUpdate).toHaveBeenCalledWith("alarms", [
+      { id: "alarm-1", data: { enabled: false } },
+      { id: "alarm-2", data: { enabled: false } },
+    ]);
+  });
+
   it("renders alarms in bridge order by time", async () => {
     installMatrixDb({
       zones: [],

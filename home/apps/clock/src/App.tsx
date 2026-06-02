@@ -651,10 +651,13 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
         return;
       }
       try {
-        await Promise.all(
-          disabledAlarms.map((alarm) =>
-            window.MatrixOS!.db!.update(ALARMS_TABLE, alarm.id, { enabled: false }),
-          ),
+        if (disabledAlarms.length === 1) {
+          await window.MatrixOS.db.update(ALARMS_TABLE, disabledAlarms[0]!.id, { enabled: false });
+          return;
+        }
+        await window.MatrixOS.db.bulkUpdate(
+          ALARMS_TABLE,
+          disabledAlarms.map((alarm) => ({ id: alarm.id, data: { enabled: false } })),
         );
       } catch (err: unknown) {
         console.warn("[clock] alarm auto-disable failed:", err instanceof Error ? err.message : String(err));
