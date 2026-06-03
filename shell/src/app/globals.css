@@ -8,7 +8,7 @@
   src: url("/fonts/meslo/MesloLGS%20NF%20Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
-  font-display: swap;
+  font-display: block;
 }
 
 @font-face {
@@ -16,7 +16,7 @@
   src: url("/fonts/meslo/MesloLGS%20NF%20Bold.ttf") format("truetype");
   font-weight: 700;
   font-style: normal;
-  font-display: swap;
+  font-display: block;
 }
 
 @font-face {
@@ -24,7 +24,7 @@
   src: url("/fonts/meslo/MesloLGS%20NF%20Italic.ttf") format("truetype");
   font-weight: 400;
   font-style: italic;
-  font-display: swap;
+  font-display: block;
 }
 
 @font-face {
@@ -32,7 +32,7 @@
   src: url("/fonts/meslo/MesloLGS%20NF%20Bold%20Italic.ttf") format("truetype");
   font-weight: 700;
   font-style: italic;
-  font-display: swap;
+  font-display: block;
 }
 
 @custom-variant dark (&:is(.dark *));
