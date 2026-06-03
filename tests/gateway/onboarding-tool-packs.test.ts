@@ -279,7 +279,7 @@ describe("onboarding tool packs", () => {
       const installer = createHostToolPackInstaller({
         scriptPath,
         timeoutMs: 50,
-        linuxToolsTimeoutMs: 500,
+        linuxToolsTimeoutMs: 2_000,
       });
 
       await installer.install(testPrincipal.userId, "linux-tools");

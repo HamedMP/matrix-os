@@ -88,7 +88,7 @@ https://matrix-os.com/skills.md
 
 Then install the Matrix CLI, help me sign in with matrix login --profile cloud, and start my preferred coding agent with matrix run.
 
-Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal agent if I ask for it.`;
+Before starting an agent, detect which coding agent I am using locally. Always ask me to confirm the choice in one click/message. If you cannot detect it confidently, ask me to choose: Claude Code, Codex, OpenCode, Gemini CLI, OpenClaw, Cursor/Cline, Shell only, or Custom.`;
 
 const agentBrands = [
   { name: "Claude Code", logo: "/agents/claude-code.svg" },

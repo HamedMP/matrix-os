@@ -41,17 +41,17 @@ Then show me this checklist:
 
 1. Install or update the Matrix CLI
 2. Run `matrix login --profile cloud` and wait for my Matrix instance to be ready
-3. Start my preferred coding agent on Matrix with `matrix run`
+3. Detect which coding agent I am using locally, then ask me to confirm which one to set up on Matrix
 4. Explain the reconnect and recovery commands only after the main path works
 
 Then proceed step by step. Keep the happy path to two Matrix commands:
 
 ```bash
 matrix login --profile cloud
-matrix run -it -- claude
+matrix run -it --session setup -- <confirmed-agent-command>
 ```
 
-Use `codex`, `gemini`, or another terminal agent instead of `claude` if I ask for it.
+If you detect my current agent, suggest it, but always ask me to confirm in one click/message before launching it. If you cannot detect it confidently, ask me to choose: Claude Code, Codex, OpenCode, Gemini CLI, OpenClaw, Cursor/Cline, Shell only, or Custom.
 
 ## Step 1: Install or update the Matrix CLI
 

@@ -2,9 +2,9 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2Icon, GithubIcon, MessageCircleIcon, SparklesIcon, TerminalIcon, XIcon } from "lucide-react";
+import { CheckCircle2Icon, GithubIcon, MessageCircleIcon, XIcon } from "lucide-react";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
-import { createTerminalLaunchPath } from "@/lib/terminal-launch";
+import { createTerminalLaunchPath, type TerminalLaunchAction } from "@/lib/terminal-launch";
 
 interface ManualSetupStickersProps {
   onOpenTerminal: (path: string) => void;
@@ -29,6 +29,46 @@ interface StickerProps {
 }
 
 type StickerId = "agent" | "github" | "hermes" | "finish";
+
+type CodingAgentChoiceId =
+  | "claude"
+  | "codex"
+  | "opencode"
+  | "gemini"
+  | "openclaw"
+  | "cursor-cline"
+  | "shell"
+  | "custom";
+
+interface CodingAgentChoice {
+  id: CodingAgentChoiceId;
+  label: string;
+  launchAction?: TerminalLaunchAction;
+  manualCopy?: string;
+}
+
+const CODING_AGENT_CHOICES: CodingAgentChoice[] = [
+  { id: "claude", label: "Claude Code", launchAction: "agent-claude" },
+  { id: "codex", label: "Codex", launchAction: "agent-codex" },
+  { id: "opencode", label: "OpenCode", launchAction: "agent-opencode" },
+  { id: "gemini", label: "Gemini CLI", launchAction: "agent-gemini" },
+  {
+    id: "openclaw",
+    label: "OpenClaw",
+    manualCopy: "Use OpenClaw from its normal terminal or editor flow, then keep Matrix as the shared shell and project workspace.",
+  },
+  {
+    id: "cursor-cline",
+    label: "Cursor/Cline",
+    manualCopy: "Use Cursor or Cline from your editor, then connect Matrix for the remote shell, GitHub auth, and preview workflow.",
+  },
+  { id: "shell", label: "Shell only", launchAction: "agent-shell" },
+  {
+    id: "custom",
+    label: "Custom",
+    manualCopy: "Run your custom terminal agent with matrix run -it --session setup -- <your-command> after Matrix login finishes.",
+  },
+];
 
 const DEFAULT_POSITIONS: Record<StickerId, { x: number; y: number }> = {
   agent: { x: 34, y: 0 },
@@ -78,6 +118,28 @@ function writeStoredPositions(positions: Record<StickerId, { x: number; y: numbe
   } catch (error) {
     console.warn("Failed to save onboarding sticker positions", error);
   }
+}
+
+function parseSuggestedAgent(value: unknown): CodingAgentChoiceId | null {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { agents?: unknown }).agents)) {
+    return null;
+  }
+  const agents = (value as { agents: unknown[] }).agents;
+  const detectableCandidates = CODING_AGENT_CHOICES.filter(
+    (choice): choice is CodingAgentChoice & { launchAction: TerminalLaunchAction } =>
+      Boolean(choice.launchAction) && choice.id !== "shell",
+  );
+  for (const candidate of detectableCandidates) {
+    const match = agents.find((agent) =>
+      agent &&
+      typeof agent === "object" &&
+      (agent as { id?: unknown }).id === candidate.id &&
+      (agent as { installed?: unknown }).installed === true &&
+      ((agent as { authState?: unknown }).authState === "ok" || (agent as { authState?: unknown }).authState === "required")
+    );
+    if (match) return candidate.id;
+  }
+  return null;
 }
 
 function StickerButton({
@@ -153,6 +215,8 @@ function SetupSticker({
 export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: ManualSetupStickersProps) {
   const [positions, setPositions] = useState(readStoredPositions);
   const [spatial, setSpatial] = useState(() => typeof window === "undefined" || window.innerWidth >= 1100);
+  const [suggestedAgent, setSuggestedAgent] = useState<CodingAgentChoiceId | null>(null);
+  const [selectedManualCopy, setSelectedManualCopy] = useState<string | null>(null);
   const positionsRef = useRef(positions);
   const dragRef = useRef<{
     id: StickerId;
@@ -170,6 +234,42 @@ export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: Ma
     window.addEventListener("resize", updateSpatialLayout);
     return () => window.removeEventListener("resize", updateSpatialLayout);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    let mounted = true;
+    void fetch("/api/agents", {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<unknown>;
+      })
+      .then((body) => {
+        if (mounted) setSuggestedAgent(parseSuggestedAgent(body));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.warn("[onboarding] failed to detect coding agents:", error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      mounted = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
+  function chooseCodingAgent(choice: CodingAgentChoice) {
+    if (choice.launchAction) {
+      setSelectedManualCopy(null);
+      onOpenTerminal(createTerminalLaunchPath(choice.launchAction));
+      return;
+    }
+    setSelectedManualCopy(choice.manualCopy ?? "Use your agent's normal setup flow, then return to Matrix when it is ready.");
+  }
 
   const onDragStart = (id: StickerId, event: ReactPointerEvent<HTMLElement>) => {
     if (!spatial || event.button !== 0) return;
@@ -241,19 +341,35 @@ export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: Ma
           {...dragProps}
         >
           <p>
-            Matrix is bring-your-own-agent. Sign in to Claude, Codex, or any agent you trust for specialist work.
-            Hermes keeps Matrix useful even when no external agent is connected.
+            Matrix is bring-your-own-agent. Pick one coding agent before opening a setup terminal. Hermes keeps Matrix
+            useful even when no external agent is connected.
           </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <StickerButton onClick={() => onOpenTerminal(createTerminalLaunchPath("claude-login"))}>
-              <TerminalIcon className="size-4" aria-hidden="true" />
-              Open Claude login
-            </StickerButton>
-            <StickerButton variant="light" onClick={() => onOpenTerminal(createTerminalLaunchPath("codex-login"))}>
-              <SparklesIcon className="size-4" aria-hidden="true" />
-              Open Codex login
-            </StickerButton>
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] opacity-65">Choose your coding agent</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {CODING_AGENT_CHOICES.map((choice) => (
+              <button
+                key={choice.id}
+                type="button"
+                onClick={() => chooseCodingAgent(choice)}
+                onPointerDown={(event) => event.stopPropagation()}
+                className="min-h-10 rounded-md border border-current/15 bg-white/46 px-2.5 text-left text-sm font-semibold transition hover:-translate-y-0.5 hover:bg-white/70 active:translate-y-0"
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span>{choice.label}</span>
+                  {suggestedAgent === choice.id && (
+                    <span className="rounded-full bg-[#17281f]/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em]">
+                      Suggested
+                    </span>
+                  )}
+                </span>
+              </button>
+            ))}
           </div>
+          {selectedManualCopy && (
+            <p className="mt-3 rounded-md border border-current/12 bg-white/42 p-3 text-sm leading-5">
+              {selectedManualCopy}
+            </p>
+          )}
         </SetupSticker>
 
         <SetupSticker
