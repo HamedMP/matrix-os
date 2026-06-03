@@ -148,6 +148,23 @@ describe("Solitaire app", () => {
     expect(undoButton.disabled).toBe(true);
   });
 
+  it("does not add undo history when recycling the waste", async () => {
+    installMatrixDb();
+    render(<App initialState={seededState()} />);
+
+    const undoButton = await screen.findByRole("button", { name: /undo/i }) as HTMLButtonElement;
+    expect(undoButton.disabled).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("stock"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("stock").textContent).toContain("1");
+    expect(screen.getByTestId("waste").textContent).not.toContain("A");
+    expect(undoButton.disabled).toBe(true);
+  });
+
   it("clears a selected tableau card when it is clicked again", async () => {
     installMatrixDb();
     const state: GameState = {
@@ -286,6 +303,28 @@ describe("Solitaire app", () => {
         games_won: 1,
         best_moves: 11,
       }));
+    });
+  });
+
+  it("records exact wall-clock win time even before the timer ticks", async () => {
+    const db = installMatrixDb([]);
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    render(<App initialState={oneMoveFromWinState()} />);
+
+    now = 1_005_000;
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const statPayloads = [
+        ...db.insert.mock.calls.filter((call) => call[0] === "stats").map((call) => call[1] as DbRow),
+        ...db.update.mock.calls.filter((call) => call[0] === "stats").map((call) => call[2] as DbRow),
+      ];
+      expect(statPayloads).toContainEqual(expect.objectContaining({ best_time: 5 }));
     });
   });
 

@@ -311,7 +311,12 @@ export default function App({ initialState }: AppProps) {
   const handleDraw = useCallback(() => {
     setSelected(null);
     if (game.stock.length === 0 && game.waste.length === 0) return;
-    commit(drawFromStock(game));
+    const next = drawFromStock(game);
+    if (game.stock.length === 0) {
+      setGame(next);
+      return;
+    }
+    commit(next);
   }, [commit, game]);
 
   // ---- Click-to-move (auto route) ----------------------------------------
@@ -396,7 +401,7 @@ export default function App({ initialState }: AppProps) {
     recordedWinRef.current = true;
     setRunning(false);
     const cur = statsRef.current;
-    const time = elapsed;
+    const time = Math.floor((Date.now() - startedAtRef.current) / 1000);
     const moves = game.moves;
     void persistStats({
       ...cur,
@@ -404,7 +409,7 @@ export default function App({ initialState }: AppProps) {
       best_time: cur.best_time === 0 ? time : Math.min(cur.best_time, time || cur.best_time),
       best_moves: cur.best_moves === 0 ? moves : Math.min(cur.best_moves, moves || cur.best_moves),
     });
-  }, [won, elapsed, game.moves, persistStats]);
+  }, [won, game.moves, persistStats]);
 
   // ---- Keyboard ----------------------------------------------------------
   useEffect(() => {
