@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { verifyAppSession, type AppSessionPayloadType } from "./app-session.js";
@@ -16,6 +17,32 @@ const SECURITY_HEADERS = {
   "Content-Security-Policy":
     "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'",
 };
+
+function isReadOnlyViteAssetRequest(method: string, path: string, slug: string): boolean {
+  return (
+    (method === "GET" || method === "HEAD") &&
+    path.startsWith(`/apps/${slug}/assets/`)
+  );
+}
+
+function timingSafeStringEquals(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  const compareLength = Math.max(actualBuffer.length, expectedBuffer.length, 1);
+  const paddedActual = Buffer.alloc(compareLength);
+  const paddedExpected = Buffer.alloc(compareLength);
+  actualBuffer.copy(paddedActual);
+  expectedBuffer.copy(paddedExpected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(paddedActual, paddedExpected);
+}
+
+function hasPlatformAssetAuthorization(authHeader: string | undefined): boolean {
+  const matrixAuthToken = process.env.MATRIX_AUTH_TOKEN;
+  if (!matrixAuthToken || !authHeader?.startsWith("Bearer ")) {
+    return false;
+  }
+  return timingSafeStringEquals(authHeader.slice("Bearer ".length), matrixAuthToken);
+}
 
 function sessionExpiredResponse(
   slug: string,
@@ -58,6 +85,14 @@ export function appSessionMiddleware(
     const slug = c.req.param("slug");
     if (!slug || !SAFE_SLUG.test(slug)) {
       return c.json({ error: "invalid slug" }, 400);
+    }
+
+    if (
+      isReadOnlyViteAssetRequest(c.req.method, c.req.path, slug) &&
+      hasPlatformAssetAuthorization(c.req.header("authorization"))
+    ) {
+      await next();
+      return;
     }
 
     const correlationId = crypto.randomUUID();
