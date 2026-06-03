@@ -247,6 +247,12 @@ describe("device routes", () => {
         }).toString(),
       });
       expect(approveRes.status).toBe(200);
+      const successCsp = approveRes.headers.get("content-security-policy") ?? "";
+      expect(successCsp).toContain("frame-ancestors 'none'");
+      expect(successCsp).toContain("script-src 'self' https://clerk.matrix-os.com");
+      expect(successCsp).not.toContain("https://challenges.cloudflare.com");
+      expect(successCsp).not.toContain("worker-src");
+      expect(successCsp).not.toContain("frame-src");
 
       const tokenRes = await app.request("/api/auth/device/token", {
         method: "POST",
@@ -475,6 +481,9 @@ describe("device routes", () => {
       expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
       expect(res.headers.get("content-security-policy")).toContain("script-src");
       expect(res.headers.get("content-security-policy")).toContain("'nonce-");
+      expect(res.headers.get("content-security-policy")).toContain("https://challenges.cloudflare.com");
+      expect(res.headers.get("content-security-policy")).toContain("worker-src 'self' blob:");
+      expect(res.headers.get("content-security-policy")).toContain("frame-src https://challenges.cloudflare.com");
       expect(res.headers.get("content-security-policy")).not.toContain("'unsafe-inline'");
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);

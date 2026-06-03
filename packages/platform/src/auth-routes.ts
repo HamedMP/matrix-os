@@ -760,14 +760,21 @@ function approvalSuccessPage(): string {
 function applyNoFrameHeaders(
   c: import('hono').Context,
   scriptNonce?: string,
+  options: { allowClerkCaptcha?: boolean } = {},
 ): void {
   c.header('X-Frame-Options', 'DENY');
   const scriptSrc = scriptNonce
     ? `'self' 'nonce-${scriptNonce}' https://clerk.matrix-os.com`
     : `'self' https://clerk.matrix-os.com`;
+  const captchaSrc = options.allowClerkCaptcha
+    ? ' https://challenges.cloudflare.com'
+    : '';
+  const captchaDirectives = options.allowClerkCaptcha
+    ? " worker-src 'self' blob:; frame-src https://challenges.cloudflare.com;"
+    : '';
   c.header(
     'Content-Security-Policy',
-    `frame-ancestors 'none'; script-src ${scriptSrc}; object-src 'none'; base-uri 'none'`,
+    `frame-ancestors 'none'; script-src ${scriptSrc}${captchaSrc};${captchaDirectives} object-src 'none'; base-uri 'none'`,
   );
 }
 
@@ -937,7 +944,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       'Set-Cookie',
       `device_csrf=${csrf}; Path=/auth/device; Max-Age=900; HttpOnly; SameSite=Strict${secure}`,
     );
-    applyNoFrameHeaders(c, scriptNonce);
+    applyNoFrameHeaders(c, scriptNonce, { allowClerkCaptcha: true });
     return c.html(approvalPage(userCodeRaw, csrf, publishableKey, scriptNonce));
   });
 

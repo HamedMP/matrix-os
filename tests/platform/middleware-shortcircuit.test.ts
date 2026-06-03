@@ -66,6 +66,9 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
     // route registered by createAuthRoutes.
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("content-security-policy")).toContain("https://challenges.cloudflare.com");
+    expect(res.headers.get("content-security-policy")).toContain("worker-src 'self' blob:");
+    expect(res.headers.get("content-security-policy")).toContain("frame-src https://challenges.cloudflare.com");
     // device-flow's GET handler sets a CSRF cookie.
     const cookie = res.headers.get("set-cookie") ?? "";
     expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
