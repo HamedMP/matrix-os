@@ -12,7 +12,10 @@ type ChessMockControls = {
   __reset(): void;
   Chess: new () => {
     moves(opts: { square: string }): string[];
-    moves(opts: { square: string; verbose: true }): Array<{ to: string; promotion?: string }>;
+    moves(opts: { square: string; verbose: true }): Array<{ to: string; promotion?: string; captured?: string }>;
+    move(move: { from: string; to: string; promotion?: string }): unknown;
+    reset(): void;
+    isCheckmate(): boolean;
   };
 };
 
@@ -301,6 +304,39 @@ describe("Chess app", () => {
     const moves = new Chess().moves({ square: "a7", verbose: true });
 
     expect(moves.filter((move) => move.to === "a8").map((move) => move.promotion)).toEqual(["q", "r", "b", "n"]);
+  });
+
+  it("mock chess verbose moves include captured pieces for non-pawns", async () => {
+    const { Chess, __setNextBoard } = await import("chess.js") as unknown as ChessMockControls;
+
+    __setNextBoard({
+      d4: { color: "w", type: "r" },
+      d6: { color: "b", type: "n" },
+      f5: { color: "w", type: "n" },
+      e7: { color: "b", type: "q" },
+    });
+    const rookMoves = new Chess().moves({ square: "d4", verbose: true });
+    expect(rookMoves).toContainEqual(expect.objectContaining({ to: "d6", captured: "n" }));
+
+    __setNextBoard({
+      f5: { color: "w", type: "n" },
+      e7: { color: "b", type: "q" },
+    });
+    const knightMoves = new Chess().moves({ square: "f5", verbose: true });
+    expect(knightMoves).toContainEqual(expect.objectContaining({ to: "e7", captured: "q" }));
+  });
+
+  it("mock chess reset clears forced checkmate state", async () => {
+    const { Chess, __setNextCheckmate } = await import("chess.js") as unknown as ChessMockControls;
+
+    __setNextCheckmate();
+    const game = new Chess();
+    expect(game.move({ from: "e2", to: "e4" })).toBeTruthy();
+    expect(game.isCheckmate()).toBe(true);
+
+    game.reset();
+    expect(game.move({ from: "e2", to: "e4" })).toBeTruthy();
+    expect(game.isCheckmate()).toBe(false);
   });
 
   it("records a legal move in the SAN history", async () => {

@@ -65,6 +65,7 @@ export class Chess {
     this.boardState = startingBoard();
     this.turnColor = "w";
     this.moveStack = [];
+    this.forceCheckmate = false;
   }
 
   turn() {
@@ -102,7 +103,7 @@ export class Chess {
           return true;
         }
         if (occupant.color !== piece.color) {
-          out.push({ from: opts.square as string, to: target, piece: piece.type, color: piece.color });
+          out.push({ from: opts.square as string, to: target, piece: piece.type, color: piece.color, captured: occupant.type });
         }
         return false;
       };
@@ -150,8 +151,9 @@ export class Chess {
           const targetRank = rank + dr;
           if (!targetFile || targetRank < 1 || targetRank > 8) continue;
           const target = `${targetFile}${targetRank}`;
-          if (!this.boardState[target] || this.boardState[target]!.color !== piece.color) {
-            out.push({ from: opts.square, to: target, piece: "n", color: piece.color });
+          const occupant = this.boardState[target];
+          if (!occupant || occupant.color !== piece.color) {
+            out.push({ from: opts.square, to: target, piece: "n", color: piece.color, captured: occupant?.type });
           }
         }
       }
