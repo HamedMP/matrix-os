@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const { execFileMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
@@ -17,13 +20,23 @@ const config: OAuthConfig = {
   clientId: "matrixos-cli",
 };
 
+let tempDirs: string[] = [];
+
+async function createTokenStorePath(fileName: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "matrixos-oauth-test-"));
+  tempDirs.push(dir);
+  return join(dir, fileName);
+}
+
 beforeEach(() => {
+  tempDirs = [];
   vi.useFakeTimers();
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe("requestDeviceCode", () => {
@@ -91,7 +104,7 @@ describe("pollForToken", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const tokenStorePath = "/tmp/test-auth-1.json";
+    const tokenStorePath = await createTokenStorePath("auth.json");
 
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
 
@@ -126,7 +139,7 @@ describe("pollForToken", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const tokenStorePath = "/tmp/test-auth-2.json";
+    const tokenStorePath = await createTokenStorePath("auth.json");
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
 
     await vi.advanceTimersByTimeAsync(5_000);
@@ -144,7 +157,7 @@ describe("pollForToken", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const tokenStorePath = "/tmp/test-auth-3.json";
+    const tokenStorePath = await createTokenStorePath("auth.json");
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
     const assertion = expect(promise).rejects.toThrow(/expired/i);
 
@@ -160,7 +173,7 @@ describe("pollForToken", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const tokenStorePath = "/tmp/test-auth-4.json";
+    const tokenStorePath = await createTokenStorePath("auth.json");
     const promise = pollForToken(config, "device-1", 5, 10, tokenStorePath);
     const assertion = expect(promise).rejects.toThrow(/timed out/i);
 
@@ -182,12 +195,7 @@ describe("pollForToken", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { mkdtemp, readFile } = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const tmp = await mkdtemp(join(tmpdir(), "oauth-test-"));
-    const tokenStorePath = join(tmp, "auth.json");
+    const tokenStorePath = await createTokenStorePath("auth.json");
 
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
     await vi.advanceTimersByTimeAsync(5_000);
@@ -204,7 +212,8 @@ describe("pollForToken", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = pollForToken(config, "device-1", 5, 60, "/tmp/test-auth-5.json");
+    const tokenStorePath = await createTokenStorePath("auth.json");
+    const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
     const assertion = expect(promise).rejects.toThrow("Token polling failed with status 500");
 
     await vi.advanceTimersByTimeAsync(5_000);
@@ -225,7 +234,7 @@ describe("pollForToken", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const tokenStorePath = "/tmp/test-auth-invalid.json";
+    const tokenStorePath = await createTokenStorePath("auth.json");
     const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
     const assertion = expect(promise).rejects.toThrow();
 
