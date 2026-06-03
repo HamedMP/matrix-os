@@ -13,7 +13,7 @@ const ICONS_DIR = join(REPO_ROOT, "home", "system", "icons");
 // Apps whose current runtime already depends on durable structured data living
 // in owner-controlled Postgres (per spec 083). Newly migrated apps should add
 // themselves here in the same PR that declares storage.tables.
-const DURABLE_DATA_APPS = new Set(["notes", "todo", "expense-tracker"]);
+const DURABLE_DATA_APPS = new Set(["notes", "task-manager", "todo", "expense-tracker"]);
 
 interface Manifest {
   slug?: string;
@@ -51,6 +51,14 @@ describe("default app manifest quality (spec 083)", () => {
 
   it("discovers the default apps", () => {
     expect(dirs.length).toBeGreaterThan(5);
+  });
+
+  it("keeps task-manager due dates as date-only storage", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(APPS_DIR, "task-manager", "matrix.json"), "utf-8"),
+    ) as { storage?: { tables?: { cards?: { columns?: Record<string, string> } } } };
+
+    expect(manifest.storage?.tables?.cards?.columns?.due).toBe("date");
   });
 
   for (const dir of dirs) {

@@ -94,6 +94,7 @@ export const DEFAULT_COLUMNS: BoardColumn[] = [
 ];
 
 const PROJECT_COLORS = ["#434E3F", "#3A7D44", "#D06F25", "#D6AB8B", "#32352E"];
+const COLUMN_COLORS = ["#7A7768", "#434E3F", "#D06F25", "#D6AB8B", "#3A7D44", "#32352E"];
 let sequence = 0;
 
 function now(): string {
@@ -134,7 +135,7 @@ export function createSeedBoard(): Board {
     description: "Capture what a professional Matrix OS app should feel like.",
     priority: "high",
     labels: ["product", "design"],
-    assignee: "Hamed",
+    assignee: "Product",
     checklist: [
       { id: "seed-1", text: "Notes upgrade", done: true },
       { id: "seed-2", text: "Task board upgrade", done: false },
@@ -281,6 +282,45 @@ export function addChecklistItem(board: Board, cardId: string, text: string): Bo
   return updateCard(board, cardId, {
     checklist: [...card.checklist, { id: id("check"), text: text.trim() || "Checklist item", done: false }],
   });
+}
+
+export function addColumn(board: Board, title: string): Board {
+  const column: BoardColumn = {
+    id: id("column"),
+    title: title.trim() || "New column",
+    color: COLUMN_COLORS[board.columns.length % COLUMN_COLORS.length],
+  };
+  return { ...board, columns: [...board.columns, column], updatedAt: now() };
+}
+
+export function renameColumn(board: Board, columnId: string, title: string): Board {
+  return {
+    ...board,
+    columns: board.columns.map((column) =>
+      column.id === columnId ? { ...column, title: title.trim() || column.title } : column,
+    ),
+    updatedAt: now(),
+  };
+}
+
+export function deleteColumn(board: Board, columnId: string): Board {
+  if (board.columns.length <= 1) return board;
+  return {
+    ...board,
+    columns: board.columns.filter((column) => column.id !== columnId),
+    cards: normalizeOrders(board.cards.filter((card) => card.columnId !== columnId)),
+    updatedAt: now(),
+  };
+}
+
+export function moveColumn(board: Board, columnId: string, targetIndex: number): Board {
+  const current = board.columns.findIndex((column) => column.id === columnId);
+  if (current < 0) return board;
+  const next = board.columns.slice();
+  const [moved] = next.splice(current, 1);
+  const clamped = Math.max(0, Math.min(targetIndex, next.length));
+  next.splice(clamped, 0, moved);
+  return { ...board, columns: next, updatedAt: now() };
 }
 
 export function resolveColumnId(board: Board, preferredColumnId: string | null | undefined): string {
