@@ -90,6 +90,7 @@ interface SettingsProps {
   closeDisabled?: boolean;
   billingMode?: "settings" | "provisioning";
   onBillingCheckoutIntent?: () => void;
+  billingCheckoutReturnPath?: string;
 }
 
 export function Settings({
@@ -101,6 +102,7 @@ export function Settings({
   closeDisabled = false,
   billingMode = "settings",
   onBillingCheckoutIntent,
+  billingCheckoutReturnPath,
 }: SettingsProps) {
   const [activeSection, setActiveSection] = useState<SectionId>(defaultSection);
   // Tracks the prior `open` value so the render-time section adjustment below
@@ -249,6 +251,7 @@ export function Settings({
                 <BillingSection
                   mode={billingMode}
                   onCheckoutIntent={onBillingCheckoutIntent}
+                  checkoutReturnPath={billingCheckoutReturnPath}
                 />
               )}
               {activeSection === "plugins" && <PluginsSection />}

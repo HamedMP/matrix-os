@@ -494,7 +494,7 @@ describe("device routes", () => {
       expect(html).toContain('id="instance-line"');
     });
 
-    it("starts signed-out CLI approval on signup and defers approval until runtime readiness", async () => {
+    it("starts signed-out CLI approval on signup and sends runtime setup to the shell billing tab", async () => {
       const res = await app.request("/auth/device?user_code=BCDF-GHJK");
       const html = await res.text();
 
@@ -504,19 +504,16 @@ describe("device routes", () => {
       expect(html).toContain("signUpUrl: deviceAuthUrl('sign-up')");
       expect(html).toContain("fallbackRedirectUrl: approvalUrl");
       expect(html).toContain("fetchWithTimeout('/api/auth/app-session'");
-      expect(html).toContain("fetchWithTimeout('/api/auth/provision-runtime'");
-      expect(html).toContain("fetchWithTimeout('/billing/checkout'");
-      expect(html).toContain("returnPath: deviceReturnPath");
-      expect(html).toContain("showRuntimeRequiredState()");
-      expect(html).toContain("showBillingRequiredState()");
+      expect(html).toContain("redirectToBillingSetup()");
+      expect(html).toContain("device_return");
+      expect(html).not.toContain("fetchWithTimeout('/api/auth/provision-runtime'");
+      expect(html).not.toContain("fetchWithTimeout('/billing/checkout'");
+      expect(html).not.toContain("Provision Matrix computer");
+      expect(html).not.toContain("Start checkout");
       expect(html).toContain("confirm.disabled = true;");
       expect(html).toContain("button.disabled = isBusy || !runtimeReady;");
       expect(html).toContain("delete signin.dataset.mounted;");
-      const provisioningStart = html.indexOf("async function startProvisioningFromClerkSession");
       const continueStart = html.indexOf("async function continueDeviceOnboarding");
-      expect(html.indexOf("var token = await clerkTokenOrNull();", provisioningStart)).toBeLessThan(
-        html.indexOf("showLoadingState('Starting your Matrix computer...');", provisioningStart),
-      );
       expect(html.indexOf("var token = await clerkTokenOrNull();", continueStart)).toBeLessThan(
         html.indexOf("showLoadingState('Checking your Matrix computer...');", continueStart),
       );

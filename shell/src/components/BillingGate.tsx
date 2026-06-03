@@ -15,6 +15,9 @@ const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "matrix.billing.checkoutAttemptAt";
 const CHECKOUT_ATTEMPT_MAX_AGE_MS = 30 * 60 * 1000;
 const DEFAULT_SIGN_IN_URL = "https://matrix-os.com/login";
+const DEVICE_SETUP_POLL_MS = 8_000;
+const DEVICE_SETUP_MAX_POLLS = 60;
+const DEVICE_SETUP_TIMEOUT_MS = 10_000;
 
 function logCheckoutStorageError(action: "read" | "write", error: unknown): void {
   if (error instanceof Error) {
@@ -54,7 +57,31 @@ function hasRecentBillingCheckoutAttempt(): boolean {
   }
 }
 
-function BillingRequired() {
+function normalizeDeviceReturnPath(value: string | null): string | null {
+  if (!value || value.length > 2048 || !value.startsWith("/") || value.startsWith("//")) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value, "https://app.matrix-os.com");
+    if (url.pathname !== "/auth/device") return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch (error) {
+    console.warn("[billing] invalid device return path", error instanceof Error ? error.name : typeof error);
+    return null;
+  }
+}
+
+function getBillingCheckoutReturnPath(deviceReturnPath: string | null): string | undefined {
+  if (!deviceReturnPath || typeof window === "undefined") return undefined;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("billing");
+  url.searchParams.delete("checkout");
+  url.searchParams.set("device_return", deviceReturnPath);
+  return `${url.pathname}${url.search}`;
+}
+
+function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }) {
   return (
     <Settings
       open
@@ -65,6 +92,7 @@ function BillingRequired() {
       closeDisabled
       billingMode="provisioning"
       onBillingCheckoutIntent={rememberBillingCheckoutAttempt}
+      billingCheckoutReturnPath={checkoutReturnPath}
     />
   );
 }
@@ -181,16 +209,20 @@ export function BillingGate({ children }: { children: ReactNode }) {
 }
 
 function BillingGateInner({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, getToken } = useAuth();
   const { active: billingActive } = useMatrixBillingAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
+  const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
+  const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
   const hasBillingAccess = isSignedIn ? billingActive === true : false;
   const billingChecking = isSignedIn && billingActive === null;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
+  const [, setDeviceSetupStatus] = useState<"idle" | "preparing" | "failed">("idle");
   const lastTrackedState = useRef<string | null>(null);
+  const deviceSetupStarted = useRef(false);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- not a cascade: this is a single post-hydration resolution of the checkout-return state. The two setStates batch in one render pass and only re-run when `checkoutReturnRequested` changes; they cannot be derived in render because hasRecentBillingCheckoutAttempt() reads sessionStorage, which is client-only and would break SSR/hydration.
   useEffect(() => {
@@ -206,7 +238,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   }, [checkoutReturnRequested]);
 
   useEffect(() => {
-    if (hasBillingAccess && checkoutReturnRequested) {
+    if (hasBillingAccess && checkoutReturnRequested && !deviceReturnPath) {
       capturePostHogEvent("billing_checkout_confirmed", {
         surface: "shell",
         source: "billing_gate",
@@ -214,7 +246,108 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       // react-doctor-disable-next-line react-doctor/nextjs-no-client-side-redirect -- legit post-action client redirect: once billing access is confirmed for a returning Stripe checkout, this strips the `?checkout=success` query so a reload does not re-trigger the confirmation flow. It must run client-side after the async billing-access check resolves (a server redirect() cannot observe client billing state), and it is gated on hasBillingAccess && checkoutReturnRequested so it fires once, not on every render.
       router.replace("/");
     }
-  }, [checkoutReturnRequested, hasBillingAccess, router]);
+  }, [checkoutReturnRequested, deviceReturnPath, hasBillingAccess, router]);
+
+  useEffect(() => {
+    if (!deviceReturnPath || !hasBillingAccess || !isLoaded || !isSignedIn) return;
+    if (deviceSetupStarted.current) return;
+    deviceSetupStarted.current = true;
+    let disposed = false;
+    let pollCount = 0;
+    let pollTimeout: number | undefined;
+
+    async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), DEVICE_SETUP_TIMEOUT_MS);
+      return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+        window.clearTimeout(timeoutId);
+      });
+    }
+
+    async function authHeaders(): Promise<HeadersInit> {
+      const token = await getToken();
+      return {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      };
+    }
+
+    async function pollRuntimeReady(): Promise<void> {
+      if (disposed) return;
+      pollCount += 1;
+      if (pollCount > DEVICE_SETUP_MAX_POLLS) {
+        setDeviceSetupStatus("failed");
+        return;
+      }
+
+      const sessionResponse = await fetchWithTimeout("/api/auth/app-session", {
+        method: "POST",
+        credentials: "include",
+        headers: await authHeaders(),
+        body: JSON.stringify({ redirectTo: deviceReturnPath }),
+      });
+
+      if (!sessionResponse.ok) {
+        pollTimeout = window.setTimeout(() => {
+          void pollRuntimeReady().catch((error: unknown) => {
+            console.warn("[billing] device runtime poll failed", error instanceof Error ? error.name : typeof error);
+            setDeviceSetupStatus("failed");
+          });
+        }, DEVICE_SETUP_POLL_MS);
+        return;
+      }
+
+      const readyResponse = await fetchWithTimeout("/", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: { Accept: "text/html" },
+      });
+
+      if (readyResponse.ok) {
+        window.location.replace(deviceReturnPath);
+        return;
+      }
+
+      pollTimeout = window.setTimeout(() => {
+        void pollRuntimeReady().catch((error: unknown) => {
+          console.warn("[billing] device runtime readiness failed", error instanceof Error ? error.name : typeof error);
+          setDeviceSetupStatus("failed");
+        });
+      }, DEVICE_SETUP_POLL_MS);
+    }
+
+    async function startDeviceRuntimeSetup(): Promise<void> {
+      setDeviceSetupStatus("preparing");
+      const provisionResponse = await fetchWithTimeout("/api/auth/provision-runtime", {
+        method: "POST",
+        credentials: "include",
+        headers: await authHeaders(),
+        body: JSON.stringify({}),
+      });
+      if (!provisionResponse.ok && provisionResponse.status !== 409) {
+        if (provisionResponse.status === 402) {
+          deviceSetupStarted.current = false;
+          setDeviceSetupStatus("idle");
+          return;
+        }
+        setDeviceSetupStatus("failed");
+        return;
+      }
+      await pollRuntimeReady();
+    }
+
+    void startDeviceRuntimeSetup().catch((error: unknown) => {
+      console.warn("[billing] device runtime setup failed", error instanceof Error ? error.name : typeof error);
+      setDeviceSetupStatus("failed");
+    });
+
+    return () => {
+      disposed = true;
+      if (pollTimeout !== undefined) window.clearTimeout(pollTimeout);
+    };
+  }, [deviceReturnPath, getToken, hasBillingAccess, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -281,7 +414,18 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
           {children}
         </div>
-        <BillingRequired />
+        <BillingRequired checkoutReturnPath={billingCheckoutReturnPath} />
+      </>
+    );
+  }
+
+  if (deviceReturnPath) {
+    return (
+      <>
+        <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
+          {children}
+        </div>
+        <SubscriptionConfirmationPending />
       </>
     );
   }

@@ -134,6 +134,44 @@ describe("BillingSection", () => {
     );
   });
 
+  it("includes a safe return path when checkout is launched from CLI device setup", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
+
+    render(
+      <BillingSection
+        mode="provisioning"
+        checkoutReturnPath="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/billing/checkout",
+        expect.objectContaining({
+          body: JSON.stringify({
+            planSlug: "matrix_builder",
+            interval: "monthly",
+            regionSlug: "region_fsn1",
+            returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+          }),
+        }),
+      ),
+    );
+  });
+
   it("uses provisioning copy when billing is shown before the hosted computer exists", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

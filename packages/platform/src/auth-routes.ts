@@ -144,13 +144,6 @@ function approvalPage(
     var csrf = "${escapedCsrf}";
     var approvalUrl = window.location.href;
     var authMode = new URL(window.location.href).searchParams.get('mode') === 'sign-in' ? 'sign-in' : 'sign-up';
-    var checkoutAttemptStorageKey = 'matrix.device.billing.checkoutAttemptAt.' + userCode;
-    var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
-    var provisioningStarted = false;
-    var provisioningPolls = 0;
-    var maxProvisioningPolls = 60;
-    var billingConfirmationPolls = 0;
-    var maxBillingConfirmationPolls = 60;
     var runtimeReady = false;
 
     function deviceReturnPath() {
@@ -160,6 +153,16 @@ function approvalPage(
       return url.pathname + url.search;
     }
 
+    function billingSetupPath() {
+      var url = new URL('/', window.location.origin);
+      url.searchParams.set('device_return', deviceReturnPath());
+      return url.pathname + url.search;
+    }
+
+    function redirectToBillingSetup() {
+      window.location.assign(billingSetupPath());
+    }
+
     function deviceAuthUrl(mode) {
       var url = new URL(approvalUrl);
       url.searchParams.delete('billing');
@@ -167,41 +170,6 @@ function approvalPage(
       url.searchParams.set('mode', mode);
       return url.toString();
     }
-
-    function hasTrustedCheckoutReturn() {
-      try {
-        var rawAttemptAt = window.sessionStorage.getItem(checkoutAttemptStorageKey);
-        if (!rawAttemptAt) return false;
-        var attemptAt = Number(rawAttemptAt);
-        return Number.isFinite(attemptAt) && Date.now() - attemptAt <= checkoutAttemptMaxAgeMs;
-      } catch (err) {
-        console.warn('[matrix] Unable to read device checkout attempt state', err instanceof Error ? err.message : String(err));
-        return false;
-      }
-    }
-
-    function rememberBillingCheckoutAttempt() {
-      try {
-        window.sessionStorage.setItem(checkoutAttemptStorageKey, String(Date.now()));
-      } catch (err) {
-        console.warn('[matrix] Unable to write device checkout attempt state', err instanceof Error ? err.message : String(err));
-      }
-    }
-
-    function stripCheckoutReturnParams() {
-      try {
-        var currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.delete('checkout');
-        currentUrl.searchParams.delete('billing');
-        window.history.replaceState(null, '', currentUrl.pathname + currentUrl.search + currentUrl.hash);
-      } catch (err) {
-        console.warn('[matrix] Unable to clear device checkout return state', err instanceof Error ? err.message : String(err));
-      }
-    }
-
-    var checkoutReturnRequested = new URLSearchParams(window.location.search || '').get('checkout') === 'success';
-    var checkoutJustCompleted = checkoutReturnRequested && hasTrustedCheckoutReturn();
-    if (checkoutReturnRequested) stripCheckoutReturnParams();
 
     function fetchWithTimeout(url, options) {
       var controller = new AbortController();
@@ -269,28 +237,6 @@ function approvalPage(
       renderActionState('Setting up Matrix CLI', message, 'Working...', function() {});
       var button = document.querySelector('#signin-area button');
       if (button) button.disabled = true;
-    }
-
-    function showRuntimeRequiredState() {
-      runtimeReady = false;
-      setConfirmReady(false);
-      renderActionState(
-        'Finish Matrix setup',
-        'Create your Matrix computer before connecting this terminal.',
-        'Provision Matrix computer',
-        startProvisioningFromClerkSession
-      );
-    }
-
-    function showBillingRequiredState() {
-      runtimeReady = false;
-      setConfirmReady(false);
-      renderActionState(
-        'Start hosted trial',
-        'Billing starts the hosted Matrix computer trial, then this CLI login can continue.',
-        'Start checkout',
-        startBillingCheckoutFromClerkSession
-      );
     }
 
     function showSignedInRecoveryState() {
@@ -364,122 +310,6 @@ function approvalPage(
       return await window.Clerk.session.getToken();
     }
 
-    function pollProvisioningSession() {
-      provisioningPolls += 1;
-      if (provisioningPolls > maxProvisioningPolls) {
-        provisioningStarted = false;
-        checkoutJustCompleted = false;
-        billingConfirmationPolls = 0;
-        showSignedInRecoveryState();
-        return;
-      }
-      window.setTimeout(continueDeviceOnboarding, 8000);
-    }
-
-    function retryProvisioningAfterBillingDelay() {
-      billingConfirmationPolls += 1;
-      if (billingConfirmationPolls > maxBillingConfirmationPolls) {
-        provisioningStarted = false;
-        checkoutJustCompleted = false;
-        showBillingRequiredState();
-        return;
-      }
-      provisioningStarted = false;
-      showLoadingState('Confirming billing...');
-      window.setTimeout(startProvisioningFromClerkSession, 8000);
-    }
-
-    async function startBillingCheckoutFromClerkSession() {
-      showLoadingState('Opening secure checkout...');
-      try {
-        var token = await clerkTokenOrNull();
-        if (!token) {
-          showAuth();
-          return;
-        }
-        var res = await fetchWithTimeout('/billing/checkout', {
-          method: 'POST',
-          headers: {
-            Authorization: \`Bearer \${token}\`,
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            planSlug: 'matrix_builder',
-            interval: 'monthly',
-            regionSlug: 'region_fsn1',
-            returnPath: deviceReturnPath(),
-          }),
-          credentials: 'same-origin',
-        });
-        var body = await res.json().catch(function(err) {
-          console.warn('[matrix] Unable to parse device checkout response', err instanceof Error ? err.message : String(err));
-          return null;
-        });
-        if (!res.ok || !body || typeof body.url !== 'string') {
-          showBillingRequiredState();
-          return;
-        }
-        rememberBillingCheckoutAttempt();
-        window.location.assign(body.url);
-      } catch (err) {
-        console.error('[matrix] Device checkout failed', err instanceof Error ? err.message : String(err));
-        showBillingRequiredState();
-      }
-    }
-
-    async function startProvisioningFromClerkSession() {
-      if (provisioningStarted) return;
-      provisioningStarted = true;
-      try {
-        var token = await clerkTokenOrNull();
-        if (!token) {
-          provisioningStarted = false;
-          showAuth();
-          return;
-        }
-        showLoadingState('Starting your Matrix computer...');
-        var res = await fetchWithTimeout('/api/auth/provision-runtime', {
-          method: 'POST',
-          headers: {
-            Authorization: \`Bearer \${token}\`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({}),
-          credentials: 'same-origin',
-        });
-        if (res.ok) {
-          billingConfirmationPolls = 0;
-          provisioningPolls = 0;
-          showLoadingState('Preparing your Matrix computer...');
-          pollProvisioningSession();
-          return;
-        }
-        if (res.status === 402) {
-          if (checkoutJustCompleted) {
-            retryProvisioningAfterBillingDelay();
-            return;
-          }
-          provisioningStarted = false;
-          showBillingRequiredState();
-          return;
-        }
-        if (res.status === 409) {
-          provisioningPolls = 0;
-          billingConfirmationPolls = 0;
-          showLoadingState('Preparing your Matrix computer...');
-          pollProvisioningSession();
-          return;
-        }
-        provisioningStarted = false;
-        showSignedInRecoveryState();
-      } catch (err) {
-        console.error('[matrix] Device runtime provisioning failed', err instanceof Error ? err.message : String(err));
-        provisioningStarted = false;
-        showSignedInRecoveryState();
-      }
-    }
-
     async function continueDeviceOnboarding() {
       try {
         var token = await clerkTokenOrNull();
@@ -498,23 +328,11 @@ function approvalPage(
           credentials: 'same-origin',
         });
         if (res.ok) {
-          provisioningStarted = false;
-          billingConfirmationPolls = 0;
-          provisioningPolls = 0;
           showConfirm();
           return;
         }
         if (res.status === 404) {
-          if (provisioningStarted) {
-            showLoadingState('Preparing your Matrix computer...');
-            pollProvisioningSession();
-            return;
-          }
-          if (checkoutJustCompleted) {
-            startProvisioningFromClerkSession();
-            return;
-          }
-          showRuntimeRequiredState();
+          redirectToBillingSetup();
           return;
         }
         showSignedInRecoveryState();

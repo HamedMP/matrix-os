@@ -104,6 +104,8 @@ describe("platform proxy routing", () => {
     delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
     delete process.env.HETZNER_SERVER_TYPE;
     delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
   });
 
   it("escapes JSON embedded in auth page inline scripts", () => {
@@ -1791,6 +1793,49 @@ describe("platform proxy routing", () => {
     expect(html).toContain("Loading your Matrix computer");
     expect(html).not.toContain("ask the operator to provision this account");
     expect(html).not.toContain("You are already signed in");
+  });
+
+  it("serves the shell billing gate from auth-shell for signed-in users before a VPS exists", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("auth shell", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("auth shell");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://auth-shell.test:3200/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
   });
 
   it("does not trust a stale app session cookie over a different Clerk session", async () => {
