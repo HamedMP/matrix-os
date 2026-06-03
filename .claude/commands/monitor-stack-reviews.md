@@ -146,10 +146,14 @@ final human review.
      expected checks never enter an active state after the push, or an active
      check exceeds 30 minutes without progress or its workflow-defined
      `timeout-minutes`, whichever is shorter.
-   - Track the push time and current head SHA for each PR awaiting Greptile. If
-     no Greptile comment for that head appears within 30 minutes after the
-     push, stop and report `Greptile review not received for <pr> @ <sha>` as a
-     blocker instead of polling indefinitely.
+   - Track a review-wait start time and current head SHA for each PR awaiting
+     Greptile. Initialize the timer at command start for any PR whose current
+     head lacks a trusted Greptile review before this command makes changes, and
+     reset it to the push time after every successful submit that rewrites that
+     PR. If no Greptile comment for that head appears within 30 minutes after
+     that PR's review-wait start time, stop and report
+     `Greptile review not received for <pr> @ <sha>` as a blocker instead of
+     polling indefinitely.
    - Trust a Greptile score only when its reviewed commit matches the PR's
      current `headRefOid`; otherwise treat it as stale and keep waiting.
    - When the PR is not draft, the latest trusted Greptile result is `5/5`, and
