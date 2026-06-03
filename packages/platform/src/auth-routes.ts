@@ -22,6 +22,7 @@ import {
 import type { ClerkAuth } from './clerk-auth.js';
 
 const DEVICE_BODY_LIMIT = 4096;
+const DEVICE_EXPIRES_IN_SEC = 2700;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 100;
 const RATE_LIMIT_MAX_KEYS = 10_000;
@@ -142,6 +143,73 @@ function approvalPage(
     var userCode = "${escapedCode}";
     var csrf = "${escapedCsrf}";
     var approvalUrl = window.location.href;
+    var authMode = new URL(window.location.href).searchParams.get('mode') === 'sign-in' ? 'sign-in' : 'sign-up';
+    var checkoutAttemptStorageKey = 'matrix.device.billing.checkoutAttemptAt.' + userCode;
+    var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
+    var provisioningStarted = false;
+    var provisioningPolls = 0;
+    var maxProvisioningPolls = 60;
+    var billingConfirmationPolls = 0;
+    var maxBillingConfirmationPolls = 60;
+    var runtimeReady = false;
+
+    function deviceReturnPath() {
+      var url = new URL(window.location.href);
+      url.searchParams.delete('billing');
+      url.searchParams.delete('checkout');
+      return url.pathname + url.search;
+    }
+
+    function deviceAuthUrl(mode) {
+      var url = new URL(approvalUrl);
+      url.searchParams.delete('billing');
+      url.searchParams.delete('checkout');
+      url.searchParams.set('mode', mode);
+      return url.toString();
+    }
+
+    function hasTrustedCheckoutReturn() {
+      try {
+        var rawAttemptAt = window.sessionStorage.getItem(checkoutAttemptStorageKey);
+        if (!rawAttemptAt) return false;
+        var attemptAt = Number(rawAttemptAt);
+        return Number.isFinite(attemptAt) && Date.now() - attemptAt <= checkoutAttemptMaxAgeMs;
+      } catch (err) {
+        console.warn('[matrix] Unable to read device checkout attempt state', err instanceof Error ? err.message : String(err));
+        return false;
+      }
+    }
+
+    function rememberBillingCheckoutAttempt() {
+      try {
+        window.sessionStorage.setItem(checkoutAttemptStorageKey, String(Date.now()));
+      } catch (err) {
+        console.warn('[matrix] Unable to write device checkout attempt state', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    function stripCheckoutReturnParams() {
+      try {
+        var currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.delete('checkout');
+        currentUrl.searchParams.delete('billing');
+        window.history.replaceState(null, '', currentUrl.pathname + currentUrl.search + currentUrl.hash);
+      } catch (err) {
+        console.warn('[matrix] Unable to clear device checkout return state', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    var checkoutReturnRequested = new URLSearchParams(window.location.search || '').get('checkout') === 'success';
+    var checkoutJustCompleted = checkoutReturnRequested && hasTrustedCheckoutReturn();
+    if (checkoutReturnRequested) stripCheckoutReturnParams();
+
+    function fetchWithTimeout(url, options) {
+      var controller = new AbortController();
+      var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
+      return fetch(url, Object.assign({}, options, { signal: controller.signal })).finally(function() {
+        window.clearTimeout(timeoutId);
+      });
+    }
 
     function setStatus(message) {
       var status = document.getElementById('status');
@@ -156,12 +224,303 @@ function approvalPage(
       }
     }
 
+    function setConfirmReady(isReady) {
+      var form = document.getElementById('confirm-area');
+      var confirm = document.getElementById('confirm-button');
+      if (form) form.style.display = isReady ? 'block' : 'none';
+      if (confirm) {
+        confirm.disabled = true;
+        if (isReady) confirm.disabled = false;
+      }
+    }
+
     function updateSignedInInstance() {
       var instance = document.getElementById('instance-line');
       if (!instance || !window.Clerk || !window.Clerk.user) return;
       var user = window.Clerk.user;
       var handle = user.username || user.primaryEmailAddress?.emailAddress || user.id;
       instance.textContent = 'signed in: @' + handle + ' on app.matrix-os.com';
+    }
+
+    function renderActionState(title, detail, primaryLabel, primaryHandler) {
+      var signin = document.getElementById('signin-area');
+      if (!signin) return;
+      signin.style.display = 'block';
+      signin.innerHTML = '';
+      var state = document.createElement('div');
+      state.className = 'device-state';
+      var heading = document.createElement('h2');
+      heading.textContent = title;
+      state.appendChild(heading);
+      var copy = document.createElement('p');
+      copy.textContent = detail;
+      state.appendChild(copy);
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = primaryLabel;
+      button.addEventListener('click', primaryHandler);
+      state.appendChild(button);
+      signin.appendChild(state);
+    }
+
+    function showLoadingState(message) {
+      setConfirmReady(false);
+      renderActionState('Setting up Matrix CLI', message, 'Working...', function() {});
+      var button = document.querySelector('#signin-area button');
+      if (button) button.disabled = true;
+    }
+
+    function showRuntimeRequiredState() {
+      runtimeReady = false;
+      setConfirmReady(false);
+      renderActionState(
+        'Finish Matrix setup',
+        'Create your Matrix computer before connecting this terminal.',
+        'Provision Matrix computer',
+        startProvisioningFromClerkSession
+      );
+    }
+
+    function showBillingRequiredState() {
+      runtimeReady = false;
+      setConfirmReady(false);
+      renderActionState(
+        'Start hosted trial',
+        'Billing starts the hosted Matrix computer trial, then this CLI login can continue.',
+        'Start checkout',
+        startBillingCheckoutFromClerkSession
+      );
+    }
+
+    function showSignedInRecoveryState() {
+      runtimeReady = false;
+      setConfirmReady(false);
+      renderActionState(
+        'Session needs a refresh',
+        'Matrix could not finish connecting this terminal. Try again after a moment.',
+        'Try again',
+        continueDeviceOnboarding
+      );
+    }
+
+    function showConfirm() {
+      runtimeReady = true;
+      var signin = document.getElementById('signin-area');
+      if (signin) {
+        signin.style.display = 'none';
+        signin.innerHTML = '';
+      }
+      setStatus('');
+      setConfirmReady(true);
+    }
+
+    function showSignUp() {
+      runtimeReady = false;
+      setConfirmReady(false);
+      var signin = document.getElementById('signin-area');
+      if (signin) signin.style.display = 'block';
+      if (signin && !signin.dataset.mounted) {
+        signin.dataset.mounted = 'true';
+        window.Clerk.mountSignUp(signin, {
+          signInUrl: deviceAuthUrl('sign-in'),
+          forceRedirectUrl: approvalUrl,
+          fallbackRedirectUrl: approvalUrl,
+          signInForceRedirectUrl: approvalUrl,
+          signInFallbackRedirectUrl: approvalUrl,
+          oauthFlow: 'redirect',
+        });
+      }
+    }
+
+    function showSignIn() {
+      runtimeReady = false;
+      setConfirmReady(false);
+      var signin = document.getElementById('signin-area');
+      if (signin) signin.style.display = 'block';
+      if (signin && !signin.dataset.mounted) {
+        signin.dataset.mounted = 'true';
+        window.Clerk.mountSignIn(signin, {
+          signUpUrl: deviceAuthUrl('sign-up'),
+          forceRedirectUrl: approvalUrl,
+          fallbackRedirectUrl: approvalUrl,
+          signUpForceRedirectUrl: approvalUrl,
+          signUpFallbackRedirectUrl: approvalUrl,
+          oauthFlow: 'redirect',
+        });
+      }
+    }
+
+    function showAuth() {
+      if (authMode === 'sign-in') {
+        showSignIn();
+        return;
+      }
+      showSignUp();
+    }
+
+    async function clerkTokenOrNull() {
+      if (!window.Clerk || !window.Clerk.session) return null;
+      return await window.Clerk.session.getToken();
+    }
+
+    function pollProvisioningSession() {
+      provisioningPolls += 1;
+      if (provisioningPolls > maxProvisioningPolls) {
+        provisioningStarted = false;
+        checkoutJustCompleted = false;
+        billingConfirmationPolls = 0;
+        showSignedInRecoveryState();
+        return;
+      }
+      window.setTimeout(continueDeviceOnboarding, 8000);
+    }
+
+    function retryProvisioningAfterBillingDelay() {
+      billingConfirmationPolls += 1;
+      if (billingConfirmationPolls > maxBillingConfirmationPolls) {
+        provisioningStarted = false;
+        checkoutJustCompleted = false;
+        showBillingRequiredState();
+        return;
+      }
+      provisioningStarted = false;
+      showLoadingState('Confirming billing...');
+      window.setTimeout(startProvisioningFromClerkSession, 8000);
+    }
+
+    async function startBillingCheckoutFromClerkSession() {
+      showLoadingState('Opening secure checkout...');
+      try {
+        var token = await clerkTokenOrNull();
+        if (!token) {
+          showAuth();
+          return;
+        }
+        var res = await fetchWithTimeout('/billing/checkout', {
+          method: 'POST',
+          headers: {
+            Authorization: \`Bearer \${token}\`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            planSlug: 'matrix_builder',
+            interval: 'monthly',
+            regionSlug: 'region_fsn1',
+            returnPath: deviceReturnPath(),
+          }),
+          credentials: 'same-origin',
+        });
+        var body = await res.json().catch(function(err) {
+          console.warn('[matrix] Unable to parse device checkout response', err instanceof Error ? err.message : String(err));
+          return null;
+        });
+        if (!res.ok || !body || typeof body.url !== 'string') {
+          showBillingRequiredState();
+          return;
+        }
+        rememberBillingCheckoutAttempt();
+        window.location.assign(body.url);
+      } catch (err) {
+        console.error('[matrix] Device checkout failed', err instanceof Error ? err.message : String(err));
+        showBillingRequiredState();
+      }
+    }
+
+    async function startProvisioningFromClerkSession() {
+      if (provisioningStarted) return;
+      provisioningStarted = true;
+      showLoadingState('Starting your Matrix computer...');
+      try {
+        var token = await clerkTokenOrNull();
+        if (!token) {
+          provisioningStarted = false;
+          showAuth();
+          return;
+        }
+        var res = await fetchWithTimeout('/api/auth/provision-runtime', {
+          method: 'POST',
+          headers: {
+            Authorization: \`Bearer \${token}\`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+          credentials: 'same-origin',
+        });
+        if (res.ok) {
+          billingConfirmationPolls = 0;
+          provisioningPolls = 0;
+          showLoadingState('Preparing your Matrix computer...');
+          pollProvisioningSession();
+          return;
+        }
+        if (res.status === 402) {
+          if (checkoutJustCompleted) {
+            retryProvisioningAfterBillingDelay();
+            return;
+          }
+          provisioningStarted = false;
+          showBillingRequiredState();
+          return;
+        }
+        if (res.status === 409) {
+          provisioningPolls = 0;
+          billingConfirmationPolls = 0;
+          showLoadingState('Preparing your Matrix computer...');
+          pollProvisioningSession();
+          return;
+        }
+        provisioningStarted = false;
+        showSignedInRecoveryState();
+      } catch (err) {
+        console.error('[matrix] Device runtime provisioning failed', err instanceof Error ? err.message : String(err));
+        provisioningStarted = false;
+        showSignedInRecoveryState();
+      }
+    }
+
+    async function continueDeviceOnboarding() {
+      showLoadingState('Checking your Matrix computer...');
+      try {
+        var token = await clerkTokenOrNull();
+        if (!token) {
+          showAuth();
+          return;
+        }
+        var res = await fetchWithTimeout('/api/auth/app-session', {
+          method: 'POST',
+          headers: {
+            Authorization: \`Bearer \${token}\`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ redirectTo: deviceReturnPath() }),
+          credentials: 'same-origin',
+        });
+        if (res.ok) {
+          provisioningStarted = false;
+          billingConfirmationPolls = 0;
+          provisioningPolls = 0;
+          showConfirm();
+          return;
+        }
+        if (res.status === 404) {
+          if (provisioningStarted) {
+            showLoadingState('Preparing your Matrix computer...');
+            pollProvisioningSession();
+            return;
+          }
+          if (checkoutJustCompleted) {
+            startProvisioningFromClerkSession();
+            return;
+          }
+          showRuntimeRequiredState();
+          return;
+        }
+        showSignedInRecoveryState();
+      } catch (err) {
+        console.error('[matrix] Device session exchange failed', err instanceof Error ? err.message : String(err));
+        showSignedInRecoveryState();
+      }
     }
 
     async function submitApproval(event) {
@@ -171,21 +530,19 @@ function approvalPage(
       setBusy(true);
 
       try {
-        if (!window.Clerk.session) {
-          setStatus('Sign in before authorizing this device.');
-          showSignIn();
+        if (!runtimeReady) {
+          await continueDeviceOnboarding();
           return;
         }
 
-        var token = await window.Clerk.session.getToken();
+        var token = await clerkTokenOrNull();
         if (!token) {
-          setStatus('Sign in before authorizing this device.');
-          showSignIn();
+          showAuth();
           return;
         }
 
         var body = new URLSearchParams({ userCode: userCode, csrf: csrf });
-        var res = await fetch('/auth/device/approve', {
+        var res = await fetchWithTimeout('/auth/device/approve', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -204,34 +561,11 @@ function approvalPage(
         }
 
         setStatus('Could not authorize this device. Refresh and try again.');
-      } catch (_) {
+      } catch (err) {
+        console.error('[matrix] Device approval failed', err instanceof Error ? err.message : String(err));
         setStatus('Could not authorize this device. Refresh and try again.');
       } finally {
         setBusy(false);
-      }
-    }
-
-    function showConfirm() {
-      var signin = document.getElementById('signin-area');
-      var confirm = document.getElementById('confirm-area');
-      if (signin) signin.style.display = 'none';
-      if (confirm) confirm.style.display = 'block';
-    }
-
-    function showSignIn() {
-      var signin = document.getElementById('signin-area');
-      var confirm = document.getElementById('confirm-area');
-      if (signin) signin.style.display = 'block';
-      if (confirm) confirm.style.display = 'block';
-      if (signin && !signin.dataset.mounted) {
-        signin.dataset.mounted = 'true';
-        window.Clerk.mountSignIn(signin, {
-          forceRedirectUrl: approvalUrl,
-          fallbackRedirectUrl: approvalUrl,
-          signUpForceRedirectUrl: approvalUrl,
-          signUpFallbackRedirectUrl: approvalUrl,
-          oauthFlow: 'redirect',
-        });
       }
     }
 
@@ -239,12 +573,12 @@ function approvalPage(
       window.Clerk.load().then(function() {
         updateSignedInInstance();
         if (window.Clerk.user && window.Clerk.session) {
-          showConfirm();
+          continueDeviceOnboarding();
         } else {
-          showSignIn();
+          showAuth();
         }
       }).catch(function() {
-        setStatus('Could not load sign-in. Refresh and try again.');
+        setStatus('Could not load signup. Refresh and try again.');
       });
     }
 
@@ -291,10 +625,10 @@ function approvalPage(
       padding: 24px;
     }
     main {
-      width: min(920px, 100%);
+      width: min(1120px, 100%);
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 280px;
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+      gap: 24px;
       align-items: stretch;
     }
     .terminal {
@@ -342,12 +676,13 @@ function approvalPage(
       color: #25332d;
       border: 1px solid #ddd4c3;
       border-radius: 8px;
-      padding: 20px;
+      padding: 24px;
       display: flex;
       flex-direction: column;
       gap: 16px;
     }
     h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    h2 { margin: 0; font-size: 18px; line-height: 1.2; }
     p { margin: 0; color: #516158; line-height: 1.5; }
     button {
       width: 100%;
@@ -362,6 +697,13 @@ function approvalPage(
     button:disabled { opacity: 0.65; cursor: wait; }
     .status { min-height: 1.25rem; color: #9f2d2d; }
     #signin-area { min-width: 0; }
+    .device-state {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      border-top: 1px solid #ded7c9;
+      padding-top: 16px;
+    }
     @media (max-width: 760px) {
       main { grid-template-columns: 1fr; }
       .terminal { min-height: 360px; }
@@ -393,10 +735,10 @@ function approvalPage(
         <p>Authorize this terminal to connect to your Matrix OS cloud computer.</p>
       </div>
       <div id="signin-area" style="display:none"></div>
-      <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">
+      <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">
         <input type="hidden" name="csrf" value="${escapedCsrf}">
-        <button id="confirm-button" type="submit">approve login</button>
+        <button id="confirm-button" type="submit" disabled>approve login</button>
       </form>
       <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
     </section>
@@ -461,6 +803,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
   const flow: DeviceFlow = createDeviceFlow({
     db: config.db,
     verificationBase: config.platformUrl,
+    expiresInSec: DEVICE_EXPIRES_IN_SEC,
     now: config.now,
     issueToken: async ({ clerkUserId }) => {
       const container = await getContainerByClerkId(config.db, clerkUserId);
