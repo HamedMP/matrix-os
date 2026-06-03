@@ -34,6 +34,10 @@ describe("terminal launch paths", () => {
       label: "Gemini CLI setup",
       command: "gemini",
     });
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("agent-shell"))).toMatchObject({
+      label: "Shell setup",
+      command: "bash",
+    });
     expect(parseTerminalLaunchPath(createTerminalLaunchPath("github-ssh-login"))?.command).toContain("gh auth login --hostname github.com --git-protocol ssh --web");
   });
 

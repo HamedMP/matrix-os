@@ -70,6 +70,27 @@ describe("ManualSetupStickers", () => {
     expect(onOpenTerminal).not.toHaveBeenCalled();
   });
 
+  it("marks Gemini CLI as suggested when detected", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      agents: [
+        { id: "gemini", installed: true, authState: "required" },
+      ],
+    }), {
+      headers: { "Content-Type": "application/json" },
+    })));
+    render(
+      <ManualSetupStickers
+        onOpenTerminal={vi.fn()}
+        onAskHermes={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const badge = await screen.findByText("Suggested");
+    const suggestedButton = badge.closest("button");
+    expect(suggestedButton?.textContent).toContain("Gemini CLI");
+  });
+
   it("shows manual setup guidance for unsupported agent choices", () => {
     const onOpenTerminal = vi.fn();
     render(

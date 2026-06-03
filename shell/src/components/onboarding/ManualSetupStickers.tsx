@@ -125,15 +125,19 @@ function parseSuggestedAgent(value: unknown): CodingAgentChoiceId | null {
     return null;
   }
   const agents = (value as { agents: unknown[] }).agents;
-  for (const candidate of ["claude", "codex", "opencode"] as const) {
+  const detectableCandidates = CODING_AGENT_CHOICES.filter(
+    (choice): choice is CodingAgentChoice & { launchAction: TerminalLaunchAction } =>
+      Boolean(choice.launchAction) && choice.id !== "shell",
+  );
+  for (const candidate of detectableCandidates) {
     const match = agents.find((agent) =>
       agent &&
       typeof agent === "object" &&
-      (agent as { id?: unknown }).id === candidate &&
+      (agent as { id?: unknown }).id === candidate.id &&
       (agent as { installed?: unknown }).installed === true &&
       ((agent as { authState?: unknown }).authState === "ok" || (agent as { authState?: unknown }).authState === "required")
     );
-    if (match) return candidate;
+    if (match) return candidate.id;
   }
   return null;
 }
