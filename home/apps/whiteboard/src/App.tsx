@@ -1860,10 +1860,10 @@ function wrapText(
   let cursorY = y;
   const paragraphs = text.replace(/\r\n/g, "\n").split("\n");
   for (const [index, paragraph] of paragraphs.entries()) {
-    const words = paragraph.split(/[ \t]+/).filter((word) => word.length > 0);
+    const words = paragraph.split(/([ \t]+)/).filter((word) => word.length > 0);
     let line = "";
     for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
+      const test = `${line}${word}`;
       if (ctx.measureText(test).width > maxWidth && line) {
         ctx.fillText(line, x, cursorY);
         line = word;

@@ -1086,7 +1086,7 @@ describe("Whiteboard app — multi-board files", () => {
         doc: {
           version: 1,
           elements: [
-            { id: "t1", kind: "text", x: 40, y: 50, width: 200, height: 80, stroke: "#111", fill: "transparent", strokeWidth: 1, text: "First line\nSecond line" },
+            { id: "t1", kind: "text", x: 40, y: 50, width: 200, height: 80, stroke: "#111", fill: "transparent", strokeWidth: 1, text: "  First line\nSecond line" },
           ],
         },
       },
@@ -1115,7 +1115,7 @@ describe("Whiteboard app — multi-board files", () => {
 
     fireEvent.click(screen.getByTitle("Export PNG"));
 
-    expect(ctx.fillText).toHaveBeenCalledWith("First line", 40, 50);
+    expect(ctx.fillText).toHaveBeenCalledWith("  First line", 40, 50);
     expect(ctx.fillText).toHaveBeenCalledWith("Second line", 40, 77);
   });
 
