@@ -4,12 +4,22 @@ set -euo pipefail
 AGENT_BIN="${AGENT_BIN:-agent}"
 MATRIX_SKILLS_SOURCE="${1:-${MATRIX_SKILLS_SOURCE:-HamedMP/matrix-os}}"
 
+if [ -d "${MATRIX_SKILLS_SOURCE}/skills/matrix" ]; then
+  MATRIX_SKILLS_ROOT="${MATRIX_SKILLS_SOURCE}/skills/matrix"
+elif [ -d "${MATRIX_SKILLS_SOURCE}/app-builder" ]; then
+  MATRIX_SKILLS_ROOT="$MATRIX_SKILLS_SOURCE"
+else
+  MATRIX_SKILLS_ROOT="${MATRIX_SKILLS_SOURCE}/skills/matrix"
+fi
+
 skills=(
   app-builder
+  app-ui-patterns
   design-system
   integrations
   dev-vps
   debug-app
+  landing-design
 )
 
 if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then
@@ -19,7 +29,7 @@ if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then
 fi
 
 for skill in "${skills[@]}"; do
-  "$AGENT_BIN" skills install "${MATRIX_SKILLS_SOURCE}/skills/matrix/${skill}"
+  "$AGENT_BIN" skills install "${MATRIX_SKILLS_ROOT}/${skill}"
 done
 
 echo "Installed Matrix Agent skills from ${MATRIX_SKILLS_SOURCE}."

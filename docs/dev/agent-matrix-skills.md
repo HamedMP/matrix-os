@@ -2,15 +2,19 @@
 
 Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skills teach Agent how to build and debug Matrix apps, use the Matrix design system, work with Matrix integrations, and operate on a dev VPS.
 
+`skills/matrix/` is the source of truth for Matrix-hosted coding agents. Runtime sync projects every skill directory with a `SKILL.md` into the tool-specific locations for Matrix, Claude Code, Codex, and Hermes.
+
 ## Skills
 
 | Skill | Purpose |
 | --- | --- |
 | `matrix-app-builder` | Build Matrix apps as Vite React TypeScript projects with `matrix.json` and verified `dist/` output. |
+| `matrix-app-ui-patterns` | Build stable app interiors for windowed, mobile, dashboard, data, and canvas contexts. |
 | `matrix-design-system` | Apply Matrix theme, shadcn-style component patterns, icon quality rules, and iframe-safe app layouts. |
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Agent or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
+| `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
 
 ## Install Into Agent
 
@@ -22,7 +26,7 @@ From a Matrix checkout:
 ./scripts/install-agent-matrix-skills.sh
 ```
 
-The script installs all five skills from `HamedMP/matrix-os` by default. To install from a local path or another tap/source:
+The script installs the shipped Matrix app skills from `HamedMP/matrix-os` by default. To install from a local path or another tap/source:
 
 ```bash
 ./scripts/install-agent-matrix-skills.sh /home/matrix/projects/matrix-os
@@ -33,7 +37,7 @@ AGENT_BIN=/opt/matrix/runtime/node/bin/agent ./scripts/install-agent-matrix-skil
 Equivalent manual command:
 
 ```bash
-for skill in app-builder design-system integrations dev-vps debug-app; do
+for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
   agent skills install "HamedMP/matrix-os/skills/matrix/$skill"
 done
 ```
@@ -44,10 +48,12 @@ From a running Agent environment with GitHub skill install support:
 
 ```bash
 agent skills install HamedMP/matrix-os/skills/matrix/app-builder
+agent skills install HamedMP/matrix-os/skills/matrix/app-ui-patterns
 agent skills install HamedMP/matrix-os/skills/matrix/design-system
 agent skills install HamedMP/matrix-os/skills/matrix/integrations
 agent skills install HamedMP/matrix-os/skills/matrix/dev-vps
 agent skills install HamedMP/matrix-os/skills/matrix/debug-app
+agent skills install HamedMP/matrix-os/skills/matrix/landing-design
 ```
 
 If Agent is running from a local checkout, install from the local path or add the repo as a tap:
@@ -79,13 +85,15 @@ Recommended target state:
 
 1. The Matrix image includes Agent or installs it during first boot as the `matrix` user.
 2. First boot runs `scripts/install-agent-matrix-skills.sh`.
-3. Agent config sets Matrix's local gateway URL:
+3. Gateway startup runs `scripts/sync-matrix-agent-skills.sh` so Matrix, Claude Code, Codex, and Hermes see
+   the same canonical skill pack.
+4. Agent config sets Matrix's local gateway URL:
 
    ```bash
    agent config set skills.config.matrix.gateway_url http://localhost:4000
    ```
 
-4. No Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets are written to Agent config or customer VPS env.
+5. No Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets are written to Agent config or customer VPS env.
 
 For production user VPSes, preinstalling Agent plus the Matrix skills is safe because the skills contain instructions only. Authenticated Matrix actions should still go through Matrix gateway/platform APIs.
 

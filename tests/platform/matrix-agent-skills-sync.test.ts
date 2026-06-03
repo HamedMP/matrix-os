@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -32,6 +34,26 @@ metadata:
 # ${skillName}
 `,
   );
+}
+
+function extractAgentSkillList(script: string): string[] {
+  const match = script.match(/skills=\(\n(?<body>[\s\S]*?)\n\)/);
+  if (!match?.groups?.body) {
+    throw new Error("Agent installer skills array not found");
+  }
+  return match.groups.body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .sort();
+}
+
+function extractHermesFallbackSkillList(script: string): string[] {
+  const match = script.match(/for skill_dir in (?<body>[^;]+); do/);
+  if (!match?.groups?.body) {
+    throw new Error("Hermes installer fallback loop not found");
+  }
+  return match.groups.body.split(/\s+/).filter(Boolean).sort();
 }
 
 describe("Matrix coding-agent skill sync", () => {
@@ -77,6 +99,99 @@ describe("Matrix coding-agent skill sync", () => {
       expect(readFileSync(join(cliHome, ".agents", "skills", "matrix-integrations", "SKILL.md"), "utf-8")).toContain(
         "name: matrix-integrations",
       );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps manual skill installers aligned with the shipped Matrix skill pack", () => {
+    const root = process.cwd();
+    const shippedSkillDirs = readdirSync(join(root, "skills", "matrix"), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+
+    const agentInstaller = readFileSync(join(root, "scripts/install-agent-matrix-skills.sh"), "utf-8");
+    const hermesInstaller = readFileSync(join(root, "scripts/install-hermes-matrix-skills.sh"), "utf-8");
+
+    expect(extractAgentSkillList(agentInstaller)).toEqual(shippedSkillDirs);
+    expect(extractHermesFallbackSkillList(hermesInstaller)).toEqual(shippedSkillDirs);
+  });
+
+  it("lets the Agent installer consume a direct skills/matrix source path", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-agent-install-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const fakeAgent = join(root, "agent");
+    const logPath = join(root, "agent.log");
+
+    try {
+      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+        writeSkill(source, skillDir, `matrix-${skillDir}`);
+      }
+
+      writeFileSync(
+        fakeAgent,
+        `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${logPath}"
+`,
+      );
+      chmodSync(fakeAgent, 0o755);
+
+      execFileSync("bash", [join(process.cwd(), "scripts/install-agent-matrix-skills.sh"), source], {
+        env: {
+          ...process.env,
+          AGENT_BIN: fakeAgent,
+        },
+        stdio: "pipe",
+      });
+
+      const log = readFileSync(logPath, "utf-8");
+      expect(log).toContain(`skills install ${join(source, "app-builder")}`);
+      expect(log).toContain(`skills install ${join(source, "app-ui-patterns")}`);
+      expect(log).toContain(`skills install ${join(source, "landing-design")}`);
+      expect(log).not.toContain("skills/matrix/skills/matrix");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets the Hermes installer sync from a direct skills/matrix source path", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-hermes-install-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const cliHome = join(root, "cli-home");
+    const hermesHome = join(root, "hermes-home");
+    const fakeHermes = join(root, "hermes");
+
+    try {
+      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+        writeSkill(source, skillDir, `matrix-${skillDir}`);
+      }
+
+      writeFileSync(
+        fakeHermes,
+        `#!/usr/bin/env bash
+exit 0
+`,
+      );
+      chmodSync(fakeHermes, 0o755);
+
+      execFileSync("bash", [join(process.cwd(), "scripts/install-hermes-matrix-skills.sh"), source], {
+        env: {
+          ...process.env,
+          HERMES_BIN: fakeHermes,
+          HERMES_HOME: hermesHome,
+          HOME: cliHome,
+        },
+        stdio: "pipe",
+      });
+
+      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+        const skillName = `matrix-${skillDir}`;
+        const target = join(hermesHome, "skills", skillName);
+        expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+        expect(lstatSync(target).isSymbolicLink()).toBe(true);
+        expect(realpathSync(target)).toBe(realpathSync(join(source, skillDir)));
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
