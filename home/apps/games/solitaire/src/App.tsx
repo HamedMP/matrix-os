@@ -22,10 +22,14 @@ import { useSolitaireStats } from "./useSolitaireStats";
 const DRAW_PREF_KEY = "solitaire:draw-mode";
 
 function formatTime(seconds: number): string {
-  if (!seconds || seconds < 0) return "--:--";
+  if (seconds < 0) return "--:--";
   const m = Math.floor(seconds / 60).toString().padStart(2, "0");
   const s = Math.floor(seconds % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
+}
+
+function formatBestTime(seconds: number): string {
+  return seconds === 0 ? "--:--" : formatTime(seconds);
 }
 
 interface AppProps {
@@ -461,7 +465,7 @@ export default function App({ initialState }: AppProps) {
         <span>
           Won {stats.games_won}/{stats.games_played}
         </span>
-        <span>Best time {formatTime(stats.best_time)}</span>
+        <span>Best time {formatBestTime(stats.best_time)}</span>
         <span>Best moves {stats.best_moves || "--"}</span>
         <span className="sol-hint">Double-click → foundation · Cmd/Ctrl+Z undo · N new</span>
       </footer>

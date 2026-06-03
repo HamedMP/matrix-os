@@ -127,6 +127,15 @@ describe("Solitaire app", () => {
     expect(screen.getByTestId("card-spades-1")).toBeTruthy();
   });
 
+  it("shows zero elapsed time while preserving the empty best-time display", async () => {
+    installMatrixDb();
+    render(<App initialState={seededState()} />);
+    await screen.findByTestId("card-spades-1");
+
+    expect(within(screen.getByLabelText("Game status")).getByText("00:00")).toBeTruthy();
+    expect(screen.getByText("Best time --:--")).toBeTruthy();
+  });
+
   it("changes draw mode without throwing when the bridge has no writeData helper", async () => {
     installMatrixDb();
     render(<App initialState={seededState()} />);
@@ -349,6 +358,24 @@ describe("Solitaire app", () => {
       ];
       expect(statPayloads).toContainEqual(expect.objectContaining({ best_time: 5 }));
     });
+  });
+
+  it("allows an immediate win to replace a slower best time", async () => {
+    const db = installMatrixDb([{ id: "stats-1", games_played: 1, games_won: 0, best_time: 30, best_moves: 20 }]);
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    render(<App initialState={oneMoveFromWinState()} />);
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith(
+      "stats",
+      "stats-1",
+      expect.objectContaining({ best_time: 0, best_moves: 11 }),
+    ));
   });
 
   it("preserves queued win and new-game stats when bridge updates resolve slowly", async () => {

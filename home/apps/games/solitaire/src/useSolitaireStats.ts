@@ -163,8 +163,8 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
     void persistStats({
       ...cur,
       games_won: cur.games_won + 1,
-      best_time: cur.best_time === 0 ? time : Math.min(cur.best_time, time || cur.best_time),
-      best_moves: cur.best_moves === 0 ? moves : Math.min(cur.best_moves, moves || cur.best_moves),
+      best_time: cur.best_time === 0 ? time : Math.min(cur.best_time, time),
+      best_moves: cur.best_moves === 0 ? moves : Math.min(cur.best_moves, moves),
     });
   }, [persistStats]);
 
