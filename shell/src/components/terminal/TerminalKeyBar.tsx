@@ -249,22 +249,36 @@ export function TerminalKeyBar({
             display: "flex",
             alignItems: "center",
             gap: 3,
-            overflow: "hidden",
-            WebkitOverflowScrolling: "touch",
-            touchAction: "manipulation",
           }}
         >
-          {PRIMARY_KEYS.map((keyDef) => (
-            <TerminalKeyButton
-              key={keyDef.ariaLabel ?? keyDef.label}
-              keyDef={keyDef}
-              onSend={onSend}
-              background={buttonBackground}
-              foreground={foreground}
-              border={buttonBorder}
-              compact
-            />
-          ))}
+          {/* Keys scroll horizontally when they overflow; the "More" button is a
+              fixed-width sibling outside the scroll area so it stays fully
+              visible and tappable on narrow (<=360px) viewports. */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflowX: "auto",
+              scrollbarWidth: "none",
+              WebkitOverflowScrolling: "touch",
+              touchAction: "pan-x",
+            }}
+          >
+            {PRIMARY_KEYS.map((keyDef) => (
+              <TerminalKeyButton
+                key={keyDef.ariaLabel ?? keyDef.label}
+                keyDef={keyDef}
+                onSend={onSend}
+                background={buttonBackground}
+                foreground={foreground}
+                border={buttonBorder}
+                compact
+              />
+            ))}
+          </div>
           <button
             type="button"
             aria-label="Show more keys"
@@ -279,7 +293,6 @@ export function TerminalKeyBar({
               fontSize: 12,
               fontWeight: 650,
               flex: "0 0 44px",
-              marginLeft: "auto",
             }}
           >
             More

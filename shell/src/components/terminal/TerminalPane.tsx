@@ -385,7 +385,15 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        navigator.clipboard.readText().then((text) => {
+        // navigator.clipboard is undefined on insecure-origin mobile browsers
+        // and WebViews with a denied clipboard policy; reading it without a
+        // guard throws synchronously before .catch() can attach. Degrade quietly.
+        const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+        if (!clipboard?.readText) {
+          console.warn("Clipboard paste unavailable: navigator.clipboard.readText is not supported in this context");
+          return;
+        }
+        clipboard.readText().then((text) => {
           const ws = wsRef.current;
           if (ws && ws.readyState === WebSocket.OPEN) {
             const safe = text.replace(/\x1b\[20[01]~/g, "");

@@ -9,6 +9,7 @@ export function isPhoneViewport(width: number): boolean {
 }
 
 function subscribeViewport(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
   window.addEventListener("resize", listener);
   return () => window.removeEventListener("resize", listener);
 }

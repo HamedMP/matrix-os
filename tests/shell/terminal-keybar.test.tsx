@@ -91,6 +91,24 @@ describe("TerminalKeyBar", () => {
     expect(screen.getAllByRole("button", { name: "Enter" })).toHaveLength(1);
   });
 
+  it("keeps the More button outside the scrollable key row so it stays tappable on narrow viewports", () => {
+    render(<TerminalKeyBar onSend={vi.fn()} />);
+
+    const moreButton = screen.getByRole("button", { name: "Show more keys" });
+    // Fixed-width control, never subject to the key row's horizontal scroll/clip.
+    expect(moreButton.style.flex).toBe("0 0 44px");
+    expect(moreButton.style.marginLeft).toBe("");
+
+    // Primary keys live in a sibling scroller that falls back to horizontal
+    // scrolling when they overflow a narrow (<=360px) viewport.
+    const scroller = screen.getByRole("button", { name: "Enter" }).parentElement as HTMLElement;
+    expect(scroller.style.overflowX).toBe("auto");
+    expect(scroller.style.touchAction).toBe("pan-x");
+
+    // The More button must not be clipped along with the overflowing keys.
+    expect(scroller.contains(moreButton)).toBe(false);
+  });
+
   it("switches expanded keyboard layers without hiding the collapse action", () => {
     render(<TerminalKeyBar onSend={vi.fn()} />);
 

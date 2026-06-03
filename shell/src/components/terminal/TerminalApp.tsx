@@ -1342,6 +1342,7 @@ function MobileTerminalActions({
         background={actionBackground}
         foreground={foreground}
         border={actionBorder}
+        minWidth={62}
       />
       <MobileActionButton
         label="Search"
@@ -1351,6 +1352,7 @@ function MobileTerminalActions({
         background={actionBackground}
         foreground={foreground}
         border={actionBorder}
+        minWidth={66}
       />
     </div>
   );
@@ -1364,6 +1366,7 @@ function MobileActionButton({
   background,
   foreground,
   border,
+  minWidth = 56,
 }: {
   label: string;
   title: string;
@@ -1372,6 +1375,7 @@ function MobileActionButton({
   background: string;
   foreground: string;
   border: string;
+  minWidth?: number;
 }) {
   return (
     <button
@@ -1385,7 +1389,7 @@ function MobileActionButton({
         justifyContent: "center",
         gap: 4,
         height: 32,
-        minWidth: label === "Search" ? 66 : label === "Paste" ? 62 : 56,
+        minWidth,
         padding: "0 5px",
         borderRadius: 7,
         border: `1px solid ${border}`,
