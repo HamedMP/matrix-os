@@ -35,12 +35,12 @@ matrix doctor
 ## First run
 
 ```bash
-matrix login                 # opens a browser, completes the device flow
+matrix login --profile cloud # opens a browser, completes the hosted device flow
 matrix whoami                # confirms handle, gateway, token expiry
 matrix shell new main        # creates and attaches to your "main" session
 ```
 
-If you do not have a Matrix account yet, `matrix login` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
+If you do not have a Matrix account yet, `matrix login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
 
 `Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell connect main`.
 
