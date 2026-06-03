@@ -18,6 +18,8 @@ import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
+import { applyTerminalAppearance } from "./terminal-appearance";
+import { buildTerminalFontStack } from "./terminal-fonts";
 import {
   isCanonicalShellSessionId,
   isLegacyPtySessionId,
@@ -62,17 +64,6 @@ const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   iipSupport: true,
   iipSizeLimit: 8_000_000,
 };
-
-const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {
-  "Berkeley Mono": '"Berkeley Mono", "Berkeley Mono Variable", "JetBrains Mono"',
-  "JetBrains Mono": '"JetBrains Mono"',
-  "Fira Code": '"Fira Code", "JetBrains Mono"',
-};
-
-function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: string | undefined): string {
-  const fallback = themeMono || "ui-monospace, SFMono-Regular, Menlo, monospace";
-  return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
-}
 
 const AUTH_BANNER_BASE_STYLE: CSSProperties = {
   position: "absolute",
@@ -380,6 +371,33 @@ export function TerminalPane({
     const onKey = (e: Event) => {
       const detail = (e as CustomEvent<TerminalInputEventDetail>).detail;
       if (!detail || detail.paneId !== paneId) return;
+      if (detail.action === "search") {
+        setSearchOpen((prev) => !prev);
+        return;
+      }
+      if (detail.action === "paste") {
+        // navigator.clipboard is undefined on insecure-origin mobile browsers
+        // and WebViews with a denied clipboard policy; reading it without a
+        // guard throws synchronously before .catch() can attach. Degrade quietly.
+        const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+        if (!clipboard?.readText) {
+          console.warn("Clipboard paste unavailable: navigator.clipboard.readText is not supported in this context");
+          return;
+        }
+        clipboard.readText().then((text) => {
+          const ws = wsRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const safe = text.replace(/\x1b\[20[01]~/g, "");
+            const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
+            const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
+            ws.send(JSON.stringify({ type: "input", data: bracketed }));
+          }
+        }).catch((err: unknown) => {
+          console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+        });
+        return;
+      }
+      if (!detail.data) return;
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "input", data: detail.data }));
@@ -1181,29 +1199,19 @@ export function TerminalPane({
 
   useEffect(() => {
     if (termRef.current && fitAddonRef.current) {
-      const term = termRef.current as {
-        element?: HTMLElement;
-        options: {
-          // react-doctor-disable-next-line react-doctor/no-event-handler -- `theme` here is a property name in the xterm option type annotation, not a DOM event handler or prop callback; the effect imperatively pushes theme/font settings into the xterm instance and has no parent handler to hoist into
-          theme: unknown;
-          fontFamily: string;
-          fontSize: number;
-          cursorBlink: boolean;
-          cursorStyle: "block" | "bar" | "underline";
-          smoothScrollDuration: number;
-        };
-      };
-      const fitAddon = fitAddonRef.current as { fit: () => void };
-      term.options.theme = buildXtermTheme(theme, terminalThemeId);
-      term.options.fontFamily = buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono);
-      term.options.fontSize = terminalFontSize;
-      term.options.cursorBlink = cursorBlink;
-      term.options.cursorStyle = terminalCursorStyle;
-      term.options.smoothScrollDuration = terminalSmoothScroll ? 125 : 0;
-      if (term.element) {
-        term.element.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
-      }
-      fitAddon.fit();
+      applyTerminalAppearance(
+        termRef.current as Parameters<typeof applyTerminalAppearance>[0],
+        fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
+        {
+          theme: buildXtermTheme(theme, terminalThemeId),
+          fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
+          fontSize: terminalFontSize,
+          cursorBlink,
+          cursorStyle: terminalCursorStyle,
+          smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
+          ligatures: terminalLigatures,
+        },
+      );
     }
   }, [
     cursorBlink,

@@ -25,11 +25,11 @@ describe("shell preferences", () => {
   it("validates the preferences schema", () => {
     expect(ShellPreferencesSchema.parse({
       themeId: "dracula",
-      fontFamily: "Fira Code",
+      fontFamily: "MesloLGS NF",
       ligatures: true,
       cursorStyle: "bar",
       smoothScroll: true,
-    })).toMatchObject({ themeId: "dracula" });
+    })).toMatchObject({ themeId: "dracula", fontFamily: "MesloLGS NF" });
 
     expect(() => ShellPreferencesSchema.parse({ fontFamily: "../bad" })).toThrow();
   });
@@ -38,11 +38,11 @@ describe("shell preferences", () => {
     const root = await tempRoot();
     const store = new ShellPreferencesStore({ homePath: root });
 
-    await store.save("main", { themeId: "nord", fontFamily: "JetBrains Mono" });
+    await store.save("main", { themeId: "nord", fontFamily: "MesloLGS NF" });
 
     await expect(store.load("main")).resolves.toMatchObject({
       themeId: "nord",
-      fontFamily: "JetBrains Mono",
+      fontFamily: "MesloLGS NF",
     });
   });
 
@@ -62,7 +62,7 @@ describe("shell preferences", () => {
     const put = await app.request("/api/sessions/main/preferences", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fontFamily: "Berkeley Mono", cursorStyle: "underline" }),
+      body: JSON.stringify({ fontFamily: "MesloLGS NF", cursorStyle: "underline" }),
     });
     expect(put.status).toBe(200);
 
@@ -70,7 +70,7 @@ describe("shell preferences", () => {
     expect(get.status).toBe(200);
     await expect(get.json()).resolves.toMatchObject({
       preferences: {
-        fontFamily: "Berkeley Mono",
+        fontFamily: "MesloLGS NF",
         cursorStyle: "underline",
       },
     });

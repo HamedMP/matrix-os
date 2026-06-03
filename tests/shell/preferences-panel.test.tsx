@@ -22,15 +22,17 @@ describe("TerminalPreferencesPanel", () => {
   it("updates theme, font, ligatures, cursor style, and smooth scroll settings", () => {
     render(<TerminalPreferencesPanel />);
 
+    expect(screen.getByRole("option", { name: "MesloLGS NF" })).toBeTruthy();
+
     fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "dracula" } });
-    fireEvent.change(screen.getByLabelText("Font"), { target: { value: "Fira Code" } });
+    fireEvent.change(screen.getByLabelText("Font"), { target: { value: "MesloLGS NF" } });
     fireEvent.click(screen.getByLabelText("Ligatures"));
     fireEvent.change(screen.getByLabelText("Cursor"), { target: { value: "bar" } });
     fireEvent.click(screen.getByLabelText("Smooth scroll"));
 
     expect(useTerminalSettings.getState()).toMatchObject({
       themeId: "dracula",
-      fontFamily: "Fira Code",
+      fontFamily: "MesloLGS NF",
       ligatures: false,
       cursorStyle: "bar",
       smoothScroll: false,

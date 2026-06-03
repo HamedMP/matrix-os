@@ -83,10 +83,46 @@ describe("TerminalKeyBar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show more keys" }));
 
+    expect(screen.getByRole("tab", { name: "ABC keyboard" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "letter q" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "letter m" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Space" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backspace" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Enter" })).toHaveLength(1);
+  });
+
+  it("keeps the More button outside the scrollable key row so it stays tappable on narrow viewports", () => {
+    render(<TerminalKeyBar onSend={vi.fn()} />);
+
+    const moreButton = screen.getByRole("button", { name: "Show more keys" });
+    // Fixed-width control, never subject to the key row's horizontal scroll/clip.
+    expect(moreButton.style.flex).toBe("0 0 44px");
+    expect(moreButton.style.marginLeft).toBe("");
+    expect(moreButton.style.touchAction).toBe("manipulation");
+
+    // Primary keys live in a sibling scroller that falls back to horizontal
+    // scrolling when they overflow a narrow (<=360px) viewport.
+    const scroller = screen.getByRole("button", { name: "Enter" }).parentElement as HTMLElement;
+    expect(scroller.style.overflowX).toBe("auto");
+    expect(scroller.style.touchAction).toBe("pan-x");
+
+    // The More button must not be clipped along with the overflowing keys.
+    expect(scroller.contains(moreButton)).toBe(false);
+  });
+
+  it("switches expanded keyboard layers without hiding the collapse action", () => {
+    render(<TerminalKeyBar onSend={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more keys" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Sym keyboard" }));
+
+    expect(screen.getByRole("tab", { name: "Sym keyboard" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Sym keyboard" }).style.touchAction).toBe("manipulation");
+    expect(screen.getByRole("button", { name: "$" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Nav keyboard" }));
+
+    expect(screen.getByRole("button", { name: "Control U" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show fewer keys" }).style.touchAction).toBe("manipulation");
   });
 });

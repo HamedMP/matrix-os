@@ -17,7 +17,7 @@ export const ShellPreferencesSchema = z.object({
     "github-dark",
     "github-light",
   ]).default("system"),
-  fontFamily: z.enum(["Berkeley Mono", "JetBrains Mono", "Fira Code"]).default("JetBrains Mono"),
+  fontFamily: z.enum(["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"]).default("MesloLGS NF"),
   ligatures: z.boolean().default(true),
   cursorStyle: z.enum(["block", "bar", "underline"]).default("block"),
   smoothScroll: z.boolean().default(true),

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileShell } from "../../shell/src/components/mobile/MobileShell.js";
@@ -186,5 +187,14 @@ describe("mobile shell", () => {
     render(<MobileShell launchAppPath="__terminal__" />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+  });
+
+  it("renders a hydration-stable clock placeholder before mounting", () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+
+    expect(renderToString(<MobileShell />)).toContain("--:--");
   });
 });

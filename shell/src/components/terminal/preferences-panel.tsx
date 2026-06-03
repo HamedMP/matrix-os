@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { useTerminalSettings, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
+import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getGatewayUrl } from "@/lib/gateway";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
 
-const FONT_OPTIONS: TerminalFontFamily[] = ["Berkeley Mono", "JetBrains Mono", "Fira Code"];
 const CURSOR_OPTIONS: TerminalCursorStyle[] = ["block", "bar", "underline"];
 
 interface TerminalPreferencesPanelProps {
@@ -120,7 +119,7 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
             persist({ fontFamily: next });
           }}
         >
-          {FONT_OPTIONS.map((font) => <option key={font} value={font}>{font}</option>)}
+          {TERMINAL_FONT_FAMILIES.map((font) => <option key={font} value={font}>{font}</option>)}
         </select>
       </label>
 
