@@ -6,7 +6,7 @@ import {
   stat as statAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { dirname, extname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -45,6 +45,7 @@ import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
+import { timingSafeStringEquals } from "./security/timing-safe.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
 import { createPushAdapter } from "./channels/push.js";
@@ -295,18 +296,6 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
-
-function timingSafeStringEquals(actual: string | null | undefined, expected: string): boolean {
-  if (!actual) return false;
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  const maxLength = Math.max(actualBuffer.length, expectedBuffer.length);
-  const paddedActual = Buffer.alloc(maxLength);
-  const paddedExpected = Buffer.alloc(maxLength);
-  actualBuffer.copy(paddedActual);
-  expectedBuffer.copy(paddedExpected);
-  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(paddedActual, paddedExpected);
-}
 
 export interface GatewayConfig {
   homePath: string;

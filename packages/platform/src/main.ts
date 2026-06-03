@@ -1062,7 +1062,7 @@ function rewriteSandboxedViteAppAssetUrls(
 function rewriteSandboxedViteJsAssetImports(js: string, assetToken: string | null): string {
   if (!assetToken) return js;
   return js.replace(
-    /(\b(?:from|import)\s*(?:\(\s*)?)(["'])(\.\/[^"']+\.(?:js|css)(?:\?[^"'#]*)?(?:#[^"']*)?)\2/g,
+    /((?:\bimport\s*\(\s*)|(?:\bimport\s*)|(?:\b(?:import|export)[^"']*?\bfrom\s*))(["'])(\.\/[^"']+\.(?:js|css)(?:\?[^"'#]*)?(?:#[^"']*)?)\2/g,
     (match: string, prefix: string, quote: string, value: string) => {
       if (value.includes(`${APP_ASSET_ROUTE_TOKEN_PARAM}=`)) return match;
       return `${prefix}${quote}${appendQueryParamToPath(value, APP_ASSET_ROUTE_TOKEN_PARAM, assetToken)}${quote}`;
@@ -3520,6 +3520,15 @@ export function createApp(deps: {
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
+    const explicitVmRouteHasValidAppAssetToken = Boolean(
+      explicitVmRoute &&
+      hasValidExplicitVmAppAssetToken({
+        method: c.req.method,
+        rawUrl: c.req.url,
+        route: explicitVmRoute,
+        platformSecret,
+      }),
+    );
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const requestRuntimeSlot = runtimeSelection.slot;
     let singleMachineRuntimeSlot: string | null = null;
@@ -3556,12 +3565,7 @@ export function createApp(deps: {
     if (
       !identity &&
       explicitVmRoute &&
-      hasValidExplicitVmAppAssetToken({
-        method: c.req.method,
-        rawUrl: c.req.url,
-        route: explicitVmRoute,
-        platformSecret,
-      })
+      explicitVmRouteHasValidAppAssetToken
     ) {
       identity = {
         handle: explicitVmRoute.handle,
@@ -3625,13 +3629,7 @@ export function createApp(deps: {
       return c.text('Invalid Matrix OS computer', 400);
     }
     if (isAppDomain && explicitVmRoute) {
-      const isExplicitSignedAppAsset = hasValidExplicitVmAppAssetToken({
-        method: c.req.method,
-        rawUrl: c.req.url,
-        route: explicitVmRoute,
-        platformSecret,
-      });
-      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !isExplicitSignedAppAsset) {
+      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasValidAppAssetToken) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }

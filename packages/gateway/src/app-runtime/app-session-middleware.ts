@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
+import { timingSafeStringEquals } from "../security/timing-safe.js";
 import { verifyAppSession, type AppSessionPayloadType } from "./app-session.js";
 import { SAFE_SLUG } from "./manifest-schema.js";
 
@@ -23,17 +23,6 @@ function isReadOnlyViteAssetRequest(method: string, path: string, slug: string):
     (method === "GET" || method === "HEAD") &&
     path.startsWith(`/apps/${slug}/assets/`)
   );
-}
-
-function timingSafeStringEquals(actual: string, expected: string): boolean {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  const compareLength = Math.max(actualBuffer.length, expectedBuffer.length, 1);
-  const paddedActual = Buffer.alloc(compareLength);
-  const paddedExpected = Buffer.alloc(compareLength);
-  actualBuffer.copy(paddedActual);
-  expectedBuffer.copy(paddedExpected);
-  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(paddedActual, paddedExpected);
 }
 
 function hasPlatformAssetAuthorization(authHeader: string | undefined): boolean {

@@ -2072,7 +2072,7 @@ describe("platform proxy routing", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response('import{a}from"./react.js";import("./editor.js");console.log("chess")', {
+        new Response('import{a}from"./react.js";import("./editor.js");const untouched=Array.from("./plain.js");console.log("chess")', {
           status: 200,
           headers: {
             "content-type": "application/javascript",
@@ -2122,6 +2122,7 @@ describe("platform proxy routing", () => {
     const js = await res.text();
     expect(js).toMatch(/from"\.\/react\.js\?matrix_asset_token=[^"]+"/);
     expect(js).toMatch(/import\("\.\/editor\.js\?matrix_asset_token=[^"]+"\)/);
+    expect(js).toContain('Array.from("./plain.js")');
   });
 
   it("rejects unsigned explicit VM Vite app assets before probing a handle", async () => {
