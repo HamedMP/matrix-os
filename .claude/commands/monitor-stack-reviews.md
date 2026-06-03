@@ -89,6 +89,10 @@ final human review.
 
 4. Fix actionable feedback.
    - Cluster findings by branch and behavior.
+   - Before editing any file, verify the checked-out branch matches the PR branch
+     that owns the fix: run `git branch --show-current` and compare it to the
+     target PR's `headRefName`. If it differs, run
+     `gt checkout <target-branch>` and re-check the branch before editing.
    - For code behavior changes, add or adjust a focused failing regression
      before the implementation change. Do not edit behavior code until the
      regression exists. For docs-only fixes, keep the edit scoped to the
@@ -98,22 +102,13 @@ final human review.
      whose head will be rewritten by the next `gt submit --stack`:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
      after fresh current-head Greptile reviews return `5/5`.
-   - Before staging, verify the checked-out branch matches the PR branch that
-     owns the fix: run `git branch --show-current` and compare it to the target
-     PR's `headRefName`. If it differs, run `gt checkout <target-branch>` and
-     re-check the branch before editing or staging.
-   - Inspect `git status --short --branch` and stage only files belonging to the
-     owning branch's fix with explicit paths:
-     `git add <paths>`. Then run `gt modify` or
-     `gt modify --commit --message "<conventional commit>"`. Staged-only is the
-     default Graphite modify behavior; do not pass a `--staged` flag, and do not
-     use `--all` in this workflow.
-   - Run the narrow relevant tests after the fix. Before submitting, also run
-     `git diff --check`, `bun run typecheck`, `bun run check:patterns`, and
-     `bun run test`. If an external outage or existing repo-wide blocker makes a
-     mandatory gate impossible to complete, stop and report the exact blocker
-     instead of submitting.
-   - If any React `.tsx` or `.jsx` file changed, run
+   - Run the narrow relevant tests after the fix. Before staging or committing,
+     also run `git diff --check`, `bun run typecheck`,
+     `bun run check:patterns`, and `bun run test`. If an external outage or
+     existing repo-wide blocker makes a mandatory gate impossible to complete,
+     stop and report the exact blocker instead of committing or submitting.
+   - If any React `.tsx` or `.jsx` file changed, run this gate before staging or
+     committing:
      `npx react-doctor@latest <project-dir>` for each affected React project
      directory that has a `package.json` (for example, `shell`, `packages/ui`,
      or `www`). Do not pass individual files to react-doctor. For default apps
@@ -124,6 +119,12 @@ final human review.
      react-doctor fails.
      Resolve findings before committing, or report the exact reason the gate
      could not run.
+   - Inspect `git status --short --branch` and stage only files belonging to the
+     owning branch's fix with explicit paths:
+     `git add <paths>`. Then run `gt modify` or
+     `gt modify --commit --message "<conventional commit>"`. Staged-only is the
+     default Graphite modify behavior; do not pass a `--staged` flag, and do not
+     use `--all` in this workflow.
    - Use Graphite to restack and sync updates before the pre-submit safety
      check: `gt restack` and `gt sync`.
      Run `gt restack` after any `gt modify` that touches a layer below the
