@@ -367,6 +367,38 @@ describe("2048 app", () => {
     await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("7777"));
   });
 
+  it("keeps a newer in-memory best when db load falls back to stale localStorage", async () => {
+    const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
+    vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);
+    window.localStorage.setItem("matrixos.2048.best", "2");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("write failed");
+    });
+    const db = installMatrixDb([]);
+    let rejectFind: (error: Error) => void = () => undefined;
+    db.find.mockImplementation(async () => new Promise<DbRow[]>((_resolve, reject) => {
+      rejectFind = reject;
+    }));
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("4"));
+
+    await act(async () => {
+      rejectFind(new Error("load failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByTestId("best").textContent).toBe("4"));
+  });
+
   it("waits for actual play before creating the first DB score row", async () => {
     const randomValues = [0, 0.1, 0, 0.1, 0, 0.1];
     vi.spyOn(Math, "random").mockImplementation(() => randomValues.shift() ?? 0.1);

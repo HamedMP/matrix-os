@@ -172,7 +172,7 @@ export default function App() {
         if (raw && active) {
           const localBest = Number(raw) || 0;
           pendingBestRef.current = Math.max(pendingBestRef.current, localBest);
-          setBest(localBest);
+          setBest((prev) => Math.max(prev, localBest));
         }
       } catch (err) {
         if (!(err instanceof DOMException && err.name === "SecurityError")) {
