@@ -105,6 +105,29 @@ describe('platform billing routes', () => {
     }));
   });
 
+  it('resolves a safe checkout returnPath against the configured app origin', async () => {
+    const app = createApp('user_123', {
+      ...env,
+      NEXT_PUBLIC_MATRIX_APP_URL: 'https://staging.matrix-os.com',
+    });
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        returnPath: '/auth/device?user_code=BCDF-GHJK',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      successUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      cancelUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
+    }));
+  });
+
   it('prefers a safe checkout returnPath over configured checkout return URLs', async () => {
     const app = createApp('user_123', {
       ...env,

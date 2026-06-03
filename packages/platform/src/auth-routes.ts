@@ -219,7 +219,7 @@ function approvalPage(
     function setBusy(isBusy) {
       var button = document.getElementById('confirm-button');
       if (button) {
-        button.disabled = isBusy;
+        button.disabled = isBusy || !runtimeReady;
         button.textContent = isBusy ? 'authorizing...' : 'approve login';
       }
     }

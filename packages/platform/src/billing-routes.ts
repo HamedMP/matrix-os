@@ -245,8 +245,8 @@ function resolvePriceId(
 function isSafeBillingReturnPath(value: string): boolean {
   if (!value.startsWith('/') || value.startsWith('//')) return false;
   try {
-    const url = new URL(value, 'https://app.matrix-os.com');
-    return url.origin === 'https://app.matrix-os.com' && url.pathname.startsWith('/');
+    const url = new URL(value, 'https://matrix-os-return.invalid');
+    return url.pathname.startsWith('/');
   } catch (err: unknown) {
     if (err instanceof TypeError || err instanceof Error) return false;
     return false;

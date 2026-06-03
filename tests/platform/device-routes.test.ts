@@ -501,6 +501,7 @@ describe("device routes", () => {
       expect(html).toContain("showRuntimeRequiredState()");
       expect(html).toContain("showBillingRequiredState()");
       expect(html).toContain("confirm.disabled = true;");
+      expect(html).toContain("button.disabled = isBusy || !runtimeReady;");
       expect(html).toContain(
         '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">',
       );
