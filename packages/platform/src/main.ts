@@ -836,6 +836,10 @@ function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
   headers.set('cache-control', 'private, no-store');
   headers.set('cdn-cache-control', 'no-store');
   headers.set('cloudflare-cdn-cache-control', 'no-store');
+  addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
+}
+
+function addVaryHeader(headers: Headers, values: string[]): void {
   const vary = headers.get('vary');
   const varyParts = new Set(
     (vary ?? '')
@@ -843,9 +847,17 @@ function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
       .map((part) => part.trim())
       .filter(Boolean),
   );
-  varyParts.add('Cookie');
-  varyParts.add('Accept-Encoding');
+  for (const value of values) {
+    varyParts.add(value);
+  }
   headers.set('vary', Array.from(varyParts).join(', '));
+}
+
+function applySandboxedAppAssetCorsHeaders(headers: Headers, path: string, origin: string | undefined): void {
+  if (!isViteAppAssetPath(path) || origin !== 'null') return;
+  headers.set('access-control-allow-origin', 'null');
+  headers.set('access-control-allow-credentials', 'true');
+  addVaryHeader(headers, ['Origin']);
 }
 
 function isCodeDomainStaticAssetPath(path: string): boolean {
@@ -863,8 +875,13 @@ function isAppDomainStaticAssetPath(path: string): boolean {
     path === '/manifest.json' ||
     path === '/og.png' ||
     path.startsWith('/_next/static/') ||
-    path.startsWith('/_next/image')
+    path.startsWith('/_next/image') ||
+    isViteAppAssetPath(path)
   );
+}
+
+function isViteAppAssetPath(path: string): boolean {
+  return /^\/apps\/[a-z0-9][a-z0-9-]{0,63}\/assets\/.+/.test(path);
 }
 
 function buildCodeDomainProxyHeaders(
@@ -3442,6 +3459,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
         return new Response(upstream.body, {
           status: upstream.status,
@@ -3591,6 +3609,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
@@ -3753,6 +3772,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }

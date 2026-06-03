@@ -92,18 +92,17 @@ The launcher loads each app's icon from `~/system/icons/<icon>.svg` (or `.png`) 
 icon.** So always:
 
 1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
-2. Create `~/system/icons/<slug>.svg` — a crisp, single-concept mark: 24×24 `viewBox`, `stroke="currentColor"`
-   lucide-style lines (or a tasteful filled mark in the Forest/Ember palette). No text characters, no
-   remote icon scripts. Keep it simple and legible at small sizes.
+2. Create `~/system/icons/<slug>.png` using the Matrix OS shipped-icon style:
+   light premium iOS/macOS skeuomorphic app icon artwork, refined Apple-like product rendering,
+   bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy
+   highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly
+   represents the app. Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
+   backgrounds, empty padding, or a separate visible icon frame; the Matrix shell owns the final corner
+   radius. Keep lighting and material treatment consistent with the shipped default app PNGs in
+   `~/system/icons/`.
 
-```bash
-cat > ~/system/icons/<slug>.svg <<'SVG'
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <!-- one clear concept for the app -->
-</svg>
-SVG
-```
+For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. SVGs are acceptable
+only for system chrome or simple compatibility fallbacks, not for newly generated app logos.
 
 ## Data (Postgres via the MatrixOS bridge)
 

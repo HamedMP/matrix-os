@@ -41,6 +41,13 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Knowledge");
   });
 
+  it("includes launcher app logo guidance in the app design prompt", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("Launcher app logos");
+    expect(prompt).toContain("light iOS/macOS skeuomorphic artwork");
+    expect(prompt).toContain("~/system/icons/<slug>.png");
+  });
+
   it("includes MATRIX_HOME with the provided path", () => {
     const prompt = buildSystemPrompt("/custom/matrixos");
     expect(prompt).toContain("MATRIX_HOME: /custom/matrixos");
