@@ -620,7 +620,7 @@ export default function App() {
             type="button"
             className="secondary-action"
             onClick={undo}
-            disabled={sanHistory.length === 0 || thinking || Boolean(pendingPromotion)}
+            disabled={sanHistory.length === 0 || thinking || aiToMove || Boolean(pendingPromotion)}
           >
             <RotateCcw size={16} /> Undo
           </button>
