@@ -179,16 +179,17 @@ export default function LandingPage() {
           transform: translateX(-50%);
           z-index: 100;
           width: fit-content;
-          max-width: min(calc(100vw - 2rem), 44rem);
+          max-width: calc(100vw - 1rem);
         }
         .nav-island-inner {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-columns: max-content max-content;
           align-items: center;
-          column-gap: 0.75rem;
+          justify-content: start;
+          column-gap: 0.45rem;
           width: 100%;
           min-height: 3rem;
-          padding: 10px 1.25rem 10px 1.375rem;
+          padding: 9px 0.75rem 9px 0.825rem;
           border-radius: 9999px;
           background: rgba(250, 250, 245, 0.96);
           backdrop-filter: blur(16px) saturate(1.8);
@@ -199,6 +200,7 @@ export default function LandingPage() {
         .nav-brand {
           grid-column: 1;
           justify-self: start;
+          min-width: 0;
         }
         .nav-links {
           display: none;
@@ -207,12 +209,28 @@ export default function LandingPage() {
           grid-column: 2;
           justify-self: end;
         }
+        @media (max-width: 350px) {
+          .nav-island-inner {
+            column-gap: 0.35rem;
+            padding: 8px 0.625rem;
+          }
+          .mobile-brand-wordmark {
+            font-size: 11px;
+          }
+          .nav-actions a {
+            padding-left: 0.625rem;
+            padding-right: 0.625rem;
+            letter-spacing: 0.08em;
+          }
+        }
         @media (min-width: 760px) {
           .nav-island {
             width: min(calc(100vw - 2rem), 39.5rem);
+            max-width: none;
           }
           .nav-island-inner {
             grid-template-columns: auto minmax(0, 1fr) auto;
+            justify-content: stretch;
             column-gap: 0.75rem;
             padding: 9px 1rem 9px 1.125rem;
           }
@@ -287,7 +305,7 @@ export default function LandingPage() {
 
 function AgentSetupSection() {
   return (
-    <section id="developers" className="relative py-16 md:py-20" style={{ backgroundColor: c.pageBg }}>
+    <section id="developers" className="relative pt-12 pb-8 md:pt-14 md:pb-10" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-6 md:px-8">
         <div className="grid gap-8 md:grid-cols-[0.88fr_1.12fr] md:items-stretch">
           <div className="flex flex-col justify-center">
@@ -328,17 +346,17 @@ function AgentSetupSection() {
               style={{ backgroundColor: "rgba(250,250,245,0.54)", color: c.forest, border: `1px solid ${c.border}` }}>
               <code>{COPYABLE_AGENT_SETUP_PROMPT}</code>
             </pre>
-            <div className="mt-5 flex flex-wrap gap-3">
+            <nav className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" aria-label="Agent setup resources">
               {/* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- /skills.md is a static public file, not a Next route; Link would prefetch/client-navigate raw markdown */}
-              <a href="/skills.md" className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80"
+              <a href="/skills.md" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.08em] transition-opacity duration-300 hover:opacity-80 sm:px-4 sm:text-[11px] sm:tracking-[0.12em]"
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
                 Open skills.md <ArrowRightIcon className="size-3.5" />
               </a>
-              <Link href="/docs/guide/developer-workflow" className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80"
+              <Link href="/docs/guide/developer-workflow" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.08em] transition-opacity duration-300 hover:opacity-80 sm:px-4 sm:text-[11px] sm:tracking-[0.12em]"
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
                 Developer workflow
               </Link>
-            </div>
+            </nav>
           </div>
         </div>
       </div>
@@ -364,12 +382,12 @@ function NavIsland() {
       <div className="nav-island-inner">
         <Link
           href="/"
-          className="nav-brand flex shrink-0 items-center gap-2.5"
+          className="nav-brand flex items-center gap-2"
           style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}
         >
-          <Logo className="h-7 w-auto min-[1100px]:h-8" style={{ color: c.forest }} />
-          <span className="hidden min-[1100px]:inline whitespace-nowrap text-[15px] font-bold tracking-tight min-[1280px]:text-base" style={{ color: c.forest }}>
-            matrix os
+          <Logo className="h-6 w-auto shrink-0 min-[380px]:h-7 min-[1100px]:h-8" style={{ color: c.forest }} />
+          <span className="mobile-brand-wordmark whitespace-nowrap text-[12px] font-bold tracking-tight min-[380px]:text-[13px] min-[1100px]:text-[15px] min-[1280px]:text-base" style={{ color: c.forest }}>
+            Matrix OS
           </span>
         </Link>
         <nav className="nav-links" aria-label="Primary">
@@ -384,7 +402,7 @@ function NavIsland() {
               data-ph-event="marketing_cta_clicked"
               data-ph-location="nav"
               data-ph-target="get_started"
-              className="inline-flex shrink-0 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] transition-colors duration-200 min-[1280px]:px-5"
+              className="inline-flex shrink-0 rounded-full px-3 py-2 text-[10px] font-medium uppercase tracking-[0.1em] transition-colors duration-200 min-[1280px]:px-5"
               style={{ backgroundColor: c.forest, color: c.pageBg }}
             >
               get started
@@ -398,7 +416,7 @@ function NavIsland() {
               data-ph-target="open_app"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex shrink-0 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] transition-colors duration-200 min-[1280px]:px-5"
+              className="inline-flex shrink-0 rounded-full px-3 py-2 text-[10px] font-medium uppercase tracking-[0.1em] transition-colors duration-200 min-[1280px]:px-5"
               style={{ backgroundColor: c.forest, color: c.pageBg }}
             >
               open matrix os
@@ -475,7 +493,7 @@ function HeroSection() {
 
 function PreviewSection() {
   return (
-    <section id="preview" className="relative py-24 md:py-36 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
+    <section id="preview" className="relative overflow-hidden pt-8 pb-14 md:pt-12 md:pb-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <ScrollScreenshot />
         <div className="mt-10 max-w-2xl mx-auto text-center">
@@ -491,9 +509,9 @@ function PreviewSection() {
 
 function AboutSection() {
   return (
-    <section id="about" className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
+    <section id="about" className="py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
-        <div className="grid md:grid-cols-[1fr_1.2fr] gap-16 md:gap-24">
+        <div className="grid gap-12 md:grid-cols-[1fr_1.2fr] md:gap-16">
           <div>
             <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>About</p>
             <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2]" style={{ color: c.forest }}>
@@ -540,7 +558,7 @@ const featurePills = [
 
 function FeaturesSection() {
   return (
-    <section id="features" className="relative py-32 md:py-44 overflow-hidden" style={{ backgroundColor: c.pageBg }}>
+    <section id="features" className="relative overflow-hidden py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
       <style>{`
         @keyframes net-flow { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
         @keyframes center-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
@@ -570,7 +588,7 @@ function FeaturesSection() {
       `}</style>
 
       <div className="mx-auto max-w-[1200px] px-8">
-        <div className="grid md:grid-cols-2 gap-12 md:gap-20 items-center mb-20 md:mb-32">
+        <div className="mb-10 grid items-center gap-10 md:mb-14 md:grid-cols-2 md:gap-14">
           <div>
             <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>The platform</p>
             <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-8" style={{ color: c.forest }}>
@@ -688,14 +706,14 @@ const howItWorksSteps = [
 
 function HowItWorksSection() {
   return (
-    <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
-        <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] mb-16 md:mb-24" style={{ color: c.forest }}>
+        <h2 className="mb-8 text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] md:mb-12" style={{ color: c.forest }}>
           Free to start, deliberate when you provision.
         </h2>
 
-        <div className="grid md:grid-cols-3 gap-12 md:gap-16">
+        <div className="grid gap-8 md:grid-cols-3 md:gap-10">
           {howItWorksSteps.map((item) => (
             <div key={item.step}>
               <span className="block text-[clamp(2.5rem,5vw,4rem)] font-bold leading-none mb-5" style={{ color: c.border }}>
@@ -713,7 +731,7 @@ function HowItWorksSection() {
 
 function FaqSection() {
   return (
-    <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[900px] px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6 text-center" style={{ color: c.subtle }}>FAQ</p>
         <div className="grid gap-4 md:grid-cols-2">
@@ -731,7 +749,7 @@ function FaqSection() {
 
 function FinalCtaSection() {
   return (
-    <section className="py-32 md:py-44" style={{ backgroundColor: c.pageBg }}>
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8 text-center">
         <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6" style={{ color: c.forest }}>
           Ready to begin?
