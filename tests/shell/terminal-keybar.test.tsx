@@ -98,6 +98,7 @@ describe("TerminalKeyBar", () => {
     // Fixed-width control, never subject to the key row's horizontal scroll/clip.
     expect(moreButton.style.flex).toBe("0 0 44px");
     expect(moreButton.style.marginLeft).toBe("");
+    expect(moreButton.style.touchAction).toBe("manipulation");
 
     // Primary keys live in a sibling scroller that falls back to horizontal
     // scrolling when they overflow a narrow (<=360px) viewport.
@@ -116,11 +117,12 @@ describe("TerminalKeyBar", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Sym keyboard" }));
 
     expect(screen.getByRole("tab", { name: "Sym keyboard" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Sym keyboard" }).style.touchAction).toBe("manipulation");
     expect(screen.getByRole("button", { name: "$" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Nav keyboard" }));
 
     expect(screen.getByRole("button", { name: "Control U" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Show fewer keys" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show fewer keys" }).style.touchAction).toBe("manipulation");
   });
 });

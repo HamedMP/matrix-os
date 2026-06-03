@@ -212,6 +212,7 @@ export function TerminalKeyBar({
                   color: foreground,
                   fontSize: 12,
                   fontWeight: 700,
+                  touchAction: "manipulation",
                 }}
               >
                 {MODE_LABELS[nextMode]}
@@ -230,6 +231,7 @@ export function TerminalKeyBar({
                 color: mutedForeground,
                 fontSize: 12,
                 fontWeight: 650,
+                touchAction: "manipulation",
               }}
             >
               Less
@@ -293,6 +295,7 @@ export function TerminalKeyBar({
               fontSize: 12,
               fontWeight: 650,
               flex: "0 0 44px",
+              touchAction: "manipulation",
             }}
           >
             More
