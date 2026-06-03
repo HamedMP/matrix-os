@@ -173,6 +173,7 @@ export default function App() {
     } catch (err: unknown) {
       console.warn("[chess] could not load game stats:", err instanceof Error ? err.message : String(err));
       setSaveState((current) => current === "saving" || current === "saved" ? current : "error");
+      if (errorRef.current === SAVE_ERROR) return;
       errorRef.current = STATS_ERROR;
       setError(STATS_ERROR);
     }
