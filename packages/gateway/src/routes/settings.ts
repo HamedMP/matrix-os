@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, relative, join } from "node:path";
-import { loadSkills } from "@matrix-os/kernel";
+import { DEFAULT_ICON_STYLE, loadSkills } from "@matrix-os/kernel";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
@@ -19,7 +19,7 @@ const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: ["__workspace__", "__terminal__", "__file-browser__", "__chat__"] as string[],
-  iconStyle: "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style",
+  iconStyle: DEFAULT_ICON_STYLE,
 };
 
 const THEME_DEFAULTS = {};
