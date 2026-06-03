@@ -271,7 +271,9 @@ export default function App() {
         canvas.width = px;
         canvas.height = px;
       }
-      const cell = canvas.width / GRID_COLS;
+      const cellW = canvas.width / GRID_COLS;
+      const cellH = canvas.height / GRID_ROWS;
+      const cell = Math.min(cellW, cellH);
       const cs = window.getComputedStyle(canvas);
       const read = (name: string, fallback: string) => {
         const v = cs.getPropertyValue(name).trim();
@@ -292,14 +294,14 @@ export default function App() {
       ctx.lineWidth = 1;
       for (let i = 1; i < GRID_COLS; i++) {
         ctx.beginPath();
-        ctx.moveTo(i * cell, 0);
-        ctx.lineTo(i * cell, canvas.height);
+        ctx.moveTo(i * cellW, 0);
+        ctx.lineTo(i * cellW, canvas.height);
         ctx.stroke();
       }
       for (let j = 1; j < GRID_ROWS; j++) {
         ctx.beginPath();
-        ctx.moveTo(0, j * cell);
-        ctx.lineTo(canvas.width, j * cell);
+        ctx.moveTo(0, j * cellH);
+        ctx.lineTo(canvas.width, j * cellH);
         ctx.stroke();
       }
 
@@ -310,8 +312,8 @@ export default function App() {
       // food with gentle pulse
       const t = prefersReducedMotion ? 0 : Date.now() / 320;
       const foodPulse = prefersReducedMotion ? 1 : 1 + Math.sin(t) * 0.06;
-      const fx = g.food.x * cell + cell / 2;
-      const fy = g.food.y * cell + cell / 2;
+      const fx = g.food.x * cellW + cellW / 2;
+      const fy = g.food.y * cellH + cellH / 2;
       ctx.fillStyle = foodColor;
       ctx.beginPath();
       ctx.arc(fx, fy, (cell / 2 - pad) * foodPulse, 0, Math.PI * 2);
@@ -323,14 +325,15 @@ export default function App() {
         const isHead = s === 0;
         ctx.fillStyle = isHead ? headColor : snakeColor;
         const grow = isHead && eatPulseRef.current > 0 ? eatPulseRef.current * pad * 0.5 : 0;
-        const x = seg.x * cell + pad - grow;
-        const y = seg.y * cell + pad - grow;
-        const w = cell - pad * 2 + grow * 2;
+        const x = seg.x * cellW + pad - grow;
+        const y = seg.y * cellH + pad - grow;
+        const w = cellW - pad * 2 + grow * 2;
+        const h = cellH - pad * 2 + grow * 2;
         ctx.beginPath();
         if (typeof ctx.roundRect === "function") {
-          ctx.roundRect(x, y, w, w, radius);
+          ctx.roundRect(x, y, w, h, radius);
         } else {
-          ctx.rect(x, y, w, w);
+          ctx.rect(x, y, w, h);
         }
         ctx.fill();
       }

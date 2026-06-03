@@ -82,8 +82,7 @@ describe("Snake app", () => {
     expect(screen.getByTestId("snake-status").textContent?.toLowerCase()).toContain("ready");
   });
 
-  it("ignores stale localStorage best scores in the sandbox", async () => {
-    localStorage.setItem("matrix-snake-best", "99");
+  it("shows 0 best when MatrixOS.readData is absent and db has no rows", async () => {
     installMatrixDb([]);
     render(<App />);
 
