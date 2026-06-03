@@ -124,8 +124,8 @@ final human review.
      react-doctor fails.
      Resolve findings before committing, or report the exact reason the gate
      could not run.
-   - Use Graphite to restack, sync, and submit updates:
-     `gt restack`, `gt sync`, and `gt submit --stack --no-edit --no-ai`.
+   - Use Graphite to restack and sync updates before the pre-submit safety
+     check: `gt restack` and `gt sync`.
      Run `gt restack` after any `gt modify` that touches a layer below the
      stack tip before submitting, so descendants are anchored to the rewritten
      parent SHA.
@@ -133,6 +133,8 @@ final human review.
      current remote head for every branch that will be rewritten still matches
      the head recorded for this edit iteration; if it changed unexpectedly,
      stop and report the remote-work conflict.
+   - Submit only after the remote-head safety check passes:
+     `gt submit --stack --no-edit --no-ai`.
    - After every successful `gt submit --stack`, discard the pre-submit
      baseline and immediately refresh the remote-head snapshot for every
      monitored PR before entering another fix loop. Graphite's successful
