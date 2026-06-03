@@ -14,7 +14,6 @@ Guide the human through a complete developer onboarding path without collecting 
 - Use Matrix shell sessions for interactive work. Do not invent SSH instructions.
 - Use Docker only when the target repo already needs containers or cannot run directly with its normal dev command. Production Matrix OS customer runtime is VPS-native, not Docker Compose.
 - If the current repo contains `www/public/skills.md`, read it first for the latest Matrix CLI commands. Otherwise use `https://matrix-os.com/skills.md` as the canonical command reference.
-- First-run hosted onboarding must use the cloud profile. Do not use `--dev`, `--profile local`, `matrix profile use local`, localhost URLs, `MATRIXOS_PLATFORM_URL`, or `MATRIXOS_GATEWAY_URL` unless the human explicitly asks for Matrix local-stack development.
 
 ## Workflow
 
@@ -26,12 +25,12 @@ Guide the human through a complete developer onboarding path without collecting 
 2. **Verify local prerequisites**
    - Check `git --version`, `gh --version`, and `matrix --version` when available.
    - If GitHub CLI is not authenticated, guide `gh auth login --hostname github.com --git-protocol ssh --web`, then verify with `gh auth status`.
-   - If Matrix CLI is missing, install using the latest `skills.md` instructions, then run `matrix login --profile cloud`.
+   - If Matrix CLI is missing, install using the latest `skills.md` instructions, then run `matrix login`.
 
 3. **Bring up Matrix**
    - Run `matrix status`, `matrix instance info`, and `matrix doctor`.
    - If `matrix doctor` reports a sync daemon issue, run `matrix sync` and then `matrix doctor` again.
-   - If no Matrix instance exists, send the human to `https://app.matrix-os.com`, wait for provisioning, then retry `matrix login --profile cloud`.
+   - If no Matrix instance exists, send the human to `https://app.matrix-os.com`, wait for provisioning, then retry `matrix login`.
 
 4. **Create or reuse the setup shell**
    - Prefer a named shell so the human, web terminal, and agent can reattach:

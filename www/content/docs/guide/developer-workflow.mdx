@@ -40,14 +40,14 @@ npx skills add HamedMP/matrix-os --skill matrix-os
 Then show me this checklist:
 
 1. Install or update the Matrix CLI
-2. Run `matrix login --profile cloud` and wait for my Matrix instance to be ready
+2. Run `matrix login` and wait for my Matrix instance to be ready
 3. Start my preferred coding agent on Matrix with `matrix run`
 4. Explain the reconnect and recovery commands only after the main path works
 
 Then proceed step by step. Keep the happy path to two Matrix commands:
 
 ```bash
-matrix login --profile cloud
+matrix login
 matrix run -it -- claude
 ```
 
@@ -75,7 +75,7 @@ install command from `skills.md`.
 Run:
 
 ```bash
-matrix login --profile cloud
+matrix login
 ```
 
 Pause while I complete the browser login flow. If Matrix says no instance
@@ -85,7 +85,7 @@ exists yet, send me to:
 https://app.matrix-os.com
 ```
 
-Wait for provisioning, then run `matrix login --profile cloud` again.
+Wait for provisioning, then run `matrix login` again.
 
 ## Step 3: Run agents inside Matrix
 
@@ -126,7 +126,7 @@ matrix shell attach setup
 
 Summarize:
 
-- whether `matrix login --profile cloud` succeeded;
+- whether `matrix login` succeeded;
 - whether the Matrix instance is ready;
 - the exact command to start Claude, Codex, or my preferred agent in Matrix.
 ````
@@ -170,7 +170,7 @@ Examples include Claude Code, Codex CLI, Gemini CLI, Cline CLI, and Devin for Te
 
 ```bash
 npm i -g @finnaai/matrix
-matrix login --profile cloud
+matrix login
 matrix run -it -- claude
 ```
 
@@ -219,7 +219,7 @@ This works especially well when Matrix keeps the terminal output, review notes, 
 
     ```bash
     npm i -g @finnaai/matrix
-    matrix login --profile cloud
+    matrix login
     matrix whoami
     ```
   </Step>

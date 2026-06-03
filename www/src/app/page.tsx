@@ -216,7 +216,7 @@ function HeroSection() {
             Your computer, in the cloud.
           </h1>
           <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
-            A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready: your apps, your files, your way.
+            A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready — your apps, your files, your way.
           </p>
           <SignedOut>
             <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="get_started" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
@@ -278,7 +278,7 @@ function PreviewSection() {
         <div className="mt-10 max-w-2xl mx-auto text-center">
           <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
           <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-            Your Matrix instance isn&apos;t just a dashboard: it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
+            Your Matrix instance isn&apos;t just a dashboard — it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
           </p>
         </div>
       </div>
@@ -299,7 +299,7 @@ function AboutSection() {
           </div>
           <div className="flex flex-col gap-6 md:pt-10">
             <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop: your apps, your files, your settings, ready to go. No installs, no setup, nothing to maintain.
+              Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop — your apps, your files, your settings — ready to go. No installs, no setup, nothing to maintain.
             </p>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
               Just tell it what you need. An AI assistant builds your apps, organizes your workspace, and keeps everything running. It works on any device, from anywhere, and picks up right where you left off.
@@ -374,10 +374,10 @@ function FeaturesSection() {
               Built around you.
             </h2>
             <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
-              Your Matrix instance runs 24/7 in the cloud: always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
+              Your Matrix instance runs 24/7 in the cloud — always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
             </p>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
-              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone; everything is exactly where you left it. No syncing, no waiting, no setup.
+              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone — everything is exactly where you left it. No syncing, no waiting, no setup.
             </p>
           </div>
 
@@ -519,7 +519,7 @@ function DevelopersSection() {
               Give your agent the setup file.
             </h2>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix publishes an agent-readable skill at <code>matrix-os.com/skills.md</code>. Claude, Codex, Cursor, Cline, or another coding agent can read it, install the CLI, help you sign up with <code>matrix login --profile cloud</code>, and start working on your cloud computer with <code>matrix run</code>.
+              Matrix publishes an agent-readable skill at <code>matrix-os.com/skills.md</code>. Claude, Codex, Cursor, Cline, or another coding agent can read it, install the CLI, help you sign up with <code>matrix login</code>, and start working on your cloud computer with <code>matrix run</code>.
             </p>
           </div>
           <div className="rounded-[16px] p-6 md:p-8" style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
@@ -527,7 +527,7 @@ function DevelopersSection() {
               <code>{`Read https://matrix-os.com/skills.md
 
 npx skills add HamedMP/matrix-os --skill matrix-os
-matrix login --profile cloud
+matrix login
 matrix run -it -- claude`}</code>
             </pre>
             <div className="mt-6 flex flex-wrap gap-3">
