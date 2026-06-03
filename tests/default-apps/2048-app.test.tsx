@@ -2,7 +2,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { resetTileIdsForTest, tilesFromBoard } from "../../home/apps/games/2048/src/App";
+import App from "../../home/apps/games/2048/src/App";
+import { resetTileIdsForTest, tilesFromBoard } from "../../home/apps/games/2048/src/tile-animation";
 
 type DbRow = Record<string, unknown>;
 
@@ -75,8 +76,8 @@ describe("2048 app", () => {
         { id: 3, value: 4, row: 0, col: 3 },
       ],
       null,
-      new Set(["0:0"]),
-      new Set(["0:0", "0:1"]),
+      ["0:0"],
+      ["0:0", "0:1"],
     );
 
     const merged = tiles.find((tile) => tile.row === 0 && tile.col === 0);
@@ -100,8 +101,8 @@ describe("2048 app", () => {
         { id: 3, value: 4, row: 0, col: 2 },
       ],
       null,
-      new Set(["0:0"]),
-      new Set(["0:0", "0:1"]),
+      ["0:0"],
+      ["0:0", "0:1"],
     );
 
     const merged = tiles.find((tile) => tile.row === 0 && tile.col === 0);
@@ -123,8 +124,8 @@ describe("2048 app", () => {
         { id: 2, value: 2, row: 0, col: 1 },
       ],
       null,
-      new Set(),
-      new Set(),
+      [],
+      [],
       "up",
     );
 

@@ -3,6 +3,7 @@ import {
   type Board,
   type Direction,
   addRandomTile,
+  animationCellsForMove,
   canMove,
   cloneBoard,
   countEmpty,
@@ -151,6 +152,21 @@ describe("2048 engine — slide + merge per direction", () => {
     const snapshot = flat(b);
     move(b, "left");
     expect(flat(b)).toEqual(snapshot);
+  });
+
+  it("reports merge animation cells from the engine collapse path", () => {
+    const b = grid([
+      [2, 2, 4, 4],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ]);
+
+    expect(move(b, "right").board[0]).toEqual([0, 0, 4, 8]);
+    expect(animationCellsForMove(b, "right")).toEqual({
+      merged: ["0:3", "0:2"],
+      consumed: ["0:3", "0:2", "0:1", "0:0"],
+    });
   });
 });
 

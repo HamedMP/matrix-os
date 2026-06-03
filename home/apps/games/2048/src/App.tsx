@@ -5,37 +5,17 @@ import {
   type Direction,
   type GameState,
   addRandomTile,
+  animationCellsForMove,
   cloneBoard,
   hasWon,
   isGameOver,
   move,
   newGame,
 } from "./game-2048";
+import { nextTileId, tilesFromBoard, type Tile } from "./tile-animation";
 
 const BEST_KEY = "matrixos.2048.best";
 const SCORES_TABLE = "scores";
-
-// ---- Tile identity for animation ------------------------------------------
-// We keep a parallel grid of stable tile ids so React can animate slides/merges
-// via CSS transforms keyed by id rather than re-rendering whole cells.
-interface Tile {
-  id: number;
-  value: number;
-  row: number;
-  col: number;
-  merged?: boolean; // pulse on merge
-  spawned?: boolean; // pop-in on spawn
-}
-
-let TILE_SEQ = 1;
-function nextId(): number {
-  TILE_SEQ += 1;
-  return TILE_SEQ;
-}
-
-export function resetTileIdsForTest(): void {
-  TILE_SEQ = 1;
-}
 
 interface InternalState extends GameState {
   tiles: Tile[];
@@ -47,98 +27,6 @@ type Action =
   | { type: "move"; direction: Direction }
   | { type: "undo" };
 
-function cellKey(row: number, col: number): string {
-  return `${row}:${col}`;
-}
-
-function animationCellsForMove(board: Board, direction: Direction): { merged: Set<string>; consumed: Set<string> } {
-  const merged = new Set<string>();
-  const consumed = new Set<string>();
-  for (let line = 0; line < board.length; line += 1) {
-    const values: Array<{ value: number; row: number; col: number }> = [];
-    for (let offset = 0; offset < board.length; offset += 1) {
-      const row = direction === "up" ? offset : direction === "down" ? board.length - 1 - offset : line;
-      const col = direction === "left" ? offset : direction === "right" ? board.length - 1 - offset : line;
-      const value = board[row][col];
-      if (value !== 0) values.push({ value, row, col });
-    }
-
-    let target = 0;
-    for (let index = 0; index < values.length; index += 1) {
-      const current = values[index];
-      const next = values[index + 1];
-      const isMerge = Boolean(next && current.value === next.value);
-      const row = direction === "up" ? target : direction === "down" ? board.length - 1 - target : line;
-      const col = direction === "left" ? target : direction === "right" ? board.length - 1 - target : line;
-      if (isMerge) {
-        // `merged` is keyed by post-move output cells; `consumed` is keyed by
-        // pre-move source cells so survivor selection cannot reuse merged tiles.
-        merged.add(cellKey(row, col));
-        consumed.add(cellKey(current.row, current.col));
-        if (next) consumed.add(cellKey(next.row, next.col));
-        index += 1;
-      }
-      target += 1;
-    }
-  }
-  return { merged, consumed };
-}
-
-export function tilesFromBoard(
-  board: Board,
-  previous: Tile[] = [],
-  spawned: { row: number; col: number; value: number } | null = null,
-  mergedCells = new Set<string>(),
-  consumedCells = new Set<string>(),
-  direction?: Direction,
-): Tile[] {
-  const tiles: Tile[] = [];
-  const used = new Set(
-    previous
-      .filter((tile) => consumedCells.has(cellKey(tile.row, tile.col)))
-      .map((tile) => tile.id),
-  );
-  for (let r = 0; r < board.length; r += 1) {
-    for (let c = 0; c < board[r].length; c += 1) {
-      if (board[r][c] !== 0) {
-        if (spawned && spawned.row === r && spawned.col === c && spawned.value === board[r][c]) {
-          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: true });
-          continue;
-        }
-        if (mergedCells.has(cellKey(r, c))) {
-          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: true });
-          continue;
-        }
-        const lineMatch = direction
-          ? previous
-            .filter((tile) =>
-              tile.value === board[r][c] &&
-              !used.has(tile.id) &&
-              (direction === "left" || direction === "right" ? tile.row === r : tile.col === c),
-            )
-            .sort((a, b) => (direction === "left" || direction === "right" ? a.col - b.col : a.row - b.row))[0]
-          : null;
-        const match = previous
-          .filter((tile) => tile.value === board[r][c] && !used.has(tile.id))
-          .sort((a, b) => {
-            const distance = Math.abs(a.row - r) + Math.abs(a.col - c) - (Math.abs(b.row - r) + Math.abs(b.col - c));
-            if (distance !== 0) return distance;
-            if (a.row !== b.row) return a.row - b.row;
-            return a.col - b.col;
-          })[0];
-        const resolved = lineMatch ?? match;
-        if (resolved) {
-          used.add(resolved.id);
-          tiles.push({ ...resolved, row: r, col: c, spawned: false, merged: false });
-        } else {
-          tiles.push({ id: nextId(), value: board[r][c], row: r, col: c, spawned: false, merged: false });
-        }
-      }
-    }
-  }
-  return tiles;
-}
-
 function freshGame(): InternalState {
   const g = newGame();
   const tiles: Tile[] = [];
@@ -146,7 +34,7 @@ function freshGame(): InternalState {
     for (let col = 0; col < g.board[row].length; col += 1) {
       const value = g.board[row][col];
       if (value !== 0) {
-        tiles.push({ id: nextId(), value, row, col, spawned: true, merged: false });
+        tiles.push({ id: nextTileId(), value, row, col, spawned: true, merged: false });
       }
     }
   }

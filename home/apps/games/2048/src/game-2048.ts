@@ -26,6 +26,11 @@ export interface GameState {
   over: boolean;
 }
 
+export interface MoveAnimationCells {
+  merged: string[];
+  consumed: string[];
+}
+
 export function createEmptyBoard(): Board {
   return Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => 0));
 }
@@ -52,23 +57,44 @@ export function hasWon(board: Board): boolean {
   return maxTile(board) >= WIN_VALUE;
 }
 
-// Slide + merge a single row to the left. Returns the new row and points gained.
-function collapseRow(row: number[]): { row: number[]; gained: number } {
-  const tiles = row.filter((v) => v !== 0);
+function cellKey(row: number, col: number): string {
+  return `${row}:${col}`;
+}
+
+function lineCell(line: number, offset: number, direction: Direction): { row: number; col: number } {
+  if (direction === "up") return { row: offset, col: line };
+  if (direction === "down") return { row: SIZE - 1 - offset, col: line };
+  if (direction === "right") return { row: line, col: SIZE - 1 - offset };
+  return { row: line, col: offset };
+}
+
+// Slide + merge a single normalized row to the left. The merge trace is used by
+// UI animation so it cannot drift from the scoring/move semantics.
+function collapseRow(row: number[]): {
+  row: number[];
+  gained: number;
+  merges: Array<{ targetIndex: number; sourceIndexes: [number, number] }>;
+} {
+  const tiles = row
+    .map((value, index) => ({ value, index }))
+    .filter((tile) => tile.value !== 0);
   const out: number[] = [];
+  const merges: Array<{ targetIndex: number; sourceIndexes: [number, number] }> = [];
   let gained = 0;
   for (let i = 0; i < tiles.length; i += 1) {
-    if (i + 1 < tiles.length && tiles[i] === tiles[i + 1]) {
-      const merged = tiles[i] * 2;
+    if (i + 1 < tiles.length && tiles[i].value === tiles[i + 1].value) {
+      const targetIndex = out.length;
+      const merged = tiles[i].value * 2;
       out.push(merged);
       gained += merged;
+      merges.push({ targetIndex, sourceIndexes: [tiles[i].index, tiles[i + 1].index] });
       i += 1; // skip the consumed tile so it cannot merge again this move
     } else {
-      out.push(tiles[i]);
+      out.push(tiles[i].value);
     }
   }
   while (out.length < SIZE) out.push(0);
-  return { row: out, gained };
+  return { row: out, gained, merges };
 }
 
 function rowsEqual(a: number[], b: number[]): boolean {
@@ -119,6 +145,28 @@ export function move(board: Board, direction: Direction): MoveResult {
   }
 
   return { board: result, moved, gained };
+}
+
+export function animationCellsForMove(board: Board, direction: Direction): MoveAnimationCells {
+  const merged: string[] = [];
+  const consumed: string[] = [];
+  for (let line = 0; line < SIZE; line += 1) {
+    const normalizedRow: number[] = [];
+    for (let offset = 0; offset < SIZE; offset += 1) {
+      const { row, col } = lineCell(line, offset, direction);
+      normalizedRow.push(board[row][col]);
+    }
+    const collapsed = collapseRow(normalizedRow);
+    for (const merge of collapsed.merges) {
+      const target = lineCell(line, merge.targetIndex, direction);
+      merged.push(cellKey(target.row, target.col));
+      for (const sourceIndex of merge.sourceIndexes) {
+        const source = lineCell(line, sourceIndex, direction);
+        consumed.push(cellKey(source.row, source.col));
+      }
+    }
+  }
+  return { merged, consumed };
 }
 
 export function emptyCells(board: Board): { row: number; col: number }[] {
