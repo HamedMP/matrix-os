@@ -103,12 +103,16 @@ docker compose -p distro \
   --env-file /home/deploy/matrix-os/.env \
   -f docker-compose.platform.yml \
   up -d --build platform
+cd /home/deploy/matrix-os
+git worktree remove --force "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA"
+git worktree prune
 ```
 
 The existing production Compose project is named `distro`; keep `-p distro` so
 Compose replaces `distro-platform-1` and does not create a second stack. The
 command may also rebuild and restart `distro-auth-shell-1` because it shares the
-same image build graph.
+same image build graph. Remove the temporary deploy worktree after the Compose
+command succeeds so old monorepo copies do not accumulate on the platform VPS.
 
 After the rebuild, verify the platform page actually changed:
 
@@ -118,15 +122,18 @@ curl -sS -X POST https://app.matrix-os.com/api/auth/device/code \
   -H 'Content-Type: application/json' \
   -d '{"clientId":"matrixos-cli"}'
 
-# Use the returned verificationUri. For current CLI device signup, the HTML
-# must contain both Clerk sign-up and sign-in handoff URLs back to /auth/device.
+# Use the returned verificationUri. For current CLI device signup, the
+# server-rendered inline HTML must contain both Clerk sign-up and sign-in
+# handoff URLs back to /auth/device. These strings are not emitted by a bundled
+# client build, so they are stable smoke-test anchors for this platform route.
 curl -sS 'https://app.matrix-os.com/auth/device?user_code=<code>' \
   | rg "mountSignUp|signInUrl: deviceAuthUrl|signUpUrl: deviceAuthUrl"
 ```
 
 If the final check has no output, `app.matrix-os.com` is still serving an old
-platform image or the request is not reaching the platform container expected by
-the current Compose project.
+platform image, the request is not reaching the platform container expected by
+the current Compose project, or the device-auth route changed and this smoke
+check needs to be updated alongside it.
 
 ## Host Bundle
 
