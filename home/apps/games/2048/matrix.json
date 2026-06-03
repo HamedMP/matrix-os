@@ -12,6 +12,17 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "2048",
+  "storage": {
+    "tables": {
+      "scores": {
+        "columns": {
+          "score": "integer",
+          "best": "integer",
+          "created_at": "timestamptz"
+        }
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",
