@@ -281,25 +281,27 @@ function App() {
           resolveCreatedCardId(created.id);
           return;
         }
-        const liveColumnExists = boardRef.current?.columns.some((column) => column.id === liveCard.columnId) ?? false;
+        const liveColumnId = liveCard.columnId;
+        const liveColumnExists = boardRef.current?.columns.some((column) => column.id === liveColumnId) ?? false;
         if (!liveColumnExists) {
           resolveCreatedCardId(created.id);
           return;
         }
-        const pendingColumnId = liveCard.columnId;
+        const pendingColumnId = liveColumnId;
         let columnId = await (pendingColumnIdsRef.current[pendingColumnId] ?? Promise.resolve(pendingColumnId));
         liveCard = boardRef.current?.cards.find((card) => card.id === created.id);
         if (!liveCard) {
           resolveCreatedCardId(created.id);
           return;
         }
-        const latestColumnExists = boardRef.current?.columns.some((column) => column.id === liveCard.columnId) ?? false;
+        const latestColumnId = liveCard.columnId;
+        const latestColumnExists = boardRef.current?.columns.some((column) => column.id === latestColumnId) ?? false;
         if (!latestColumnExists) {
           resolveCreatedCardId(created.id);
           return;
         }
-        if (liveCard.columnId !== pendingColumnId) {
-          columnId = await (pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId));
+        if (latestColumnId !== pendingColumnId) {
+          columnId = await (pendingColumnIdsRef.current[latestColumnId] ?? Promise.resolve(latestColumnId));
         }
         const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...liveCard, columnId }, liveCard.order));
         resolveCreatedCardId(result.id);
@@ -1065,10 +1067,11 @@ function CardDetail({
   const [assignee, setAssignee] = useState(card.assignee);
   const [labelInput, setLabelInput] = useState("");
   const [checklistInput, setChecklistInput] = useState("");
-  const previousCardRef = useRef(card);
-  useEffect(() => {
-    const previous = previousCardRef.current;
+  const [previousCard, setPreviousCard] = useState(card);
+  if (previousCard !== card) {
+    const previous = previousCard;
     const sameCard = previous.id === card.id || pendingSwapFromId === previous.id;
+    setPreviousCard(card);
     if (!sameCard || title === previous.title) setTitle(card.title);
     if (!sameCard || description === previous.description) setDescription(card.description);
     if (!sameCard || assignee === previous.assignee) setAssignee(card.assignee);
@@ -1076,8 +1079,7 @@ function CardDetail({
       setLabelInput("");
       setChecklistInput("");
     }
-    previousCardRef.current = card;
-  }, [assignee, card, description, pendingSwapFromId, title]);
+  }
 
   const progress = checklistProgress(card.checklist);
 
