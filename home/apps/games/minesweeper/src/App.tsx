@@ -23,6 +23,11 @@ interface GameMeta {
   spec: DifficultySpec;
 }
 
+interface PendingBestSave {
+  secs: number;
+  count: number;
+}
+
 const DIFFICULTIES: Array<{ id: Difficulty; label: string }> = [
   { id: "beginner", label: "Beginner" },
   { id: "intermediate", label: "Intermediate" },
@@ -94,6 +99,7 @@ export default function App(): React.ReactElement {
   const savedGameId = useRef<number | null>(null);
   const latestSecondsRef = useRef(seconds);
   const bestTimesRef = useRef(bestTimes);
+  const pendingBestSavesRef = useRef<Record<string, PendingBestSave>>({});
 
   useEffect(() => {
     latestSecondsRef.current = seconds;
@@ -223,8 +229,18 @@ export default function App(): React.ReactElement {
         return;
       }
       const previousBest = bestTimesRef.current[key];
-      if (previousBest !== undefined && previousBest <= secs) return;
-      setBestTimes((prev) => ({ ...prev, [key]: secs }));
+      const pendingForKey = pendingBestSavesRef.current[key];
+      if (previousBest !== undefined && previousBest < secs) return;
+      if (previousBest === secs && pendingForKey?.secs !== secs) return;
+      pendingBestSavesRef.current[key] = {
+        secs,
+        count: pendingForKey?.secs === secs ? pendingForKey.count + 1 : 1,
+      };
+      setBestTimes((prev) => {
+        const current = prev[key];
+        if (current !== undefined && current < secs) return prev;
+        return { ...prev, [key]: secs };
+      });
 
       try {
         const inserted = await db.insert("times", {
@@ -254,13 +270,20 @@ export default function App(): React.ReactElement {
       } catch (err) {
         console.warn("[minesweeper] failed to persist best time", err);
         setStatusMsg("Could not save best time");
+        const hasEqualPendingSave = (pendingBestSavesRef.current[key]?.count ?? 0) > 1;
         setBestTimes((prev) => {
+          if (hasEqualPendingSave) return prev;
           if (prev[key] !== secs) return prev;
           const next = { ...prev };
           if (previousBest === undefined) delete next[key];
           else next[key] = previousBest;
           return next;
         });
+      } finally {
+        const pending = pendingBestSavesRef.current[key];
+        if (pending?.secs !== secs) return;
+        if (pending.count <= 1) delete pendingBestSavesRef.current[key];
+        else pendingBestSavesRef.current[key] = { secs, count: pending.count - 1 };
       }
     },
     [],
@@ -299,11 +322,7 @@ export default function App(): React.ReactElement {
         // same commit; using live difficulty/spec here would save the completed
         // game's time under the next board's key.
         const finalSecs = Math.max(1, latestSecondsRef.current);
-        const gameBestKey = bestKeyFor(gameMeta.difficulty, gameMeta.spec);
-        const current = bestTimesRef.current[gameBestKey];
-        if (current === undefined || finalSecs < current) {
-          void persistBestTime(gameMeta.difficulty, gameMeta.spec, finalSecs);
-        }
+        void persistBestTime(gameMeta.difficulty, gameMeta.spec, finalSecs);
       }
     } else if (board.status === "lost") {
       setFace("dead");

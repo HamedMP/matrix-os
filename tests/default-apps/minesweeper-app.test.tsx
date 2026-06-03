@@ -298,6 +298,55 @@ describe("Minesweeper app", () => {
     );
   });
 
+  it("persists an equal best time while the previous equal save is still pending", async () => {
+    const db = installMatrixDb([]);
+    const insertResolvers: Array<(value: { id: string }) => void> = [];
+    db.insert.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          insertResolvers.push(resolve);
+        }),
+    );
+
+    render(<App />);
+    await screen.findAllByTestId(/^cell-/);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Custom" }));
+    fireEvent.change(screen.getByLabelText("Width"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Height"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Mines"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(await screen.findAllByTestId(/^cell-/)).toHaveLength(25);
+
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    fireEvent.click(screen.getByTestId("cell-12"));
+    for (let index = 1; index < 25; index += 1) {
+      fireEvent.click(screen.getByTestId(`cell-${index}`));
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(db.insert).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /new game/i }));
+    expect(await screen.findAllByTestId(/^cell-/)).toHaveLength(25);
+    fireEvent.click(screen.getByTestId("cell-12"));
+    for (let index = 1; index < 25; index += 1) {
+      fireEvent.click(screen.getByTestId(`cell-${index}`));
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(db.insert).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      insertResolvers.forEach((resolve, index) => resolve({ id: `time-${index}` }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   it("works without a DB bridge", async () => {
     // No MatrixOS injected.
     render(<App />);
