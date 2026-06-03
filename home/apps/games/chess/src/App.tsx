@@ -110,10 +110,15 @@ export default function App() {
   const [gamesPlayed, setGamesPlayed] = useState<number>(0);
   const savedResultRef = useRef(false);
   const errorRef = useRef<string | null>(null);
+  const saveStateRef = useRef(saveState);
 
   useEffect(() => {
     errorRef.current = error;
   }, [error]);
+
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
 
   // AI opponent configuration. `humanColor` is the side the user plays in
   // vs-computer mode; the engine plays the other side. `thinking` disables input
@@ -348,7 +353,7 @@ export default function App() {
   );
 
   const undo = useCallback(() => {
-    if (pendingPromotion) return;
+    if (pendingPromotion || saveStateRef.current === "saving") return;
     cancelAiMove();
     // In vs-computer mode an "undo" should take back the full human+AI pair so
     // the human is the side to move again (unless only one ply exists).
@@ -373,7 +378,7 @@ export default function App() {
         else clearSelection();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        if (!pendingPromotion) undo();
+        if (!pendingPromotion && !inputLockedRef.current && saveStateRef.current !== "saving") undo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -619,7 +624,7 @@ export default function App() {
             type="button"
             className="secondary-action"
             onClick={undo}
-            disabled={sanHistory.length === 0 || thinking || aiToMove || Boolean(pendingPromotion)}
+            disabled={sanHistory.length === 0 || thinking || aiToMove || Boolean(pendingPromotion) || saveState === "saving"}
           >
             <RotateCcw size={16} /> Undo
           </button>

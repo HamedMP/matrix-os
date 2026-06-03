@@ -156,6 +156,44 @@ describe("Chess app", () => {
     expect(screen.queryByText("Saved games could not be loaded.")).toBeNull();
   });
 
+  it("keeps undo locked while a finished game save is pending", async () => {
+    const { __setNextCheckmate } = await import("chess.js") as unknown as ChessMockControls;
+    __setNextCheckmate();
+    const db = installMatrixDb([]);
+    let resolveInsert: ((value: { id: string }) => void) | null = null;
+    db.insert.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveInsert = resolve;
+        }),
+    );
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e2"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-e4"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Saving game to Matrix Postgres…")).toBeTruthy();
+    const undoButton = screen.getByRole("button", { name: /undo/i }) as HTMLButtonElement;
+    expect(undoButton.disabled).toBe(true);
+
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+
+    expect(screen.getByTestId("square-e4").getAttribute("aria-label")).toBe("e4 White p");
+    expect(screen.getByTestId("square-e2").getAttribute("aria-label")).toBe("e2 empty");
+    expect(db.insert).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveInsert?.({ id: "game-new" });
+      await Promise.resolve();
+    });
+  });
+
   it("highlights legal destinations when a pawn is selected", async () => {
     installMatrixDb([]);
     render(<App />);
