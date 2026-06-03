@@ -75,6 +75,66 @@ PIPEDREAM_WEBHOOK_SECRET=...
 
 Do not copy `PIPEDREAM_*`, Clerk server secrets, platform DB credentials, or `PLATFORM_SECRET` into customer VPS env files. Customer VPS gateways call the platform through `PLATFORM_INTERNAL_URL` with a per-host `UPGRADE_TOKEN`.
 
+## Updating Platform Auth and Device-Login Pages
+
+`app.matrix-os.com` sign-in, sign-up, billing handoff, provisioning handoff, and
+CLI device-login pages are served by the platform Docker service. Pulling
+`main` on the platform VPS is not enough: the running `distro-platform-1`
+container keeps serving the previously built image until the platform service is
+rebuilt and recreated.
+
+Rebuild the platform Docker service whenever a PR changes:
+
+- `packages/platform/src/auth-routes.ts`
+- `packages/platform/src/main.ts` auth, sign-in, sign-up, billing, or provisioning routes
+- Clerk redirect/sign-in/sign-up environment wiring
+- `distro/docker-compose.platform.yml` for `platform` or `auth-shell`
+- platform pages that users reach at `app.matrix-os.com`
+
+On the platform VPS, keep the main checkout clean and deploy from a manual
+worktree pointed at `origin/main`:
+
+```bash
+git fetch origin main
+DEPLOY_SHA="$(git rev-parse --short origin/main)"
+git worktree add --detach "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA" origin/main
+cd "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA/distro"
+docker compose -p distro \
+  --env-file /home/deploy/matrix-os/.env \
+  -f docker-compose.platform.yml \
+  up -d --build platform \
+&& cd /home/deploy/matrix-os \
+&& git worktree remove --force "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA" \
+&& git worktree prune
+```
+
+The existing production Compose project is named `distro`; keep `-p distro` so
+Compose replaces `distro-platform-1` and does not create a second stack. The
+command may also rebuild and restart `distro-auth-shell-1` because it shares the
+same image build graph. Remove the temporary deploy worktree after the Compose
+command succeeds so old monorepo copies do not accumulate on the platform VPS.
+
+After the rebuild, verify the platform page actually changed:
+
+```bash
+curl -sS https://app.matrix-os.com/health
+curl -sS -X POST https://app.matrix-os.com/api/auth/device/code \
+  -H 'Content-Type: application/json' \
+  -d '{"clientId":"matrixos-cli"}'
+
+# Use the returned verificationUri. For current CLI device signup, the
+# server-rendered inline HTML must contain both Clerk sign-up and sign-in
+# handoff URLs back to /auth/device. These strings are not emitted by a bundled
+# client build, so they are stable smoke-test anchors for this platform route.
+curl -sS 'https://app.matrix-os.com/auth/device?user_code=<code>' \
+  | rg "mountSignUp|signInUrl: deviceAuthUrl|signUpUrl: deviceAuthUrl"
+```
+
+If the final check has no output, `app.matrix-os.com` is still serving an old
+platform image, the request is not reaching the platform container expected by
+the current Compose project, or the device-auth route changed and this smoke
+check needs to be updated alongside it.
+
 ## Host Bundle
 
 Build and publish the customer VPS host bundle before provisioning or refreshing customer VPSes:
