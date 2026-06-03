@@ -63,10 +63,9 @@ describe("Chess app", () => {
     const { __reset } = await import("chess.js") as unknown as ChessMockControls;
     __reset();
     vi.restoreAllMocks();
-    vi.mocked(findBestMove).mockClear();
+    vi.clearAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
     window.localStorage.clear();
-    vi.resetModules();
   });
 
   it("renders an 8x8 board with 64 squares", async () => {
