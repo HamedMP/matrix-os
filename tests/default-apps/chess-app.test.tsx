@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "../../home/apps/games/chess/src/App";
 import { findBestMove } from "../../home/apps/games/chess/src/chess-ai";
 
 type DbRow = Record<string, unknown>;
@@ -14,8 +15,6 @@ type ChessMockControls = {
     moves(opts: { square: string; verbose: true }): Array<{ to: string; promotion?: string }>;
   };
 };
-
-let App: React.ComponentType;
 
 vi.mock("../../home/apps/games/chess/src/chess-ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../home/apps/games/chess/src/chess-ai")>();
@@ -54,8 +53,11 @@ function installMatrixDb(rows: DbRow[] = []) {
 
 describe("Chess app", () => {
   beforeEach(async () => {
+    const actualChessAi = await vi.importActual<typeof import("../../home/apps/games/chess/src/chess-ai")>(
+      "../../home/apps/games/chess/src/chess-ai",
+    );
+    vi.mocked(findBestMove).mockImplementation(actualChessAi.findBestMove);
     window.localStorage.clear();
-    ({ default: App } = await import("../../home/apps/games/chess/src/App"));
   });
 
   afterEach(async () => {
@@ -63,7 +65,7 @@ describe("Chess app", () => {
     const { __reset } = await import("chess.js") as unknown as ChessMockControls;
     __reset();
     vi.restoreAllMocks();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
     window.localStorage.clear();
   });
