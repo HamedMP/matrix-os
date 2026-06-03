@@ -727,7 +727,7 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
         objectFit: "contain",
       }}
       onError={() => {
-        const svgUrl = `/icons/${encodeURIComponent(slug)}.svg`;
+        const svgUrl = src.replace(/\.[^.]+$/, ".svg");
         if (!triedSvg.current && src !== svgUrl) {
           triedSvg.current = true;
           setSrc(svgUrl);

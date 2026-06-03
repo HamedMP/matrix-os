@@ -37,6 +37,8 @@ describe("dock icon resolution", () => {
     expect(source).toContain("import { iconUrlForSlug } from \"@/lib/app-launch\"");
     expect(source).not.toContain("function iconUrl");
     expect(source).not.toContain("/icons/${slug}.png");
+    expect(source).toContain("const svgUrl = src.replace(/\\.[^.]+$/, \".svg\")");
+    expect(source).not.toContain("const svgUrl = `/icons/${encodeURIComponent(slug)}.svg`");
   });
 
   it("keeps the desktop dock as a glass rail with stable icon controls", async () => {
