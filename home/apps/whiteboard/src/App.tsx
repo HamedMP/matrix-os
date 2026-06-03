@@ -589,11 +589,9 @@ export default function App() {
   // -- commit + autosave wrapper -------------------------------------------
   const apply = useCallback(
     (next: Scene, targetBoardId: string | null = activeIdRef.current) => {
-      setHistory((h) => {
-        const nextHistory = commit(h, next);
-        historyRef.current = nextHistory;
-        return nextHistory;
-      });
+      const nextHistory = commit(historyRef.current, next);
+      historyRef.current = nextHistory;
+      setHistory(nextHistory);
       scheduleSave(next, targetBoardId);
     },
     [scheduleSave],
@@ -735,11 +733,9 @@ export default function App() {
         const dy = p.y - drag.startScene.y;
         let next = drag.baseScene;
         for (const id of drag.movedIds) next = moveElement(next, id, dx, dy);
-        setHistory((h) => {
-          const nextHistory = { ...h, present: next };
-          historyRef.current = nextHistory;
-          return nextHistory;
-        });
+        const nextHistory = { ...historyRef.current, present: next };
+        historyRef.current = nextHistory;
+        setHistory(nextHistory);
         drag.lastScene = p;
         return;
       }
@@ -847,11 +843,9 @@ export default function App() {
         setTool("select");
       }
       if (drag?.mode === "move" && drag.baseScene) {
-        setHistory((current) => {
-          const nextHistory = { ...current, present: drag.baseScene as Scene };
-          historyRef.current = nextHistory;
-          return nextHistory;
-        });
+        const nextHistory = { ...historyRef.current, present: drag.baseScene };
+        historyRef.current = nextHistory;
+        setHistory(nextHistory);
       }
     },
     [tool, updateDraft],
