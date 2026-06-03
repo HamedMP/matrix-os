@@ -97,8 +97,12 @@ final human review.
      whose head will be rewritten by the next `gt submit --stack`:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
      after fresh current-head Greptile reviews return `5/5`.
-   - Before staging, inspect `git status --short --branch` and stage only files
-     belonging to the owning branch's fix with explicit paths:
+   - Before staging, verify the checked-out branch matches the PR branch that
+     owns the fix: run `git branch --show-current` and compare it to the target
+     PR's `headRefName`. If it differs, run `gt checkout <target-branch>` and
+     re-check the branch before editing or staging.
+   - Inspect `git status --short --branch` and stage only files belonging to the
+     owning branch's fix with explicit paths:
      `git add <paths>`. Then run `gt modify` or
      `gt modify --commit --message "<conventional commit>"`. Staged-only is the
      default Graphite modify behavior; do not pass a `--staged` flag, and do not
@@ -142,10 +146,13 @@ final human review.
      60 seconds between polls. Do not stop only because an already-running CI
      job remains `queued`, `pending`, or `in_progress` across consecutive
      polls; normal Matrix OS checks can run longer than several poll intervals.
-     Stop and report a blocker only when checks fail with actionable output, the
-     expected checks never enter an active state after the push, or an active
-     check exceeds 30 minutes without progress or its workflow-defined
-     `timeout-minutes`, whichever is shorter.
+     Track a CI-start wait timer from the push time for each PR expected to run
+     checks. Stop and report a blocker only when checks fail with actionable
+     output, expected checks have not entered `queued`, `pending`, or
+     `in_progress` within 30 minutes after the push, or an active check exceeds
+     30 minutes without progress or its workflow-defined `timeout-minutes`,
+     whichever is shorter. Report the never-active case as
+     `CI checks never became active for <pr> @ <sha>`.
    - Track a review-wait start time and current head SHA for each PR awaiting
      Greptile. Initialize the timer at command start for any PR whose current
      head lacks a trusted Greptile review before this command makes changes, and
