@@ -11,6 +11,7 @@ function installMatrixDb(
   rows: DbRow[] = [],
   bridge: { readData?: () => Promise<unknown>; writeData?: (key: string, value: unknown) => Promise<void> } = {},
 ) {
+  let onChangeCallback: (() => void) | undefined;
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
@@ -18,7 +19,11 @@ function installMatrixDb(
     update: vi.fn(async () => ({ ok: true })),
     delete: vi.fn(async () => ({ ok: true })),
     count: vi.fn(async () => rows.length),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, callback: () => void) => {
+      onChangeCallback = callback;
+      return () => undefined;
+    }),
+    emitChange: () => onChangeCallback?.(),
   };
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
@@ -306,6 +311,24 @@ describe("Solitaire app", () => {
     });
   });
 
+  it("does not issue a redundant update after the initial stats insert", async () => {
+    const db = installMatrixDb([]);
+    render(<App initialState={oneMoveFromWinState()} />);
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.insert).toHaveBeenCalledWith(
+      "stats",
+      expect.objectContaining({ games_won: 1, best_moves: 11 }),
+    ));
+    expect(db.update.mock.calls.filter((call) => call[0] === "stats")).toHaveLength(0);
+  });
+
   it("records exact wall-clock win time even before the timer ticks", async () => {
     const db = installMatrixDb([]);
     let now = 1_000_000;
@@ -401,5 +424,53 @@ describe("Solitaire app", () => {
       ];
       expect(statPayloads).toContainEqual(expect.objectContaining({ games_won: 2 }));
     });
+  });
+
+  it("keeps in-flight win stats newer than a stale bridge reload", async () => {
+    let resolveReload: (rows: DbRow[]) => void = () => undefined;
+    const db = installMatrixDb([{ id: "stats-1", games_played: 5, games_won: 0, best_time: 0, best_moves: 0 }]);
+
+    render(<App initialState={oneMoveFromWinState()} />);
+    await screen.findByTestId("card-clubs-13");
+
+    db.find.mockImplementationOnce(async () => new Promise<DbRow[]>((resolve) => {
+      resolveReload = resolve;
+    }));
+    act(() => {
+      db.emitChange();
+    });
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith(
+      "stats",
+      "stats-1",
+      expect.objectContaining({ games_won: 1 }),
+    ));
+
+    await act(async () => {
+      resolveReload([{ id: "stats-1", games_played: 5, games_won: 0, best_time: 0, best_moves: 0 }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("card-clubs-13"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith(
+      "stats",
+      "stats-1",
+      expect.objectContaining({ games_won: 2 }),
+    ));
   });
 });

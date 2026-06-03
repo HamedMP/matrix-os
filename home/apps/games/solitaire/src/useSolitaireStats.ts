@@ -34,6 +34,7 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
   const statsRowIdRef = useRef<string | null>(null);
   const statsInsertRef = useRef<Promise<string> | null>(null);
   const statsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const statsWriteVersionRef = useRef(0);
   const pendingGamesPlayedRef = useRef(0);
   const countedInitialGameRef = useRef(countInitialGame);
 
@@ -46,6 +47,7 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
   }, []);
 
   const persistStats = useCallback((next: Stats) => {
+    statsWriteVersionRef.current += 1;
     statsRef.current = next;
     setStats(next);
     const db = window.MatrixOS?.db;
@@ -63,7 +65,9 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
           statsRowIdRef.current = rowId;
           await db.update(STATS_TABLE, rowId, payload);
         } else {
+          let createdForThisSave = false;
           if (!statsInsertRef.current) {
+            createdForThisSave = true;
             statsInsertRef.current = db.insert(STATS_TABLE, payload)
               .then((res) => {
                 statsRowIdRef.current = res.id;
@@ -75,7 +79,9 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
               });
           }
           const insertedId = await statsInsertRef.current;
-          await db.update(STATS_TABLE, insertedId, payload);
+          if (!createdForThisSave) {
+            await db.update(STATS_TABLE, insertedId, payload);
+          }
         }
       } catch (err: unknown) {
         console.warn("[solitaire] stats save failed:", err instanceof Error ? err.message : String(err));
@@ -89,6 +95,7 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
 
   const loadStats = useCallback(async () => {
     const db = window.MatrixOS?.db;
+    const writeVersionAtStart = statsWriteVersionRef.current;
     if (!db) {
       setStats({ ...EMPTY_STATS });
       statsLoadedRef.current = true;
@@ -100,9 +107,13 @@ export function useSolitaireStats({ countInitialGame }: { countInitialGame: bool
       if (rows && rows.length > 0) {
         const loaded = coerceStats(rows[0]);
         statsRowIdRef.current = loaded.id ?? null;
-        setStats(loaded);
+        if (statsWriteVersionRef.current === writeVersionAtStart) {
+          setStats(loaded);
+        }
       } else {
-        setStats({ ...EMPTY_STATS });
+        if (statsWriteVersionRef.current === writeVersionAtStart) {
+          setStats({ ...EMPTY_STATS });
+        }
       }
       setError(null);
     } catch (err: unknown) {
