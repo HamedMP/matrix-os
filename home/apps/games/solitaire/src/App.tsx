@@ -18,32 +18,8 @@ import {
   isWon,
   suitColor,
 } from "./solitaire-model";
-
-const STATS_TABLE = "stats";
+import { useSolitaireStats } from "./useSolitaireStats";
 const DRAW_PREF_KEY = "solitaire:draw-mode";
-
-interface Stats {
-  id?: string;
-  games_played: number;
-  games_won: number;
-  best_time: number; // seconds, 0 = none
-  best_moves: number; // 0 = none
-}
-
-const EMPTY_STATS: Stats = { games_played: 0, games_won: 0, best_time: 0, best_moves: 0 };
-
-function coerceStats(row: unknown): Stats {
-  if (!row || typeof row !== "object") return { ...EMPTY_STATS };
-  const r = row as Record<string, unknown>;
-  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
-  return {
-    id: typeof r.id === "string" ? r.id : undefined,
-    games_played: num(r.games_played),
-    games_won: num(r.games_won),
-    best_time: num(r.best_time),
-    best_moves: num(r.best_moves),
-  };
-}
 
 function formatTime(seconds: number): string {
   if (!seconds || seconds < 0) return "--:--";
@@ -60,23 +36,16 @@ export default function App({ initialState }: AppProps) {
   const [draw, setDraw] = useState<1 | 3>(1);
   const [game, setGame] = useState<GameState>(() => initialState ?? deal(Math.random, draw));
   const [history, setHistory] = useState<GameState[]>([]);
-  const [stats, setStats] = useState<Stats>(EMPTY_STATS);
-  const statsRef = useRef<Stats>(EMPTY_STATS);
   const historyRef = useRef<GameState[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(!initialState);
-  const [statsLoaded, setStatsLoaded] = useState(false);
   const [selected, setSelected] = useState<Source | null>(null);
   const gameRef = useRef(game);
   const recordedWinRef = useRef(false);
-  const countedInitialGameRef = useRef(Boolean(initialState));
-  const statsLoadedRef = useRef(false);
-  const statsRowIdRef = useRef<string | null>(null);
-  const statsInsertRef = useRef<Promise<string> | null>(null);
-  const statsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingGamesPlayedRef = useRef(0);
   const startedAtRef = useRef<number>(Date.now());
+  const { stats, error, clearStatsError, recordGamePlayed, recordWin } = useSolitaireStats({
+    countInitialGame: Boolean(initialState),
+  });
 
   const won = isWon(game);
 
@@ -85,88 +54,8 @@ export default function App({ initialState }: AppProps) {
   }, [game]);
 
   useEffect(() => {
-    statsRef.current = stats;
-  }, [stats]);
-
-  useEffect(() => {
     historyRef.current = history;
   }, [history]);
-
-  // ---- Stats persistence -------------------------------------------------
-  const persistStats = useCallback((next: Stats) => {
-    statsRef.current = next;
-    setStats(next);
-    const db = window.MatrixOS?.db;
-    if (!db) return Promise.resolve();
-    const save = async () => {
-      const payload = {
-        games_played: next.games_played,
-        games_won: next.games_won,
-        best_time: next.best_time,
-        best_moves: next.best_moves,
-      };
-      try {
-        const rowId = next.id ?? statsRowIdRef.current;
-        if (rowId) {
-          statsRowIdRef.current = rowId;
-          await db.update(STATS_TABLE, rowId, payload);
-        } else {
-          if (!statsInsertRef.current) {
-            statsInsertRef.current = db.insert(STATS_TABLE, payload)
-              .then((res) => {
-                statsRowIdRef.current = res.id;
-                setStats((cur) => ({ ...cur, id: res.id }));
-                return res.id;
-              })
-              .finally(() => {
-                statsInsertRef.current = null;
-              });
-          }
-          const insertedId = await statsInsertRef.current;
-          await db.update(STATS_TABLE, insertedId, payload);
-        }
-      } catch (err: unknown) {
-        console.warn("[solitaire] stats save failed:", err instanceof Error ? err.message : String(err));
-        setError("Stats could not be saved to Matrix Postgres.");
-      }
-    };
-    const run = statsSaveQueueRef.current.then(save, save);
-    statsSaveQueueRef.current = run.catch(() => undefined);
-    return run;
-  }, []);
-
-  const loadStats = useCallback(async () => {
-    const db = window.MatrixOS?.db;
-    if (!db) {
-      setStats({ ...EMPTY_STATS });
-      statsLoadedRef.current = true;
-      setStatsLoaded(true);
-      return;
-    }
-    try {
-      const rows = await db.find(STATS_TABLE, { limit: 1 });
-      if (rows && rows.length > 0) {
-        const loaded = coerceStats(rows[0]);
-        statsRowIdRef.current = loaded.id ?? null;
-        setStats(loaded);
-      } else {
-        setStats({ ...EMPTY_STATS });
-      }
-      setError(null);
-    } catch (err: unknown) {
-      console.warn("[solitaire] stats load failed:", err instanceof Error ? err.message : String(err));
-      setError("Stats could not be loaded.");
-      setStats({ ...EMPTY_STATS });
-    }
-    statsLoadedRef.current = true;
-    setStatsLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    void loadStats();
-    const db = window.MatrixOS?.db;
-    return db?.onChange?.(STATS_TABLE, () => void loadStats());
-  }, [loadStats]);
 
   useEffect(() => {
     let active = true;
@@ -195,32 +84,6 @@ export default function App({ initialState }: AppProps) {
     };
   }, [initialState]);
 
-  const recordGamePlayed = useCallback(() => {
-    if (!statsLoadedRef.current) {
-      pendingGamesPlayedRef.current += 1;
-      return;
-    }
-    const cur = statsRef.current;
-    const next = { ...cur, games_played: cur.games_played + 1 };
-    statsRef.current = next;
-    void persistStats(next);
-  }, [persistStats]);
-
-  useEffect(() => {
-    if (!statsLoaded) return;
-    let increment = pendingGamesPlayedRef.current;
-    pendingGamesPlayedRef.current = 0;
-    if (!countedInitialGameRef.current) {
-      countedInitialGameRef.current = true;
-      increment += 1;
-    }
-    if (increment === 0) return;
-    const cur = statsRef.current;
-    const next = { ...cur, games_played: cur.games_played + increment };
-    statsRef.current = next;
-    void persistStats(next);
-  }, [persistStats, statsLoaded]);
-
   // ---- Timer -------------------------------------------------------------
   useEffect(() => {
     if (!running || won) return undefined;
@@ -238,14 +101,13 @@ export default function App({ initialState }: AppProps) {
       setHistory([]);
       setSelected(null);
       setElapsed(0);
-      setError(null);
+      clearStatsError();
       recordedWinRef.current = false;
-      countedInitialGameRef.current = true;
       startedAtRef.current = Date.now();
       setRunning(true);
       recordGamePlayed();
     },
-    [draw, recordGamePlayed],
+    [clearStatsError, draw, recordGamePlayed],
   );
 
   const setDrawMode = useCallback((mode: 1 | 3) => {
@@ -400,16 +262,9 @@ export default function App({ initialState }: AppProps) {
     if (!won || recordedWinRef.current) return;
     recordedWinRef.current = true;
     setRunning(false);
-    const cur = statsRef.current;
     const time = Math.floor((Date.now() - startedAtRef.current) / 1000);
-    const moves = game.moves;
-    void persistStats({
-      ...cur,
-      games_won: cur.games_won + 1,
-      best_time: cur.best_time === 0 ? time : Math.min(cur.best_time, time || cur.best_time),
-      best_moves: cur.best_moves === 0 ? moves : Math.min(cur.best_moves, moves || cur.best_moves),
-    });
-  }, [won, game.moves, persistStats]);
+    recordWin(time, game.moves);
+  }, [won, game.moves, recordWin]);
 
   // ---- Keyboard ----------------------------------------------------------
   useEffect(() => {
