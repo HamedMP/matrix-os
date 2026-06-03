@@ -55,14 +55,12 @@ describe("Snake app", () => {
       set shadowBlur(_v: number) {},
       set shadowColor(_v: string) {},
     }));
-    localStorage.clear();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
-    localStorage.clear();
   });
 
   it("uses a shipped default game icon", () => {
