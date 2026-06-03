@@ -320,6 +320,7 @@ export default function App() {
   }, []);
 
   const newGame = useCallback(() => {
+    if (saveStateRef.current === "saving") return;
     cancelAiMove();
     gameRef.current.reset();
     savedResultRef.current = false;
@@ -617,7 +618,7 @@ export default function App() {
         </div>
 
         <div className="board-actions">
-          <button type="button" className="primary-action" onClick={newGame}>
+          <button type="button" className="primary-action" onClick={newGame} disabled={saveState === "saving"}>
             <Sparkles size={16} /> New game
           </button>
           <button

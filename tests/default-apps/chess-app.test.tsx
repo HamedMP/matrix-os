@@ -158,7 +158,7 @@ describe("Chess app", () => {
     expect(screen.queryByText("Saved games could not be loaded.")).toBeNull();
   });
 
-  it("keeps undo locked while a finished game save is pending", async () => {
+  it("keeps reset and undo locked while a finished game save is pending", async () => {
     const { __setNextCheckmate } = await import("chess.js") as unknown as ChessMockControls;
     __setNextCheckmate();
     const db = installMatrixDb([]);
@@ -181,9 +181,12 @@ describe("Chess app", () => {
     });
 
     expect(await screen.findByText("Saving game to Matrix Postgres…")).toBeTruthy();
+    const newGameButton = screen.getByRole("button", { name: /new game/i }) as HTMLButtonElement;
     const undoButton = screen.getByRole("button", { name: /undo/i }) as HTMLButtonElement;
+    expect(newGameButton.disabled).toBe(true);
     expect(undoButton.disabled).toBe(true);
 
+    fireEvent.click(newGameButton);
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
 
     expect(screen.getByTestId("square-e4").getAttribute("aria-label")).toBe("e4 White p");
