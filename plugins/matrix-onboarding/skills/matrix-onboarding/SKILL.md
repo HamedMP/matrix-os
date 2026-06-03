@@ -20,7 +20,8 @@ Guide the human through a complete developer onboarding path without collecting 
 
 1. **Identify the path**
    - Determine whether you are running locally, inside Matrix, or inside another remote environment.
-   - Default the preferred coding agent to the one currently being used locally. If unknown, ask which one they want: Codex, Claude, another terminal agent, or Hermes.
+   - Detect the coding agent currently being used locally. If detected, suggest it, but always ask the human to confirm before launching or signing in.
+   - If unknown, ask which coding agent Matrix should set up: Claude Code, Codex, OpenCode, Gemini CLI, OpenClaw, Cursor/Cline, Shell only, or Custom. Hermes remains the Matrix system agent, not the coding-agent choice.
    - Identify the target repo URL and desired project name. If a repo is already open, use it as the starting point.
 
 2. **Verify local prerequisites**

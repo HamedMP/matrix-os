@@ -2,18 +2,25 @@
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { ManualSetupStickers } from "../../shell/src/components/onboarding/ManualSetupStickers.js";
 
 describe("ManualSetupStickers", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ agents: [] }), {
+      headers: { "Content-Type": "application/json" },
+    })));
+  });
+
   afterEach(() => {
+    vi.unstubAllGlobals();
     window.localStorage.clear();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
   });
 
-  it("opens only explicit terminal setup actions", () => {
+  it("asks the user to choose a coding agent before opening terminal setup", () => {
     const onOpenTerminal = vi.fn();
     render(
       <ManualSetupStickers
@@ -23,12 +30,60 @@ describe("ManualSetupStickers", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /open claude login/i }));
+    expect(screen.getByText("Choose your coding agent")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Claude Code/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Codex/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /OpenCode/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Gemini CLI/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /OpenClaw/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Cursor\/Cline/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Shell only/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Custom/i })).toBeTruthy();
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Claude Code/i }));
     fireEvent.click(screen.getByRole("button", { name: /run gh auth login/i }));
 
     expect(onOpenTerminal).toHaveBeenCalledTimes(2);
-    expect(onOpenTerminal.mock.calls[0]?.[0]).toMatch(/^__terminal__:setup-claude-login-/);
+    expect(onOpenTerminal.mock.calls[0]?.[0]).toMatch(/^__terminal__:setup-agent-claude-/);
     expect(onOpenTerminal.mock.calls[1]?.[0]).toMatch(/^__terminal__:setup-github-ssh-login-/);
+  });
+
+  it("marks a detected coding agent as suggested without selecting it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      agents: [
+        { id: "codex", installed: true, authState: "ok" },
+      ],
+    }), {
+      headers: { "Content-Type": "application/json" },
+    })));
+    const onOpenTerminal = vi.fn();
+    render(
+      <ManualSetupStickers
+        onOpenTerminal={onOpenTerminal}
+        onAskHermes={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Suggested")).toBeTruthy();
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+  });
+
+  it("shows manual setup guidance for unsupported agent choices", () => {
+    const onOpenTerminal = vi.fn();
+    render(
+      <ManualSetupStickers
+        onOpenTerminal={onOpenTerminal}
+        onAskHermes={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Cursor\/Cline/i }));
+
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+    expect(screen.getByText(/Use Cursor or Cline from your editor/i)).toBeTruthy();
   });
 
   it("opens Hermes instead of the old voice onboarding", () => {

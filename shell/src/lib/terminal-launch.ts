@@ -1,4 +1,10 @@
-export type TerminalLaunchAction = "claude-login" | "codex-login" | "github-ssh-login";
+export type TerminalLaunchAction =
+  | "agent-claude"
+  | "agent-codex"
+  | "agent-opencode"
+  | "agent-gemini"
+  | "agent-shell"
+  | "github-ssh-login";
 
 export interface TerminalLaunchConfig {
   action: TerminalLaunchAction;
@@ -8,16 +14,31 @@ export interface TerminalLaunchConfig {
 }
 
 const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
-  "claude-login": {
-    action: "claude-login",
-    label: "Claude login",
+  "agent-claude": {
+    action: "agent-claude",
+    label: "Claude Code setup",
     command: "claude",
     claudeMode: true,
   },
-  "codex-login": {
-    action: "codex-login",
-    label: "Codex login",
+  "agent-codex": {
+    action: "agent-codex",
+    label: "Codex setup",
     command: "codex",
+  },
+  "agent-opencode": {
+    action: "agent-opencode",
+    label: "OpenCode setup",
+    command: "opencode",
+  },
+  "agent-gemini": {
+    action: "agent-gemini",
+    label: "Gemini CLI setup",
+    command: "gemini",
+  },
+  "agent-shell": {
+    action: "agent-shell",
+    label: "Shell setup",
+    command: "bash",
   },
   "github-ssh-login": {
     action: "github-ssh-login",
@@ -41,7 +62,7 @@ export function createTerminalLaunchPath(action: TerminalLaunchAction): string {
 
 export function parseTerminalLaunchPath(path: string): TerminalLaunchConfig | null {
   if (!path.startsWith("__terminal__:setup-")) return null;
-  const match = path.match(/^__terminal__:setup-(claude-login|codex-login|github-ssh-login)(?:-[A-Za-z0-9]+)?$/);
+  const match = path.match(/^__terminal__:setup-(agent-claude|agent-codex|agent-opencode|agent-gemini|agent-shell|github-ssh-login)(?:-[A-Za-z0-9]+)?$/);
   if (!match) return null;
   return TERMINAL_ACTIONS[match[1] as TerminalLaunchAction];
 }

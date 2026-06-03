@@ -17,14 +17,22 @@ describe("terminal launch paths", () => {
   it("maps onboarding setup actions to startup commands", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_779_788_800_000);
 
-    expect(parseTerminalLaunchPath(createTerminalLaunchPath("claude-login"))).toMatchObject({
-      label: "Claude login",
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("agent-claude"))).toMatchObject({
+      label: "Claude Code setup",
       command: "claude",
       claudeMode: true,
     });
-    expect(parseTerminalLaunchPath(createTerminalLaunchPath("codex-login"))).toMatchObject({
-      label: "Codex login",
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("agent-codex"))).toMatchObject({
+      label: "Codex setup",
       command: "codex",
+    });
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("agent-opencode"))).toMatchObject({
+      label: "OpenCode setup",
+      command: "opencode",
+    });
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("agent-gemini"))).toMatchObject({
+      label: "Gemini CLI setup",
+      command: "gemini",
     });
     expect(parseTerminalLaunchPath(createTerminalLaunchPath("github-ssh-login"))?.command).toContain("gh auth login --hostname github.com --git-protocol ssh --web");
   });
@@ -35,27 +43,27 @@ describe("terminal launch paths", () => {
   });
 
   it("queues setup actions so an existing terminal can open them as tabs", () => {
-    enqueueTerminalLaunch(createTerminalLaunchPath("claude-login"));
-    enqueueTerminalLaunch(createTerminalLaunchPath("codex-login"));
+    enqueueTerminalLaunch(createTerminalLaunchPath("agent-claude"));
+    enqueueTerminalLaunch(createTerminalLaunchPath("agent-codex"));
 
     expect(drainTerminalLaunchQueue().map((launch) => launch.action)).toEqual([
-      "claude-login",
-      "codex-login",
+      "agent-claude",
+      "agent-codex",
     ]);
     expect(drainTerminalLaunchQueue()).toEqual([]);
   });
 
   it("drains only launches targeted at the active terminal window", () => {
-    enqueueTerminalLaunch(createTerminalLaunchPath("claude-login"), "terminal-a");
-    enqueueTerminalLaunch(createTerminalLaunchPath("codex-login"), "terminal-b");
+    enqueueTerminalLaunch(createTerminalLaunchPath("agent-claude"), "terminal-a");
+    enqueueTerminalLaunch(createTerminalLaunchPath("agent-codex"), "terminal-b");
     enqueueTerminalLaunch(createTerminalLaunchPath("github-ssh-login"));
 
     expect(drainTerminalLaunchQueue("terminal-a").map((launch) => launch.action)).toEqual([
-      "claude-login",
+      "agent-claude",
       "github-ssh-login",
     ]);
     expect(drainTerminalLaunchQueue("terminal-b").map((launch) => launch.action)).toEqual([
-      "codex-login",
+      "agent-codex",
     ]);
     expect(drainTerminalLaunchQueue()).toEqual([]);
   });

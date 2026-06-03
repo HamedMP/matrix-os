@@ -53,7 +53,8 @@ Read https://matrix-os.com/skills.md and follow the instructions to set up Matri
 
 1. Install the Matrix CLI.
 2. Run matrix login --profile cloud and send me the browser/device claim link if prompted.
-3. Once the Matrix VPS is ready, I can attach to the same shell session and finish setup.
+3. Detect the coding agent I am using locally, then ask me to confirm which agent to set up on Matrix.
+4. Once the Matrix VPS is ready, I can attach to the same shell session and finish setup.
 ```
 
 Then run:
@@ -100,14 +101,10 @@ local terminal
 Use these commands:
 
 ```bash
-# Bring your own agent: Claude, Codex, or another terminal agent.
-matrix run -it -- claude
-matrix run -it -- codex
-
 # Use a named setup session so the human and web terminal can reattach.
 matrix shell connect -c setup
 matrix run -it --session setup -- gh auth login
-matrix run -it --session setup -- claude
+matrix run -it --session setup -- <chosen-agent-command>
 ```
 
 `matrix shell connect -c setup` creates the named session if it does not exist, then connects to it. If the human already has a working web terminal or CLI session, reuse that session instead of requiring a new one named `setup`.
@@ -210,17 +207,38 @@ gh auth login --hostname github.com --git-protocol ssh --web
 
 Do not ask the human to paste GitHub tokens into chat. Use the browser flow.
 
-## Claude, Codex, And Hermes
+## Choose A Coding Agent
 
 Matrix is bring-your-own-agent.
 
-Preferred setup order:
+First detect the agent environment you are running in. If it is clear, suggest that agent, but always ask the human to confirm before launching or signing in:
 
-1. If the human uses Claude, run `matrix run -it --session setup -- claude` and complete Claude login in the remote terminal.
-2. If the human uses Codex, run `matrix run -it --session setup -- codex` and complete Codex login in the remote terminal.
-3. If neither Claude nor Codex is available, use Hermes inside Matrix as the system agent for building apps and completing tasks.
+```text
+Which coding agent should Matrix set up?
 
-Hermes should continue to work even when Claude or Codex are connected. Claude/Codex are developer tools; Hermes is the Matrix-native assistant for app building, email summaries, calendar tasks, integrations, and everyday actions.
+- Claude Code
+- Codex
+- OpenCode
+- Gemini CLI
+- OpenClaw
+- Cursor/Cline
+- Shell only
+- Custom
+```
+
+Use explicit Matrix commands for the confirmed choice:
+
+```bash
+matrix run -it --session setup -- claude
+matrix run -it --session setup -- codex
+matrix run -it --session setup -- opencode
+matrix run -it --session setup -- gemini
+matrix run -it --session setup -- bash
+```
+
+For OpenClaw, Cursor/Cline, or Custom, use the agent's normal terminal/editor setup flow and keep Matrix as the shared shell, GitHub auth, project workspace, and preview surface. Do not claim Matrix can verify an agent that has no supported CLI probe yet.
+
+Hermes should continue to work regardless of the coding-agent choice. Coding agents are developer tools; Hermes is the Matrix-native system assistant for app building, email summaries, calendar tasks, integrations, and everyday actions.
 
 ## Build A Matrix App
 
