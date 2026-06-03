@@ -155,6 +155,13 @@ describe("Chess app", () => {
     });
 
     expect(await screen.findByText("Game saved")).toBeTruthy();
+    await act(async () => {
+      db.emitChange();
+      await Promise.resolve();
+    });
+
+    expect(db.count).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Game saved")).toBeTruthy();
     expect(screen.queryByText("Saved games could not be loaded.")).toBeNull();
   });
 
