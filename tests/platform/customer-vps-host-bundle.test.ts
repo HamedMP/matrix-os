@@ -44,6 +44,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
+    expect(script).toContain('scripts/reset-shipped-icons.mjs');
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');

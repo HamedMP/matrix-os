@@ -745,6 +745,55 @@ describe("platform proxy routing", () => {
     expect(assetRes.headers.get("transfer-encoding")).toBeNull();
   });
 
+  it("routes sandboxed srcdoc Vite app assets with null-origin CORS through the shell route cookie", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice-vite-asset",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 127,
+      publicIPv4: "203.0.113.15",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("console.log('chess')", {
+        status: 200,
+        headers: {
+          "content-type": "application/javascript",
+          vary: "Accept-Encoding",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/apps/chess/assets/index.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        origin: "null",
+        cookie: "matrix_shell_route=alice",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [assetUrl, assetInit] = fetchMock.mock.calls[0]!;
+    expect(assetUrl).toBe("https://203.0.113.15:443/apps/chess/assets/index.js");
+    const assetHeaders = assetInit?.headers as Headers;
+    expect(assetHeaders.get("origin")).toBe("null");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    expect(assetHeaders.get("cookie")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBe("null");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("vary")).toContain("Origin");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
+  });
+
   it("routes code.matrix-os.com to the authenticated user's VPS gateway first", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await insertUserMachine(db, {
@@ -1947,6 +1996,57 @@ describe("platform proxy routing", () => {
     const claims = await syncJwt.verifySyncJwt(body.token, { secret: JWT_SECRET });
     expect(claims.handle).toBe("alice-staging");
     expect(claims.runtime_slot).toBe("staging");
+  });
+
+  it("routes explicit VM Vite app assets with null-origin CORS", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff140",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123484,
+      publicIPv4: "203.0.113.34",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("console.log('chess')", {
+        status: 200,
+        headers: {
+          "content-type": "application/javascript",
+          vary: "Accept-Encoding",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/vm/alice/apps/chess/assets/index.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        origin: "null",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [assetUrl, assetInit] = fetchMock.mock.calls[0]!;
+    expect(assetUrl).toBe("https://203.0.113.34:443/apps/chess/assets/index.js");
+    const assetHeaders = assetInit?.headers as Headers;
+    expect(assetHeaders.get("origin")).toBe("null");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    expect(res.headers.get("access-control-allow-origin")).toBe("null");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(res.headers.get("vary")).toContain("Origin");
+    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
   });
 
   it("routes authenticated shell static assets through the selected VM handle cookie", async () => {
