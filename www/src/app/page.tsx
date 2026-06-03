@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
@@ -85,7 +86,7 @@ const COPYABLE_AGENT_SETUP_PROMPT = `Set up Matrix OS so I can use my own cloud 
 First, read the official Matrix agent skill:
 https://matrix-os.com/skills.md
 
-Then install the Matrix CLI, help me sign in with matrix login, and start my preferred coding agent with matrix run.
+Then install the Matrix CLI, help me sign in with matrix login --profile cloud, and start my preferred coding agent with matrix run.
 
 Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal agent if I ask for it.`;
 
@@ -314,7 +315,7 @@ function AgentSetupSection() {
               Paste one message. Let your agent install Matrix.
             </h2>
             <p className="max-w-xl text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix publishes a setup skill at <code>matrix-os.com/skills.md</code>. Give it to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another coding agent so it can install the CLI, guide <code>matrix login</code>, and start work on your cloud computer with <code>matrix run</code>.
+              Matrix publishes a setup skill at <code>matrix-os.com/skills.md</code>. Give it to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another coding agent so it can install the CLI, guide <code>matrix login --profile cloud</code>, and start work on your cloud computer with <code>matrix run</code>.
             </p>
             <div className="mt-7 flex flex-wrap gap-3" aria-label="Supported coding agents">
               {agentBrands.map((brand) => (
@@ -323,13 +324,14 @@ function AgentSetupSection() {
                   className="inline-flex min-h-11 items-center gap-2.5 rounded-full px-3.5 text-[12px] font-medium"
                   style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(250,250,245,0.36)", color: c.forest }}
                 >
-                  <img
+                  <Image
                     src={brand.logo}
                     alt=""
                     aria-hidden="true"
                     width={24}
                     height={24}
                     className="size-6 shrink-0 rounded-md object-contain"
+                    unoptimized
                   />
                   {brand.name}
                 </div>
@@ -595,10 +597,10 @@ function FeaturesSection() {
               Built around you.
             </h2>
             <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
-              Your Matrix instance runs 24/7 in the cloud, always on and always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
+              Your Matrix instance runs 24/7 in the cloud: always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
             </p>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
-              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone, with everything exactly where you left it. No syncing, no waiting, no setup.
+              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone; everything is exactly where you left it. No syncing, no waiting, no setup.
             </p>
           </div>
 
