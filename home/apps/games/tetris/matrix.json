@@ -13,6 +13,20 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "tetris",
+  "storage": {
+    "tables": {
+      "scores": {
+        "columns": {
+          "score": "integer",
+          "lines": "integer",
+          "level": "integer"
+        },
+        "indexes": [
+          "score"
+        ]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",
