@@ -1,0 +1,470 @@
+:root {
+  --app-bg: var(--matrix-bg, #fafaf5);
+  --app-fg: var(--matrix-fg, #32352e);
+  --app-card: var(--matrix-card, #ffffff);
+  --app-muted: var(--matrix-muted, #f0ede4);
+  --app-muted-fg: var(--matrix-muted-fg, #7a7768);
+  --app-border: var(--matrix-border, #d6d3c8);
+  --app-primary: var(--matrix-primary, #434e3f);
+  --app-primary-fg: var(--matrix-primary-fg, #fafaf5);
+  --app-accent: var(--matrix-accent, #d06f25);
+  --app-success: var(--matrix-success, #3a7d44);
+  --app-warning: var(--matrix-warning, #d49b2a);
+  --app-danger: var(--matrix-destructive, #c4342d);
+  --app-radius: var(--matrix-radius, 22px);
+  --app-font: var(--matrix-font-sans, "Inter", system-ui, sans-serif);
+
+  /* Card geometry */
+  --card-w: clamp(46px, 9.4vw, 86px);
+  --card-h: calc(var(--card-w) * 1.4);
+  --card-radius: clamp(6px, 1vw, 10px);
+  --stack-step: calc(var(--card-h) * 0.27);
+  --felt: #2f6b46;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+body {
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--app-font);
+  color: var(--app-fg);
+  background: var(--app-bg);
+}
+
+.sol-app {
+  position: relative;
+  height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(140% 120% at 50% -20%, color-mix(in srgb, var(--app-accent) 7%, transparent), transparent 55%),
+    var(--app-bg);
+  overflow: hidden;
+}
+
+/* ---- Top bar ----------------------------------------------------------- */
+.sol-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px clamp(12px, 2.4vw, 22px);
+  flex-wrap: wrap;
+}
+.sol-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.sol-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
+  color: var(--app-accent);
+}
+.sol-stats {
+  display: flex;
+  gap: 8px;
+  margin-left: 4px;
+}
+.sol-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 58px;
+  padding: 5px 10px;
+  background: var(--app-card);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.08);
+}
+.sol-stat-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--app-muted-fg);
+}
+.sol-stat-value {
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.sol-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.sol-segment {
+  display: inline-flex;
+  background: var(--app-muted);
+  border-radius: 11px;
+  padding: 2px;
+}
+.seg {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-muted-fg);
+  padding: 6px 11px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.seg--on {
+  background: var(--app-card);
+  color: var(--app-fg);
+  box-shadow: 0 2px 6px rgba(50, 53, 46, 0.1);
+}
+.sol-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--app-muted);
+  color: var(--app-fg);
+  transition: all 0.15s ease;
+}
+.sol-btn:hover {
+  background: color-mix(in srgb, var(--app-fg) 8%, var(--app-muted));
+}
+.sol-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.sol-btn--primary {
+  background: var(--app-primary);
+  color: var(--app-primary-fg);
+}
+.sol-btn--primary:hover {
+  filter: brightness(1.06);
+  background: var(--app-primary);
+}
+.sol-btn--accent {
+  background: var(--app-accent);
+  color: #fff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--app-accent) 30%, transparent);
+}
+.sol-btn--accent:hover {
+  filter: brightness(1.06);
+  background: var(--app-accent);
+}
+.sol-btn:focus-visible,
+.seg:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.sol-toast {
+  margin: 0 clamp(12px, 2.4vw, 22px);
+  padding: 8px 14px;
+  font-size: 12px;
+  border-radius: 12px;
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+}
+
+/* ---- Felt table -------------------------------------------------------- */
+.sol-table {
+  flex: 1;
+  margin: 4px clamp(10px, 2vw, 22px) 0;
+  padding: clamp(12px, 2vw, 22px);
+  border-radius: var(--app-radius);
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, #ffffff 10%, var(--felt)), transparent 60%),
+    var(--felt);
+  box-shadow: inset 0 2px 18px rgba(0, 0, 0, 0.28), 0 10px 30px rgba(50, 53, 46, 0.16);
+  overflow: auto;
+  user-select: none;
+}
+
+.sol-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: clamp(14px, 2.6vw, 26px);
+}
+.sol-deal,
+.sol-foundations {
+  display: flex;
+  gap: clamp(6px, 1.4vw, 14px);
+}
+
+.sol-slot {
+  width: var(--card-w);
+  height: var(--card-h);
+  border-radius: var(--card-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.sol-foundation,
+.sol-waste,
+.sol-stock {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+}
+.sol-stock {
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  background: rgba(255, 255, 255, 0.06);
+  transition: all 0.15s ease;
+}
+.sol-stock:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.sol-stock-back {
+  position: absolute;
+  inset: 4px;
+  border-radius: calc(var(--card-radius) - 2px);
+  background:
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--app-primary) 80%, #1d231a) 0 6px, color-mix(in srgb, var(--app-primary) 60%, #2a3322) 6px 12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 800;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.sol-recycle {
+  color: rgba(255, 255, 255, 0.55);
+}
+.sol-empty-mark {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: clamp(18px, 4vw, 30px);
+  font-weight: 700;
+}
+.sol-empty-mark--col {
+  margin-top: 4px;
+}
+
+.sol-foundation {
+  cursor: pointer;
+}
+
+/* ---- Tableau ----------------------------------------------------------- */
+.sol-tableau {
+  display: grid;
+  grid-template-columns: repeat(7, var(--card-w));
+  gap: clamp(6px, 1.4vw, 14px);
+  justify-content: space-between;
+}
+.sol-col {
+  position: relative;
+  width: var(--card-w);
+  min-height: var(--card-h);
+}
+.sol-col .sol-empty-mark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px dashed rgba(255, 255, 255, 0.18);
+  border-radius: var(--card-radius);
+}
+.sol-stacked {
+  position: absolute;
+  left: 0;
+  width: var(--card-w);
+}
+
+/* ---- Card -------------------------------------------------------------- */
+.sol-card {
+  position: relative;
+  width: var(--card-w);
+  height: var(--card-h);
+  border-radius: var(--card-radius);
+  background: var(--app-card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  overflow: hidden;
+}
+.sol-card:hover {
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+.sol-card--selected {
+  outline: 2.5px solid var(--app-accent);
+  outline-offset: -1px;
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--app-accent) 40%, rgba(0, 0, 0, 0.4));
+}
+.sol-card:focus-visible {
+  outline: 2.5px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.sol-card--red {
+  color: var(--app-danger);
+}
+.sol-card--black {
+  color: #1c1f1a;
+}
+.sol-card--back {
+  background:
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--app-primary) 78%, #1d231a) 0 6px, color-mix(in srgb, var(--app-primary) 58%, #2a3322) 6px 12px);
+  cursor: default;
+}
+.sol-corner {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.95;
+  font-weight: 800;
+}
+.sol-corner em {
+  font-style: normal;
+  font-size: clamp(11px, 2.4vw, 17px);
+}
+.sol-corner i {
+  font-style: normal;
+  font-size: clamp(9px, 2vw, 14px);
+}
+.sol-corner--tl {
+  top: 4px;
+  left: 5px;
+}
+.sol-corner--br {
+  bottom: 4px;
+  right: 5px;
+  transform: rotate(180deg);
+}
+.sol-pip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(20px, 5vw, 38px);
+  opacity: 0.9;
+}
+
+/* ---- Win celebration --------------------------------------------------- */
+.sol-win {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--app-bg) 60%, transparent);
+  backdrop-filter: blur(4px);
+  z-index: 5;
+  animation: sol-fade 0.25s ease;
+}
+.sol-win-card {
+  position: relative;
+  z-index: 2;
+  background: var(--app-card);
+  border-radius: var(--app-radius);
+  padding: 28px 34px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-accent);
+  box-shadow: 0 18px 50px rgba(50, 53, 46, 0.28);
+}
+.sol-win-card h2 {
+  margin: 2px 0 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--app-fg);
+}
+.sol-win-card p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--app-muted-fg);
+}
+.sol-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.sol-confetti i {
+  position: absolute;
+  top: -12px;
+  left: calc(var(--i) * 4.16%);
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  background: hsl(calc(var(--i) * 37) 70% 55%);
+  animation: sol-fall 2.4s linear infinite;
+  animation-delay: calc(var(--i) * 0.08s);
+}
+@keyframes sol-fall {
+  0% {
+    transform: translateY(-20px) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(105vh) rotate(540deg);
+    opacity: 0.7;
+  }
+}
+@keyframes sol-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- Footer ------------------------------------------------------------ */
+.sol-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px clamp(12px, 2.4vw, 22px);
+  font-size: 12px;
+  color: var(--app-muted-fg);
+  flex-wrap: wrap;
+}
+.sol-hint {
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sol-card,
+  .sol-win,
+  .sol-card--selected {
+    transition: none;
+    animation: none;
+  }
+  .sol-confetti i {
+    animation: none;
+    display: none;
+  }
+}
