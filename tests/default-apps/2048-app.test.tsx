@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { tilesFromBoard } from "../../home/apps/games/2048/src/App";
+import App, { resetTileIdsForTest, tilesFromBoard } from "../../home/apps/games/2048/src/App";
 
 type DbRow = Record<string, unknown>;
 
@@ -25,6 +25,7 @@ function installMatrixDb(rows: DbRow[] = []) {
 
 describe("2048 app", () => {
   beforeEach(() => {
+    resetTileIdsForTest();
     window.localStorage.clear();
   });
 

@@ -33,6 +33,10 @@ function nextId(): number {
   return TILE_SEQ;
 }
 
+export function resetTileIdsForTest(): void {
+  TILE_SEQ = 1;
+}
+
 interface InternalState extends GameState {
   tiles: Tile[];
   history: { board: Board; score: number; tiles: Tile[] } | null;
@@ -67,6 +71,8 @@ function animationCellsForMove(board: Board, direction: Direction): { merged: Se
       const row = direction === "up" ? target : direction === "down" ? board.length - 1 - target : line;
       const col = direction === "left" ? target : direction === "right" ? board.length - 1 - target : line;
       if (isMerge) {
+        // `merged` is keyed by post-move output cells; `consumed` is keyed by
+        // pre-move source cells so survivor selection cannot reuse merged tiles.
         merged.add(cellKey(row, col));
         consumed.add(cellKey(current.row, current.col));
         if (next) consumed.add(cellKey(next.row, next.col));
