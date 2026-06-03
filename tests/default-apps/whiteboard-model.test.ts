@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -239,6 +240,18 @@ describe("whiteboard model — serialization", () => {
 });
 
 describe("whiteboard model — board index", () => {
+  it("keeps the template manifest hash aligned with matrix.json", () => {
+    const repoRoot = join(__dirname, "..", "..");
+    const matrixJson = readFileSync(join(repoRoot, "home/apps/whiteboard/matrix.json"));
+    const templateManifest = JSON.parse(
+      readFileSync(join(repoRoot, "home/.template-manifest.json"), "utf-8"),
+    ) as Record<string, string>;
+
+    expect(templateManifest["apps/whiteboard/matrix.json"]).toBe(
+      createHash("sha256").update(matrixJson).digest("hex"),
+    );
+  });
+
   it("declares timestamp columns needed for recency sorting", () => {
     const repoRoot = join(__dirname, "..", "..");
     const manifest = JSON.parse(
