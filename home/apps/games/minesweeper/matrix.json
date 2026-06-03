@@ -12,6 +12,20 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "minesweeper",
+  "storage": {
+    "tables": {
+      "times": {
+        "columns": {
+          "difficulty": "text",
+          "rows": "integer",
+          "cols": "integer",
+          "mines": "integer",
+          "seconds": "integer"
+        },
+        "indexes": ["difficulty", "rows", "cols", "mines"]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",
