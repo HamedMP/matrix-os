@@ -82,7 +82,7 @@ describe("device routes", () => {
         deviceCode: expect.any(String),
         userCode: expect.stringMatching(/^[A-Z]{4}-[A-Z]{4}$/),
         verificationUri: expect.stringContaining("/auth/device?user_code="),
-        expiresIn: 900,
+        expiresIn: 2700,
         interval: 5,
       });
     });
@@ -485,6 +485,37 @@ describe("device routes", () => {
       expect(html).toContain('id="instance-line"');
     });
 
+    it("starts signed-out CLI approval on signup and defers approval until runtime readiness", async () => {
+      const res = await app.request("/auth/device?user_code=BCDF-GHJK");
+      const html = await res.text();
+
+      expect(html).toContain("window.Clerk.mountSignUp");
+      expect(html).toContain("signInUrl: deviceAuthUrl('sign-in')");
+      expect(html).toContain("window.Clerk.mountSignIn");
+      expect(html).toContain("signUpUrl: deviceAuthUrl('sign-up')");
+      expect(html).toContain("fallbackRedirectUrl: approvalUrl");
+      expect(html).toContain("fetchWithTimeout('/api/auth/app-session'");
+      expect(html).toContain("fetchWithTimeout('/api/auth/provision-runtime'");
+      expect(html).toContain("fetchWithTimeout('/billing/checkout'");
+      expect(html).toContain("returnPath: deviceReturnPath");
+      expect(html).toContain("showRuntimeRequiredState()");
+      expect(html).toContain("showBillingRequiredState()");
+      expect(html).toContain("confirm.disabled = true;");
+      expect(html).toContain("button.disabled = isBusy || !runtimeReady;");
+      expect(html).toContain("delete signin.dataset.mounted;");
+      const provisioningStart = html.indexOf("async function startProvisioningFromClerkSession");
+      const continueStart = html.indexOf("async function continueDeviceOnboarding");
+      expect(html.indexOf("var token = await clerkTokenOrNull();", provisioningStart)).toBeLessThan(
+        html.indexOf("showLoadingState('Starting your Matrix computer...');", provisioningStart),
+      );
+      expect(html.indexOf("var token = await clerkTokenOrNull();", continueStart)).toBeLessThan(
+        html.indexOf("showLoadingState('Checking your Matrix computer...');", continueStart),
+      );
+      expect(html).toContain(
+        '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">',
+      );
+    });
+
     it("submits approval with an explicit Clerk bearer token", async () => {
       const res = await app.request("/auth/device?user_code=BCDF-GHJK");
       const html = await res.text();
@@ -499,7 +530,7 @@ describe("device routes", () => {
         html.indexOf("event.preventDefault();"),
       );
       expect(html).toContain(
-        '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:block">',
+        '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">',
       );
       expect(html).toContain("var html = await res.text();");
       expect(html.indexOf("var html = await res.text();")).toBeLessThan(
@@ -510,7 +541,7 @@ describe("device routes", () => {
       expect(html).not.toContain('onload="initClerk()"');
       expect(html).toContain("forceRedirectUrl: approvalUrl");
       expect(html).toContain("fallbackRedirectUrl: approvalUrl");
-      expect(html).toContain("signUpForceRedirectUrl: approvalUrl");
+      expect(html).toContain("signInForceRedirectUrl: approvalUrl");
       expect(html).not.toContain("afterSignInUrl");
     });
 
