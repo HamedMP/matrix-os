@@ -855,6 +855,8 @@ function addVaryHeader(headers: Headers, values: string[]): void {
 
 function applySandboxedAppAssetCorsHeaders(headers: Headers, path: string, origin: string | undefined): void {
   if (!isViteAppAssetPath(path) || origin !== 'null') return;
+  // Credentialed null-origin asset CORS is intentionally limited to shell-route cookies,
+  // which must remain SameSite=Lax so arbitrary sandboxed iframes cannot send them.
   headers.set('access-control-allow-origin', 'null');
   headers.set('access-control-allow-credentials', 'true');
   addVaryHeader(headers, ['Origin']);

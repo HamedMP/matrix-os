@@ -64,8 +64,7 @@ export async function resetShippedIcons(options = {}) {
     skipped: [],
   };
 
-  const sourceEntries = (await readdir(sourceDir, { withFileTypes: true }))
-    .map((entry) => entry.name)
+  const sourceEntries = (await readdir(sourceDir))
     .filter((fileName) => ICON_EXTENSIONS.has(fileName.slice(fileName.lastIndexOf('.'))))
     .sort();
 
