@@ -1,5 +1,19 @@
 export const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
-const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+const APP_RASTER_ICON_SLUGS = new Set([
+  "calculator",
+  "clock",
+  "expense-tracker",
+  "game-center",
+  "notes",
+  "pomodoro-timer",
+  "profile",
+  "social",
+  "task-manager",
+  "todo",
+  "weather",
+]);
 
 const SHIPPED_SVG_ICON_SLUGS = new Set([
   "calendar",
@@ -11,14 +25,21 @@ const SHIPPED_SVG_ICON_SLUGS = new Set([
   "files",
   "folder",
   "game",
+  "grid",
   "globe",
+  "layers",
   "mail",
+  "messages",
   "music",
   "search",
   "settings",
   "terminal",
   "whiteboard",
   "workspace",
+]);
+
+const ICON_SLUG_ALIASES = new Map<string, string>([
+  ["pomodoro", "pomodoro-timer"],
 ]);
 
 export interface GatewayAppEntryLike {
@@ -29,8 +50,9 @@ export interface GatewayAppEntryLike {
 
 export function iconUrlForSlug(slug: string | undefined): string | undefined {
   if (!slug || !SAFE_ICON_SLUG.test(slug)) return undefined;
-  const extension = SHIPPED_SVG_ICON_SLUGS.has(slug) ? "svg" : "png";
-  return `/icons/${encodeURIComponent(slug)}.${extension}`;
+  const iconSlug = ICON_SLUG_ALIASES.get(slug) ?? slug;
+  const extension = APP_RASTER_ICON_SLUGS.has(iconSlug) || !SHIPPED_SVG_ICON_SLUGS.has(iconSlug) ? "png" : "svg";
+  return `/icons/${encodeURIComponent(iconSlug)}.${extension}`;
 }
 
 function slugFromLaunchUrl(launchUrl: string | undefined): string | null {

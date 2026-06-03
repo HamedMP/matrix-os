@@ -53,8 +53,37 @@ interface CanvasTransformActions {
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
   focusOnWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
+  zoomToWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
   setTransform: (zoom: number, panX: number, panY: number) => void;
   resetForMobileViewport: () => void;
+}
+
+// Duration of the programmatic zoom animation; kept in sync with the CSS
+// transition in CanvasTransform. Exported so the view can read one value.
+export const ZOOM_ANIM_MS = 460;
+
+let zoomAnimTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelZoomAnimation(): void {
+  if (zoomAnimTimer) {
+    clearTimeout(zoomAnimTimer);
+    zoomAnimTimer = null;
+  }
+}
+
+export function resetCanvasTransformAnimation(): void {
+  cancelZoomAnimation();
+}
+
+function finishInstantTransform(): { isAnimating: false } {
+  cancelZoomAnimation();
+  return { isAnimating: false };
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export const useCanvasTransform = create<CanvasTransformState & CanvasTransformActions>()(
@@ -66,15 +95,16 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     isScrolling: false,
     containerRect: null,
 
-    setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+    setZoom: (zoom) => set({ zoom: clampZoom(zoom), ...finishInstantTransform() }),
 
-    zoomIn: () => set((s) => ({ zoom: clampZoom(s.zoom + ZOOM_STEP) })),
+    zoomIn: () => set((s) => ({ zoom: clampZoom(s.zoom + ZOOM_STEP), ...finishInstantTransform() })),
 
-    zoomOut: () => set((s) => ({ zoom: clampZoom(s.zoom - ZOOM_STEP) })),
+    zoomOut: () => set((s) => ({ zoom: clampZoom(s.zoom - ZOOM_STEP), ...finishInstantTransform() })),
 
-    resetZoom: () => set({ zoom: 1 }),
+    resetZoom: () => set({ zoom: 1, ...finishInstantTransform() }),
 
     zoomAtPoint: (newZoom, cx, cy) => {
+      cancelZoomAnimation();
       const clamped = clampZoom(newZoom);
       const rect = get().containerRect;
       const lx = cx - (rect?.left ?? 0);
@@ -83,15 +113,20 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
         zoom: clamped,
         panX: s.panX + lx * (1 / clamped - 1 / s.zoom),
         panY: s.panY + ly * (1 / clamped - 1 / s.zoom),
+        isAnimating: false,
       }));
     },
 
-    setPan: (x, y) => set({ panX: x, panY: y }),
+    setPan: (x, y) => set({ panX: x, panY: y, ...finishInstantTransform() }),
 
-    panBy: (dx, dy) => set((s) => ({
-      panX: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panX + dx)),
-      panY: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panY + dy)),
-    })),
+    panBy: (dx, dy) => {
+      cancelZoomAnimation();
+      set((s) => ({
+        panX: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panX + dx)),
+        panY: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panY + dy)),
+        isAnimating: false,
+      }));
+    },
 
     setIsScrolling: (v) => { if (get().isScrolling !== v) set({ isScrolling: v }); },
 
@@ -117,9 +152,10 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     fitAll: (windows, viewportW, viewportH) => {
       if (windows.length === 0) {
-        set({ zoom: 1, panX: 0, panY: 0 });
+        set({ zoom: 1, panX: 0, panY: 0, ...finishInstantTransform() });
         return;
       }
+      const instant = finishInstantTransform();
 
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const w of windows) {
@@ -140,20 +176,48 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
 
-      set({ zoom, panX, panY });
+      set({ zoom, panX, panY, ...instant });
     },
 
     focusOnWindow: (win, viewportW, viewportH) => {
+      const instant = finishInstantTransform();
       const { zoom } = get();
       const centerX = win.x + win.width / 2;
       const centerY = win.y + win.height / 2;
       const panX = viewportW / (2 * zoom) - centerX;
       const panY = viewportH / (2 * zoom) - centerY;
-      set({ panX, panY });
+      set({ panX, panY, ...instant });
     },
 
-    setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
+    // Zoom so a single window fills the viewport (minus padding) and center it.
+    // Used by double-clicking an app's title bar to "zoom into" that app. The
+    // transform change is eased (with a gentle overshoot) via a CSS transition
+    // gated on `isAnimating` in CanvasTransform — so the jump isn't abrupt.
+    zoomToWindow: (win, viewportW, viewportH) => {
+      const availW = viewportW - FIT_PADDING * 2;
+      const availH = viewportH - FIT_PADDING * 2;
+      const zoom = clampZoom(Math.min(availW / win.width, availH / win.height));
+      const centerX = win.x + win.width / 2;
+      const centerY = win.y + win.height / 2;
+      const panX = viewportW / (2 * zoom) - centerX;
+      const panY = viewportH / (2 * zoom) - centerY;
 
-    resetForMobileViewport: () => set({ zoom: 1, panX: 0, panY: 0, isScrolling: false, isAnimating: false }),
+      if (prefersReducedMotion()) {
+        set({ zoom, panX, panY, isAnimating: false });
+        return;
+      }
+      cancelZoomAnimation();
+      // Flip on the eased transition, then set the target transform in the same
+      // commit so React applies both together and the browser animates to it.
+      set({ zoom, panX, panY, isAnimating: true });
+      zoomAnimTimer = setTimeout(() => {
+        set({ isAnimating: false });
+        zoomAnimTimer = null;
+      }, ZOOM_ANIM_MS);
+    },
+
+    setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY, ...finishInstantTransform() }),
+
+    resetForMobileViewport: () => set({ zoom: 1, panX: 0, panY: 0, isScrolling: false, ...finishInstantTransform() }),
   })),
 );

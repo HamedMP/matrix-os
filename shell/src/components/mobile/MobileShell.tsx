@@ -22,6 +22,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatContext } from "@/stores/chat-context";
 import { useTheme } from "@/hooks/useTheme";
+import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
@@ -53,10 +54,6 @@ const BUILT_IN_APPS: MobileApp[] = [
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
   { id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" },
 ];
-
-function iconUrl(slug: string): string {
-  return `/icons/${slug}.png`;
-}
 
 const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {
   display: "flex",
@@ -703,7 +700,7 @@ function DockButton({
 }
 
 function AppIcon({ slug, size }: { slug: string; size: number }) {
-  const [src, setSrc] = useState(() => iconUrl(slug));
+  const [src, setSrc] = useState(() => iconUrlForSlug(slug) ?? "/icon-192.png");
   const triedSvg = useRef(false);
   const prevSlug = useRef(slug);
 
@@ -712,7 +709,7 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
     prevSlug.current = slug;
     triedSvg.current = false;
     // react-doctor-disable-next-line react-doctor/no-derived-state -- `src` is not pure derived state: it is seeded from `slug` but then mutated at runtime by the onError fallback chain (.png -> .svg -> /icon-192.png). Computing it in render would discard the resolved fallback and re-trigger the broken-image flicker on every render. This effect resets the chain only when the slug actually changes.
-    setSrc(iconUrl(slug));
+    setSrc(iconUrlForSlug(slug) ?? "/icon-192.png");
   }, [slug]);
 
   return (
@@ -730,9 +727,10 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
         objectFit: "contain",
       }}
       onError={() => {
-        if (!triedSvg.current) {
+        const svgUrl = src.replace(/\.[^.]+$/, ".svg");
+        if (!triedSvg.current && src !== svgUrl) {
           triedSvg.current = true;
-          setSrc(`/icons/${slug}.svg`);
+          setSrc(svgUrl);
         } else {
           setSrc("/icon-192.png");
         }

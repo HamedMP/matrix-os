@@ -12,6 +12,7 @@ import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { useChatContext } from "@/stores/chat-context";
+import { TrafficLights } from "../window/TrafficLights";
 import { Minus, Maximize2 } from "lucide-react";
 
 function useThemeStyle() {
@@ -184,6 +185,18 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
     if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
   };
 
+  // Double-clicking the title bar zooms the canvas so this app fills the
+  // viewport (and centers it) — a quick "zoom into this app" gesture.
+  const onTitleDoubleClick = () => {
+    const cRect = useCanvasTransform.getState().containerRect;
+    focusWindow(win.id);
+    useCanvasTransform.getState().zoomToWindow(
+      { x: win.x, y: win.y, width: win.width, height: win.height },
+      cRect?.width ?? window.innerWidth,
+      cRect?.height ?? window.innerHeight,
+    );
+  };
+
   const onResizeStart = (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -239,6 +252,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
       onPointerMove={onDragMove}
       onPointerUp={onDragEnd}
       onPointerCancel={onDragEnd}
+      onDoubleClick={onTitleDoubleClick}
     >
       {/* Glass pill container */}
       <div
@@ -248,37 +262,12 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
             : "bg-muted/40 border border-border/20 opacity-80"
         }`}
       >
-        {/* macOS traffic lights */}
-        <div className="group/traffic flex items-center gap-1.5 shrink-0 relative z-10">
-          <button
-            type="button"
-            className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
-            onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
-            aria-label="Close"
-          >
-            <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-              x
-            </span>
-          </button>
-          <button
-            type="button"
-            className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
-            onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
-            aria-label="Minimize"
-          >
-            <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-              -
-            </span>
-          </button>
-          <button
-            type="button"
-            className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
-            onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
-            aria-label="Fullscreen"
-          >
-            <Maximize2 className="size-1.5 text-black/0 group-hover/traffic:text-black/60 transition-colors" />
-          </button>
-        </div>
+        <TrafficLights
+          className="mr-2 shrink-0 relative z-10"
+          onClose={() => closeWindow(win.id)}
+          onMinimize={() => minimizeWindow(win.id)}
+          onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}
+        />
         {/* Centered title with icon */}
         <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 relative z-10">
           {iconUrl ? (
@@ -311,6 +300,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
       onPointerMove={onDragMove}
       onPointerUp={onDragEnd}
       onPointerCancel={onDragEnd}
+      onDoubleClick={onTitleDoubleClick}
     >
       {/* Win98 raised title bar */}
       <div
@@ -343,7 +333,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
           </span>
         </div>
         {/* Right: Win98 window buttons */}
-        <div className="flex items-center gap-0.5 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0" onDoubleClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
