@@ -60,9 +60,10 @@ final human review.
    - Produce an ordered list of PR number, branch, base, draft state, and URL.
 
 2. Validate reviewability.
-   - If any PR is still draft, report that Greptile may not run until a human or
-     a separate explicit action marks it ready. Do not convert it from this
-     command.
+   - If any PR is still draft, report that Greptile may not run for that PR until
+     a human or a separate explicit action marks it ready. Do not convert it from
+     this command. Continue monitoring and fixing the remaining non-draft PRs in
+     stack order; keep each draft PR listed as a blocker in the final status.
    - Always keep the PR order intact, regardless of draft state. Do not alter
      bases manually unless Graphite reports the stack is malformed.
 
@@ -116,9 +117,11 @@ final human review.
      `npx react-doctor@latest <project-dir>` for each affected React project
      directory that has a `package.json` (for example, `shell`, `packages/ui`,
      or `www`). Do not pass individual files to react-doctor. For default apps
-     under `home/apps/**`, create a temporary React project, copy the affected
-     app `src/` files plus a minimal React `package.json`, run react-doctor
-     against that temporary directory, then delete the temporary directory.
+     under `home/apps/**`, create a temporary React project outside the repo with
+     `mktemp -d` (for example under `/tmp`), copy the affected app `src/` files
+     plus a minimal React `package.json`, run react-doctor against that temporary
+     directory, and delete the temporary directory in cleanup even when
+     react-doctor fails.
      Resolve findings before committing, or report the exact reason the gate
      could not run.
    - Use Graphite to restack, sync, and submit updates:
