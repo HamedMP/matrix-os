@@ -4,10 +4,14 @@ import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
 import { LandingBilling } from "@/components/landing/LandingBilling";
 import { LandingTelemetry } from "@/components/landing/LandingTelemetry";
+import { AgentSetupCopyButton } from "@/components/landing/AgentSetupCopyButton";
 import {
   ArrowRightIcon,
   BrainCircuitIcon,
+  GithubIcon,
   GlobeIcon,
+  LinkedinIcon,
+  MessageCircleIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 
@@ -44,29 +48,54 @@ const c = {
   subtle: "#7A7768",
 } as const;
 
-const navLinks = [
-  { label: "about", href: "#about" },
-  { label: "features", href: "#features" },
-  { label: "pricing", href: "#pricing" },
-  { label: "developers", href: "#developers" },
-  { label: "releases", href: "/releases" },
-  { label: "agents", href: "/skills.md" },
-] as const;
+type NavLinkConfig = {
+  label: string;
+  href: string;
+};
 
-const communityLinks = [
+const navLinks: NavLinkConfig[] = [
+  { label: "features", href: "#features" },
+  { label: "developers", href: "#developers" },
+  { label: "billing", href: "#pricing" },
+];
+
+type FooterLinkItem = { label: string; href: string };
+
+const footerProductLinks: readonly FooterLinkItem[] = [
   { label: "Docs", href: "/docs" },
   { label: "Releases", href: "/releases" },
   { label: "Agent Skill", href: "/skills.md" },
   { label: "Whitepaper", href: "/whitepaper" },
-  { label: "Join Discord", href: "https://discord.gg/cSBBQWtPwV" },
-  { label: "LinkedIn", href: "https://www.linkedin.com/company/matrix-os" },
-  { label: "X", href: "https://x.com/joinmatrixos" },
-  { label: "GitHub", href: "https://github.com/HamedMP/matrix-os" },
-] as const;
+];
 
-const legalLinks = [
+const footerLegalLinks: readonly FooterLinkItem[] = [
   { label: "Terms", href: "/terms" },
   { label: "Privacy", href: "/privacy" },
+];
+
+const footerSocialIcons = [
+  { label: "Discord", href: "https://discord.gg/cSBBQWtPwV", Icon: MessageCircleIcon },
+  { label: "LinkedIn", href: "https://www.linkedin.com/company/matrix-os", Icon: LinkedinIcon },
+  { label: "X", href: "https://x.com/joinmatrixos", Icon: null },
+  { label: "GitHub", href: "https://github.com/HamedMP/matrix-os", Icon: GithubIcon },
+] as const;
+
+const COPYABLE_AGENT_SETUP_PROMPT = `Set up Matrix OS so I can use my own cloud computer for coding agents.
+
+First, read the official Matrix agent skill:
+https://matrix-os.com/skills.md
+
+Then install the Matrix CLI, help me sign in with matrix login, and start my preferred coding agent with matrix run.
+
+Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal agent if I ask for it.`;
+
+const agentBrands = [
+  { name: "Claude Code", logo: "/agents/claude-code.svg" },
+  { name: "Codex", logo: "/agents/codex.svg" },
+  { name: "Pi", logo: "/agents/pi.svg" },
+  { name: "OpenCode", logo: "/agents/opencode.svg" },
+  { name: "Cursor", logo: "/agents/cursor.svg" },
+  { name: "Gemini CLI", logo: "/agents/gemini.svg" },
 ] as const;
 
 export const metadata: Metadata = {
@@ -107,9 +136,27 @@ export default function LandingPage() {
         <rect width="100%" height="100%" filter="url(#grain)" />
       </svg>
       <style>{`
-        .nav-link { position: relative; }
+        .nav-link { position: relative; transition: color 0.25s ease; }
+        .nav-link:hover { color: ${c.forest}; }
         .nav-link::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 1px; background: currentColor; transform: scaleX(0); transform-origin: right; transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
         .nav-link:hover::after { transform: scaleX(1); transform-origin: left; }
+        .nav-chip {
+          display: inline-flex;
+          min-height: 2rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 9999px;
+          padding: 0 0.5rem;
+          transition: color 0.25s ease, opacity 0.25s ease;
+        }
+        .nav-chip:hover {
+          color: ${c.forest};
+          opacity: 0.72;
+        }
+
+        .footer-link { transition: color 0.25s ease, opacity 0.25s ease; }
+        .footer-link:hover { color: ${c.forest}; opacity: 1; }
+        .footer-social:hover { color: ${c.forest}; border-color: ${c.mutedFg}; background-color: rgba(250, 250, 245, 0.9); }
 
         html { scroll-behavior: smooth; }
 
@@ -131,23 +178,94 @@ export default function LandingPage() {
           left: 50%;
           transform: translateX(-50%);
           z-index: 100;
+          width: fit-content;
+          max-width: min(calc(100vw - 2rem), 44rem);
         }
         .nav-island-inner {
-          display: flex;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
           align-items: center;
-          gap: 2rem;
-          padding: 10px 12px 10px 16px;
+          column-gap: 0.75rem;
+          width: 100%;
+          min-height: 3rem;
+          padding: 10px 1.25rem 10px 1.375rem;
           border-radius: 9999px;
-          background: rgba(250, 250, 245, 0.82);
+          background: rgba(250, 250, 245, 0.96);
           backdrop-filter: blur(16px) saturate(1.8);
           -webkit-backdrop-filter: blur(16px) saturate(1.8);
           border: 1px solid ${c.border};
           box-shadow: 0 4px 24px rgba(50, 53, 46, 0.08), 0 1px 4px rgba(50, 53, 46, 0.04);
         }
+        .nav-brand {
+          grid-column: 1;
+          justify-self: start;
+        }
+        .nav-links {
+          display: none;
+        }
+        .nav-actions {
+          grid-column: 2;
+          justify-self: end;
+        }
+        @media (min-width: 760px) {
+          .nav-island {
+            width: min(calc(100vw - 2rem), 39.5rem);
+          }
+          .nav-island-inner {
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            column-gap: 0.75rem;
+            padding: 9px 1rem 9px 1.125rem;
+          }
+          .nav-brand {
+            grid-column: 1;
+          }
+          .nav-links {
+            grid-column: 2;
+            justify-self: center;
+            display: inline-flex;
+            min-width: 0;
+            align-items: center;
+            gap: 1.05rem;
+          }
+          .nav-actions {
+            grid-column: 3;
+          }
+        }
+        @media (min-width: 1100px) {
+          .nav-island {
+            width: min(calc(100vw - 2rem), 50rem);
+          }
+          .nav-island-inner {
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            column-gap: 1.25rem;
+            padding: 10px 1.75rem 10px 1.5rem;
+          }
+          .nav-brand {
+            grid-column: 1;
+          }
+          .nav-links {
+            grid-column: 2;
+            justify-self: center;
+            gap: 0.35rem;
+          }
+          .nav-actions {
+            grid-column: 3;
+          }
+        }
+        @media (min-width: 1280px) {
+          .nav-island-inner {
+            column-gap: 1.5rem;
+            padding: 11px 2rem 11px 1.75rem;
+          }
+          .nav-links {
+            gap: 2.25rem;
+          }
+        }
       `}</style>
 
       <NavIsland />
       <HeroSection />
+      <AgentSetupSection />
       <PreviewSection />
       <AboutSection />
 
@@ -160,7 +278,6 @@ export default function LandingPage() {
 
       <LandingBilling />
 
-      <DevelopersSection />
       <FaqSection />
       <FinalCtaSection />
       <SiteFooter />
@@ -168,40 +285,126 @@ export default function LandingPage() {
   );
 }
 
+function AgentSetupSection() {
+  return (
+    <section id="developers" className="relative py-16 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="grid gap-8 md:grid-cols-[0.88fr_1.12fr] md:items-stretch">
+          <div className="flex flex-col justify-center">
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>For coding agents</p>
+            <h2 className="mb-5 max-w-xl text-[clamp(1.8rem,4vw,3.2rem)] font-semibold leading-[1.12]" style={{ color: c.forest }}>
+              Paste one message. Let your agent install Matrix.
+            </h2>
+            <p className="max-w-xl text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+              Matrix publishes a setup skill at <code>matrix-os.com/skills.md</code>. Give it to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another coding agent so it can install the CLI, guide <code>matrix login</code>, and start work on your cloud computer with <code>matrix run</code>.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3" aria-label="Supported coding agents">
+              {agentBrands.map((brand) => (
+                <div
+                  key={brand.name}
+                  className="inline-flex min-h-11 items-center gap-2.5 rounded-full px-3.5 text-[12px] font-medium"
+                  style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(250,250,245,0.36)", color: c.forest }}
+                >
+                  <img
+                    src={brand.logo}
+                    alt=""
+                    aria-hidden="true"
+                    width={24}
+                    height={24}
+                    className="size-6 shrink-0 rounded-md object-contain"
+                  />
+                  {brand.name}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[16px] p-5 md:p-6" style={{ backgroundColor: "rgba(67,78,63,0.07)", border: `1px solid ${c.border}` }}>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <p className="text-[11px] uppercase tracking-[0.2em]" style={{ color: c.subtle }}>Copy for your agent</p>
+              <AgentSetupCopyButton text={COPYABLE_AGENT_SETUP_PROMPT} />
+            </div>
+            <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap rounded-[12px] p-4 text-left text-[12px] leading-[1.75]"
+              style={{ backgroundColor: "rgba(250,250,245,0.54)", color: c.forest, border: `1px solid ${c.border}` }}>
+              <code>{COPYABLE_AGENT_SETUP_PROMPT}</code>
+            </pre>
+            <div className="mt-5 flex flex-wrap gap-3">
+              {/* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- /skills.md is a static public file, not a Next route; Link would prefetch/client-navigate raw markdown */}
+              <a href="/skills.md" className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80"
+                style={{ border: `1px solid ${c.border}`, color: c.forest }}>
+                Open skills.md <ArrowRightIcon className="size-3.5" />
+              </a>
+              <Link href="/docs/guide/developer-workflow" className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] transition-opacity duration-300 hover:opacity-80"
+                style={{ border: `1px solid ${c.border}`, color: c.forest }}>
+                Developer workflow
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function NavLinkItem({ link }: { link: NavLinkConfig }) {
+  return (
+    <a
+      href={link.href}
+      className="nav-chip shrink-0 whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.12em]"
+      style={{ color: c.mutedFg }}
+    >
+      {link.label}
+    </a>
+  );
+}
+
 function NavIsland() {
   return (
     <div className="nav-island">
       <div className="nav-island-inner">
-        <Link href="/" className="flex items-center gap-2 shrink-0" style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>
-          <Logo className="h-[1.35rem] w-auto" style={{ color: c.forest }} />
-          <span className="text-[13px] font-bold tracking-tight" style={{ color: c.forest }}>matrix os</span>
+        <Link
+          href="/"
+          className="nav-brand flex shrink-0 items-center gap-2.5"
+          style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}
+        >
+          <Logo className="h-7 w-auto min-[1100px]:h-8" style={{ color: c.forest }} />
+          <span className="hidden min-[1100px]:inline whitespace-nowrap text-[15px] font-bold tracking-tight min-[1280px]:text-base" style={{ color: c.forest }}>
+            matrix os
+          </span>
         </Link>
-        <nav className="hidden md:flex items-center gap-5">
+        <nav className="nav-links" aria-label="Primary">
           {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              target={link.href.startsWith("http") ? "_blank" : undefined}
-              rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
-              className="nav-link text-[10px] tracking-[0.18em] uppercase"
-              style={{ color: c.forest }}
-            >
-              {link.label}
-            </a>
+            <NavLinkItem key={link.href} link={link} />
           ))}
         </nav>
-        <SignedOut>
-          <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="nav" data-ph-target="get_started" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
-            style={{ backgroundColor: c.forest, color: c.pageBg }}>
-            get started
-          </a>
-        </SignedOut>
-        <SignedIn>
-          <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="nav" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="text-[10px] tracking-[0.12em] uppercase font-medium px-4 py-1.5 rounded-full transition-colors duration-200 shrink-0"
-            style={{ backgroundColor: c.forest, color: c.pageBg }}>
-            open matrix os
-          </a>
-        </SignedIn>
+        <div className="nav-actions">
+          <SignedOut>
+            <a
+              href="https://app.matrix-os.com"
+              data-ph-event="marketing_cta_clicked"
+              data-ph-location="nav"
+              data-ph-target="get_started"
+              className="inline-flex shrink-0 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] transition-colors duration-200 min-[1280px]:px-5"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}
+            >
+              get started
+            </a>
+          </SignedOut>
+          <SignedIn>
+            <a
+              href="https://app.matrix-os.com"
+              data-ph-event="marketing_cta_clicked"
+              data-ph-location="nav"
+              data-ph-target="open_app"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex shrink-0 rounded-full px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] transition-colors duration-200 min-[1280px]:px-5"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}
+            >
+              open matrix os
+            </a>
+          </SignedIn>
+        </div>
       </div>
     </div>
   );
@@ -209,14 +412,14 @@ function NavIsland() {
 
 function HeroSection() {
   return (
-    <section className="relative min-h-[92svh] overflow-hidden pt-32 pb-20 md:pt-24 md:pb-24" style={{ backgroundColor: c.pageBg }}>
-      <div className="relative min-h-[calc(92svh-13rem)] mx-auto max-w-[1200px] px-6 md:px-8 grid items-center gap-10 md:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)] md:gap-14">
-        <div className="relative z-10 max-w-md">
+    <section className="relative min-h-[78svh] overflow-hidden pt-32 pb-20 md:min-h-[82svh] md:pt-28 md:pb-24" style={{ backgroundColor: c.pageBg }}>
+      <div className="relative mx-auto grid min-h-[calc(78svh-13rem)] max-w-[980px] items-center gap-8 px-6 md:min-h-[calc(82svh-13rem)] md:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] md:gap-10 md:px-8 lg:max-w-[1040px] lg:gap-12">
+        <div className="relative z-10 max-w-[22rem] md:max-w-[26rem]">
           <h1 className="text-[2.65rem] md:text-[3.25rem] leading-[1.1] mb-6" style={{ color: c.forest }}>
             Your computer, in the cloud.
           </h1>
           <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
-            A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready — your apps, your files, your way.
+            A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready: your apps, your files, your way.
           </p>
           <SignedOut>
             <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="get_started" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
@@ -250,7 +453,7 @@ function HeroSection() {
             </a>
           </div>
         </div>
-        <div className="relative z-0 w-full overflow-hidden" style={{ backgroundColor: c.pageBg }}>
+        <div className="relative z-0 mx-auto w-full max-w-[340px] md:mx-0 md:max-w-none md:justify-self-end">
           <video
             autoPlay
             loop
@@ -261,7 +464,7 @@ function HeroSection() {
             preload="metadata"
             controls={false}
             src="/hero-loop.mp4"
-            className="block w-full aspect-[16/11] md:aspect-[16/10] object-contain object-center"
+            className="block aspect-[4/3] w-full object-contain object-center md:aspect-[16/11] md:max-w-[420px]"
             style={{ backgroundColor: c.pageBg }}
           />
         </div>
@@ -278,7 +481,7 @@ function PreviewSection() {
         <div className="mt-10 max-w-2xl mx-auto text-center">
           <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
           <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-            Your Matrix instance isn&apos;t just a dashboard — it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
+            Your Matrix instance isn&apos;t just a dashboard: it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
           </p>
         </div>
       </div>
@@ -299,7 +502,7 @@ function AboutSection() {
           </div>
           <div className="flex flex-col gap-6 md:pt-10">
             <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop — your apps, your files, your settings — ready to go. No installs, no setup, nothing to maintain.
+              Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop: your apps, your files, your settings, ready to go. No installs, no setup, nothing to maintain.
             </p>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
               Just tell it what you need. An AI assistant builds your apps, organizes your workspace, and keeps everything running. It works on any device, from anywhere, and picks up right where you left off.
@@ -312,27 +515,27 @@ function AboutSection() {
 }
 
 const featureNetworkLines = [
-  { x: 200, y: 52, anim: "line-blink", delay: "0s" },
-  { x: 338, y: 115, anim: "line-steady", delay: "1s" },
-  { x: 340, y: 280, anim: "line-blink", delay: "3s" },
-  { x: 200, y: 348, anim: "line-steady", delay: "0.5s" },
-  { x: 60, y: 280, anim: "line-blink", delay: "5s" },
-  { x: 62, y: 115, anim: "line-steady", delay: "2s" },
+  { x: 200, y: 42, anim: "line-blink", delay: "0s" },
+  { x: 348, y: 108, anim: "line-steady", delay: "1s" },
+  { x: 350, y: 292, anim: "line-blink", delay: "3s" },
+  { x: 200, y: 358, anim: "line-steady", delay: "0.5s" },
+  { x: 50, y: 292, anim: "line-blink", delay: "5s" },
+  { x: 52, y: 108, anim: "line-steady", delay: "2s" },
 ] as const;
 
 const featureNetworkDevices = [
-  { x: 200, y: 52, anim: "device-blink", delay: "0s", label: "Mobile", icon: "smartphone" as const },
-  { x: 338, y: 115, anim: "device-steady", delay: "1s", label: "Laptop", icon: "laptop" as const },
-  { x: 340, y: 280, anim: "device-blink", delay: "3s", label: "Tablet", icon: "tablet" as const },
-  { x: 200, y: 348, anim: "device-steady", delay: "0.5s", label: "Computer", icon: "monitor" as const },
-  { x: 60, y: 280, anim: "device-blink", delay: "5s", label: "Friend's PC", icon: "laptop" as const },
-  { x: 62, y: 115, anim: "device-steady", delay: "2s", label: "Browser", icon: "globe" as const },
+  { x: 200, y: 42, anim: "device-blink", delay: "0s", label: "Mobile", icon: "smartphone" as const },
+  { x: 348, y: 108, anim: "device-steady", delay: "1s", label: "Laptop", icon: "laptop" as const },
+  { x: 350, y: 292, anim: "device-blink", delay: "3s", label: "Tablet", icon: "tablet" as const },
+  { x: 200, y: 358, anim: "device-steady", delay: "0.5s", label: "Computer", icon: "monitor" as const },
+  { x: 50, y: 292, anim: "device-blink", delay: "5s", label: "Friend's PC", icon: "laptop" as const },
+  { x: 52, y: 108, anim: "device-steady", delay: "2s", label: "Browser", icon: "globe" as const },
 ] as const;
 
 const featurePills = [
-  { Icon: BrainCircuitIcon, title: "Always running", desc: "Your instance never sleeps. Apps, data, and AI — running 24/7 whether you're connected or not." },
+  { Icon: BrainCircuitIcon, title: "Always running", desc: "Your instance never sleeps. Apps, data, and AI stay online 24/7 whether you're connected or not." },
   { Icon: ShieldCheckIcon, title: "Private by design", desc: "Your own database, files, and runtime. Fully isolated. Nobody else can see in." },
-  { Icon: GlobeIcon, title: "Any screen, anywhere", desc: "Phone, laptop, friend's computer — open a browser and you're home." },
+  { Icon: GlobeIcon, title: "Any screen, anywhere", desc: "Phone, laptop, friend's computer: open a browser and you're home." },
 ] as const;
 
 function FeaturesSection() {
@@ -341,12 +544,12 @@ function FeaturesSection() {
       <style>{`
         @keyframes net-flow { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
         @keyframes center-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
-        @keyframes center-ring { 0% { r: 44; opacity: 0.3; } 100% { r: 80; opacity: 0; } }
+        @keyframes center-ring { 0% { r: 52; opacity: 0.35; } 100% { r: 96; opacity: 0; } }
         @keyframes glow-breathe { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.45; } }
-        @keyframes device-online { 0%, 15% { opacity: 1; } 20%, 100% { opacity: 0.3; } }
-        @keyframes device-online-long { 0%, 60% { opacity: 1; } 65%, 100% { opacity: 0.3; } }
-        @keyframes line-active { 0%, 15% { stroke-opacity: 0.3; } 20%, 100% { stroke-opacity: 0.06; } }
-        @keyframes line-active-long { 0%, 60% { stroke-opacity: 0.3; } 65%, 100% { stroke-opacity: 0.06; } }
+        @keyframes device-online { 0%, 15% { opacity: 1; } 20%, 100% { opacity: 0.72; } }
+        @keyframes device-online-long { 0%, 60% { opacity: 1; } 65%, 100% { opacity: 0.72; } }
+        @keyframes line-active { 0%, 15% { stroke-opacity: 0.55; } 20%, 100% { stroke-opacity: 0.22; } }
+        @keyframes line-active-long { 0%, 60% { stroke-opacity: 0.55; } 65%, 100% { stroke-opacity: 0.22; } }
         .net-line-flow {
           stroke-dasharray: 6 6;
           animation: net-flow 1.8s linear infinite, var(--line-state-animation);
@@ -374,10 +577,10 @@ function FeaturesSection() {
               Built around you.
             </h2>
             <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
-              Your Matrix instance runs 24/7 in the cloud — always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
+              Your Matrix instance runs 24/7 in the cloud, always on and always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
             </p>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
-              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone — everything is exactly where you left it. No syncing, no waiting, no setup.
+              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone, with everything exactly where you left it. No syncing, no waiting, no setup.
             </p>
           </div>
 
@@ -401,74 +604,74 @@ function FeaturesSection() {
 
 function FeatureNetworkDiagram() {
   return (
-    <div className="relative" style={{ aspectRatio: "1 / 1", maxWidth: 520, margin: "0 auto" }}>
-      <svg viewBox="0 0 400 400" className="w-full h-full" style={{ overflow: "visible" }}>
+    <div className="relative w-full" style={{ aspectRatio: "1 / 1", maxWidth: 560, margin: "0 auto" }}>
+      <svg viewBox="0 0 400 400" className="h-full w-full" style={{ overflow: "visible" }} aria-label="Matrix instance connected to phones, laptops, tablets, and browsers">
         <defs>
           <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={c.ember} stopOpacity="0.25" />
-            <stop offset="70%" stopColor={c.ember} stopOpacity="0.05" />
+            <stop offset="0%" stopColor={c.ember} stopOpacity="0.35" />
+            <stop offset="70%" stopColor={c.ember} stopOpacity="0.08" />
             <stop offset="100%" stopColor={c.ember} stopOpacity="0" />
           </radialGradient>
         </defs>
 
-        <circle cx="200" cy="200" r="110" fill="url(#center-glow)" className="net-glow" />
+        <circle cx="200" cy="200" r="132" fill="url(#center-glow)" className="net-glow" />
 
-        <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.8" className="center-ring-ping" />
-        <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.5" className="center-ring-ping" style={{ animationDelay: "1s" }} />
-        <circle cx="200" cy="200" r="44" fill="none" stroke={c.ember} strokeWidth="0.3" className="center-ring-ping" style={{ animationDelay: "2s" }} />
+        <circle cx="200" cy="200" r="52" fill="none" stroke={c.ember} strokeWidth="1.2" className="center-ring-ping" />
+        <circle cx="200" cy="200" r="52" fill="none" stroke={c.ember} strokeWidth="0.8" className="center-ring-ping" style={{ animationDelay: "1s" }} />
+        <circle cx="200" cy="200" r="52" fill="none" stroke={c.ember} strokeWidth="0.5" className="center-ring-ping" style={{ animationDelay: "2s" }} />
 
         {featureNetworkLines.map((node, i) => (
           <line key={`line-${i}`} x1="200" y1="200" x2={node.x} y2={node.y}
-            stroke="rgba(67,78,63,0.25)" strokeWidth="1.5"
+            stroke="rgba(67,78,63,0.45)" strokeWidth="2.2"
             className={`net-line-flow ${node.anim}`}
             style={{ animationDelay: `${node.delay}, ${node.delay}` }} />
         ))}
 
         <g className="center-hub">
-          <circle cx="200" cy="200" r="44" fill="rgba(208,111,37,0.12)" stroke={c.ember} strokeWidth="1.5" />
-          <circle cx="200" cy="200" r="28" fill={c.ember} opacity="0.85" />
+          <circle cx="200" cy="200" r="52" fill="rgba(208,111,37,0.14)" stroke={c.ember} strokeWidth="2" />
+          <circle cx="200" cy="200" r="34" fill={c.ember} opacity="0.92" />
         </g>
 
         {featureNetworkDevices.map((node, i) => (
           <g key={`device-${i}`} className={node.anim} style={{ animationDelay: node.delay }}>
-            <circle cx={node.x} cy={node.y} r="28" fill="rgba(67,78,63,0.06)" stroke="rgba(67,78,63,0.2)" strokeWidth="1" />
+            <circle cx={node.x} cy={node.y} r="34" fill="rgba(250,250,245,0.72)" stroke="rgba(67,78,63,0.35)" strokeWidth="1.5" />
             {node.icon === "smartphone" && (
-              <rect x={node.x - 5} y={node.y - 8} width="10" height="16" rx="2" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+              <rect x={node.x - 6} y={node.y - 10} width="12" height="20" rx="2.5" fill="none" stroke={c.forest} strokeWidth="1.6" />
             )}
             {node.icon === "laptop" && (<>
-              <rect x={node.x - 9} y={node.y - 6} width="18" height="12" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-              <line x1={node.x - 11} y1={node.y + 7} x2={node.x + 11} y2={node.y + 7} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+              <rect x={node.x - 11} y={node.y - 7} width="22" height="14" rx="2" fill="none" stroke={c.forest} strokeWidth="1.6" />
+              <line x1={node.x - 13} y1={node.y + 8} x2={node.x + 13} y2={node.y + 8} stroke={c.forest} strokeWidth="1.6" />
             </>)}
             {node.icon === "tablet" && (
-              <rect x={node.x - 7} y={node.y - 9} width="14" height="18" rx="2" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+              <rect x={node.x - 8} y={node.y - 11} width="16" height="22" rx="2.5" fill="none" stroke={c.forest} strokeWidth="1.6" />
             )}
             {node.icon === "monitor" && (<>
-              <rect x={node.x - 10} y={node.y - 8} width="20" height="14" rx="1.5" fill="none" stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-              <line x1={node.x} y1={node.y + 6} x2={node.x} y2={node.y + 9} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
-              <line x1={node.x - 5} y1={node.y + 9} x2={node.x + 5} y2={node.y + 9} stroke={c.forest} strokeWidth="1.2" opacity="0.7" />
+              <rect x={node.x - 12} y={node.y - 10} width="24" height="16" rx="2" fill="none" stroke={c.forest} strokeWidth="1.6" />
+              <line x1={node.x} y1={node.y + 7} x2={node.x} y2={node.y + 11} stroke={c.forest} strokeWidth="1.6" />
+              <line x1={node.x - 6} y1={node.y + 11} x2={node.x + 6} y2={node.y + 11} stroke={c.forest} strokeWidth="1.6" />
             </>)}
             {node.icon === "globe" && (
-              <g opacity="0.7">
-                <circle cx={node.x} cy={node.y} r="8" fill="none" stroke={c.forest} strokeWidth="1.2" />
-                <ellipse cx={node.x} cy={node.y} rx="4" ry="8" fill="none" stroke={c.forest} strokeWidth="0.8" />
-                <line x1={node.x - 8} y1={node.y} x2={node.x + 8} y2={node.y} stroke={c.forest} strokeWidth="0.8" />
+              <g>
+                <circle cx={node.x} cy={node.y} r="10" fill="none" stroke={c.forest} strokeWidth="1.6" />
+                <ellipse cx={node.x} cy={node.y} rx="5" ry="10" fill="none" stroke={c.forest} strokeWidth="1" />
+                <line x1={node.x - 10} y1={node.y} x2={node.x + 10} y2={node.y} stroke={c.forest} strokeWidth="1" />
               </g>
             )}
-            <text x={node.x} y={node.y + 38} textAnchor="middle" dominantBaseline="central"
-              fill="rgba(67,78,63,0.7)" fontSize="7" letterSpacing="0.1em"
+            <text x={node.x} y={node.y + 48} textAnchor="middle" dominantBaseline="central"
+              fill={c.forest} fontSize="9.5" fontWeight="600" letterSpacing="0.08em"
               fontFamily="var(--font-inter), Inter, sans-serif">
               {node.label.toUpperCase()}
             </text>
           </g>
         ))}
 
-        <text x="200" y="196" textAnchor="middle" dominantBaseline="central"
-          fill="#FAFAF5" fontSize="7" fontWeight="600" letterSpacing="0.12em"
+        <text x="200" y="194" textAnchor="middle" dominantBaseline="central"
+          fill="#FAFAF5" fontSize="9" fontWeight="700" letterSpacing="0.14em"
           fontFamily="var(--font-orbitron), Orbitron, sans-serif">
           MATRIX
         </text>
         <text x="200" y="208" textAnchor="middle" dominantBaseline="central"
-          fill="rgba(250,250,245,0.7)" fontSize="5.5" letterSpacing="0.15em"
+          fill="rgba(250,250,245,0.85)" fontSize="7.5" fontWeight="600" letterSpacing="0.12em"
           fontFamily="var(--font-inter), Inter, sans-serif">
           24/7
         </text>
@@ -480,7 +683,7 @@ function FeatureNetworkDiagram() {
 const howItWorksSteps = [
   { step: "01", title: "Create a free account", desc: "Sign up in seconds. No credit card, no setup wizard, no downloads." },
   { step: "02", title: "Start the hosted trial", desc: "When you provision a Matrix computer, Clerk starts the 3-day trial and collects the card required for the private VPS." },
-  { step: "03", title: "Bring your own agent", desc: "Connect your preferred AI — Claude, GPT, Hermes, or any model you trust. Your instance, your agent, your rules." },
+  { step: "03", title: "Bring your own agent", desc: "Connect your preferred AI: Claude, GPT, Hermes, or any model you trust. Your instance, your agent, your rules." },
 ] as const;
 
 function HowItWorksSection() {
@@ -502,46 +705,6 @@ function HowItWorksSection() {
               <p className="text-[14px] leading-[1.8]" style={{ color: c.mutedFg }}>{item.desc}</p>
             </div>
           ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function DevelopersSection() {
-  return (
-    <section id="developers" className="py-28 md:py-36" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8">
-        <div className="grid gap-10 md:grid-cols-[0.9fr_1.1fr] md:items-center">
-          <div>
-            <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>For coding agents</p>
-            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-6" style={{ color: c.forest }}>
-              Give your agent the setup file.
-            </h2>
-            <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix publishes an agent-readable skill at <code>matrix-os.com/skills.md</code>. Claude, Codex, Cursor, Cline, or another coding agent can read it, install the CLI, help you sign up with <code>matrix login</code>, and start working on your cloud computer with <code>matrix run</code>.
-            </p>
-          </div>
-          <div className="rounded-[16px] p-6 md:p-8" style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
-            <pre className="overflow-x-auto text-left text-[12px] leading-[1.8]" style={{ color: c.forest }}>
-              <code>{`Read https://matrix-os.com/skills.md
-
-npx skills add HamedMP/matrix-os --skill matrix-os
-matrix login
-matrix run -it -- claude`}</code>
-            </pre>
-            <div className="mt-6 flex flex-wrap gap-3">
-              {/* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- /skills.md is a static public file, not a Next route; Link would prefetch/client-navigate raw markdown */}
-              <a href="/skills.md" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-                style={{ backgroundColor: c.forest, color: c.pageBg }}>
-                Open skills.md <ArrowRightIcon className="size-3.5" />
-              </a>
-              <Link href="/docs/guide/developer-workflow" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-                style={{ border: `1px solid ${c.border}`, color: c.forest }}>
-                Developer workflow
-              </Link>
-            </div>
-          </div>
         </div>
       </div>
     </section>
@@ -604,34 +767,118 @@ function FinalCtaSection() {
   );
 }
 
-function SiteFooter() {
+function FooterLink({ href, label }: FooterLinkItem) {
+  const external = href.startsWith("http");
   return (
-    <footer className="py-16" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
-          <div className="flex items-center gap-3">
-            <Logo className="h-5 w-auto" style={{ color: c.subtle }} />
-            <span className="text-[11px] font-semibold tracking-[0.25em] uppercase"
-              style={{ color: c.subtle, fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}>matrix os</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-7 gap-y-4">
-            {[...communityLinks, ...legalLinks].map((link) => (
-              <a
-                key={link.href}
-                href={link.href}
-                target={link.href.startsWith("http") ? "_blank" : undefined}
-                rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
-                className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70"
-                style={{ color: c.mutedFg }}
+    <a
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
+      className="footer-link text-[12px] leading-snug"
+      style={{ color: c.mutedFg }}
+    >
+      {label}
+    </a>
+  );
+}
+
+function FooterColumn({ title, links }: { title: string; links: readonly FooterLinkItem[] }) {
+  return (
+    <div>
+      <p
+        className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em]"
+        style={{ color: c.subtle }}
+      >
+        {title}
+      </p>
+      <ul className="flex flex-col gap-1.5">
+        {links.map((link) => (
+          <li key={link.href}>
+            <FooterLink {...link} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SiteFooter() {
+  const year = new Date().getFullYear();
+
+  return (
+    <footer
+      className="border-t py-10"
+      style={{ backgroundColor: c.pageBg, borderColor: c.border }}
+    >
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-4">
+            <Link
+              href="/"
+              className="flex shrink-0 items-center gap-2.5"
+              style={{ fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}
+            >
+              <Logo className="h-7 w-auto shrink-0" style={{ color: c.forest }} />
+              <span
+                className="whitespace-nowrap text-[15px] font-bold tracking-tight"
+                style={{ color: c.forest }}
               >
-                {link.label}
-              </a>
-            ))}
+                matrix os
+              </span>
+            </Link>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {footerSocialIcons.map(({ label, href, Icon }) => (
+                <a
+                  key={href}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={label}
+                  className="footer-social inline-flex size-8 items-center justify-center rounded-full border transition-colors"
+                  style={{ borderColor: c.border, color: c.mutedFg, backgroundColor: "rgba(250, 250, 245, 0.5)" }}
+                >
+                  {Icon ? <Icon className="size-3.5" strokeWidth={1.75} /> : (
+                    <span className="text-[10px] font-semibold">X</span>
+                  )}
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-10 gap-y-6 sm:gap-x-14">
+            <FooterColumn title="Product" links={footerProductLinks} />
+            <FooterColumn title="Legal" links={footerLegalLinks} />
+          </div>
+        </div>
+
+        <div
+          className="mt-8 flex flex-col gap-3 border-t pt-6 sm:flex-row sm:items-center sm:justify-between"
+          style={{ borderColor: c.border }}
+        >
+          <p className="text-[11px]" style={{ color: c.subtle }}>
+            © {year} Matrix OS · AGPL-3.0-or-later
+          </p>
+          <div className="flex items-center gap-5">
             <SignedOut>
-              <a href="https://app.matrix-os.com" className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70" style={{ color: c.mutedFg }}>Sign In</a>
+              <a
+                href="https://app.matrix-os.com"
+                className="footer-link text-[11px] font-medium tracking-[0.1em] uppercase"
+                style={{ color: c.forest }}
+              >
+                Sign In
+              </a>
             </SignedOut>
             <SignedIn>
-              <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="text-[11px] tracking-[0.15em] uppercase transition-opacity hover:opacity-70" style={{ color: c.mutedFg }}>Open App</a>
+              <a
+                href="https://app.matrix-os.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="footer-link inline-flex items-center gap-1 text-[11px] font-medium tracking-[0.1em] uppercase"
+                style={{ color: c.forest }}
+              >
+                Open App
+                <ArrowRightIcon className="size-3" strokeWidth={2} />
+              </a>
             </SignedIn>
           </div>
         </div>
