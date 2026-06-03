@@ -236,7 +236,9 @@ export default function App() {
             const rows = await db.find(SCORES_TABLE, { orderBy: { created_at: "desc" }, limit: 1 });
             const row = rows[0];
             if (row) {
-              dbRowId.current = (row.id as string) ?? dbRowId.current;
+              const rowId = typeof row.id === "string" ? row.id : null;
+              if (dbRowId.current && rowId && rowId !== dbRowId.current) return;
+              dbRowId.current = rowId ?? dbRowId.current;
               pendingBestRef.current = Math.max(pendingBestRef.current, Number(row.best) || 0);
               setBest((prev) => Math.max(prev, Number(row.best) || 0));
               setError(null);

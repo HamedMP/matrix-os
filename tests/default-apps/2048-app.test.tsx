@@ -8,6 +8,7 @@ import { resetTileIdsForTest, tilesFromBoard } from "../../home/apps/games/2048/
 type DbRow = Record<string, unknown>;
 
 function installMatrixDb(rows: DbRow[] = []) {
+  let onChangeHandler: (() => void) | null = null;
   const db = {
     find: vi.fn(async () => rows),
     findOne: vi.fn(async () => null),
@@ -15,7 +16,15 @@ function installMatrixDb(rows: DbRow[] = []) {
     update: vi.fn(async () => ({ ok: true })),
     delete: vi.fn(async () => ({ ok: true })),
     count: vi.fn(async () => rows.length),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, handler: () => void) => {
+      onChangeHandler = handler;
+      return () => {
+        if (onChangeHandler === handler) onChangeHandler = null;
+      };
+    }),
+    emitChange: () => {
+      onChangeHandler?.();
+    },
   };
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
@@ -222,6 +231,33 @@ describe("2048 app", () => {
 
     await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", expect.objectContaining({ score: 0 })));
     expect(db.update).not.toHaveBeenCalledWith("scores", "s1", { score: 4 });
+  });
+
+  it("keeps writes on the loaded score row after a foreign score change", async () => {
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValueOnce(0).mockReturnValueOnce(0.1).mockReturnValue(0.1);
+    const db = installMatrixDb([{ id: "s1", score: 0, best: 0, created_at: "2026-05-31T00:00:00.000Z" }]);
+    db.find
+      .mockResolvedValueOnce([{ id: "s1", score: 0, best: 0, created_at: "2026-05-31T00:00:00.000Z" }])
+      .mockResolvedValueOnce([{ id: "s2", score: 0, best: 4096, created_at: "2026-06-01T00:00:00.000Z" }]);
+    render(<App />);
+    await screen.findByTestId("board");
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 0 }));
+    db.update.mockClear();
+
+    await act(async () => {
+      db.emitChange();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(db.find).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(db.update).toHaveBeenCalledWith("scores", "s1", { score: 4 }));
+    expect(db.update).not.toHaveBeenCalledWith("scores", "s2", expect.anything());
   });
 
   it("does not persist an in-flight previous score after starting a new game", async () => {
