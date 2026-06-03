@@ -128,7 +128,10 @@ final human review.
      check: `gt restack` and `gt sync`.
      Run `gt restack` after any `gt modify` that touches a layer below the
      stack tip before submitting, so descendants are anchored to the rewritten
-     parent SHA.
+     parent SHA. If `gt restack` reports merge conflicts or leaves the worktree
+     in a conflicted state, stop immediately and report the conflicted branch,
+     files, and current stack state; do not attempt autonomous conflict
+     resolution inside this monitor command.
    - Before submitting, verify the
      current remote head for every branch that will be rewritten still matches
      the head recorded for this edit iteration; if it changed unexpectedly,
