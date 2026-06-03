@@ -102,10 +102,10 @@ cd "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA/distro"
 docker compose -p distro \
   --env-file /home/deploy/matrix-os/.env \
   -f docker-compose.platform.yml \
-  up -d --build platform
-cd /home/deploy/matrix-os
-git worktree remove --force "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA"
-git worktree prune
+  up -d --build platform \
+&& cd /home/deploy/matrix-os \
+&& git worktree remove --force "/home/deploy/matrix-os.worktrees/platform-main-$DEPLOY_SHA" \
+&& git worktree prune
 ```
 
 The existing production Compose project is named `distro`; keep `-p distro` so
