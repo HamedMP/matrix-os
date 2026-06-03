@@ -1,6 +1,6 @@
 import { type TerminalFontFamily } from "@/stores/terminal-settings";
 
-const NERD_FONT_FALLBACK = '"MesloLGS NF", "Symbols Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+const NERD_FONT_FALLBACK = '"Symbols Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 
 const TERMINAL_FONT_STACKS = {
   "MesloLGS NF": '"MesloLGS NF"',

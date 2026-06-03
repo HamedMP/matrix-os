@@ -8,7 +8,13 @@ describe("terminal font stacks", () => {
 
   it("keeps MesloLGS NF as a glyph fallback for every selectable terminal font", () => {
     expect(buildTerminalFontStack("JetBrains Mono", "JetBrains Mono, monospace")).toBe(
-      '"JetBrains Mono", "MesloLGS NF", JetBrains Mono, monospace, "MesloLGS NF", "Symbols Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+      '"JetBrains Mono", "MesloLGS NF", JetBrains Mono, monospace, "Symbols Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+    );
+  });
+
+  it("does not duplicate MesloLGS NF when Meslo is selected", () => {
+    expect(buildTerminalFontStack("MesloLGS NF", undefined)).toBe(
+      '"MesloLGS NF", "Symbols Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
     );
   });
 });
