@@ -71,6 +71,10 @@ function cancelZoomAnimation(): void {
   }
 }
 
+export function resetCanvasTransformAnimation(): void {
+  cancelZoomAnimation();
+}
+
 function finishInstantTransform(): { isAnimating: false } {
   cancelZoomAnimation();
   return { isAnimating: false };

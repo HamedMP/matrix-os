@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { useCanvasTransform, ZOOM_ANIM_MS, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from "../../shell/src/hooks/useCanvasTransform.js";
+import {
+  resetCanvasTransformAnimation,
+  useCanvasTransform,
+  ZOOM_ANIM_MS,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  ZOOM_STEP,
+} from "../../shell/src/hooks/useCanvasTransform.js";
 
 function reset() {
+  resetCanvasTransformAnimation();
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
 }
 
