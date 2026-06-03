@@ -117,8 +117,8 @@ final human review.
      against that temporary directory, then delete the temporary directory.
      Resolve findings before committing, or report the exact reason the gate
      could not run.
-   - Use Graphite to sync, restack, and submit updates:
-     `gt sync`, `gt restack`, and `gt submit --stack --no-edit --no-ai`.
+   - Use Graphite to restack, sync, and submit updates:
+     `gt restack`, `gt sync`, and `gt submit --stack --no-edit --no-ai`.
      Run `gt restack` after any `gt modify` that touches a layer below the
      stack tip before submitting, so descendants are anchored to the rewritten
      parent SHA.
