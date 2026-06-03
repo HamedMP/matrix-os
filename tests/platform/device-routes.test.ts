@@ -502,6 +502,15 @@ describe("device routes", () => {
       expect(html).toContain("showBillingRequiredState()");
       expect(html).toContain("confirm.disabled = true;");
       expect(html).toContain("button.disabled = isBusy || !runtimeReady;");
+      expect(html).toContain("delete signin.dataset.mounted;");
+      const provisioningStart = html.indexOf("async function startProvisioningFromClerkSession");
+      const continueStart = html.indexOf("async function continueDeviceOnboarding");
+      expect(html.indexOf("var token = await clerkTokenOrNull();", provisioningStart)).toBeLessThan(
+        html.indexOf("showLoadingState('Starting your Matrix computer...');", provisioningStart),
+      );
+      expect(html.indexOf("var token = await clerkTokenOrNull();", continueStart)).toBeLessThan(
+        html.indexOf("showLoadingState('Checking your Matrix computer...');", continueStart),
+      );
       expect(html).toContain(
         '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">',
       );

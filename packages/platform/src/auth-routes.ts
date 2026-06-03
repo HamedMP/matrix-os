@@ -247,6 +247,7 @@ function approvalPage(
       if (!signin) return;
       signin.style.display = 'block';
       signin.innerHTML = '';
+      delete signin.dataset.mounted;
       var state = document.createElement('div');
       state.className = 'device-state';
       var heading = document.createElement('h2');
@@ -430,7 +431,6 @@ function approvalPage(
     async function startProvisioningFromClerkSession() {
       if (provisioningStarted) return;
       provisioningStarted = true;
-      showLoadingState('Starting your Matrix computer...');
       try {
         var token = await clerkTokenOrNull();
         if (!token) {
@@ -438,6 +438,7 @@ function approvalPage(
           showAuth();
           return;
         }
+        showLoadingState('Starting your Matrix computer...');
         var res = await fetchWithTimeout('/api/auth/provision-runtime', {
           method: 'POST',
           headers: {
@@ -480,13 +481,13 @@ function approvalPage(
     }
 
     async function continueDeviceOnboarding() {
-      showLoadingState('Checking your Matrix computer...');
       try {
         var token = await clerkTokenOrNull();
         if (!token) {
           showAuth();
           return;
         }
+        showLoadingState('Checking your Matrix computer...');
         var res = await fetchWithTimeout('/api/auth/app-session', {
           method: 'POST',
           headers: {
