@@ -500,29 +500,32 @@ describe("Whiteboard app — multi-board files", () => {
       configurable: true,
       value: scrollIntoView,
     });
-    installMatrixDb([
-      board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
-      board("b2", "Wireframe", "2026-03-03T00:00:00.000Z"),
-    ]);
-    render(<App />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    scrollIntoView.mockClear();
-
-    const sprintButton = screen.getByText("Sprint plan").closest("button");
-    if (!sprintButton) throw new Error("Expected Sprint plan board button");
-    fireEvent.click(sprintButton);
-
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    if (originalScrollIntoView) {
-      Object.defineProperty(Element.prototype, "scrollIntoView", {
-        configurable: true,
-        value: originalScrollIntoView,
+    try {
+      installMatrixDb([
+        board("b1", "Sprint plan", "2026-02-02T00:00:00.000Z"),
+        board("b2", "Wireframe", "2026-03-03T00:00:00.000Z"),
+      ]);
+      render(<App />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
       });
-    } else {
-      Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      scrollIntoView.mockClear();
+
+      const sprintButton = screen.getByText("Sprint plan").closest("button");
+      if (!sprintButton) throw new Error("Expected Sprint plan board button");
+      fireEvent.click(sprintButton);
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      }
     }
   });
 

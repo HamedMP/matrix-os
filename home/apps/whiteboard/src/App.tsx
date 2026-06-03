@@ -128,7 +128,8 @@ interface BoardIndexResult {
 function reduceMotion(): boolean {
   try {
     return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[whiteboard] matchMedia check failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }
