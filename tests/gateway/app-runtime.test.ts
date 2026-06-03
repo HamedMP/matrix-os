@@ -152,6 +152,38 @@ icon: N
       expect(manifest.autoStart).toBe(true);
     });
 
+    it("rejects storage indexes that reference undeclared columns", () => {
+      expect(() =>
+        parseAppManifest({
+          name: "Bad Index",
+          storage: {
+            tables: {
+              tasks: {
+                columns: { title: "text" },
+                indexes: ["missing"],
+              },
+            },
+          },
+        }),
+      ).toThrow(/Storage index column/);
+    });
+
+    it("rejects storage unique indexes that reference undeclared columns", () => {
+      expect(() =>
+        parseAppManifest({
+          name: "Bad Unique Index",
+          storage: {
+            tables: {
+              tasks: {
+                columns: { title: "text" },
+                uniqueIndexes: ["missing"],
+              },
+            },
+          },
+        }),
+      ).toThrow(/Storage unique index column/);
+    });
+
     it("defaults autoStart to false", () => {
       const manifest = parseAppManifest({ name: "Lazy" });
       expect(manifest.autoStart).toBe(false);

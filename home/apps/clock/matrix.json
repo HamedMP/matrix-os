@@ -1,6 +1,6 @@
 {
   "name": "Clock",
-  "description": "Analog and digital clock with timer",
+  "description": "World clock, alarms, timers, and stopwatch.",
   "runtime": "vite",
   "category": "utility",
   "icon": "clock",
@@ -9,6 +9,33 @@
   "slug": "clock",
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "zones": {
+        "columns": {
+          "tz": "text",
+          "position": "integer"
+        },
+        "indexes": [
+          "position"
+        ],
+        "uniqueIndexes": [
+          "tz"
+        ]
+      },
+      "alarms": {
+        "columns": {
+          "time": "text",
+          "label": "text",
+          "repeat": "text",
+          "enabled": "boolean"
+        },
+        "indexes": [
+          "time"
+        ]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",

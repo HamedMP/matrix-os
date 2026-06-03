@@ -2,6 +2,34 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod/v4";
 
+const AppStorageTableSchema = z
+  .object({
+    columns: z.record(z.string(), z.string()),
+    indexes: z.array(z.string()).optional(),
+    uniqueIndexes: z.array(z.string()).optional(),
+  })
+  .superRefine((table, ctx) => {
+    const declaredColumns = new Set(Object.keys(table.columns));
+    for (const [index, column] of (table.indexes ?? []).entries()) {
+      if (!declaredColumns.has(column)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Storage index column "${column}" is not declared in columns`,
+          path: ["indexes", index],
+        });
+      }
+    }
+    for (const [index, column] of (table.uniqueIndexes ?? []).entries()) {
+      if (!declaredColumns.has(column)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Storage unique index column "${column}" is not declared in columns`,
+          path: ["uniqueIndexes", index],
+        });
+      }
+    }
+  });
+
 export const AppManifestSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -25,10 +53,7 @@ export const AppManifestSchema = z.object({
     .object({
       tables: z.record(
         z.string(),
-        z.object({
-          columns: z.record(z.string(), z.string()),
-          indexes: z.array(z.string()).optional(),
-        }),
+        AppStorageTableSchema,
       ).default({}),
     })
     .optional(),

@@ -31,6 +31,7 @@ describe("AppRegistry", () => {
         tasks: {
           columns: { title: "text", done: "boolean", due: "timestamptz" },
           indexes: ["due"],
+          uniqueIndexes: ["title"],
         },
       },
     });
@@ -39,6 +40,23 @@ describe("AppRegistry", () => {
     expect(app).toBeDefined();
     expect(app!.name).toBe("Todo");
     expect(app!.tables).toHaveProperty("tasks");
+    expect(app!.tables.tasks.uniqueIndexes).toEqual(["title"]);
+  });
+
+  it("provisions unique indexes declared in app schemas", async () => {
+    await registry.register({
+      slug: "todo",
+      name: "Todo",
+      tables: {
+        tasks: {
+          columns: { title: "text" },
+          uniqueIndexes: ["title"],
+        },
+      },
+    });
+
+    await db.raw('INSERT INTO "todo"."tasks" (title) VALUES ($1)', ["Inbox"]);
+    await expect(db.raw('INSERT INTO "todo"."tasks" (title) VALUES ($1)', ["Inbox"])).rejects.toThrow();
   });
 
   it("creates Postgres schema and tables on register", async () => {

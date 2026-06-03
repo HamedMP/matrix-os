@@ -80,15 +80,26 @@ describe("T1430-T1433: Core utility apps", () => {
   describe("clock specifics", () => {
     const appSource = () => appOrSharedSource("clock");
 
-    it("has local time and focus timer surfaces", () => {
-      expect(appSource().toLowerCase()).toContain("time-card");
-      expect(appSource()).toContain("Local time");
-      expect(appSource().toLowerCase()).toContain("focus timer");
+    it("has world clock, timer, and stopwatch surfaces", () => {
+      const source = appSource().toLowerCase();
+      expect(source).toContain("world clock");
+      expect(source).toContain("timer");
+      expect(source).toContain("stopwatch");
     });
 
     it("has timer functionality", () => {
       expect(appSource().toLowerCase()).toContain("timer");
-      expect(appSource()).toContain("25:00");
+      expect(appSource()).toContain("25 min");
+    });
+
+    it("indexes alarms by scheduled time", () => {
+      const manifest = JSON.parse(readFileSync(join(APPS_DIR, "clock", "matrix.json"), "utf-8"));
+      expect(manifest.storage?.tables?.alarms?.indexes).toContain("time");
+    });
+
+    it("enforces unique saved world clock zones", () => {
+      const manifest = JSON.parse(readFileSync(join(APPS_DIR, "clock", "matrix.json"), "utf-8"));
+      expect(manifest.storage?.tables?.zones?.uniqueIndexes).toContain("tz");
     });
   });
 });

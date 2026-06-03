@@ -19,6 +19,11 @@ export interface QueryEngine {
   findOne(schema: string, table: string, id: string): Promise<Record<string, unknown> | null>;
   insert(schema: string, table: string, data: Record<string, unknown>): Promise<{ id: string }>;
   update(schema: string, table: string, id: string, data: Record<string, unknown>): Promise<void>;
+  bulkUpdate(
+    schema: string,
+    table: string,
+    updates: Array<{ id: string; data: Record<string, unknown> }>,
+  ): Promise<void>;
   delete(schema: string, table: string, id: string): Promise<void>;
   count(schema: string, table: string, filter?: Record<string, FilterValue>): Promise<number>;
 }
@@ -148,6 +153,61 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       await db.raw(
         `UPDATE ${qualifiedTable(schema, table)} SET ${sets}, updated_at = now() WHERE id = $${vals.length}`,
         vals,
+      );
+    },
+
+    async bulkUpdate(schema, table, updates) {
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
+      if (updates.length === 0) return;
+      // Parameter count scales with row count and changed column count
+      // (up to 2 * rows * columns + rows), so keep this cap conservative.
+      if (updates.length > 200) throw new Error("bulkUpdate: too many rows");
+      const seenIds = new Set<string>();
+      for (const update of updates) {
+        if (typeof update.id !== "string" || update.id.length === 0) {
+          throw new Error("bulkUpdate: id is required");
+        }
+        if (seenIds.has(update.id)) {
+          throw new Error("bulkUpdate: duplicate id");
+        }
+        seenIds.add(update.id);
+      }
+
+      const cols = Array.from(new Set(updates.flatMap((update) => Object.keys(update.data))));
+      for (const col of cols) {
+        parseSafeName(col, "column");
+      }
+      if (cols.length === 0) throw new Error("bulkUpdate: data must have at least one column");
+      for (const update of updates) {
+        for (const col of Object.keys(update.data)) {
+          if (update.data[col] === undefined) {
+            throw new Error(`bulkUpdate: value for column "${col}" in id "${update.id}" must not be undefined`);
+          }
+        }
+      }
+
+      const params: unknown[] = [];
+      const setClauses = cols.map((col) => {
+        const cases: string[] = [];
+        for (const update of updates) {
+          if (Object.prototype.hasOwnProperty.call(update.data, col)) {
+            params.push(update.id, update.data[col]);
+            cases.push(`WHEN $${params.length - 1} THEN $${params.length}`);
+          }
+        }
+        return `"${col}" = CASE "id"::text ${cases.join(" ")} ELSE "${col}" END`;
+      });
+      const whereIds = updates.map((update) => {
+        params.push(update.id);
+        return `$${params.length}`;
+      });
+
+      await db.raw(
+        `UPDATE ${qualifiedTable(schema, table)}
+         SET ${setClauses.join(", ")}, updated_at = now()
+         WHERE "id"::text IN (${whereIds.join(", ")})`,
+        params,
       );
     },
 
