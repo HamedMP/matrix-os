@@ -9,10 +9,7 @@ export default defineConfig({
       resolveId(source, importer) {
         if (source !== "chess.js" || !importer) return null;
         const normalized = importer.split(path.sep).join("/");
-        if (
-          normalized.endsWith("/tests/default-apps/chess-app.test.tsx") ||
-          normalized.endsWith("/home/apps/games/chess/src/App.tsx")
-        ) {
+        if (normalized.endsWith("/tests/default-apps/chess-app.test.tsx") || normalized.includes("/home/apps/games/chess/src/")) {
           return path.resolve(__dirname, "tests/default-apps/mocks/chess-js.ts");
         }
         return null;

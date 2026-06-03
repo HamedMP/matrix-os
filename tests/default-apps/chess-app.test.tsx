@@ -9,7 +9,10 @@ type ChessMockControls = {
   __setNextBoard(board: Record<string, { color: "w" | "b"; type: "p" | "n" | "b" | "r" | "q" | "k" }>, turn?: "w" | "b"): void;
   __setNextCheckmate(value?: boolean): void;
   __reset(): void;
-  Chess: new () => { moves(opts: { square: string }): string[] };
+  Chess: new () => {
+    moves(opts: { square: string }): string[];
+    moves(opts: { square: string; verbose: true }): Array<{ to: string; promotion?: string }>;
+  };
 };
 
 let App: React.ComponentType;
@@ -191,6 +194,15 @@ describe("Chess app", () => {
     const blackPawnMoves = new Chess().moves({ square: "d5" });
     expect(blackPawnMoves).toEqual(expect.arrayContaining(["d4", "e4"]));
     expect(blackPawnMoves).not.toContain("c4");
+  });
+
+  it("mock chess verbose pawn moves include promotion choices", async () => {
+    const { Chess, __setNextBoard } = await import("chess.js") as unknown as ChessMockControls;
+
+    __setNextBoard({ a7: { color: "w", type: "p" } });
+    const moves = new Chess().moves({ square: "a7", verbose: true });
+
+    expect(moves.filter((move) => move.to === "a8").map((move) => move.promotion)).toEqual(["q", "r", "b", "n"]);
   });
 
   it("records a legal move in the SAN history", async () => {

@@ -6,6 +6,7 @@ type VerboseMove = {
   color: Piece["color"];
   piece: Piece["type"];
   captured?: Piece["type"];
+  promotion?: Piece["type"];
 };
 type MoveRecord = VerboseMove & {
   moved: Piece;
@@ -82,6 +83,15 @@ export class Chess {
       const rank = Number(opts.square[1]);
       const fileIdx = FILES.indexOf(file);
       const out: Omit<VerboseMove, "san">[] = [];
+      const addPawnMove = (to: string, captured?: Piece["type"]) => {
+        const promotionRank = piece.color === "w" ? "8" : "1";
+        const base = { from: opts.square as string, to, piece: "p" as const, color: piece.color, captured };
+        if (to[1] !== promotionRank) {
+          out.push(base);
+          return;
+        }
+        for (const promotion of ["q", "r", "b", "n"] as const) out.push({ ...base, promotion });
+      };
       const addTarget = (targetFileIdx: number, targetRank: number): boolean => {
         const targetFile = FILES[targetFileIdx];
         if (!targetFile || targetRank < 1 || targetRank > 8) return false;
@@ -108,10 +118,10 @@ export class Chess {
         const dir = piece.color === "w" ? 1 : -1;
         const one = `${file}${rank + dir}`;
         const two = `${file}${rank + dir * 2}`;
-        if (!this.boardState[one]) out.push({ from: opts.square, to: one, piece: "p", color: piece.color });
+        if (!this.boardState[one]) addPawnMove(one);
         const homeRank = piece.color === "w" ? 2 : 7;
         if (rank === homeRank && !this.boardState[one] && !this.boardState[two]) {
-          out.push({ from: opts.square, to: two, piece: "p", color: piece.color });
+          addPawnMove(two);
         }
         for (const dc of [-1, 1]) {
           const targetFile = FILES[fileIdx + dc];
@@ -120,7 +130,7 @@ export class Chess {
           const target = `${targetFile}${targetRank}`;
           const occupant = this.boardState[target];
           if (occupant && occupant.color !== piece.color) {
-            out.push({ from: opts.square, to: target, piece: "p", color: piece.color, captured: occupant.type });
+            addPawnMove(target, occupant.type);
           }
         }
       }
@@ -185,6 +195,7 @@ export class Chess {
       color: piece.color,
       piece: piece.type,
       captured: capturedPiece?.type,
+      promotion: m.promotion as Piece["type"] | undefined,
       moved: piece,
       capturedPiece,
     };
@@ -195,13 +206,14 @@ export class Chess {
 
   history(opts?: { verbose?: boolean }) {
     if (opts?.verbose) {
-      return this.moveStack.map(({ from, to, san, color, piece, captured }) => ({
+      return this.moveStack.map(({ from, to, san, color, piece, captured, promotion }) => ({
         from,
         to,
         san,
         color,
         piece,
         captured,
+        promotion,
       }));
     }
     return this.moveStack.map((move) => move.san);
