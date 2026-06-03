@@ -1,6 +1,6 @@
 {
   "name": "Calculator",
-  "description": "Scientific calculator with history",
+  "description": "Numi-style calculator: evaluate expressions live with a history rail and scientific mode.",
   "runtime": "vite",
   "category": "utility",
   "icon": "calculator",
@@ -8,7 +8,20 @@
   "version": "1.0.0",
   "slug": "calculator",
   "runtimeVersion": "^1.0.0",
+  "scope": "personal",
   "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "history": {
+        "columns": {
+          "expression": "text",
+          "result": "text",
+          "created_at": "timestamptz"
+        },
+        "indexes": ["created_at"]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",
