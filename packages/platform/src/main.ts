@@ -3461,7 +3461,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
+        applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
         return new Response(upstream.body, {
           status: upstream.status,

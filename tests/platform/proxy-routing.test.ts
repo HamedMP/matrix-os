@@ -1998,6 +1998,57 @@ describe("platform proxy routing", () => {
     expect(claims.runtime_slot).toBe("staging");
   });
 
+  it("routes explicit VM Vite app assets with null-origin CORS", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff140",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123484,
+      publicIPv4: "203.0.113.34",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("console.log('chess')", {
+        status: 200,
+        headers: {
+          "content-type": "application/javascript",
+          vary: "Accept-Encoding",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/vm/alice/apps/chess/assets/index.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        origin: "null",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [assetUrl, assetInit] = fetchMock.mock.calls[0]!;
+    expect(assetUrl).toBe("https://203.0.113.34:443/apps/chess/assets/index.js");
+    const assetHeaders = assetInit?.headers as Headers;
+    expect(assetHeaders.get("origin")).toBe("null");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    expect(res.headers.get("access-control-allow-origin")).toBe("null");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(res.headers.get("vary")).toContain("Origin");
+    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+  });
+
   it("routes authenticated shell static assets through the selected VM handle cookie", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {

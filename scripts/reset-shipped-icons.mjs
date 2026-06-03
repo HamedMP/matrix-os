@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { copyFile, lstat, mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_MATRIX_HOME = '/home/matrix/home';
 const DEFAULT_TEMPLATE_HOME = '/opt/matrix/app/home';
 const ICON_EXTENSIONS = new Set(['.png', '.svg']);
 const MAX_ICON_BYTES = 10 * 1024 * 1024;
+const BACKUP_STAMP_PATTERN = /^\d{8}T\d{6}Z$/;
 
 function utcStamp(date = new Date()) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -14,6 +15,20 @@ function utcStamp(date = new Date()) {
 
 function isIconFileName(fileName) {
   return /^[a-z0-9][a-z0-9-]*\.(png|svg)$/.test(fileName);
+}
+
+function validateRootPath(name, path) {
+  if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0') || path.split('/').includes('..')) {
+    throw new Error(`${name} must be an absolute path without traversal segments`);
+  }
+  return path;
+}
+
+function validateBackupStamp(backupStamp) {
+  if (typeof backupStamp !== 'string' || !BACKUP_STAMP_PATTERN.test(backupStamp)) {
+    throw new Error('backupStamp must match YYYYMMDDTHHMMSSZ');
+  }
+  return backupStamp;
 }
 
 async function lstatOrNull(path) {
@@ -46,10 +61,10 @@ async function copyFileAtomic(sourcePath, targetPath, targetDir, fileName) {
 }
 
 export async function resetShippedIcons(options = {}) {
-  const matrixHome = options.matrixHome ?? process.env.MATRIX_HOME ?? DEFAULT_MATRIX_HOME;
-  const templateHome = options.templateHome ?? process.env.MATRIX_TEMPLATE_HOME ?? DEFAULT_TEMPLATE_HOME;
+  const matrixHome = validateRootPath('matrixHome', options.matrixHome ?? process.env.MATRIX_HOME ?? DEFAULT_MATRIX_HOME);
+  const templateHome = validateRootPath('templateHome', options.templateHome ?? process.env.MATRIX_TEMPLATE_HOME ?? DEFAULT_TEMPLATE_HOME);
   const dryRun = Boolean(options.dryRun);
-  const backupStamp = options.backupStamp ?? utcStamp();
+  const backupStamp = validateBackupStamp(options.backupStamp ?? utcStamp());
   const sourceDir = join(templateHome, 'system/icons');
   const targetDir = join(matrixHome, 'system/icons');
   const backupDir = join(matrixHome, 'system/icon-backups', backupStamp);

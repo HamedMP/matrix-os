@@ -74,4 +74,37 @@ describe("reset-shipped-icons", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects traversal-capable path inputs before filesystem access", async () => {
+    await expect(
+      resetShippedIcons({
+        matrixHome: "relative/home",
+        templateHome: "/opt/matrix/app/home",
+      }),
+    ).rejects.toThrow("matrixHome must be an absolute path without traversal segments");
+
+    await expect(
+      resetShippedIcons({
+        matrixHome: "/home/matrix/../evil",
+        templateHome: "/opt/matrix/app/home",
+      }),
+    ).rejects.toThrow("matrixHome must be an absolute path without traversal segments");
+
+    await expect(
+      resetShippedIcons({
+        matrixHome: "/home/matrix/home",
+        templateHome: "/opt/matrix/app/../evil",
+      }),
+    ).rejects.toThrow("templateHome must be an absolute path without traversal segments");
+  });
+
+  it("rejects invalid backup stamps before constructing backup paths", async () => {
+    await expect(
+      resetShippedIcons({
+        matrixHome: "/home/matrix/home",
+        templateHome: "/opt/matrix/app/home",
+        backupStamp: "../../../etc/cron.d",
+      }),
+    ).rejects.toThrow("backupStamp must match YYYYMMDDTHHMMSSZ");
+  });
 });
