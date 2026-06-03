@@ -2,7 +2,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App from "../../home/apps/games/backgammon/src/App";
+import App, { movesForTarget } from "../../home/apps/games/backgammon/src/App";
+import { OFF, type Move } from "../../home/apps/games/backgammon/src/backgammon-model";
 
 type DbRow = Record<string, unknown>;
 
@@ -77,6 +78,13 @@ describe("Backgammon app", () => {
     await waitFor(() =>
       expect(screen.getByTestId("point-23").getAttribute("data-owner")).toBe("white"),
     );
+  });
+
+  it("keeps all legal die choices for an ambiguous bear off target", () => {
+    const exact = { from: 3, to: OFF, die: 3, bearOff: true } satisfies Move;
+    const overshoot = { from: 3, to: OFF, die: 6, bearOff: true } satisfies Move;
+
+    expect(movesForTarget([exact, overshoot], OFF)).toEqual([exact, overshoot]);
   });
 
   it("renders without a DB bridge and leaves match history empty", async () => {

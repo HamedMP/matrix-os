@@ -26,6 +26,10 @@ interface MatchRecord {
   points: number;
 }
 
+export function movesForTarget(moves: Move[], to: number): Move[] {
+  return moves.filter((m) => m.to === to);
+}
+
 // ---- persistence -----------------------------------------------------------
 
 async function loadMatches(setError: (s: string | null) => void): Promise<MatchRecord[] | null> {
@@ -202,6 +206,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("Roll the dice to begin.");
   const [result, setResult] = useState<WinResult | null>(null);
+  const [dieChoice, setDieChoice] = useState<Move[] | null>(null);
   const savedRef = useRef(false);
 
   // load history + subscribe
@@ -284,6 +289,7 @@ export default function App() {
     setState(next);
     setRolled(true);
     setSelected(null);
+    setDieChoice(null);
     setError(null);
     setStatus(`${PLAYER_NAME[next.turn]} rolled ${roll.values[0]} & ${roll.values[1]}.`);
     window.setTimeout(() => setRolling(false), 420);
@@ -293,11 +299,13 @@ export default function App() {
     setState((prev) => ({ ...prev, turn: other(prev.turn), movesLeft: [], dice: [], history: [] }));
     setRolled(false);
     setSelected(null);
+    setDieChoice(null);
   }, []);
 
   const doMove = useCallback((move: Move) => {
     setState((prev) => applyMove(prev, move));
     setSelected(null);
+    setDieChoice(null);
   }, []);
 
   useEffect(() => {
@@ -312,6 +320,7 @@ export default function App() {
     (point: number) => {
       if (!rolled || result) return;
       if (!sourcesWithMoves.has(point)) return;
+      setDieChoice(null);
       setSelected((cur) => (cur === point ? null : point));
     },
     [rolled, result, sourcesWithMoves],
@@ -320,9 +329,14 @@ export default function App() {
   const handleTarget = useCallback(
     (to: number) => {
       if (selected === null) return;
-      const move = legalFromSelected.find((m) => m.to === to);
-      if (!move) return;
-      doMove(move);
+      const targetMoves = movesForTarget(legalFromSelected, to);
+      if (targetMoves.length === 0) return;
+      if (to === OFF && targetMoves.length > 1) {
+        setDieChoice(targetMoves);
+        setStatus(`Choose a die to bear off from point ${selected}.`);
+        return;
+      }
+      doMove(targetMoves[0]);
     },
     [selected, legalFromSelected, doMove],
   );
@@ -331,11 +345,13 @@ export default function App() {
     if (result) return;
     setState((prev) => undoMove(prev));
     setSelected(null);
+    setDieChoice(null);
   }, [result]);
 
   const handleNewGame = useCallback(() => {
     setState(createInitialState());
     setSelected(null);
+    setDieChoice(null);
     setRolled(false);
     setResult(null);
     savedRef.current = false;
@@ -663,7 +679,16 @@ export default function App() {
 
       {/* ---------- footer ---------- */}
       <footer className="bg-status">
-        {error ? (
+        {dieChoice ? (
+          <span className="die-choice">
+            Choose die
+            {dieChoice.map((move) => (
+              <button key={move.die} type="button" className="bg-btn" onClick={() => doMove(move)}>
+                {move.die}
+              </button>
+            ))}
+          </span>
+        ) : error ? (
           <span className="err">{error}</span>
         ) : status === "Saved to Matrix Postgres" ? (
           <span className="ok">{status}</span>

@@ -396,6 +396,17 @@ body {
   color: var(--app-danger);
   font-weight: 600;
 }
+.die-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.die-choice .bg-btn {
+  min-width: 32px;
+  justify-content: center;
+  padding: 5px 9px;
+}
 .bg-records {
   margin-left: auto;
   font-size: 12px;
