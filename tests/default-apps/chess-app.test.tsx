@@ -136,6 +136,26 @@ describe("Chess app", () => {
     expect(screen.getByText("1 game on record")).toBeTruthy();
   });
 
+  it("keeps a successful save visible when a later stats reload would fail", async () => {
+    const { __setNextCheckmate } = await import("chess.js") as unknown as ChessMockControls;
+    __setNextCheckmate();
+    const db = installMatrixDb([]);
+    db.count.mockResolvedValueOnce(0).mockRejectedValueOnce(new Error("count failed"));
+
+    render(<App />);
+    await screen.findByTestId("board");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("square-e2"));
+      await Promise.resolve();
+      fireEvent.click(screen.getByTestId("square-e4"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Game saved")).toBeTruthy();
+    expect(screen.queryByText("Saved games could not be loaded.")).toBeNull();
+  });
+
   it("highlights legal destinations when a pawn is selected", async () => {
     installMatrixDb([]);
     render(<App />);

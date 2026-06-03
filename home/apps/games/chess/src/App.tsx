@@ -199,7 +199,6 @@ export default function App() {
       try {
         await persistGame(gameRef.current.pgn(), result);
         setSaveState("saved");
-        await reloadStats();
       } catch (err: unknown) {
         console.warn("[chess] could not save game:", err instanceof Error ? err.message : String(err));
         setSaveState("error");
@@ -207,7 +206,7 @@ export default function App() {
         setError(SAVE_ERROR);
       }
     },
-    [reloadStats],
+    [],
   );
 
   const applyMove = useCallback(
