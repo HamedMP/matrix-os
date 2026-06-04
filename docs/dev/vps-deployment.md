@@ -1075,6 +1075,14 @@ For customer VPSes, `/icons/<slug>.png` is the system-icon compatibility path. I
 
 Default app manifests must only reference shipped icons in `home/system/icons/`. The preferred raster style is light iOS/macOS skeuomorphic app icon artwork: refined Apple-like product rendering, a bright light background, glossy ceramic/glass objects, no text/logos, no transparent background, and no separate visible icon frame baked into the artwork. Built-ins use their own concrete icons (`terminal`, `workspace`, `files`, `chat`); games use distinct concrete icons (`2048`, `backgammon`, `chess`, `minesweeper`, `snake`, `solitaire`, `tetris`) instead of sharing `game-center`; `pomodoro` uses `pomodoro-timer`, `symphony` uses `code`, and `whiteboard` uses `whiteboard`. The default-app manifest/icon tests enforce this so new VPS homes and restored user homes do not depend on runtime icon generation for first paint.
 
+Existing VPS homes keep owner files under `/home/matrix/home/system/icons`, so a host-bundle upgrade does not overwrite older generated logos automatically. When the owner explicitly wants the current shipped icon family, run:
+
+```bash
+ssh matrix@<customer-vps-ip> 'node /opt/matrix/app/scripts/reset-shipped-icons.mjs --home /home/matrix/home --template /opt/matrix/app/home'
+```
+
+The script overwrites only shipped `.png`/`.svg` icon names, backs up changed files under `/home/matrix/home/system/icon-backups/<timestamp>/`, skips symlinks, and leaves unrelated custom icons in place.
+
 ### Browser console shows stale production bundle errors
 
 Map repeated console errors before changing code:

@@ -1,14 +1,26 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from "../../shell/src/hooks/useCanvasTransform.js";
+import {
+  resetCanvasTransformAnimation,
+  useCanvasTransform,
+  ZOOM_ANIM_MS,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  ZOOM_STEP,
+} from "../../shell/src/hooks/useCanvasTransform.js";
 
 function reset() {
+  resetCanvasTransformAnimation();
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
 }
 
 describe("Canvas Transform Store", () => {
   beforeEach(() => {
     reset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("zoom", () => {
@@ -197,6 +209,54 @@ describe("Canvas Transform Store", () => {
     it("can be set to true", () => {
       useCanvasTransform.setState({ isAnimating: true });
       expect(useCanvasTransform.getState().isAnimating).toBe(true);
+    });
+
+    it("zoomAtPoint cancels a programmatic zoom animation", () => {
+      vi.useFakeTimers();
+      useCanvasTransform.getState().zoomToWindow({ x: 0, y: 0, width: 400, height: 300 }, 1200, 800);
+      expect(useCanvasTransform.getState().isAnimating).toBe(true);
+
+      useCanvasTransform.getState().zoomAtPoint(1.2, 400, 300);
+
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+      vi.advanceTimersByTime(ZOOM_ANIM_MS);
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+    });
+
+    it("panBy cancels a programmatic zoom animation", () => {
+      vi.useFakeTimers();
+      useCanvasTransform.getState().zoomToWindow({ x: 0, y: 0, width: 400, height: 300 }, 1200, 800);
+      expect(useCanvasTransform.getState().isAnimating).toBe(true);
+
+      useCanvasTransform.getState().panBy(10, -20);
+
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+      vi.advanceTimersByTime(ZOOM_ANIM_MS);
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+    });
+
+    it("toolbar zoom cancels a programmatic zoom animation", () => {
+      vi.useFakeTimers();
+      useCanvasTransform.getState().zoomToWindow({ x: 0, y: 0, width: 400, height: 300 }, 1200, 800);
+      expect(useCanvasTransform.getState().isAnimating).toBe(true);
+
+      useCanvasTransform.getState().zoomIn();
+
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+      vi.advanceTimersByTime(ZOOM_ANIM_MS);
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+    });
+
+    it("fitAll cancels a programmatic zoom animation", () => {
+      vi.useFakeTimers();
+      useCanvasTransform.getState().zoomToWindow({ x: 0, y: 0, width: 400, height: 300 }, 1200, 800);
+      expect(useCanvasTransform.getState().isAnimating).toBe(true);
+
+      useCanvasTransform.getState().fitAll([{ x: 0, y: 0, width: 800, height: 600 }], 1200, 800);
+
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
+      vi.advanceTimersByTime(ZOOM_ANIM_MS);
+      expect(useCanvasTransform.getState().isAnimating).toBe(false);
     });
   });
 

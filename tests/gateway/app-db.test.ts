@@ -93,6 +93,33 @@ describe("AppDb connection", () => {
     expect(indexes.rows[0].indexname).toContain("title");
   });
 
+  it("creates unique indexes on specified columns", async () => {
+    await db.createAppSchema("test-app");
+    await db.createTable("test-app", "items", { title: "text" }, undefined, ["title"]);
+
+    const indexes = await db.raw(
+      "SELECT indexname FROM pg_indexes WHERE schemaname = 'test-app' AND tablename = 'items' AND indexname LIKE 'uidx_%'",
+    );
+    expect(indexes.rows).toHaveLength(1);
+    expect(indexes.rows[0].indexname).toContain("title");
+
+    await db.raw('INSERT INTO "test-app"."items" (title) VALUES ($1)', ["Unique title"]);
+    await expect(
+      db.raw('INSERT INTO "test-app"."items" (title) VALUES ($1)', ["Unique title"]),
+    ).rejects.toThrow();
+  });
+
+  it("rejects invalid index column names instead of silently skipping manifest constraints", async () => {
+    await db.createAppSchema("test-app");
+
+    await expect(
+      db.createTable("test-app", "items", { title: "text" }, ["../title"]),
+    ).rejects.toThrow(/invalid index column name/i);
+    await expect(
+      db.createTable("test-app", "items", { title: "text" }, undefined, ["../title"]),
+    ).rejects.toThrow(/invalid unique index column name/i);
+  });
+
   it("maps type aliases correctly", async () => {
     await db.createAppSchema("test-app");
     await db.createTable("test-app", "typed", {

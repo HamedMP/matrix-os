@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_THEME, normalizeTheme, type Theme } from "../../shell/src/hooks/useTheme";
+import { DEFAULT_THEME, getThemeFallback, normalizeTheme, type Theme } from "../../shell/src/hooks/useTheme";
 
 function themeToCssVars(theme: Theme): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -46,6 +46,18 @@ describe("theme system", () => {
   it("default theme has font keys", () => {
     expect(DEFAULT_THEME.fonts.mono).toBeDefined();
     expect(DEFAULT_THEME.fonts.sans).toBeDefined();
+  });
+
+  it("keeps desktop fallback on the light default theme", () => {
+    expect(getThemeFallback()).toBe(DEFAULT_THEME);
+    expect(getThemeFallback({ mobileDefaultDark: false })).toBe(DEFAULT_THEME);
+  });
+
+  it("uses a dark fallback theme for mobile first-run shell state", () => {
+    const theme = getThemeFallback({ mobileDefaultDark: true });
+
+    expect(theme.mode).toBe("dark");
+    expect(theme.colors.background).not.toBe(DEFAULT_THEME.colors.background);
   });
 
   it("converts theme to CSS variables", () => {

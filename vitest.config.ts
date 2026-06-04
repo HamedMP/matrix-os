@@ -2,6 +2,25 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "chess-app-test-mock",
+      enforce: "pre",
+      resolveId(source, importer) {
+        if (source !== "chess.js" || !importer) return null;
+        const normalized = importer.split(path.sep).join("/");
+        // Keep FakeChess scoped to the chess app integration test and the
+        // component it renders so lower-level chess unit tests opt in explicitly.
+        if (
+          normalized.endsWith("/tests/default-apps/chess-app.test.tsx") ||
+          normalized.endsWith("/home/apps/games/chess/src/App.tsx")
+        ) {
+          return path.resolve(__dirname, "tests/default-apps/mocks/chess-js.ts");
+        }
+        return null;
+      },
+    },
+  ],
   resolve: {
     conditions: ["node"],
     alias: {

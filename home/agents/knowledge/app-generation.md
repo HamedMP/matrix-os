@@ -129,12 +129,25 @@ createRoot(document.getElementById("root")!).render(
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "category": "productivity",
+  "icon": "todo-app",
   "build": {
     "command": "pnpm build",
     "output": "dist"
   }
 }
 ```
+
+### App Icon
+
+Every app manifest must set `"icon": "<slug>"`, and the matching file must exist at
+`~/system/icons/<slug>.png` or `~/system/icons/<slug>.svg`. Prefer PNGs for app logos.
+
+New app logos should match the shipped Matrix OS icon family: light premium iOS/macOS skeuomorphic
+app icon artwork, refined Apple-like product rendering, bright warm off-white or pale pastel
+background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows,
+and one large tactile 3D object or symbol that clearly represents the app. Do not include text,
+logos, watermarks, transparent backgrounds, black/dark dock backgrounds, empty padding, or a
+separate visible icon frame; the Matrix shell owns the final corner radius.
 
 ### Theme Integration — Matrix OS Design System
 ALWAYS use the Matrix OS brand palette. Load fonts and use gradient backgrounds:
@@ -191,7 +204,8 @@ input, textarea, select {
 }
 ```
 
-Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters as icons.
+Inside app UI, use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs,
+remote fonts, or third-party JavaScript from generated apps. Never use text characters as icons.
 
 For the full design system reference, read `~/agents/knowledge/matrix-design-system.md`.
 

@@ -43,7 +43,7 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
         // Create schema and tables via AppDb (outside trx -- DDL is auto-committed in PG)
         await db.createAppSchema(slug);
         for (const [tableName, tableDef] of Object.entries(opts.tables)) {
-          await db.createTable(slug, tableName, tableDef.columns, tableDef.indexes);
+          await db.createTable(slug, tableName, tableDef.columns, tableDef.indexes, tableDef.uniqueIndexes);
         }
 
         // Upsert registry row inside transaction

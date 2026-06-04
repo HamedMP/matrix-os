@@ -3,6 +3,38 @@
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";
 
+@font-face {
+  font-family: "MesloLGS NF";
+  src: url("/fonts/meslo/MesloLGS%20NF%20Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "MesloLGS NF";
+  src: url("/fonts/meslo/MesloLGS%20NF%20Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "MesloLGS NF";
+  src: url("/fonts/meslo/MesloLGS%20NF%20Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "MesloLGS NF";
+  src: url("/fonts/meslo/MesloLGS%20NF%20Bold%20Italic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: block;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @keyframes shimmer {

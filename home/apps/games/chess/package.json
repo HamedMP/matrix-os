@@ -1,16 +1,17 @@
 {
-  "name": "@matrixos/whiteboard",
+  "name": "@matrixos/chess",
   "private": true,
   "version": "1.0.0",
   "packageManager": "pnpm@10.33.4",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 3100",
-    "build": "node ./scripts/copy-excalidraw-assets.mjs && vite build",
+    "dev": "vite --host 0.0.0.0 --port 3108",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@excalidraw/excalidraw": "^0.18.0",
+    "chess.js": "^1.0.0",
+    "lucide-react": "^0.563.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

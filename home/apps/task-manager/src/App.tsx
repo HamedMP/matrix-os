@@ -1,787 +1,1217 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive,
-  ArrowLeft,
-  ArrowRight,
-  Bot,
   CalendarDays,
+  Check,
   CheckCircle2,
   Circle,
-  ClipboardList,
-  FolderKanban,
   GripVertical,
   LayoutDashboard,
   ListChecks,
+  Pencil,
   Plus,
   Search,
-  Send,
-  Sparkles,
+  Tag,
   Trash2,
-  Users,
+  User,
   X,
 } from "lucide-react";
 import {
   addCard,
   addChecklistItem,
-  addProject,
-  clearDelegation,
+  addColumn,
   createSeedBoard,
-  delegateCard,
   deleteCard,
-  hydrateBoard,
+  deleteColumn,
   moveCard,
-  moveCardToAdjacentColumn,
-  resolveColumnId,
-  summarizeBoard,
+  moveColumn,
+  renameColumn,
   toggleChecklistItem,
   updateCard,
   type Board,
+  type BoardColumn,
   type Card,
-  type CardDelegation,
-  type DelegationStatus,
-  type DelegationTarget,
-  type DelegationTrigger,
+  type ChecklistItem,
   type Priority,
 } from "./board-model";
+import {
+  CARDS_TABLE,
+  COLUMNS_TABLE,
+  boardFromRows,
+  cardToRow,
+  columnToRow,
+  emptyBoard,
+  loadBridgeBoard,
+  loadLocalBoard,
+  saveLocalBoard,
+} from "./persistence";
+import "./styles.css";
 
-const APP_ID = "task-manager";
-const BOARD_KEY = "project-board";
-const FETCH_TIMEOUT_MS = 10_000;
-
-const TRIGGER_LABELS: Record<DelegationTrigger, string> = {
-  manual: "Manual",
-  when_ready: "When ready",
-  on_review: "On review",
-  scheduled: "Scheduled",
+const PRIORITY_ORDER: Priority[] = ["low", "medium", "high", "urgent"];
+const PRIORITY_LABEL: Record<Priority, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  urgent: "Urgent",
 };
 
-const STATUS_LABELS: Record<DelegationStatus, string> = {
-  queued: "Queued",
-  active: "Active",
-  blocked: "Blocked",
-  done: "Done",
-};
+const LABEL_PALETTE = ["#D06F25", "#3A7D44", "#434E3F", "#D49B2A", "#C4342D", "#7A7768"];
 
-const DELEGATION_LABELS: Record<DelegationTarget, string> = {
-  matrix: "Matrix",
-  hermes: "Hermes",
-};
-
-type DraftDelegationTarget = DelegationTarget | "none";
-
-interface QuickDraft {
-  title: string;
-  columnId: string;
-  priority: Priority;
-  delegationTarget: DraftDelegationTarget;
+function labelColor(label: string): string {
+  let hash = 0;
+  for (let i = 0; i < label.length; i += 1) hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  return LABEL_PALETTE[hash % LABEL_PALETTE.length];
 }
 
-function makeDefaultQuickDraft(board?: Board | null): QuickDraft {
-  return {
-    title: "",
-    columnId: board ? resolveColumnId(board, null) : "backlog",
-    priority: "medium",
-    delegationTarget: "none",
-  };
+function db(): NonNullable<Window["MatrixOS"]>["db"] | undefined {
+  return typeof window !== "undefined" ? window.MatrixOS?.db : undefined;
 }
 
-const DEFAULT_QUICK_DRAFT: QuickDraft = makeDefaultQuickDraft();
+type MatrixDb = NonNullable<NonNullable<Window["MatrixOS"]>["db"]>;
 
-async function readBoard(): Promise<Board> {
-  const params = new URLSearchParams({ app: APP_ID, key: BOARD_KEY });
-  const response = await fetch(`/api/bridge/data?${params.toString()}`, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) return createSeedBoard();
-  if (!response.headers.get("content-type")?.includes("application/json")) {
-    throw new Error("Bridge returned a non-JSON response");
-  }
-  let payload: { value?: string | null } | null;
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function checklistProgress(checklist: ChecklistItem[]): { done: number; total: number } {
+  return { done: checklist.filter((item) => item.done).length, total: checklist.length };
+}
+
+function dueState(due: string): "overdue" | "soon" | "none" | "later" {
+  if (!due) return "none";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const date = new Date(`${due}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "none";
+  const diff = Math.round((date.getTime() - today.getTime()) / 86_400_000);
+  if (diff < 0) return "overdue";
+  if (diff <= 2) return "soon";
+  return "later";
+}
+
+function formatDue(due: string): string {
+  const date = new Date(`${due}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return due;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+async function persistBoardToBridge(bridge: MatrixDb, source: Board): Promise<Board> {
+  const columnIdMap = new Map<string, string>();
+  const insertedColumnIds: string[] = [];
+  const insertedCardIds: string[] = [];
   try {
-    payload = (await response.json()) as { value?: string | null } | null;
-  } catch (err: unknown) {
-    throw new Error(`Bridge returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    for (let i = 0; i < source.columns.length; i += 1) {
+      const column = source.columns[i];
+      const result = await bridge.insert(COLUMNS_TABLE, columnToRow(column, i));
+      insertedColumnIds.push(result.id);
+      columnIdMap.set(column.id, result.id);
+    }
+    for (const card of source.cards) {
+      const result = await bridge.insert(CARDS_TABLE, {
+        ...cardToRow(card, card.order),
+        column_id: columnIdMap.get(card.columnId) ?? card.columnId,
+      });
+      insertedCardIds.push(result.id);
+    }
+  } catch (err) {
+    for (const cardId of [...insertedCardIds].reverse()) {
+      await bridge.delete(CARDS_TABLE, cardId).catch((cleanupErr: unknown) => {
+        console.warn("[task-manager] seed card cleanup failed:", errMessage(cleanupErr));
+      });
+    }
+    for (const columnId of [...insertedColumnIds].reverse()) {
+      await bridge.delete(COLUMNS_TABLE, columnId).catch((cleanupErr: unknown) => {
+        console.warn("[task-manager] seed column cleanup failed:", errMessage(cleanupErr));
+      });
+    }
+    throw err;
   }
-  if (!payload?.value) return createSeedBoard();
-  try {
-    return hydrateBoard(JSON.parse(payload.value));
-  } catch (err: unknown) {
-    throw new Error(`Bridge returned invalid board payload: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-function timeoutSignal(signal?: AbortSignal): AbortSignal {
-  if (!signal) return AbortSignal.timeout(FETCH_TIMEOUT_MS);
-  return AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
-
-async function writeBoard(board: Board, signal?: AbortSignal): Promise<void> {
-  const response = await fetch("/api/bridge/data", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: timeoutSignal(signal),
-    body: JSON.stringify({
-      action: "write",
-      app: APP_ID,
-      key: BOARD_KEY,
-      value: JSON.stringify(board),
-    }),
-  });
-  if (!response.ok) {
-    throw new Error("Board save failed");
-  }
-}
-
-function priorityClass(priority: Priority): string {
-  return `priority priority--${priority}`;
-}
-
-function delegationClass(target: DelegationTarget): string {
-  return `delegation-badge delegation-badge--${target}`;
-}
-
-function defaultDelegationInstructions(card: Card): string {
-  return card.description.trim() || card.title;
-}
-
-function columnCardCount(board: Board, columnId: string): number {
-  return board.cards.filter((card) => card.columnId === columnId).length;
-}
-
-function cardDropIndex(board: Board, targetCardId: string, movingCardId: string): number {
-  const targetCard = board.cards.find((card) => card.id === targetCardId);
-  if (!targetCard) return 0;
-  const targetCards = board.cards
-    .filter((card) => card.columnId === targetCard.columnId && card.id !== movingCardId)
-    .sort((a, b) => a.order - b.order);
-  const targetIndex = targetCards.findIndex((card) => card.id === targetCardId);
-  return targetIndex < 0 ? targetCards.length : targetIndex;
-}
-
-function CardView({
-  card,
-  projectName,
-  columnTitle,
-  canMovePrevious,
-  canMoveNext,
-  onOpen,
-  onDragStart,
-  onMovePrevious,
-  onMoveNext,
-}: {
-  card: Card;
-  projectName: string;
-  columnTitle: string;
-  canMovePrevious: boolean;
-  canMoveNext: boolean;
-  onOpen: () => void;
-  onDragStart: () => void;
-  onMovePrevious: () => void;
-  onMoveNext: () => void;
-}) {
-  const done = card.checklist.filter((item) => item.done).length;
-  return (
-    <article className={card.delegation ? "task-card task-card--delegated" : "task-card"} draggable onDragStart={onDragStart}>
-      <button className="task-card__open" type="button" onClick={onOpen}>
-        <span className="task-card__drag">
-          <GripVertical size={14} />
-        </span>
-        <span className="task-card__main">
-          <span className="task-card__title">{card.title}</span>
-          <span className="task-card__status">{columnTitle}</span>
-        </span>
-        <span className={priorityClass(card.priority)}>{card.priority}</span>
-      </button>
-      {card.description ? <p>{card.description}</p> : null}
-      <div className="label-row">
-        {card.labels.map((label) => (
-          <span className="label" key={label}>{label}</span>
-        ))}
-        {card.delegation ? (
-          <span className={delegationClass(card.delegation.target)}>
-            <Bot size={12} />
-            {DELEGATION_LABELS[card.delegation.target]}
-          </span>
-        ) : null}
-      </div>
-      <footer className="task-card__meta">
-        <span><FolderKanban size={13} />{projectName}</span>
-        {card.dueDate ? <span><CalendarDays size={13} />{card.dueDate}</span> : null}
-        {card.assignee ? <span><Users size={13} />{card.assignee}</span> : null}
-        {card.checklist.length > 0 ? <span><CheckCircle2 size={13} />{done}/{card.checklist.length}</span> : null}
-      </footer>
-      <div className="task-card__actions">
-        <button className="icon-button icon-button--compact" type="button" onClick={onMovePrevious} disabled={!canMovePrevious} title="Move previous">
-          <ArrowLeft size={15} />
-        </button>
-        <button className="button button--compact" type="button" onClick={onOpen}>
-          <ListChecks size={14} />
-          Details
-        </button>
-        <button className="icon-button icon-button--compact" type="button" onClick={onMoveNext} disabled={!canMoveNext} title="Move next">
-          <ArrowRight size={15} />
-        </button>
-      </div>
-    </article>
-  );
+  const [columnRows, cardRows] = await Promise.all([
+    bridge.find(COLUMNS_TABLE, { orderBy: { position: "asc" } }),
+    bridge.find(CARDS_TABLE, { orderBy: { position: "asc" } }),
+  ]);
+  return boardFromRows(columnRows, cardRows);
 }
 
 function App() {
   const [board, setBoard] = useState<Board | null>(null);
-  const [activeProjectId, setActiveProjectId] = useState<string>("all");
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
-  const [quickDraft, setQuickDraft] = useState<QuickDraft>(DEFAULT_QUICK_DRAFT);
+  const [draggingColumnId, setDraggingColumnId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ columnId: string; index: number } | null>(null);
+  const [editingColumnId, setEditingColumnId] = useState<string | null>(null);
   const [columnDrafts, setColumnDrafts] = useState<Record<string, string>>({});
-  const [newProjectName, setNewProjectName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const detailSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingDetailBoardRef = useRef<Board | null>(null);
-  const saveAbortRef = useRef<AbortController | null>(null);
+  const [addingColumn, setAddingColumn] = useState(false);
+  const [newColumnTitle, setNewColumnTitle] = useState("");
 
-  useEffect(() => {
-    readBoard()
-      .then((nextBoard) => {
-        setBoard(nextBoard);
-        setQuickDraft(makeDefaultQuickDraft(nextBoard));
-      })
-      .catch((err: unknown) => {
-        console.warn("[task-manager] load failed:", err instanceof Error ? err.message : String(err));
-        setError("Board could not be loaded.");
-      });
+  const boardRef = useRef<Board | null>(null);
+  boardRef.current = board;
+  const pendingColumnIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
+  const pendingCardIdsRef = useRef<Record<string, Promise<string> | undefined>>({});
+  const pendingCardIdSwapsRef = useRef<Record<string, string | undefined>>({});
+  const deletingColumnIdsRef = useRef<Set<string>>(new Set());
+  const usingDbRef = useRef(false);
+  const suppressReloadRef = useRef(false);
+
+  const reload = useCallback(async () => {
+    const bridge = db();
+    if (!bridge) {
+      usingDbRef.current = false;
+      const local = loadLocalBoard();
+      const next = local && local.columns?.length ? local : createSeedBoard();
+      setBoard(next);
+      if (!local) saveLocalBoard(next);
+      return true;
+    }
+    usingDbRef.current = true;
+    try {
+      const [columnRows, cardRows] = await Promise.all([
+        bridge.find(COLUMNS_TABLE, { orderBy: { position: "asc" } }),
+        bridge.find(CARDS_TABLE, { orderBy: { position: "asc" } }),
+      ]);
+      if (columnRows.length === 0) {
+        const legacy = await loadBridgeBoard();
+        if (legacy) {
+          suppressReloadRef.current = true;
+          try {
+            setBoard(await persistBoardToBridge(bridge, legacy));
+          } finally {
+            suppressReloadRef.current = false;
+          }
+          setError(null);
+          return true;
+        }
+        // First run: seed the default workflow columns into Postgres.
+        const seed = emptyBoard();
+        suppressReloadRef.current = true;
+        try {
+          setBoard(await persistBoardToBridge(bridge, seed));
+        } finally {
+          suppressReloadRef.current = false;
+        }
+        setError(null);
+        return true;
+      }
+      setBoard(boardFromRows(columnRows, cardRows));
+      setError(null);
+      return true;
+    } catch (err: unknown) {
+      console.warn("[task-manager] load failed:", errMessage(err));
+      setError("Board could not be loaded. Retrying may help.");
+      return false;
+    }
   }, []);
 
   useEffect(() => {
-    if (!board) return;
-    setQuickDraft((draft) => {
-      const columnId = resolveColumnId(board, draft.columnId);
-      return columnId === draft.columnId ? draft : { ...draft, columnId };
-    });
-  }, [board]);
+    void reload();
+    const bridge = db();
+    if (!bridge) return undefined;
+    const guardedReload = () => {
+      if (!suppressReloadRef.current) void reload();
+    };
+    const offColumns = bridge.onChange(COLUMNS_TABLE, guardedReload);
+    const offCards = bridge.onChange(CARDS_TABLE, guardedReload);
+    return () => {
+      offColumns?.();
+      offCards?.();
+    };
+  }, [reload]);
 
   useEffect(() => {
-    if (!selectedCardId) return;
-    const onKeyDown = (event: KeyboardEvent) => {
+    if (!selectedCardId) return undefined;
+    const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedCardId(null);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [selectedCardId]);
 
-  const persistBoard = useCallback((nextBoard: Board) => {
-    saveAbortRef.current?.abort();
-    const controller = new AbortController();
-    saveAbortRef.current = controller;
-    writeBoard(nextBoard, controller.signal)
-      .catch((err: unknown) => {
-        if (isAbortError(err)) return;
-        console.warn("[task-manager] save failed:", err instanceof Error ? err.message : String(err));
-        setError("Board could not be saved.");
-      })
-      .finally(() => {
-        if (saveAbortRef.current === controller) saveAbortRef.current = null;
-      });
-  }, []);
-
-  const saveBoard = useCallback((nextBoard: Board) => {
-    if (detailSaveTimerRef.current) {
-      clearTimeout(detailSaveTimerRef.current);
-      detailSaveTimerRef.current = null;
-      pendingDetailBoardRef.current = null;
-    }
-    setBoard(nextBoard);
-    setError(null);
-    persistBoard(nextBoard);
-  }, [persistBoard]);
-
-  const queueBoardSave = useCallback((nextBoard: Board) => {
-    setBoard(nextBoard);
-    setError(null);
-    pendingDetailBoardRef.current = nextBoard;
-    if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
-    detailSaveTimerRef.current = setTimeout(() => {
-      detailSaveTimerRef.current = null;
-      const pendingBoard = pendingDetailBoardRef.current ?? nextBoard;
-      pendingDetailBoardRef.current = null;
-      persistBoard(pendingBoard);
-    }, 400);
-  }, [persistBoard]);
-
+  // Persist a localStorage snapshot whenever the board changes in fallback mode.
   useEffect(() => {
-    return () => {
-      const pendingBoard = pendingDetailBoardRef.current;
-      if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
-      detailSaveTimerRef.current = null;
-      pendingDetailBoardRef.current = null;
-      if (!pendingBoard) return;
-      saveAbortRef.current?.abort();
-      saveAbortRef.current = null;
-      writeBoard(pendingBoard).catch((err: unknown) => {
-        if (isAbortError(err)) return;
-        console.warn("[task-manager] save failed:", err instanceof Error ? err.message : String(err));
-      });
-    };
+    if (board && !usingDbRef.current) saveLocalBoard(board);
+  }, [board]);
+
+  const persist = useCallback(async (action: () => Promise<void>, failure: string) => {
+    if (!usingDbRef.current) return;
+    try {
+      await action();
+    } catch (err: unknown) {
+      console.warn(`[task-manager] ${failure}:`, errMessage(err));
+      const refreshed = await reload();
+      setError(refreshed ? `${failure}. The board has been refreshed.` : `${failure}. Reopen the board to refresh.`);
+    }
+  }, [reload]);
+
+  const resolveCardId = useCallback((cardId: string): Promise<string> => {
+    return pendingCardIdsRef.current[cardId] ?? Promise.resolve(cardId);
   }, []);
 
-  const summary = useMemo(() => board ? summarizeBoard(board) : null, [board]);
-  const selectedCard = board?.cards.find((card) => card.id === selectedCardId) ?? null;
-  const visibleCards = useMemo(() => {
-    if (!board) return [];
-    const normalizedQuery = query.trim().toLowerCase();
-    return board.cards.filter((card) => {
-      const projectMatch = activeProjectId === "all" || card.projectId === activeProjectId;
-      if (!projectMatch) return false;
-      if (!normalizedQuery) return true;
-      return [
-        card.title,
-        card.description,
-        card.assignee,
-        card.priority,
-        card.delegation?.target,
-        card.delegation?.instructions,
-        ...card.labels,
-        board.projects.find((project) => project.id === card.projectId)?.name ?? "",
-      ].join(" ").toLowerCase().includes(normalizedQuery);
-    });
-  }, [activeProjectId, board, query]);
+  // --- Card mutations (optimistic) ---
 
-  const createCard = useCallback((
-    columnId: string,
-    title: string,
-    options?: { priority?: Priority; delegationTarget?: DraftDelegationTarget },
-  ) => {
-    if (!board || !title.trim()) return;
-    const projectId = activeProjectId === "all" ? board.projects[0]?.id : activeProjectId;
-    if (!projectId) return;
-    const existingIds = new Set(board.cards.map((card) => card.id));
-    const targetColumnId = resolveColumnId(board, columnId);
-    let nextBoard = addCard(board, {
-      columnId: targetColumnId,
-      projectId,
-      title,
-      priority: options?.priority ?? "medium",
-      labels: [],
+  const createCard = useCallback((columnId: string, title: string) => {
+    const current = boardRef.current;
+    if (!current || !title.trim()) return;
+    if (deletingColumnIdsRef.current.has(columnId)) return;
+    const projectId = current.projects[0]?.id ?? "project-default";
+    const existing = new Set(current.cards.map((card) => card.id));
+    const next = addCard(current, { columnId, projectId, title });
+    setBoard(next);
+    boardRef.current = next;
+    const created = next.cards.find((card) => !existing.has(card.id));
+    if (!created) return;
+    let resolveCreatedCardId: (id: string) => void = () => undefined;
+    let rejectCreatedCardId: (err: unknown) => void = () => undefined;
+    const pendingCardId = new Promise<string>((resolve, reject) => {
+      resolveCreatedCardId = resolve;
+      rejectCreatedCardId = reject;
     });
-    const createdCard = nextBoard.cards.find((card) => !existingIds.has(card.id));
-    if (createdCard && options?.delegationTarget && options.delegationTarget !== "none") {
-      nextBoard = delegateCard(nextBoard, createdCard.id, {
-        target: options.delegationTarget,
-        trigger: "manual",
-        instructions: createdCard.title,
+    pendingCardId.catch(() => undefined);
+    pendingCardIdsRef.current[created.id] = pendingCardId;
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) {
+        resolveCreatedCardId(created.id);
+        return;
+      }
+      try {
+        let liveCard = boardRef.current?.cards.find((card) => card.id === created.id);
+        if (!liveCard) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        const liveColumnId = liveCard.columnId;
+        const liveColumnExists = boardRef.current?.columns.some((column) => column.id === liveColumnId) ?? false;
+        if (!liveColumnExists) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        const pendingColumnId = liveColumnId;
+        let columnId = await (pendingColumnIdsRef.current[pendingColumnId] ?? Promise.resolve(pendingColumnId));
+        liveCard = boardRef.current?.cards.find((card) => card.id === created.id);
+        if (!liveCard) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        const latestColumnId = liveCard.columnId;
+        const latestColumnExists = boardRef.current?.columns.some((column) => column.id === latestColumnId) ?? false;
+        if (!latestColumnExists) {
+          resolveCreatedCardId(created.id);
+          return;
+        }
+        if (latestColumnId !== pendingColumnId) {
+          columnId = await (pendingColumnIdsRef.current[latestColumnId] ?? Promise.resolve(latestColumnId));
+        }
+        const result = await bridge.insert(CARDS_TABLE, cardToRow({ ...liveCard, columnId }, liveCard.order));
+        resolveCreatedCardId(result.id);
+        pendingCardIdSwapsRef.current[result.id] = created.id;
+        window.setTimeout(() => {
+          delete pendingCardIdSwapsRef.current[result.id];
+        }, 0);
+        setSelectedCardId((id) => (id === created.id ? result.id : id));
+        setBoard((current) => current ? {
+          ...current,
+          cards: current.cards.map((card) => card.id === created.id ? { ...card, id: result.id } : card),
+        } : current);
+      } catch (err) {
+        rejectCreatedCardId(err);
+        throw err;
+      } finally {
+        delete pendingCardIdsRef.current[created.id];
+      }
+    }, "Card could not be saved");
+  }, [persist, reload]);
+
+  const patchCard = useCallback((cardId: string, patch: Partial<Omit<Card, "id" | "createdAt">>) => {
+    const current = boardRef.current;
+    if (!current) return;
+    const next = updateCard(current, cardId, patch);
+    setBoard(next);
+    boardRef.current = next;
+    const updated = next.cards.find((card) => card.id === cardId);
+    if (!updated) return;
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      const persistedCardId = await resolveCardId(cardId);
+      const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+        ?? boardRef.current?.cards.find((card) => card.id === cardId);
+      const rowCard = liveCard ?? updated;
+      const persistedColumnId = await (
+        pendingColumnIdsRef.current[rowCard.columnId] ?? Promise.resolve(rowCard.columnId)
+      );
+      await bridge.update(
+        CARDS_TABLE,
+        persistedCardId,
+        cardToRow({ ...rowCard, id: persistedCardId, columnId: persistedColumnId }, rowCard.order),
+      );
+    }, "Card could not be updated");
+  }, [persist, resolveCardId]);
+
+  const removeCard = useCallback((cardId: string) => {
+    const current = boardRef.current;
+    if (!current) return;
+    const next = deleteCard(current, cardId);
+    setBoard(next);
+    boardRef.current = next;
+    setSelectedCardId((id) => (id === cardId ? null : id));
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
+    }, "Card could not be deleted");
+  }, [persist, resolveCardId]);
+
+  const dropCard = useCallback((cardId: string, targetColumnId: string, targetIndex: number) => {
+    const current = boardRef.current;
+    if (!current) return;
+    if (deletingColumnIdsRef.current.has(targetColumnId)) return;
+    const before = current.cards.find((card) => card.id === cardId);
+    const next = moveCard(current, cardId, targetColumnId, targetIndex);
+    setBoard(next);
+    boardRef.current = next;
+    // Persist new column + position for every card in affected columns.
+    const affected = new Set([before?.columnId, targetColumnId].filter(Boolean) as string[]);
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      const cardIds = next.cards.filter((card) => affected.has(card.columnId)).map((card) => card.id);
+      for (const cardId of cardIds) {
+        const persistedCardId = await resolveCardId(cardId);
+        const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+          ?? boardRef.current?.cards.find((card) => card.id === cardId)
+          ?? next.cards.find((card) => card.id === cardId);
+        if (!liveCard) continue;
+        const persistedColumnId = await (
+          pendingColumnIdsRef.current[liveCard.columnId] ?? Promise.resolve(liveCard.columnId)
+        );
+        await bridge.update(CARDS_TABLE, persistedCardId, {
+          column_id: persistedColumnId,
+          position: liveCard.order,
+        });
+      }
+    }, "Card order could not be saved");
+  }, [persist, resolveCardId]);
+
+  // --- Checklist (within selected card) ---
+
+  const toggleChecklist = useCallback((cardId: string, itemId: string) => {
+    const current = boardRef.current;
+    if (!current) return;
+    const next = toggleChecklistItem(current, cardId, itemId);
+    setBoard(next);
+    boardRef.current = next;
+    const updated = next.cards.find((card) => card.id === cardId);
+    if (!updated) return;
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      const persistedCardId = await resolveCardId(cardId);
+      const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+        ?? boardRef.current?.cards.find((card) => card.id === cardId);
+      await bridge.update(CARDS_TABLE, persistedCardId, { checklist: liveCard?.checklist ?? updated.checklist });
+    }, "Checklist could not be saved");
+  }, [persist, resolveCardId]);
+
+  const addChecklist = useCallback((cardId: string, text: string) => {
+    const current = boardRef.current;
+    if (!current || !text.trim()) return;
+    const next = addChecklistItem(current, cardId, text);
+    setBoard(next);
+    boardRef.current = next;
+    const updated = next.cards.find((card) => card.id === cardId);
+    if (!updated) return;
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      const persistedCardId = await resolveCardId(cardId);
+      const liveCard = boardRef.current?.cards.find((card) => card.id === persistedCardId)
+        ?? boardRef.current?.cards.find((card) => card.id === cardId);
+      await bridge.update(CARDS_TABLE, persistedCardId, { checklist: liveCard?.checklist ?? updated.checklist });
+    }, "Checklist could not be saved");
+  }, [persist, resolveCardId]);
+
+  // --- Column mutations ---
+
+  const createColumn = useCallback((title: string) => {
+    const current = boardRef.current;
+    if (!current || !title.trim()) return;
+    const existing = new Set(current.columns.map((column) => column.id));
+    const next = addColumn(current, title);
+    setBoard(next);
+    boardRef.current = next;
+    const created = next.columns.find((column) => !existing.has(column.id));
+    if (!created) return;
+    const position = next.columns.findIndex((column) => column.id === created.id);
+    let resolveColumnId: (id: string) => void = () => undefined;
+    let rejectColumnId: (err: unknown) => void = () => undefined;
+    const pendingColumnId = new Promise<string>((resolve, reject) => {
+      resolveColumnId = resolve;
+      rejectColumnId = reject;
+    });
+    pendingColumnId.catch(() => undefined);
+    pendingColumnIdsRef.current[created.id] = pendingColumnId;
+    void (async () => {
+      if (!usingDbRef.current) {
+        resolveColumnId(created.id);
+        delete pendingColumnIdsRef.current[created.id];
+        return;
+      }
+      const bridge = db();
+      if (!bridge) {
+        resolveColumnId(created.id);
+        return;
+      }
+      try {
+        const result = await bridge.insert(COLUMNS_TABLE, columnToRow(created, position));
+        resolveColumnId(result.id);
+        const latest = boardRef.current;
+        if (latest) {
+          const next = {
+            ...latest,
+            columns: latest.columns.map((column) => column.id === created.id ? { ...column, id: result.id } : column),
+            cards: latest.cards.map((card) => card.columnId === created.id ? { ...card, columnId: result.id } : card),
+          };
+          boardRef.current = next;
+          setBoard(next);
+        }
+      } catch (err) {
+        rejectColumnId(err);
+        console.warn("[task-manager] Column could not be created:", errMessage(err));
+        await reload();
+        setError("Column could not be created. Reopen the board to refresh.");
+      } finally {
+        delete pendingColumnIdsRef.current[created.id];
+      }
+    })();
+  }, [reload]);
+
+  const renameBoardColumn = useCallback((columnId: string, title: string) => {
+    if (!boardRef.current) return;
+    const trimmedTitle = title.trim();
+    setBoard((current) => (current ? renameColumn(current, columnId, title) : current));
+    if (!trimmedTitle) return;
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
+      await bridge.update(COLUMNS_TABLE, persistedColumnId, { title: trimmedTitle });
+    }, "Column could not be renamed");
+  }, [persist]);
+
+  const removeColumn = useCallback((columnId: string) => {
+    const current = boardRef.current;
+    if (!current || current.columns.length <= 1) return;
+    const removedCards = current.cards.filter((card) => card.columnId === columnId).map((card) => card.id);
+    const bridge = db();
+    if (!usingDbRef.current || !bridge) {
+      setBoard((latest) => {
+        if (!latest) return latest;
+        const next = deleteColumn(latest, columnId);
+        boardRef.current = next;
+        return next;
       });
-    }
-    saveBoard(nextBoard);
-  }, [activeProjectId, board, saveBoard]);
-
-  const createProject = useCallback(() => {
-    if (!board || !newProjectName.trim()) return;
-    const nextBoard = addProject(board, newProjectName);
-    saveBoard(nextBoard);
-    setActiveProjectId(nextBoard.projects[nextBoard.projects.length - 1].id);
-    setNewProjectName("");
-  }, [board, newProjectName, saveBoard]);
-
-  const updateSelectedCard = useCallback((patch: Partial<Omit<Card, "id" | "createdAt">>) => {
-    if (!board || !selectedCard) return;
-    queueBoardSave(updateCard(board, selectedCard.id, patch));
-  }, [board, queueBoardSave, selectedCard]);
-
-  const moveSelectedCard = useCallback((columnId: string) => {
-    if (!board || !selectedCard || selectedCard.columnId === columnId) return;
-    const targetCount = board.cards.filter((card) => card.columnId === columnId).length;
-    saveBoard(moveCard(board, selectedCard.id, columnId, targetCount));
-  }, [board, saveBoard, selectedCard]);
-
-  const updateDelegation = useCallback((patch: Partial<Omit<CardDelegation, "updatedAt">>) => {
-    if (!board || !selectedCard) return;
-    const current = selectedCard.delegation;
-    const target = patch.target ?? current?.target;
-    if (!target) return;
-    queueBoardSave(delegateCard(board, selectedCard.id, {
-      target,
-      trigger: patch.trigger ?? current?.trigger ?? "manual",
-      instructions: patch.instructions ?? current?.instructions ?? defaultDelegationInstructions(selectedCard),
-      status: patch.status ?? current?.status ?? "queued",
-    }));
-  }, [board, queueBoardSave, selectedCard]);
-
-  const setDelegationTarget = useCallback((target: DraftDelegationTarget) => {
-    if (!board || !selectedCard) return;
-    if (target === "none") {
-      saveBoard(clearDelegation(board, selectedCard.id));
       return;
     }
-    saveBoard(delegateCard(board, selectedCard.id, {
-      target,
-      trigger: selectedCard.delegation?.trigger ?? "manual",
-      instructions: selectedCard.delegation?.instructions ?? defaultDelegationInstructions(selectedCard),
-      status: selectedCard.delegation?.status ?? "queued",
-    }));
-  }, [board, saveBoard, selectedCard]);
+    if (deletingColumnIdsRef.current.has(columnId)) return;
+    deletingColumnIdsRef.current.add(columnId);
+    suppressReloadRef.current = true;
+    void (async () => {
+      let persistedDeleteColumnId: string | null = null;
+      try {
+        for (const cardId of removedCards) {
+          await bridge.delete(CARDS_TABLE, await resolveCardId(cardId));
+        }
+        const persistedColumnId = await (pendingColumnIdsRef.current[columnId] ?? Promise.resolve(columnId));
+        persistedDeleteColumnId = persistedColumnId;
+        deletingColumnIdsRef.current.add(persistedColumnId);
+        await bridge.delete(COLUMNS_TABLE, persistedColumnId);
+        setError(null);
+        setBoard((latest) => {
+          if (!latest) return latest;
+          const deleteId = latest.columns.some((column) => column.id === persistedColumnId)
+            ? persistedColumnId
+            : columnId;
+          const next = deleteColumn(latest, deleteId);
+          boardRef.current = next;
+          return next;
+        });
+      } catch (err: unknown) {
+        console.warn("[task-manager] Column could not be deleted:", errMessage(err));
+        await reload();
+        setError("Column could not be deleted. Reopen the board to refresh.");
+      } finally {
+        deletingColumnIdsRef.current.delete(columnId);
+        if (persistedDeleteColumnId) deletingColumnIdsRef.current.delete(persistedDeleteColumnId);
+        suppressReloadRef.current = false;
+      }
+    })();
+  }, [reload, resolveCardId]);
 
-  if (!board || !summary) {
-    return <div className="loading">{error ?? "Opening Task Manager"}</div>;
+  const dropColumn = useCallback((columnId: string, targetIndex: number) => {
+    const current = boardRef.current;
+    if (!current) return;
+    const next = moveColumn(current, columnId, targetIndex);
+    setBoard(next);
+    boardRef.current = next;
+    void persist(async () => {
+      const bridge = db();
+      if (!bridge) return;
+      const columnIds = next.columns.map((column) => column.id);
+      for (const originalColumnId of columnIds) {
+        const persistedColumnId = await (
+          pendingColumnIdsRef.current[originalColumnId] ?? Promise.resolve(originalColumnId)
+        );
+        const liveColumns = boardRef.current?.columns ?? next.columns;
+        const liveIndex = liveColumns.findIndex((column) =>
+          column.id === persistedColumnId || column.id === originalColumnId,
+        );
+        if (liveIndex < 0) continue;
+        await bridge.update(COLUMNS_TABLE, persistedColumnId, { position: liveIndex });
+      }
+    }, "Column order could not be saved");
+  }, [persist]);
+
+  // --- Derived ---
+
+  const allLabels = useMemo(() => {
+    if (!board) return [];
+    const set = new Set<string>();
+    for (const card of board.cards) for (const label of card.labels) set.add(label);
+    return [...set].sort();
+  }, [board]);
+
+  const filteredCards = useMemo(() => {
+    if (!board) return [];
+    const q = query.trim().toLowerCase();
+    return board.cards.filter((card) => {
+      if (labelFilter && !card.labels.includes(labelFilter)) return false;
+      if (!q) return true;
+      return [card.title, card.description, card.assignee, ...card.labels]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [board, labelFilter, query]);
+
+  const totalShown = filteredCards.length;
+  const selectedCard = board?.cards.find((card) => card.id === selectedCardId) ?? null;
+  const isFiltering = Boolean(query.trim()) || Boolean(labelFilter);
+
+  if (!board) {
+    return (
+      <main className="board-shell board-shell--loading">
+        <div className="loading">{error ?? "Opening Task Manager…"}</div>
+      </main>
+    );
   }
-
-  const projectById = Object.fromEntries(board.projects.map((project) => [project.id, project]));
-  const columnById = Object.fromEntries(board.columns.map((column) => [column.id, column]));
-  const selectedColumn = selectedCard ? columnById[selectedCard.columnId] : null;
 
   return (
     <main className="board-shell">
       <header className="app-header">
         <div className="app-title">
-          <span className="app-icon"><LayoutDashboard size={24} /></span>
+          <span className="app-icon"><LayoutDashboard size={22} /></span>
           <div>
-            <span className="eyebrow">Proactive board</span>
+            <span className="eyebrow">Project board</span>
             <h1>Task Manager</h1>
           </div>
         </div>
-        <label className="search-field">
-          <Search size={15} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks, projects, agents" />
-        </label>
+        <div className="header-tools">
+          <label className="search-field">
+            <Search size={15} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search cards"
+              aria-label="Search cards"
+            />
+          </label>
+        </div>
       </header>
 
-      <section className="summary-grid" aria-label="Board summary">
-        <div className="summary-card"><ClipboardList size={17} /><span>{summary.totalCards}</span><small>Tasks</small></div>
-        <div className="summary-card"><FolderKanban size={17} /><span>{summary.activeProjects}</span><small>Projects</small></div>
-        <div className="summary-card"><Send size={17} /><span>{summary.delegatedCards}</span><small>Delegated</small></div>
-        <div className="summary-card"><Sparkles size={17} /><span>{summary.urgentCards}</span><small>Urgent</small></div>
-        <div className="summary-card"><CheckCircle2 size={17} /><span>{summary.doneCards}</span><small>Done</small></div>
-        <div className="summary-card"><Archive size={17} /><span>{summary.checklistDone}/{summary.checklistTotal}</span><small>Checklist</small></div>
-      </section>
-
-      {error ? <div className="error-banner">{error}</div> : null}
-
-      <section className="control-row">
-        <div className="project-tabs" aria-label="Project filter">
-          <button className={activeProjectId === "all" ? "project-tab project-tab--active" : "project-tab"} type="button" onClick={() => setActiveProjectId("all")}>All</button>
-          {board.projects.map((project) => (
+      {allLabels.length > 0 ? (
+        <div className="filter-bar" aria-label="Label filters">
+          <button
+            type="button"
+            className={labelFilter === null ? "label-chip label-chip--active" : "label-chip"}
+            onClick={() => setLabelFilter(null)}
+          >
+            All
+          </button>
+          {allLabels.map((label) => (
             <button
-              className={activeProjectId === project.id ? "project-tab project-tab--active" : "project-tab"}
               type="button"
-              key={project.id}
-              onClick={() => setActiveProjectId(project.id)}
+              key={label}
+              className={labelFilter === label ? "label-chip label-chip--active" : "label-chip"}
+              style={{ "--chip": labelColor(label) } as React.CSSProperties}
+              onClick={() => setLabelFilter((current) => (current === label ? null : label))}
             >
-              <span style={{ background: project.color }} />
-              {project.name}
+              <span className="label-chip__dot" />
+              {label}
             </button>
           ))}
         </div>
-        <form className="inline-form" onSubmit={(event) => { event.preventDefault(); createProject(); }}>
-          <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="New project" />
-          <button className="button" type="submit"><Plus size={15} />Project</button>
-        </form>
-      </section>
+      ) : null}
 
-      <form
-        className="quick-add"
-        onSubmit={(event) => {
-          event.preventDefault();
-          createCard(quickDraft.columnId, quickDraft.title, {
-            priority: quickDraft.priority,
-            delegationTarget: quickDraft.delegationTarget,
-          });
-          setQuickDraft((draft) => ({ ...draft, title: "", delegationTarget: "none" }));
-        }}
-      >
-        <label className="quick-add__title">
-          <span className="sr-only">Task title</span>
-          <input
-            value={quickDraft.title}
-            onChange={(event) => setQuickDraft((draft) => ({ ...draft, title: event.target.value }))}
-            placeholder="Capture a task"
-          />
-        </label>
-        <label>
-          <span className="sr-only">Status</span>
-          <select value={quickDraft.columnId} onChange={(event) => setQuickDraft((draft) => ({ ...draft, columnId: event.target.value }))}>
-            {board.columns.map((column) => <option key={column.id} value={column.id}>{column.title}</option>)}
-          </select>
-        </label>
-        <label>
-          <span className="sr-only">Priority</span>
-          <select value={quickDraft.priority} onChange={(event) => setQuickDraft((draft) => ({ ...draft, priority: event.target.value as Priority }))}>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </label>
-        <label>
-          <span className="sr-only">Agent</span>
-          <select value={quickDraft.delegationTarget} onChange={(event) => setQuickDraft((draft) => ({ ...draft, delegationTarget: event.target.value as DraftDelegationTarget }))}>
-            <option value="none">No agent</option>
-            <option value="matrix">Matrix</option>
-            <option value="hermes">Hermes</option>
-          </select>
-        </label>
-        <button className="button button--primary" type="submit"><Plus size={15} />Add task</button>
-      </form>
+      {error ? <div className="error-banner" role="alert">{error}</div> : null}
 
       <section className="board" aria-label="Kanban board">
         {board.columns.map((column, columnIndex) => {
-          const cards = visibleCards
+          const cards = filteredCards
             .filter((card) => card.columnId === column.id)
             .sort((a, b) => a.order - b.order);
-          const totalCards = columnCardCount(board, column.id);
-          const draftValue = columnDrafts[column.id] ?? "";
+          const total = board.cards.filter((card) => card.columnId === column.id).length;
           return (
-            <div
-              className="column"
+            <BoardColumnView
               key={column.id}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => {
-                if (!draggingCardId) return;
-                saveBoard(moveCard(board, draggingCardId, column.id, columnCardCount(board, column.id)));
-                setDraggingCardId(null);
+              column={column}
+              columnIndex={columnIndex}
+              cards={cards}
+              total={total}
+              shownCount={cards.length}
+              isFiltering={isFiltering}
+              isEditing={editingColumnId === column.id}
+              draftValue={columnDrafts[column.id] ?? ""}
+              draggingCardId={draggingCardId}
+              draggingColumnId={draggingColumnId}
+              dropTarget={dropTarget?.columnId === column.id ? dropTarget.index : null}
+              onStartEdit={() => setEditingColumnId(column.id)}
+              onRename={(value) => {
+                renameBoardColumn(column.id, value);
+                setEditingColumnId(null);
               }}
-            >
-              <header className="column__header">
-                <span style={{ background: column.color }} />
-                <div>
-                  <h2>{column.title}</h2>
-                  <small>{cards.length === totalCards ? `${totalCards} tasks` : `${cards.length}/${totalCards} shown`}</small>
-                </div>
-              </header>
-              <form
-                className="column__quick-add"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  createCard(column.id, draftValue);
-                  setColumnDrafts((drafts) => ({ ...drafts, [column.id]: "" }));
-                }}
-              >
-                <input
-                  value={draftValue}
-                  onChange={(event) => setColumnDrafts((drafts) => ({ ...drafts, [column.id]: event.target.value }))}
-                  placeholder={`Add to ${column.title}`}
-                />
-                <button className="icon-button icon-button--compact" type="submit" title={`Add to ${column.title}`}>
-                  <Plus size={15} />
-                </button>
-              </form>
-              <div className="column__cards">
-                {cards.map((card, index) => (
-                  <div
-                    key={card.id}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => {
-                      event.stopPropagation();
-                      if (!draggingCardId) return;
-                      if (draggingCardId === card.id) {
-                        setDraggingCardId(null);
-                        return;
-                      }
-                      saveBoard(moveCard(board, draggingCardId, column.id, cardDropIndex(board, card.id, draggingCardId)));
-                      setDraggingCardId(null);
-                    }}
-                  >
-                    <CardView
-                      card={card}
-                      projectName={projectById[card.projectId]?.name ?? "Project"}
-                      columnTitle={column.title}
-                      canMovePrevious={columnIndex > 0}
-                      canMoveNext={columnIndex < board.columns.length - 1}
-                      onOpen={() => setSelectedCardId(card.id)}
-                      onDragStart={() => setDraggingCardId(card.id)}
-                      onMovePrevious={() => saveBoard(moveCardToAdjacentColumn(board, card.id, "previous"))}
-                      onMoveNext={() => saveBoard(moveCardToAdjacentColumn(board, card.id, "next"))}
-                    />
-                  </div>
-                ))}
-                {cards.length === 0 ? (
-                  <div className="column-empty">
-                    <Circle size={16} />
-                    <span>No tasks</span>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+              onCancelEdit={() => setEditingColumnId(null)}
+              onDelete={() => removeColumn(column.id)}
+              canDelete={board.columns.length > 1}
+              onDraftChange={(value) => setColumnDrafts((drafts) => ({ ...drafts, [column.id]: value }))}
+              onAddCard={() => {
+                createCard(column.id, columnDrafts[column.id] ?? "");
+                setColumnDrafts((drafts) => ({ ...drafts, [column.id]: "" }));
+              }}
+              onCardDragStart={(cardId) => setDraggingCardId(cardId)}
+              onCardDragEnd={() => {
+                setDraggingCardId(null);
+                setDropTarget(null);
+              }}
+              onColumnDragStart={() => setDraggingColumnId(column.id)}
+              onColumnDragEnd={() => setDraggingColumnId(null)}
+              onColumnDrop={() => {
+                if (draggingColumnId && draggingColumnId !== column.id) {
+                  dropColumn(draggingColumnId, columnIndex);
+                }
+                setDraggingColumnId(null);
+              }}
+              onSetDropTarget={(index) => setDropTarget({ columnId: column.id, index })}
+              onCardDrop={(index) => {
+                if (draggingCardId) dropCard(draggingCardId, column.id, index);
+                setDraggingCardId(null);
+                setDropTarget(null);
+              }}
+              onOpenCard={(cardId) => setSelectedCardId(cardId)}
+            />
           );
         })}
-      </section>
 
-      {selectedCard ? (
-        <aside className="detail-panel" aria-label="Card details">
-          <div className="detail-panel__backdrop" onClick={() => setSelectedCardId(null)} />
-          <section className="detail-panel__sheet">
-            <header>
-              <div>
-                <span className="eyebrow">Task</span>
-                <h2>{selectedCard.title}</h2>
-                {selectedColumn ? <small>{selectedColumn.title}</small> : null}
-              </div>
-              <button className="icon-button" type="button" onClick={() => setSelectedCardId(null)} title="Close">
-                <X size={18} />
-              </button>
-            </header>
-            <label>
-              Title
-              <input
-                value={selectedCard.title}
-                onChange={(event) => updateSelectedCard({ title: event.target.value })}
-              />
-            </label>
-            <label>
-              Description
-              <textarea
-                value={selectedCard.description}
-                onChange={(event) => updateSelectedCard({ description: event.target.value })}
-              />
-            </label>
-            <div className="field-grid">
-              <label>
-                Status
-                <select value={selectedCard.columnId} onChange={(event) => moveSelectedCard(event.target.value)}>
-                  {board.columns.map((column) => <option key={column.id} value={column.id}>{column.title}</option>)}
-                </select>
-              </label>
-              <label>
-                Project
-                <select value={selectedCard.projectId} onChange={(event) => updateSelectedCard({ projectId: event.target.value })}>
-                  {board.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                </select>
-              </label>
-            </div>
-            <div className="field-grid">
-              <label>
-                Priority
-                <select
-                  value={selectedCard.priority}
-                  onChange={(event) => updateSelectedCard({ priority: event.target.value as Priority })}
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </label>
-              <label>
-                Due
-                <input
-                  type="date"
-                  value={selectedCard.dueDate}
-                  onChange={(event) => updateSelectedCard({ dueDate: event.target.value })}
-                />
-              </label>
-            </div>
-            <label>
-              Assignee
-              <input
-                value={selectedCard.assignee}
-                onChange={(event) => updateSelectedCard({ assignee: event.target.value })}
-                placeholder="Owner"
-              />
-            </label>
-            <label>
-              Labels
-              <input
-                value={selectedCard.labels.join(", ")}
-                onChange={(event) => updateSelectedCard({
-                  labels: event.target.value.split(",").map((item) => item.trim()).filter(Boolean),
-                })}
-                placeholder="design, launch"
-              />
-            </label>
-
-            <section className="delegation-panel" aria-label="Agent delegation">
-              <header>
-                <h3><Bot size={16} />Delegate</h3>
-                {selectedCard.delegation ? <span>{STATUS_LABELS[selectedCard.delegation.status]}</span> : <span>Unassigned</span>}
-              </header>
-              <div className="delegate-options" role="group" aria-label="Delegation target">
-                {(["none", "matrix", "hermes"] as DraftDelegationTarget[]).map((target) => {
-                  const active = target === "none" ? !selectedCard.delegation : selectedCard.delegation?.target === target;
-                  return (
-                    <button
-                      className={active ? "delegate-option delegate-option--active" : "delegate-option"}
-                      type="button"
-                      key={target}
-                      onClick={() => setDelegationTarget(target)}
-                    >
-                      {target === "none" ? <Circle size={14} /> : <Bot size={14} />}
-                      {target === "none" ? "No agent" : DELEGATION_LABELS[target]}
-                    </button>
-                  );
-                })}
-              </div>
-              {selectedCard.delegation ? (
-                <div className="delegation-fields">
-                  <div className="field-grid">
-                    <label>
-                      Trigger
-                      <select
-                        value={selectedCard.delegation.trigger}
-                        onChange={(event) => updateDelegation({ trigger: event.target.value as DelegationTrigger })}
-                      >
-                        {Object.entries(TRIGGER_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                    </label>
-                    <label>
-                      State
-                      <select
-                        value={selectedCard.delegation.status}
-                        onChange={(event) => updateDelegation({ status: event.target.value as DelegationStatus })}
-                      >
-                        {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                  <label>
-                    Agent brief
-                    <textarea
-                      value={selectedCard.delegation.instructions}
-                      onChange={(event) => updateDelegation({ instructions: event.target.value })}
-                    />
-                  </label>
-                </div>
-              ) : null}
-            </section>
-
-            <div className="checklist">
-              <h3>Checklist</h3>
-              {selectedCard.checklist.map((item) => (
-                <button
-                  className="checklist-item"
-                  type="button"
-                  key={item.id}
-                  onClick={() => saveBoard(toggleChecklistItem(board, selectedCard.id, item.id))}
-                >
-                  {item.done ? <CheckCircle2 size={16} /> : <Circle size={16} />}
-                  {item.text}
-                </button>
-              ))}
-              <form onSubmit={(event) => {
+        <div className="column-adder">
+          {addingColumn ? (
+            <form
+              className="column-adder__form"
+              onSubmit={(event) => {
                 event.preventDefault();
-                const input = event.currentTarget.elements.namedItem("checklist") as HTMLInputElement;
-                saveBoard(addChecklistItem(board, selectedCard.id, input.value));
-                input.value = "";
-              }}>
-                <input name="checklist" placeholder="Add checklist item" />
-              </form>
-            </div>
-            <button
-              className="button button--danger"
-              type="button"
-              onClick={() => {
-                saveBoard(deleteCard(board, selectedCard.id));
-                setSelectedCardId(null);
+                createColumn(newColumnTitle);
+                setNewColumnTitle("");
+                setAddingColumn(false);
               }}
             >
-              <Trash2 size={15} />
-              Delete task
+              <input
+                autoFocus
+                value={newColumnTitle}
+                onChange={(event) => setNewColumnTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setAddingColumn(false);
+                    setNewColumnTitle("");
+                  }
+                }}
+                placeholder="Column name"
+              />
+              <div className="column-adder__actions">
+                <button className="button button--primary" type="submit"><Check size={14} />Add</button>
+                <button className="icon-button" type="button" onClick={() => { setAddingColumn(false); setNewColumnTitle(""); }}>
+                  <X size={15} />
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button className="column-adder__trigger" type="button" onClick={() => setAddingColumn(true)}>
+              <Plus size={16} />
+              Add column
             </button>
-          </section>
-        </aside>
+          )}
+        </div>
+      </section>
+
+      {board.cards.length === 0 && !isFiltering ? (
+        <div className="empty-state" role="status">
+          <span className="empty-state__icon"><ListChecks size={28} /></span>
+          <h2>Plan your first project</h2>
+          <p>Add a card to any column to start tracking work. Drag cards to move them across your workflow.</p>
+        </div>
+      ) : null}
+
+      {totalShown === 0 && isFiltering ? (
+        <div className="empty-state empty-state--filter" role="status">
+          <span className="empty-state__icon"><Search size={24} /></span>
+          <h2>No matching cards</h2>
+          <p>Try a different search term or clear the label filter.</p>
+        </div>
+      ) : null}
+
+      {selectedCard ? (
+        <CardDetail
+          card={selectedCard}
+          columns={board.columns}
+          pendingSwapFromId={pendingCardIdSwapsRef.current[selectedCard.id] ?? null}
+          onClose={() => setSelectedCardId(null)}
+          onPatch={(patch) => patchCard(selectedCard.id, patch)}
+          onMoveColumn={(columnId) => {
+            const count = boardRef.current?.cards.filter((card) => card.columnId === columnId).length ?? 0;
+            dropCard(selectedCard.id, columnId, count);
+          }}
+          onToggleChecklist={(itemId) => toggleChecklist(selectedCard.id, itemId)}
+          onAddChecklist={(text) => addChecklist(selectedCard.id, text)}
+          onDelete={() => removeCard(selectedCard.id)}
+        />
       ) : null}
     </main>
+  );
+}
+
+interface ColumnViewProps {
+  column: BoardColumn;
+  columnIndex: number;
+  cards: Card[];
+  total: number;
+  shownCount: number;
+  isFiltering: boolean;
+  isEditing: boolean;
+  draftValue: string;
+  draggingCardId: string | null;
+  draggingColumnId: string | null;
+  dropTarget: number | null;
+  canDelete: boolean;
+  onStartEdit: () => void;
+  onRename: (value: string) => void;
+  onCancelEdit: () => void;
+  onDelete: () => void;
+  onDraftChange: (value: string) => void;
+  onAddCard: () => void;
+  onCardDragStart: (cardId: string) => void;
+  onCardDragEnd: () => void;
+  onColumnDragStart: () => void;
+  onColumnDragEnd: () => void;
+  onColumnDrop: () => void;
+  onSetDropTarget: (index: number) => void;
+  onCardDrop: (index: number) => void;
+  onOpenCard: (cardId: string) => void;
+}
+
+function BoardColumnView(props: ColumnViewProps) {
+  const {
+    column, cards, total, shownCount, isFiltering, isEditing, draftValue,
+    draggingCardId, draggingColumnId, dropTarget, canDelete,
+    onStartEdit, onRename, onCancelEdit, onDelete, onDraftChange, onAddCard,
+    onCardDragStart, onCardDragEnd, onColumnDragStart, onColumnDragEnd, onColumnDrop,
+    onSetDropTarget, onCardDrop, onOpenCard,
+  } = props;
+  const [renameValue, setRenameValue] = useState(column.title);
+  const skipNextRenameBlurRef = useRef(false);
+  useEffect(() => setRenameValue(column.title), [column.title]);
+
+  const isColumnDropTarget = draggingColumnId !== null && draggingColumnId !== column.id;
+
+  return (
+    <section
+      className={draggingColumnId === column.id ? "column column--dragging" : "column"}
+      aria-label={column.title}
+      onDragOver={(event) => {
+        if (draggingColumnId && draggingColumnId !== column.id) event.preventDefault();
+        else if (draggingCardId && !isFiltering) {
+          event.preventDefault();
+          onSetDropTarget(cards.length);
+        }
+      }}
+      onDrop={(event) => {
+        if (draggingColumnId && draggingColumnId !== column.id) {
+          event.preventDefault();
+          onColumnDrop();
+          return;
+        }
+        if (draggingCardId && !isFiltering) {
+          event.preventDefault();
+          onCardDrop(cards.length);
+        }
+      }}
+    >
+      <header className="column__header">
+        <span
+          className="column__grip"
+          draggable
+          onDragStart={onColumnDragStart}
+          onDragEnd={onColumnDragEnd}
+          title="Reorder column"
+        >
+          <span className="column__swatch" style={{ background: column.color }} />
+          <GripVertical size={13} />
+        </span>
+        {isEditing ? (
+          <form
+            className="column__rename"
+            onSubmit={(event) => {
+              event.preventDefault();
+              skipNextRenameBlurRef.current = true;
+              onRename(renameValue);
+            }}
+          >
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onBlur={() => {
+                if (skipNextRenameBlurRef.current) {
+                  skipNextRenameBlurRef.current = false;
+                  return;
+                }
+                onRename(renameValue);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  skipNextRenameBlurRef.current = true;
+                  setRenameValue(column.title);
+                  onCancelEdit();
+                }
+              }}
+            />
+          </form>
+        ) : (
+          <button className="column__title" type="button" onClick={onStartEdit} title="Rename column">
+            <h2>{column.title}</h2>
+            <span className="column__count">
+              {isFiltering && shownCount !== total ? `${shownCount}/${total}` : total}
+            </span>
+          </button>
+        )}
+        <div className="column__menu">
+          <button className="icon-button icon-button--ghost" type="button" onClick={onStartEdit} title="Rename column">
+            <Pencil size={13} />
+          </button>
+          {canDelete ? (
+            <button className="icon-button icon-button--ghost" type="button" onClick={onDelete} title="Delete column">
+              <Trash2 size={13} />
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      <div className={isColumnDropTarget ? "column__cards column__cards--target" : "column__cards"}>
+        {cards.map((card, index) => (
+          <div key={card.id} className="card-slot">
+            {dropTarget === index && draggingCardId ? <div className="drop-indicator" /> : null}
+            <div
+              onDragOver={(event) => {
+                if (!draggingCardId || isFiltering) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onSetDropTarget(index);
+              }}
+              onDrop={(event) => {
+                if (!draggingCardId) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (isFiltering) return;
+                onCardDrop(index);
+              }}
+            >
+              <TaskCardView
+                card={card}
+                onOpen={() => onOpenCard(card.id)}
+                onDragStart={() => onCardDragStart(card.id)}
+                onDragEnd={onCardDragEnd}
+              />
+            </div>
+          </div>
+        ))}
+        {dropTarget === cards.length && draggingCardId ? <div className="drop-indicator" /> : null}
+        {cards.length === 0 ? (
+          <div className="column-empty">
+            <Circle size={14} />
+            <span>{isFiltering ? "No matches" : "Drop a card here"}</span>
+          </div>
+        ) : null}
+      </div>
+
+      <form
+        className="column__quick-add"
+        onSubmit={(event) => { event.preventDefault(); onAddCard(); }}
+      >
+        <input
+          value={draftValue}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onAddCard();
+            }
+          }}
+          placeholder={`Add a card to ${column.title}`}
+          aria-label={`Add a card to ${column.title}`}
+        />
+        <button className="icon-button icon-button--compact" type="submit" title="Add card">
+          <Plus size={15} />
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function TaskCardView({
+  card,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+}: {
+  card: Card;
+  onOpen: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+}) {
+  const progress = checklistProgress(card.checklist);
+  const due = dueState(card.dueDate);
+  return (
+    <article
+      className="task-card"
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      {card.labels.length > 0 ? (
+        <div className="task-card__labels">
+          {card.labels.map((label) => (
+            <span className="task-card__label" key={label} style={{ background: labelColor(label) }} title={label} />
+          ))}
+        </div>
+      ) : null}
+      <h3 className="task-card__title">{card.title}</h3>
+      {card.description ? <p className="task-card__desc">{card.description}</p> : null}
+      <footer className="task-card__meta">
+        {card.priority !== "medium" ? (
+          <span className={`pill pill--${card.priority}`}>{PRIORITY_LABEL[card.priority]}</span>
+        ) : null}
+        {card.dueDate ? (
+          <span className={`meta meta--due-${due}`}>
+            <CalendarDays size={12} />
+            {formatDue(card.dueDate)}
+          </span>
+        ) : null}
+        {progress.total > 0 ? (
+          <span className={progress.done === progress.total ? "meta meta--done" : "meta"}>
+            <CheckCircle2 size={12} />
+            {progress.done}/{progress.total}
+          </span>
+        ) : null}
+        {card.assignee ? (
+          <span className="meta meta--assignee" title={card.assignee}>
+            <User size={12} />
+            {card.assignee}
+          </span>
+        ) : null}
+      </footer>
+    </article>
+  );
+}
+
+function CardDetail({
+  card,
+  columns,
+  pendingSwapFromId,
+  onClose,
+  onPatch,
+  onMoveColumn,
+  onToggleChecklist,
+  onAddChecklist,
+  onDelete,
+}: {
+  card: Card;
+  columns: BoardColumn[];
+  pendingSwapFromId: string | null;
+  onClose: () => void;
+  onPatch: (patch: Partial<Omit<Card, "id" | "createdAt">>) => void;
+  onMoveColumn: (columnId: string) => void;
+  onToggleChecklist: (itemId: string) => void;
+  onAddChecklist: (text: string) => void;
+  onDelete: () => void;
+}) {
+  const [title, setTitle] = useState(card.title);
+  const [description, setDescription] = useState(card.description);
+  const [assignee, setAssignee] = useState(card.assignee);
+  const [labelInput, setLabelInput] = useState("");
+  const [checklistInput, setChecklistInput] = useState("");
+  const [previousCard, setPreviousCard] = useState(card);
+  if (previousCard !== card) {
+    const previous = previousCard;
+    const sameCard = previous.id === card.id || pendingSwapFromId === previous.id;
+    setPreviousCard(card);
+    if (!sameCard || title === previous.title) setTitle(card.title);
+    if (!sameCard || description === previous.description) setDescription(card.description);
+    if (!sameCard || assignee === previous.assignee) setAssignee(card.assignee);
+    if (!sameCard) {
+      setLabelInput("");
+      setChecklistInput("");
+    }
+  }
+
+  const progress = checklistProgress(card.checklist);
+
+  const addLabel = () => {
+    const value = labelInput.trim();
+    if (!value || card.labels.includes(value)) {
+      setLabelInput("");
+      return;
+    }
+    onPatch({ labels: [...card.labels, value] });
+    setLabelInput("");
+  };
+
+  return (
+    <div className="detail-overlay" role="dialog" aria-modal="true" aria-label="Card details">
+      <div className="detail-overlay__backdrop" onClick={onClose} />
+      <section className="detail-sheet">
+        <header className="detail-sheet__header">
+          <span className="eyebrow">Card</span>
+          <button className="icon-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <X size={18} />
+          </button>
+        </header>
+
+        <input
+          className="detail-title"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          onBlur={() => { if (title.trim() && title.trim() !== card.title) onPatch({ title: title.trim() }); else setTitle(card.title); }}
+          aria-label="Card title"
+        />
+
+        <div className="detail-grid">
+          <label className="field">
+            <span>Column</span>
+            <select value={card.columnId} onChange={(event) => onMoveColumn(event.target.value)}>
+              {columns.map((column) => <option key={column.id} value={column.id}>{column.title}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Priority</span>
+            <select value={card.priority} onChange={(event) => onPatch({ priority: event.target.value as Priority })}>
+              {PRIORITY_ORDER.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Due date</span>
+            <input type="date" value={card.dueDate} onChange={(event) => onPatch({ dueDate: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Assignee</span>
+            <input
+              value={assignee}
+              onChange={(event) => setAssignee(event.target.value)}
+              onBlur={() => { if (assignee !== card.assignee) onPatch({ assignee: assignee.trim() }); }}
+              placeholder="Unassigned"
+            />
+          </label>
+        </div>
+
+        <label className="field field--block">
+          <span>Description</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            onBlur={() => { if (description !== card.description) onPatch({ description }); }}
+            placeholder="Add more detail…"
+            rows={3}
+          />
+        </label>
+
+        <div className="field field--block">
+          <span className="field__label"><Tag size={13} />Labels</span>
+          <div className="label-editor">
+            {card.labels.map((label) => (
+              <span className="label-tag" key={label} style={{ background: labelColor(label) }}>
+                {label}
+                <button type="button" onClick={() => onPatch({ labels: card.labels.filter((l) => l !== label) })} aria-label={`Remove ${label}`}>
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <form onSubmit={(event) => { event.preventDefault(); addLabel(); }}>
+              <input
+                value={labelInput}
+                onChange={(event) => setLabelInput(event.target.value)}
+                placeholder="Add label"
+                aria-label="Add label"
+              />
+            </form>
+          </div>
+        </div>
+
+        <div className="field field--block">
+          <span className="field__label">
+            <ListChecks size={13} />
+            Checklist {progress.total > 0 ? <em>{progress.done}/{progress.total}</em> : null}
+          </span>
+          {progress.total > 0 ? (
+            <div className="checklist-progress">
+              <div className="checklist-progress__bar" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+            </div>
+          ) : null}
+          <div className="checklist">
+            {card.checklist.map((item) => (
+              <button
+                className={item.done ? "checklist-item checklist-item--done" : "checklist-item"}
+                type="button"
+                key={item.id}
+                onClick={() => onToggleChecklist(item.id)}
+              >
+                {item.done ? <CheckCircle2 size={16} /> : <Circle size={16} />}
+                <span>{item.text}</span>
+              </button>
+            ))}
+            <form onSubmit={(event) => { event.preventDefault(); onAddChecklist(checklistInput); setChecklistInput(""); }}>
+              <input
+                value={checklistInput}
+                onChange={(event) => setChecklistInput(event.target.value)}
+                placeholder="Add checklist item"
+                aria-label="Add checklist item"
+              />
+            </form>
+          </div>
+        </div>
+
+        <button className="button button--danger detail-delete" type="button" onClick={onDelete}>
+          <Trash2 size={15} />
+          Delete card
+        </button>
+      </section>
+    </div>
   );
 }
 

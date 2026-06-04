@@ -1,6 +1,6 @@
 {
   "name": "Chess",
-  "description": "Classic chess with AI opponent",
+  "description": "Local two-player chess with full legal-move validation, SAN history, and saved games.",
   "runtime": "vite",
   "category": "games",
   "icon": "game-center",
@@ -13,8 +13,20 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "chess",
+  "scope": "personal",
+  "storage": {
+    "tables": {
+      "games": {
+        "columns": {
+          "pgn": "text",
+          "result": "text",
+          "created_at": "timestamptz"
+        }
+      }
+    }
+  },
   "build": {
-    "install": "true",
+    "install": "pnpm install --ignore-workspace --prefer-offline",
     "command": "vite build --base ./ --outDir dist",
     "output": "dist",
     "timeout": 180,
@@ -24,7 +36,10 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "package.json",
+      "pnpm-lock.yaml",
+      "vite.config.ts",
+      "tsconfig.json"
     ]
   }
 }

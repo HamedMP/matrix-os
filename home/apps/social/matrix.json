@@ -68,5 +68,6 @@
       "matrix.json",
       "vite.config.ts"
     ]
-  }
+  },
+  "hidden": true
 }

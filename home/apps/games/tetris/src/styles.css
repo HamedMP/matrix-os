@@ -1,0 +1,367 @@
+:root {
+  --app-bg: var(--matrix-bg, #fafaf5);
+  --app-fg: var(--matrix-fg, #32352e);
+  --app-card: var(--matrix-card, #ffffff);
+  --app-muted: var(--matrix-muted, #f0ede4);
+  --app-muted-fg: var(--matrix-muted-fg, #7a7768);
+  --app-border: var(--matrix-border, #d6d3c8);
+  --app-primary: var(--matrix-primary, #434e3f);
+  --app-primary-fg: var(--matrix-primary-fg, #fafaf5);
+  --app-accent: var(--matrix-accent, #d06f25);
+  --app-success: var(--matrix-success, #3a7d44);
+  --app-warning: var(--matrix-warning, #d49b2a);
+  --app-danger: var(--matrix-destructive, #c4342d);
+  --app-radius: var(--matrix-radius, 22px);
+  --app-font: var(--matrix-font-sans, "Inter", system-ui, sans-serif);
+  --app-mono: var(--matrix-font-mono, "JetBrains Mono", monospace);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  background: var(--app-bg);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+}
+
+.tetris-app {
+  height: 100vh;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 20px;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 14% 8%, color-mix(in srgb, var(--app-accent) 12%, transparent), transparent 40%),
+    radial-gradient(circle at 92% 96%, color-mix(in srgb, var(--app-primary) 10%, transparent), transparent 42%),
+    var(--app-bg);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  color: inherit;
+}
+
+button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--app-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* ---------- Playfield ---------- */
+.play-area {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.board-wrap {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.board {
+  --cols: 10;
+  --rows: 20;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 1fr);
+  grid-template-rows: repeat(var(--rows), 1fr);
+  gap: 2px;
+  aspect-ratio: 10 / 20;
+  height: min(100%, calc((100vh - 44px)));
+  max-height: calc(100vh - 44px);
+  padding: 10px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--app-fg) 8%, var(--app-card));
+  box-shadow:
+    inset 0 2px 10px color-mix(in srgb, var(--app-fg) 16%, transparent),
+    0 10px 28px rgba(50, 53, 46, 0.14);
+}
+
+.cell {
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--app-fg) 5%, transparent);
+  transition: background 0.12s ease;
+}
+
+.tetris-app--reduced .cell {
+  transition: none;
+}
+
+.cell--locked {
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.32),
+    inset 0 -3px 4px rgba(0, 0, 0, 0.22);
+}
+
+.cell--active {
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.45),
+    inset 0 -3px 5px rgba(0, 0, 0, 0.24);
+}
+
+.cell--ghost {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--app-fg) 22%, transparent);
+}
+
+/* ---------- Overlays ---------- */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--app-bg) 72%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.overlay__card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 320px;
+  padding: 28px 26px;
+  text-align: center;
+  border-radius: var(--app-radius);
+  background: var(--app-card);
+  box-shadow: 0 18px 44px rgba(50, 53, 46, 0.2);
+}
+
+.overlay__card h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: -0.01em;
+}
+
+.overlay__card p {
+  margin: 0;
+  color: var(--app-muted-fg);
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.overlay__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-accent);
+  font-weight: 800;
+}
+
+.overlay__note {
+  font-size: 12px;
+  color: var(--app-muted-fg);
+}
+
+/* ---------- Side rail ---------- */
+.side-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 850;
+  font-size: 15px;
+}
+
+.brand__mark {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--app-primary-fg);
+  background: linear-gradient(145deg, var(--app-accent), color-mix(in srgb, var(--app-accent) 60%, var(--app-warning)));
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--app-accent) 40%, transparent);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.stat {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--app-card);
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.08);
+}
+
+.stat span {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--app-muted-fg);
+}
+
+.stat strong {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Previews ---------- */
+.preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--app-card);
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.08);
+}
+
+.preview__label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--app-muted-fg);
+}
+
+.preview__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 3px;
+  width: 72px;
+  aspect-ratio: 1;
+}
+
+.preview__cell {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+}
+
+.next-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.next-stack__list {
+  display: grid;
+  gap: 10px;
+}
+
+.next-stack .preview {
+  padding: 10px 12px;
+}
+
+/* ---------- Controls ---------- */
+.controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.primary-action,
+.secondary-action,
+.icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: 14px;
+  font-weight: 800;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.tetris-app--reduced .primary-action,
+.tetris-app--reduced .secondary-action,
+.tetris-app--reduced .icon-action {
+  transition: none;
+}
+
+.primary-action {
+  padding: 0 22px;
+  color: var(--app-primary-fg);
+  background: var(--app-accent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--app-accent) 38%, transparent);
+}
+
+.secondary-action {
+  flex: 1;
+  background: var(--app-card);
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.08);
+}
+
+.icon-action {
+  width: 44px;
+  background: var(--app-card);
+  box-shadow: 0 4px 12px rgba(50, 53, 46, 0.08);
+}
+
+.primary-action:hover,
+.secondary-action:hover,
+.icon-action:hover {
+  transform: translateY(-1px);
+}
+
+/* ---------- Hints & errors ---------- */
+.hints {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--app-muted-fg);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.hints kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border-radius: 6px;
+  background: var(--app-muted);
+  font-family: var(--app-mono);
+  font-size: 11px;
+  color: var(--app-fg);
+}
+
+.error-note {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-danger) 12%, var(--app-card));
+  color: var(--app-danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .tetris-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .side-rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+}

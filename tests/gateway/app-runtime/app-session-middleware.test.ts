@@ -17,6 +17,10 @@ function createTestApp() {
     return c.json({ ok: true, slug: c.req.param("slug") });
   });
 
+  app.post("/apps/:slug/*", (c) => {
+    return c.json({ ok: true, slug: c.req.param("slug") });
+  });
+
   return app;
 }
 
@@ -36,6 +40,47 @@ function makeValidCookie(slug: string, overrides?: Partial<AppSessionPayloadType
 }
 
 describe("appSessionMiddleware", () => {
+  it("rejects read-only Vite asset requests without an app-session cookie or platform authorization", async () => {
+    const app = createTestApp();
+    const res = await app.request("/apps/notes/assets/index.js", {
+      headers: { Accept: "application/json" },
+    });
+
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe("session_expired");
+  });
+
+  it("allows read-only Vite asset requests with platform authorization", async () => {
+    const previousMatrixAuthToken = process.env.MATRIX_AUTH_TOKEN;
+    try {
+      process.env.MATRIX_AUTH_TOKEN = MASTER_SECRET;
+      const app = createTestApp();
+      const res = await app.request("/apps/notes/assets/index.js", {
+        headers: { Authorization: `Bearer ${MASTER_SECRET}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.slug).toBe("notes");
+    } finally {
+      process.env.MATRIX_AUTH_TOKEN = previousMatrixAuthToken;
+    }
+  });
+
+  it("still requires an app-session cookie for mutating asset-path requests", async () => {
+    const app = createTestApp();
+    const res = await app.request("/apps/notes/assets/index.js", {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe("session_expired");
+  });
+
   it("401 without cookie + Accept: text/html returns HTML interstitial with postMessage script", async () => {
     const app = createTestApp();
     const res = await app.request("/apps/notes/index.html", {

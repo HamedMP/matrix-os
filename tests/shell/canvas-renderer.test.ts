@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { shouldHydrateCanvasWindow } from "../../shell/src/components/canvas/CanvasRenderer.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
@@ -90,5 +91,54 @@ describe("Canvas Renderer Integration", () => {
     // Simulating a 100px screen drag at 2x zoom = 50px canvas movement
     useWindowManager.getState().moveWindow(winId, origX + 50, 20);
     expect(useWindowManager.getState().windows[0].x).toBe(origX + 50);
+  });
+
+  it("defers offscreen Canvas app hydration while keeping visible apps and built-ins eager", () => {
+    const base = {
+      focusedWindowId: null,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      viewportWidth: 1200,
+      viewportHeight: 800,
+    };
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
+      windowId: "visible-app",
+      window: { path: "apps/notes/index.html", x: 100, y: 100, width: 640, height: 480 },
+    })).toBe(true);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
+      windowId: "minimized-app",
+      window: { path: "apps/notes/index.html", x: 100, y: 100, width: 640, height: 480, minimized: true },
+    })).toBe(true);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
+      windowId: "offscreen-app",
+      window: { path: "apps/legacy/index.html", x: 5000, y: 100, width: 640, height: 480 },
+    })).toBe(false);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
+      hydratedOnce: true,
+      windowId: "hydrated-offscreen-app",
+      window: { path: "apps/legacy/index.html", x: 5000, y: 100, width: 640, height: 480 },
+    })).toBe(true);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
+      windowId: "terminal",
+      window: { path: "__terminal__:restored", x: 5000, y: 100, width: 640, height: 480 },
+    })).toBe(true);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
+      focusedWindowId: "focused-app",
+      windowId: "focused-app",
+      window: { path: "apps/legacy/index.html", x: 5000, y: 100, width: 640, height: 480 },
+    })).toBe(true);
   });
 });

@@ -18,10 +18,12 @@ The sync script uses symlinked skill directories when possible, so updates to `s
 | Skill | Purpose |
 | --- | --- |
 | `matrix-app-builder` | Build Matrix apps as Vite React TypeScript projects with `matrix.json` and verified `dist/` output. |
+| `matrix-app-ui-patterns` | Build stable app interiors for windowed, mobile, dashboard, data, and canvas contexts. |
 | `matrix-design-system` | Apply Matrix theme, shadcn-style component patterns, icon quality rules, and iframe-safe app layouts. |
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Hermes or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
+| `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
 
 ## Install Into Hermes
 
@@ -33,7 +35,7 @@ From a Matrix checkout:
 ./scripts/install-hermes-matrix-skills.sh
 ```
 
-The script installs all five skills from `HamedMP/matrix-os` by default. To install from a local path or another tap/source:
+The script installs the shipped Matrix app skills from `HamedMP/matrix-os` by default. To install from a local path or another tap/source:
 
 ```bash
 ./scripts/install-hermes-matrix-skills.sh /home/matrix/projects/matrix-os
@@ -50,7 +52,7 @@ MATRIX_SKILL_TARGETS=matrix,claude,codex,hermes ./scripts/sync-matrix-agent-skil
 Equivalent manual command:
 
 ```bash
-for skill in app-builder design-system integrations dev-vps debug-app; do
+for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
   hermes skills install "HamedMP/matrix-os/skills/matrix/$skill"
 done
 ```
@@ -61,10 +63,12 @@ From a running Hermes environment with GitHub skill install support:
 
 ```bash
 hermes skills install HamedMP/matrix-os/skills/matrix/app-builder
+hermes skills install HamedMP/matrix-os/skills/matrix/app-ui-patterns
 hermes skills install HamedMP/matrix-os/skills/matrix/design-system
 hermes skills install HamedMP/matrix-os/skills/matrix/integrations
 hermes skills install HamedMP/matrix-os/skills/matrix/dev-vps
 hermes skills install HamedMP/matrix-os/skills/matrix/debug-app
+hermes skills install HamedMP/matrix-os/skills/matrix/landing-design
 ```
 
 If Hermes is running from a local checkout, install from the local path or add the repo as a tap:

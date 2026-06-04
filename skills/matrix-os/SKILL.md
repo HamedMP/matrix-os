@@ -25,7 +25,8 @@ Matrix OS gives each developer their own cloud computer: browser desktop, files,
 
 - Only send Matrix credentials to `https://app.matrix-os.com` or `https://matrix-os.com`.
 - Do not paste Matrix tokens, Clerk tokens, GitHub tokens, Claude keys, Codex keys, or OAuth codes into third-party websites.
-- Prefer `matrix login` and browser/device flows over copying secrets into chat.
+- Prefer hosted `matrix login --profile cloud` and browser/device flows over copying secrets into chat.
+- For first-run hosted onboarding, use the `cloud` profile explicitly. Do not use `--dev`, `--profile local`, `matrix profile use local`, localhost URLs, `MATRIXOS_PLATFORM_URL`, or `MATRIXOS_GATEWAY_URL` unless the human explicitly asks for Matrix local-stack development.
 - Treat the Matrix VPS as the user's computer. Ask before deleting files, resetting sessions, or installing global packages that may change their environment.
 - Use named shell sessions for setup so the human can reattach from the Matrix web terminal.
 
@@ -51,7 +52,7 @@ Tell the human:
 Read https://matrix-os.com/skills.md and follow the instructions to set up Matrix OS.
 
 1. Install the Matrix CLI.
-2. Run matrix login and send me the browser/device claim link if prompted.
+2. Run matrix login --profile cloud and send me the browser/device claim link if prompted.
 3. Once the Matrix VPS is ready, I can attach to the same shell session and finish setup.
 ```
 
@@ -68,12 +69,12 @@ curl -fsSL https://get.matrix-os.com | sh
 Authenticate:
 
 ```bash
-matrix login
+matrix login --profile cloud
 matrix status
 matrix instance info
 ```
 
-If `matrix login` says no Matrix instance exists yet, ask the human to sign up at `https://app.matrix-os.com`, wait for provisioning, then run `matrix login` again.
+If `matrix login --profile cloud` says no Matrix instance exists yet, ask the human to sign up at `https://app.matrix-os.com`, wait for provisioning, then run `matrix login --profile cloud` again.
 
 ## Interactive Setup
 

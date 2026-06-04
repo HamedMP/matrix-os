@@ -1,14 +1,16 @@
 "use client";
 
-import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
+import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
 
 export function TerminalSettingsPanel() {
   const themeId = useTerminalSettings((s) => s.themeId);
   const fontSize = useTerminalSettings((s) => s.fontSize);
+  const fontFamily = useTerminalSettings((s) => s.fontFamily);
   const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
   const setFontSize = useTerminalSettings((s) => s.setFontSize);
+  const setFontFamily = useTerminalSettings((s) => s.setFontFamily);
   const setCursorBlink = useTerminalSettings((s) => s.setCursorBlink);
 
   return (
@@ -26,6 +28,24 @@ export function TerminalSettingsPanel() {
           {TERMINAL_THEME_OPTIONS.map((t) => (
             <option key={t.id} value={t.id}>
               {t.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium" htmlFor="terminal-font-family">
+          Font
+        </label>
+        <select
+          id="terminal-font-family"
+          className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
+          value={fontFamily}
+          onChange={(e) => setFontFamily(e.target.value as TerminalFontFamily)}
+        >
+          {TERMINAL_FONT_FAMILIES.map((font) => (
+            <option key={font} value={font}>
+              {font}
             </option>
           ))}
         </select>

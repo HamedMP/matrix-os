@@ -6,7 +6,7 @@ import {
   stat as statAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { dirname, extname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -45,6 +45,7 @@ import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
+import { timingSafeStringEquals } from "./security/timing-safe.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
 import { createPushAdapter } from "./channels/push.js";
@@ -295,18 +296,6 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
-
-function timingSafeStringEquals(actual: string | null | undefined, expected: string): boolean {
-  if (!actual) return false;
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  const maxLength = Math.max(actualBuffer.length, expectedBuffer.length);
-  const paddedActual = Buffer.alloc(maxLength);
-  const paddedExpected = Buffer.alloc(maxLength);
-  actualBuffer.copy(paddedActual);
-  expectedBuffer.copy(paddedExpected);
-  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(paddedActual, paddedExpected);
-}
 
 export interface GatewayConfig {
   homePath: string;
@@ -721,7 +710,7 @@ export async function createGateway(config: GatewayConfig) {
         }
         shouldCacheProvisionAttempt = true;
         const tables = manifest.storage?.tables as
-          | Record<string, { columns: Record<string, string>; indexes?: string[] }>
+          | Record<string, { columns: Record<string, string>; indexes?: string[]; uniqueIndexes?: string[] }>
           | undefined;
         if (tables && Object.keys(tables).length > 0) {
           await registry.register({
@@ -848,7 +837,10 @@ export async function createGateway(config: GatewayConfig) {
               version: manifest.version,
               author: manifest.author,
               category: manifest.category,
-              tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
+              tables: manifest.storage.tables as Record<
+                string,
+                { columns: Record<string, string>; indexes?: string[]; uniqueIndexes?: string[] }
+              >,
             });
             registered++;
             rememberProvisionedAppSlug(storageSlug);
@@ -3147,9 +3139,35 @@ export async function createGateway(config: GatewayConfig) {
     if ((action === "insert" || action === "update") && JSON.stringify(body.data).length > 1_000_000) {
       return c.json({ error: "data too large (max 1MB)" }, 413);
     }
+    if (action === "bulkUpdate") {
+      if (!Array.isArray(body.updates)) {
+        return c.json({ error: "updates must be an array" }, 400);
+      }
+      if (body.updates.length > 200) {
+        return c.json({ error: "updates too large (max 200 rows)" }, 413);
+      }
+      if (JSON.stringify(body.updates).length > 1_000_000) {
+        return c.json({ error: "updates too large (max 1MB)" }, 413);
+      }
+      for (const update of body.updates) {
+        if (!update || typeof update !== "object" || Array.isArray(update)) {
+          return c.json({ error: "updates entries must be objects" }, 400);
+        }
+        const candidate = update as Record<string, unknown>;
+        if (typeof candidate.id !== "string" || candidate.id.length === 0) {
+          return c.json({ error: "updates entries require id" }, 400);
+        }
+        if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
+          return c.json({ error: "updates entries require data" }, 400);
+        }
+        if (Object.keys(candidate.data).length === 0) {
+          return c.json({ error: "updates entries require at least one data field" }, 400);
+        }
+      }
+    }
 
     // Validate table is present for actions that need it
-    const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
+    const needsTable = ["find", "findOne", "insert", "update", "bulkUpdate", "delete", "count"].includes(action);
     const safeTable = typeof body.table === "string" ? body.table.replace(/[^a-zA-Z0-9_-]/g, "") : "";
     if (needsTable && !safeTable) {
       return c.json({ error: "table is required and must contain valid characters" }, 400);
@@ -3214,6 +3232,15 @@ export async function createGateway(config: GatewayConfig) {
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
+        case "bulkUpdate": {
+          await queryEngine.bulkUpdate(
+            appSlug,
+            safeTable,
+            body.updates as Array<{ id: string; data: Record<string, unknown> }>,
+          );
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json({ ok: true });
+        }
         case "delete": {
           await queryEngine.delete(appSlug, safeTable, body.id as string);
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
@@ -3231,7 +3258,11 @@ export async function createGateway(config: GatewayConfig) {
     } catch (e) {
       const msg = (e as Error).message;
       console.error("[app-db] Query error:", msg);
-      const isValidation = msg.startsWith("Invalid ") || msg.startsWith("insert:") || msg.startsWith("update:");
+      const isValidation =
+        msg.startsWith("Invalid ") ||
+        msg.startsWith("insert:") ||
+        msg.startsWith("update:") ||
+        msg.startsWith("bulkUpdate:");
       const safe = isValidation ? msg : "Query failed";
       return c.json({ error: safe }, isValidation ? 400 : 500);
     }

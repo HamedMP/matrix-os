@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export const DEFAULT_ICON_STYLE = "Minimal app icon filling the entire square canvas edge to edge with zero margin or padding, solid muted sage-cream background color #D1D3BC (a warm gray-green) that is IDENTICAL across ALL icons for a cohesive unified look, a single centered symbolic glyph or pictogram that clearly represents what the app does — the symbol color should be chosen from the Matrix OS design palette: Forest #434E3F (default, earthy dark green), Ember #D06F25 (warm terracotta orange), Deep #32352E (rich charcoal), or Cream #E0E1CA (soft warm light) — pick whichever color best suits the app's personality while maintaining contrast against the sage background, the glyph should be clean and geometric with organic rounded edges, instantly recognizable and directly related to the app purpose, no text, no transparency, no rounded corners (the UI container handles rounding), no gradients on the background (flat solid sage-cream), the symbol can have subtle depth or dimension but the background must remain flat #D1D3BC, every icon must look like part of the same family";
+export const DEFAULT_ICON_STYLE = "Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering. Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly represents the app. Use dimensional glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent lighting across the icon family. Do not include text, logos, watermarks, transparent background, black/dark dock backgrounds, or empty padding. The Matrix shell owns the final corner radius, so do not bake a separate visible icon frame into the artwork.";
 
 export function loadIconStyle(homePath: string): string {
   try {
@@ -21,20 +21,20 @@ export function buildIconPrompt(slug: string, style: string): string {
   return `App icon for '${name}': ${style}, no text, 1:1 square`;
 }
 
-export interface IconTarget {
-  slug: string;
-  icon?: string;
-  name?: string;
-}
-
 export interface IconBatchResult {
   generated: number;
   failed: string[];
 }
 
+export interface IconGenerationTarget {
+  slug: string;
+  icon?: string;
+  name?: string;
+}
+
 export async function generateIconBatch(
   apiKey: string,
-  targets: Array<string | IconTarget>,
+  targets: Array<string | IconGenerationTarget>,
   iconStyle: string,
   iconsDir: string,
   opts?: { skipExisting?: boolean },
@@ -43,24 +43,58 @@ export async function generateIconBatch(
   let generated = 0;
   const failed: string[] = [];
   for (const target of targets) {
-    const slug = typeof target === "string" ? target : target.slug;
-    const fileStem = typeof target === "string" ? target : target.icon ?? target.slug;
-    const promptSubject = typeof target === "string" ? target : target.name ?? target.slug;
-    if (opts?.skipExisting && existsSync(join(iconsDir, `${fileStem}.png`))) continue;
+    const normalized = normalizeIconTarget(target);
+    if (!normalized) {
+      failed.push(describeIconTarget(target));
+      continue;
+    }
+    if (opts?.skipExisting && existsSync(join(iconsDir, `${normalized.fileStem}.png`))) continue;
     try {
-      await client.generateImage(buildIconPrompt(promptSubject, iconStyle), {
+      await client.generateImage(buildIconPrompt(normalized.promptName, iconStyle), {
         aspectRatio: "1:1",
         imageDir: iconsDir,
-        saveAs: `${fileStem}.png`,
+        saveAs: `${normalized.fileStem}.png`,
       });
       generated++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[icons] Generation failed for "${slug}": ${msg}`);
-      failed.push(slug);
+      console.warn(`[icons] Generation failed for "${normalized.slug}": ${msg}`);
+      failed.push(normalized.slug);
     }
   }
   return { generated, failed };
+}
+
+function normalizeIconTarget(target: string | IconGenerationTarget): { slug: string; fileStem: string; promptName: string } | null {
+  if (typeof target === "string") {
+    return isSafeIconStem(target)
+      ? { slug: target, fileStem: target, promptName: target }
+      : null;
+  }
+  const slug = target.slug;
+  const fileStem = isSafeIconStem(target.icon) ? target.icon : safeStemFromSlug(slug);
+  if (!fileStem) return null;
+  const promptName = typeof target.name === "string" && target.name.trim().length > 0
+    ? target.name.trim()
+    : slug;
+  return { slug, fileStem, promptName };
+}
+
+function safeStemFromSlug(slug: string): string | null {
+  const leaf = slug.split("/").filter(Boolean).at(-1);
+  return isSafeIconStem(leaf) ? leaf : null;
+}
+
+function isSafeIconStem(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+function describeIconTarget(target: string | IconGenerationTarget): string {
+  return typeof target === "string" ? target : target.slug;
+}
+
+function isSafeImageFileName(value: string): boolean {
+  return /^[a-zA-Z0-9_.-]+$/.test(value) && !value.includes("..") && value.endsWith(".png");
 }
 
 export interface ImageResult {
@@ -118,6 +152,9 @@ export function createImageClient(apiKey: string): ImageClient {
 
       const model = opts.model ?? DEFAULT_MODEL;
       const fetchFn = opts.fetchFn ?? globalThis.fetch;
+      if (opts.saveAs && !isSafeImageFileName(opts.saveAs)) {
+        throw new Error("Invalid image filename.");
+      }
 
       const url = `${API_BASE}/${model}:generateContent`;
 
@@ -177,6 +214,9 @@ export function createImageClient(apiKey: string): ImageClient {
         .slice(0, 40);
       const timestamp = Date.now();
       const fileName = opts.saveAs ?? `${timestamp}-${slug}.png`;
+      if (!isSafeImageFileName(fileName)) {
+        throw new Error("Invalid image filename.");
+      }
       const localPath = join(opts.imageDir, fileName);
 
       await writeFile(localPath, imageBuffer);

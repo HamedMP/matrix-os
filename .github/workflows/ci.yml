@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "stack/**"]
     types: [labeled, ready_for_review]
 
 concurrency:

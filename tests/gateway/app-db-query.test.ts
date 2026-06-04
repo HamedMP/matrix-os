@@ -153,6 +153,57 @@ describe("QueryEngine", () => {
     expect(row!.done).toBe(true);
   });
 
+  it("bulk-updates rows in one statement", async () => {
+    const first = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+    const second = await engine.insert("todo", "tasks", { title: "B", done: false, priority: 2 });
+
+    await engine.bulkUpdate("todo", "tasks", [
+      { id: first.id, data: { priority: 2 } },
+      { id: second.id, data: { priority: 1 } },
+    ]);
+
+    const rows = await engine.find("todo", "tasks", { orderBy: { priority: "asc" } });
+    expect(rows.map((row) => row.title)).toEqual(["B", "A"]);
+  });
+
+  it("bulk-updates sparse row data without changing omitted columns", async () => {
+    const first = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+    const second = await engine.insert("todo", "tasks", { title: "B", done: false, priority: 2 });
+
+    await engine.bulkUpdate("todo", "tasks", [
+      { id: first.id, data: { priority: 3 } },
+      { id: second.id, data: { priority: 4, done: true } },
+    ]);
+
+    const firstRow = await engine.findOne("todo", "tasks", first.id);
+    const secondRow = await engine.findOne("todo", "tasks", second.id);
+    expect(firstRow!.priority).toBe(3);
+    expect(firstRow!.done).toBe(false);
+    expect(secondRow!.priority).toBe(4);
+    expect(secondRow!.done).toBe(true);
+  });
+
+  it("rejects duplicate ids in bulk updates", async () => {
+    const { id } = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+
+    await expect(
+      engine.bulkUpdate("todo", "tasks", [
+        { id, data: { priority: 2 } },
+        { id, data: { priority: 3 } },
+      ]),
+    ).rejects.toThrow(/duplicate id/i);
+  });
+
+  it("rejects undefined values in bulk updates", async () => {
+    const { id } = await engine.insert("todo", "tasks", { title: "A", done: false, priority: 1 });
+
+    await expect(
+      engine.bulkUpdate("todo", "tasks", [
+        { id, data: { priority: undefined } },
+      ]),
+    ).rejects.toThrow(/must not be undefined/i);
+  });
+
   it("deletes a row by id", async () => {
     const { id } = await engine.insert("todo", "tasks", { title: "Delete me", done: false });
     await engine.delete("todo", "tasks", id);

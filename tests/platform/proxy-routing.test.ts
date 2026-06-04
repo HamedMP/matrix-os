@@ -104,6 +104,8 @@ describe("platform proxy routing", () => {
     delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
     delete process.env.HETZNER_SERVER_TYPE;
     delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
   });
 
   it("escapes JSON embedded in auth page inline scripts", () => {
@@ -743,6 +745,103 @@ describe("platform proxy routing", () => {
     expect(assetRes.headers.get("content-length")).toBeNull();
     expect(assetRes.headers.get("connection")).toBeNull();
     expect(assetRes.headers.get("transfer-encoding")).toBeNull();
+  });
+
+  it("routes sandboxed srcdoc Vite app assets with null-origin CORS through the shell route cookie", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice-vite-asset",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 127,
+      publicIPv4: "203.0.113.15",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("console.log('chess')", {
+        status: 200,
+        headers: {
+          "content-type": "application/javascript",
+          vary: "Accept-Encoding",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/apps/chess/assets/index.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        origin: "null",
+        cookie: "matrix_shell_route=alice",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [assetUrl, assetInit] = fetchMock.mock.calls[0]!;
+    expect(assetUrl).toBe("https://203.0.113.15:443/apps/chess/assets/index.js");
+    const assetHeaders = assetInit?.headers as Headers;
+    expect(assetHeaders.get("origin")).toBe("null");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    expect(assetHeaders.get("cookie")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBe("null");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("vary")).toContain("Origin");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
+  });
+
+  it("rewrites proxied Vite app HTML to signed explicit VM asset URLs for srcdoc iframes", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice-vite-html",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 128,
+      publicIPv4: "203.0.113.16",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        '<!doctype html><script>const fixture = \'src="./assets/not-a-real-import.js"\';</script><script type="module" src="./assets/index.js"></script><link rel="stylesheet" href="./assets/index.css">',
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+          },
+        },
+      ),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/apps/chess/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.16:443/apps/chess/");
+    const html = await res.text();
+    expect(html).toMatch(/src="\/vm\/alice\/apps\/chess\/assets\/index\.js\?matrix_asset_token=[^"]+"/);
+    expect(html).toMatch(/href="\/vm\/alice\/apps\/chess\/assets\/index\.css\?matrix_asset_token=[^"]+"/);
+    expect(html).toContain('src="./assets/not-a-real-import.js"');
+    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+    expect(res.headers.get("set-cookie")).toContain("SameSite=Lax");
   });
 
   it("routes code.matrix-os.com to the authenticated user's VPS gateway first", async () => {
@@ -1744,6 +1843,85 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("You are already signed in");
   });
 
+  it("serves the shell billing gate from auth-shell for signed-in users before a VPS exists", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("auth shell", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("auth shell");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://auth-shell.test:3200/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
+  });
+
+  it("keeps legacy no-container app-domain users on the platform auth page", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("auth shell", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("fetch('/api/auth/provision-runtime'");
+    expect(html).toContain("Billing required");
+    expect(html).not.toBe("auth shell");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not trust a stale app session cookie over a different Clerk session", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
@@ -1947,6 +2125,118 @@ describe("platform proxy routing", () => {
     const claims = await syncJwt.verifySyncJwt(body.token, { secret: JWT_SECRET });
     expect(claims.handle).toBe("alice-staging");
     expect(claims.runtime_slot).toBe("staging");
+  });
+
+  it("routes signed explicit VM Vite app assets with null-origin CORS without browser cookies", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff140",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123484,
+      publicIPv4: "203.0.113.34",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          '<!doctype html><script type="module" src="./assets/index.js"></script>',
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response('import{a}from"./react.js";import("./editor.js");const untouched=Array.from("./plain.js");console.log("chess")', {
+          status: 200,
+          headers: {
+            "content-type": "application/javascript",
+            vary: "Accept-Encoding",
+          },
+        }),
+      );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const htmlRes = await app.request("/apps/chess/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+    expect(htmlRes.status).toBe(200);
+    const html = await htmlRes.text();
+    const assetPath = html.match(/src="([^"]+)"/)?.[1];
+    expect(assetPath).toMatch(/^\/vm\/alice\/apps\/chess\/assets\/index\.js\?matrix_asset_token=/);
+
+    const res = await app.request(assetPath ?? "/invalid", {
+      headers: {
+        host: "app.matrix-os.com",
+        origin: "null",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [assetUrl, assetInit] = fetchMock.mock.calls[1]!;
+    expect(assetUrl).toBe("https://203.0.113.34:443/apps/chess/assets/index.js");
+    const assetHeaders = assetInit?.headers as Headers;
+    expect(assetHeaders.get("origin")).toBe("null");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    expect(assetHeaders.get("cookie")).toBeNull();
+    expect(assetHeaders.get("x-platform-user-id")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBe("null");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(res.headers.get("vary")).toContain("Origin");
+    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+    const js = await res.text();
+    expect(js).toMatch(/from"\.\/react\.js\?matrix_asset_token=[^"]+"/);
+    expect(js).toMatch(/import\("\.\/editor\.js\?matrix_asset_token=[^"]+"\)/);
+    expect(js).toContain('Array.from("./plain.js")');
+  });
+
+  it("rejects unsigned explicit VM Vite app assets before probing a handle", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff14a",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123494,
+      publicIPv4: "203.0.113.44",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("console.log('chess')", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/vm/alice/apps/chess/assets/index.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        origin: "null",
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes authenticated shell static assets through the selected VM handle cookie", async () => {
@@ -3040,6 +3330,41 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cache-control")).toBe("no-store, private");
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+      expect(verifyToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    }
+  });
+
+  it("serves an unregistering app-domain service worker without auth", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue({ authenticated: false });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_123";
+    try {
+      const res = await app.request("/service-worker.js", {
+        headers: {
+          host: "app.matrix-os.com",
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/javascript");
+      expect(res.headers.get("cache-control")).toBe("no-store, private");
+      expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+      expect(res.headers.get("service-worker-allowed")).toBe("/");
+      expect(await res.text()).toContain("registration.unregister()");
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

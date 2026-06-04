@@ -74,10 +74,6 @@ const MOBILE_FALLBACK_THEME: Theme = getPreset("dark") ?? {
   },
 };
 
-export interface UseThemeOptions {
-  mobileDefaultDark?: boolean;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -147,9 +143,16 @@ function inferMode(theme: Theme): "light" | "dark" {
   return luminance < 0.5 ? "dark" : "light";
 }
 
+export interface UseThemeOptions {
+  mobileDefaultDark?: boolean;
+}
+
+export function getThemeFallback(options: UseThemeOptions = {}): Theme {
+  return options.mobileDefaultDark ? MOBILE_FALLBACK_THEME : DEFAULT_THEME;
+}
+
 export function useTheme(options: UseThemeOptions = {}) {
-  const { mobileDefaultDark = false } = options;
-  const fallbackTheme = mobileDefaultDark ? MOBILE_FALLBACK_THEME : DEFAULT_THEME;
+  const fallbackTheme = getThemeFallback(options);
   const [theme, setTheme] = useState<Theme>(fallbackTheme);
 
   // Fetch theme from server on mount
@@ -163,7 +166,7 @@ export function useTheme(options: UseThemeOptions = {}) {
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
-      fetchTheme().then(setTheme);
+      fetchTheme(fallbackTheme).then(setTheme);
     }
   });
 

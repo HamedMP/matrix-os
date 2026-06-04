@@ -3,12 +3,16 @@
 import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   BotIcon,
+  ClipboardPasteIcon,
   FilesIcon,
   FolderIcon,
+  KeyboardIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   PlusIcon,
   RefreshCwIcon,
+  Rows2Icon,
+  SearchIcon,
   TerminalIcon,
 } from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
@@ -116,7 +120,17 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<TerminalInputEventDetail>(TERMINAL_INPUT_EVENT, {
-      detail: { paneId, data },
+      detail: { paneId, data, action: "input" },
+    }),
+  );
+}
+
+function dispatchPaneAction(paneId: string | null, action: NonNullable<TerminalInputEventDetail["action"]>): void {
+  if (!paneId) return;
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<TerminalInputEventDetail>(TERMINAL_INPUT_EVENT, {
+      detail: { paneId, action },
     }),
   );
 }
@@ -872,12 +886,20 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   suppressNativeKeyboard={mobile}
                 />
                 {mobile && (
-                  <TerminalKeyBar
-                    onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
-                    background={terminalBackground}
-                    foreground={terminalForeground}
-                    accent={terminalAccent}
-                  />
+                  <>
+                    <MobileTerminalActions
+                      defaultCwd={DEFAULT_CWD}
+                      background={terminalBackground}
+                      foreground={terminalForeground}
+                      accent={terminalAccent}
+                    />
+                    <TerminalKeyBar
+                      onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
+                      background={terminalBackground}
+                      foreground={terminalForeground}
+                      accent={terminalAccent}
+                    />
+                  </>
                 )}
               </div>
             </div>
@@ -1238,6 +1260,151 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
       </div>
       )}
     </div>
+  );
+}
+
+function MobileTerminalActions({
+  defaultCwd,
+  background,
+  foreground,
+  accent,
+}: {
+  defaultCwd: string;
+  background: string;
+  foreground: string;
+  accent: string;
+}) {
+  const ctx = useTerminalAppContext();
+  const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
+  const focusedPaneId = ctx.focusedPaneId;
+  const actionBackground = `color-mix(in srgb, ${foreground} 9%, transparent)`;
+  const actionBorder = `color-mix(in srgb, ${foreground} 18%, transparent)`;
+
+  return (
+    <div
+      data-testid="terminal-mobile-actions"
+      role="toolbar"
+      aria-label="Mobile terminal actions"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        overflowX: "auto",
+        padding: "6px 2px 4px",
+        background,
+        borderTop: `1px solid ${actionBorder}`,
+        scrollbarWidth: "none",
+        WebkitOverflowScrolling: "touch",
+        flexShrink: 0,
+      }}
+    >
+      <MobileActionButton
+        label="Zellij"
+        title="Open mobile Zellij"
+        icon={<TerminalIcon size={14} strokeWidth={1.8} />}
+        onClick={() => { void ctx.createShellSessionTab("Mobile Zellij", getCwd()); }}
+        background={accent}
+        foreground="var(--primary-foreground)"
+        border="transparent"
+      />
+      <MobileActionButton
+        label="Pane"
+        title="Split pane below"
+        icon={<Rows2Icon size={14} strokeWidth={1.8} />}
+        onClick={() => { if (focusedPaneId) ctx.splitPane(focusedPaneId, "vertical"); }}
+        background={actionBackground}
+        foreground={foreground}
+        border={actionBorder}
+      />
+      <MobileActionButton
+        label="Tab"
+        title="Open terminal tab"
+        icon={<PlusIcon size={14} strokeWidth={1.8} />}
+        onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
+        background={actionBackground}
+        foreground={foreground}
+        border={actionBorder}
+      />
+      <MobileActionButton
+        label="Cmd"
+        title="Open Claude Code"
+        icon={<KeyboardIcon size={14} strokeWidth={1.8} />}
+        onClick={() => ctx.addTab(getCwd(), "Claude Code", true)}
+        background={actionBackground}
+        foreground={foreground}
+        border={actionBorder}
+      />
+      <MobileActionButton
+        label="Paste"
+        title="Paste clipboard"
+        icon={<ClipboardPasteIcon size={14} strokeWidth={1.8} />}
+        onClick={() => dispatchPaneAction(focusedPaneId, "paste")}
+        background={actionBackground}
+        foreground={foreground}
+        border={actionBorder}
+        minWidth={62}
+      />
+      <MobileActionButton
+        label="Search"
+        title="Search terminal"
+        icon={<SearchIcon size={14} strokeWidth={1.8} />}
+        onClick={() => dispatchPaneAction(focusedPaneId, "search")}
+        background={actionBackground}
+        foreground={foreground}
+        border={actionBorder}
+        minWidth={66}
+      />
+    </div>
+  );
+}
+
+function MobileActionButton({
+  label,
+  title,
+  icon,
+  onClick,
+  background,
+  foreground,
+  border,
+  minWidth = 56,
+}: {
+  label: string;
+  title: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  background: string;
+  foreground: string;
+  border: string;
+  minWidth?: number;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title}
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 4,
+        height: 32,
+        minWidth,
+        padding: "0 5px",
+        borderRadius: 7,
+        border: `1px solid ${border}`,
+        background,
+        color: foreground,
+        fontSize: 11,
+        fontWeight: 650,
+        whiteSpace: "nowrap",
+        flex: "0 0 auto",
+        touchAction: "manipulation",
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }
 

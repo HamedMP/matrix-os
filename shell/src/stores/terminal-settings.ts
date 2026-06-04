@@ -13,7 +13,8 @@ export type TerminalThemeId =
   | "github-dark"
   | "github-light";
 
-export type TerminalFontFamily = "Berkeley Mono" | "JetBrains Mono" | "Fira Code";
+export const TERMINAL_FONT_FAMILIES = ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"] as const;
+export type TerminalFontFamily = (typeof TERMINAL_FONT_FAMILIES)[number];
 export type TerminalCursorStyle = "block" | "bar" | "underline";
 
 interface TerminalSettings {
@@ -38,7 +39,7 @@ export const useTerminalSettings = create<TerminalSettings>()(
     (set) => ({
       themeId: "system",
       fontSize: 13,
-      fontFamily: "JetBrains Mono",
+      fontFamily: "MesloLGS NF",
       ligatures: true,
       cursorStyle: "block",
       smoothScroll: true,

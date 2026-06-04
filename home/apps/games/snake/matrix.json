@@ -12,6 +12,19 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "snake",
+  "storage": {
+    "tables": {
+      "scores": {
+        "columns": {
+          "score": "integer",
+          "best": "integer"
+        },
+        "indexes": [
+          "best"
+        ]
+      }
+    }
+  },
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",

@@ -45,21 +45,25 @@ for dir in agents system apps; do
   fi
 done
 
-echo "[matrix-os-dev] Building bundled default apps..."
-node /app/scripts/build-default-apps.mjs /app/home/apps
-find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do
-  built_app=$(dirname "$(dirname "$built_index")")
-  app_rel=${built_app#/app/home/apps/}
-  target_app="$MATRIX_HOME/apps/$app_rel"
-  [ -d "$target_app" ] || continue
-  if [ ! -d "$target_app/dist" ]; then
-    mkdir -p "$target_app"
-    cp -R "$built_app/dist" "$target_app/dist"
-    if [ -f "$built_app/.build-stamp" ]; then
-      cp "$built_app/.build-stamp" "$target_app/.build-stamp"
+if [ "${MATRIX_SKIP_DEFAULT_APP_BUILD:-}" = "true" ]; then
+  echo "[matrix-os-dev] Skipping bundled default app builds (MATRIX_SKIP_DEFAULT_APP_BUILD=true)"
+else
+  echo "[matrix-os-dev] Building bundled default apps..."
+  node /app/scripts/build-default-apps.mjs /app/home/apps
+  find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do
+    built_app=$(dirname "$(dirname "$built_index")")
+    app_rel=${built_app#/app/home/apps/}
+    target_app="$MATRIX_HOME/apps/$app_rel"
+    [ -d "$target_app" ] || continue
+    if [ ! -d "$target_app/dist" ]; then
+      mkdir -p "$target_app"
+      cp -R "$built_app/dist" "$target_app/dist"
+      if [ -f "$built_app/.build-stamp" ]; then
+        cp "$built_app/.build-stamp" "$target_app/.build-stamp"
+      fi
     fi
-  fi
-done
+  done
+fi
 
 # Unify $HOME/.agents/.claude/.codex and matching $MATRIX_HOME paths into a
 # single directory. The gateway runs with HOME=/home/matrixos and reads

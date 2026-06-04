@@ -20,6 +20,7 @@ export function isSafeName(s: string): s is SafeName {
 export interface TableDef {
   columns: Record<string, string>;
   indexes?: string[];
+  uniqueIndexes?: string[];
 }
 
 export type Comparable = string | number | boolean | null;

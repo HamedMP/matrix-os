@@ -110,6 +110,8 @@ const APP_SESSION_COOKIE = 'matrix_app_session';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
 const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
+const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
+const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
@@ -482,7 +484,7 @@ function readRuntimeSlot(rawUrl: string): string {
   return readRuntimeSlotSelection(rawUrl).slot;
 }
 
-function buildForwardedQueryString(rawUrl: string): string {
+function buildForwardedQueryString(rawUrl: string, omittedParams: readonly string[] = []): string {
   const queryStart = rawUrl.indexOf('?');
   if (queryStart === -1) return '';
   // Browser HTTP requests do not include fragments, but synthetic proxy tests
@@ -498,7 +500,7 @@ function buildForwardedQueryString(rawUrl: string): string {
       // `%72untime=staging` cannot leak the platform-only runtime selector to
       // a customer VPS.
       const parsedKey = new URLSearchParams(`${rawKey}=`).keys().next().value ?? rawKey;
-      return parsedKey !== 'runtime';
+      return parsedKey !== 'runtime' && !omittedParams.includes(parsedKey);
     })
     .join('&');
   return forwarded ? `?${forwarded}` : '';
@@ -562,6 +564,29 @@ function shouldProxyShellForBillingGate(input: {
   );
 }
 
+function shouldProxyAuthShellForUnroutedUser(input: {
+  isAppDomain: boolean;
+  method: string;
+  path: string;
+}): boolean {
+  return (
+    input.isAppDomain &&
+    (input.method === 'GET' || input.method === 'HEAD') &&
+    !input.path.startsWith('/api/') &&
+    !input.path.startsWith('/vps') &&
+    !input.path.startsWith('/internal/') &&
+    !input.path.startsWith('/billing/') &&
+    !input.path.startsWith('/ws') &&
+    input.path !== '/metrics'
+  );
+}
+
+function getAuthShellOrigin(env: NodeJS.ProcessEnv): string {
+  const host = env.AUTH_SHELL_HOST?.trim() || '127.0.0.1';
+  const port = env.AUTH_SHELL_PORT?.trim() || '3200';
+  return `http://${host}:${port}`;
+}
+
 interface ExplicitVmRoute {
   handle: string;
   upstreamPath: string;
@@ -575,6 +600,29 @@ function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
     handle: match[1],
     upstreamPath: rest ? `/${rest}` : '/',
   };
+}
+
+function hasValidExplicitVmAppAssetToken(input: {
+  method: string;
+  rawUrl: string;
+  route: ExplicitVmRoute;
+  platformSecret: string;
+}): boolean {
+  if (input.method !== 'GET' && input.method !== 'HEAD') return false;
+  const slug = getViteAppAssetSlug(input.route.upstreamPath);
+  if (!slug) return false;
+  try {
+    const url = new URL(input.rawUrl, 'https://app.matrix-os.com');
+    return verifyAppAssetRouteToken({
+      token: url.searchParams.get(APP_ASSET_ROUTE_TOKEN_PARAM),
+      expectedHandle: input.route.handle,
+      expectedSlug: slug,
+      platformSecret: input.platformSecret,
+    });
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to parse explicit VM asset URL:', err instanceof Error ? err.message : String(err));
+    return false;
+  }
 }
 
 function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
@@ -689,6 +737,42 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Cloudflare-CDN-Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   c.header('Expires', '0');
+}
+
+const APP_DOMAIN_UNREGISTER_SERVICE_WORKER = `
+self.addEventListener("install", () => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter((key) => key.startsWith("matrix-os-"))
+      .map((key) => caches.delete(key)));
+    await self.clients.claim();
+    await self.registration.unregister();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  event.respondWith(fetch(event.request));
+});
+`.trim();
+
+function appDomainServiceWorkerResponse(): Response {
+  return new Response(APP_DOMAIN_UNREGISTER_SERVICE_WORKER, {
+    status: 200,
+    headers: {
+      'content-type': 'text/javascript; charset=utf-8',
+      'cache-control': 'no-store, private',
+      'cdn-cache-control': 'no-store',
+      'cloudflare-cdn-cache-control': 'no-store',
+      'pragma': 'no-cache',
+      'expires': '0',
+      'service-worker-allowed': '/',
+    },
+  });
 }
 
 function isPostgresUniqueViolation(err: unknown): boolean {
@@ -836,6 +920,10 @@ function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
   headers.set('cache-control', 'private, no-store');
   headers.set('cdn-cache-control', 'no-store');
   headers.set('cloudflare-cdn-cache-control', 'no-store');
+  addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
+}
+
+function addVaryHeader(headers: Headers, values: string[]): void {
   const vary = headers.get('vary');
   const varyParts = new Set(
     (vary ?? '')
@@ -843,9 +931,20 @@ function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
       .map((part) => part.trim())
       .filter(Boolean),
   );
-  varyParts.add('Cookie');
-  varyParts.add('Accept-Encoding');
+  for (const value of values) {
+    varyParts.add(value);
+  }
   headers.set('vary', Array.from(varyParts).join(', '));
+}
+
+function applySandboxedAppAssetCorsHeaders(headers: Headers, path: string, origin: string | undefined): void {
+  if (!isViteAppAssetPath(path) || origin !== 'null') return;
+  // Runtime apps execute from a sandboxed srcdoc iframe with an opaque null
+  // origin. Asset requests use explicit /vm/{handle}/apps/... URLs so they do
+  // not need relaxed SameSite cookies to cross that sandbox boundary.
+  headers.set('access-control-allow-origin', 'null');
+  headers.set('access-control-allow-credentials', 'true');
+  addVaryHeader(headers, ['Origin']);
 }
 
 function isCodeDomainStaticAssetPath(path: string): boolean {
@@ -863,8 +962,205 @@ function isAppDomainStaticAssetPath(path: string): boolean {
     path === '/manifest.json' ||
     path === '/og.png' ||
     path.startsWith('/_next/static/') ||
-    path.startsWith('/_next/image')
+    path.startsWith('/_next/image') ||
+    isViteAppAssetPath(path)
   );
+}
+
+function isViteAppAssetPath(path: string): boolean {
+  return /^\/apps\/[a-z0-9][a-z0-9-]{0,63}\/assets\/.+/.test(path);
+}
+
+function getViteAppAssetSlug(path: string): string | null {
+  const match = path.match(/^\/apps\/([a-z0-9][a-z0-9-]{0,63})\/assets\/.+/);
+  return match?.[1] ?? null;
+}
+
+function getViteAppHtmlSlug(path: string): string | null {
+  const match = path.match(/^\/apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
+  return match?.[1] ?? null;
+}
+
+interface AppAssetRouteTokenPayload {
+  v: 1;
+  handle: string;
+  slug: string;
+}
+
+function signAppAssetRouteToken(
+  payload: AppAssetRouteTokenPayload,
+  platformSecret: string,
+): string {
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = createHmac('sha256', platformSecret)
+    .update(encodedPayload)
+    .digest('base64url');
+  return `${encodedPayload}.${signature}`;
+}
+
+function buildAppAssetRouteToken(
+  handle: string,
+  slug: string,
+  platformSecret: string,
+): string {
+  // Vite can lazy-load chunks long after initial HTML render, and browser
+  // module imports cannot refresh query tokens without a full page reload. The
+  // token therefore gates static app bundle assets by handle+slug, not time.
+  return signAppAssetRouteToken({
+    v: 1,
+    handle,
+    slug,
+  }, platformSecret);
+}
+
+function verifyAppAssetRouteToken(input: {
+  token: string | null;
+  expectedHandle: string;
+  expectedSlug: string;
+  platformSecret: string;
+}): boolean {
+  if (!input.token || !input.platformSecret) return false;
+  const [encodedPayload, signature, extra] = input.token.split('.');
+  if (!encodedPayload || !signature || extra !== undefined) return false;
+  const expectedSignature = createHmac('sha256', input.platformSecret)
+    .update(encodedPayload)
+    .digest('base64url');
+  if (!timingSafeTokenEquals(signature, expectedSignature)) return false;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as Partial<AppAssetRouteTokenPayload>;
+    return (
+      parsed.v === 1 &&
+      parsed.handle === input.expectedHandle &&
+      parsed.slug === input.expectedSlug
+    );
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to parse app asset route token:', err instanceof Error ? err.message : String(err));
+    return false;
+  }
+}
+
+function appendQueryParamToPath(path: string, key: string, value: string): string {
+  const hashStart = path.indexOf('#');
+  const pathAndQuery = hashStart === -1 ? path : path.slice(0, hashStart);
+  const hash = hashStart === -1 ? '' : path.slice(hashStart);
+  const separator = pathAndQuery.includes('?') ? '&' : '?';
+  return `${pathAndQuery}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}${hash}`;
+}
+
+function readAppAssetRouteToken(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl, 'https://app.matrix-os.com');
+    return url.searchParams.get(APP_ASSET_ROUTE_TOKEN_PARAM);
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to read app asset route token:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+function rewriteSandboxedViteAppAssetUrls(
+  html: string,
+  handle: string,
+  path: string,
+  platformSecret: string,
+): string {
+  const slug = getViteAppHtmlSlug(path);
+  if (!slug || !platformSecret) return html;
+  const assetToken = buildAppAssetRouteToken(handle, slug, platformSecret);
+  const appAssetPrefix = `/apps/${slug}/assets/`;
+  const rewriteTag = (tag: string): string => tag.replace(
+    /\b(src|href)=(["'])([^"']+)\2/g,
+    (match: string, attr: string, quote: string, value: string) => {
+      const assetRemainder = value.startsWith('./assets/')
+        ? value.slice('./assets/'.length)
+        : value.startsWith(appAssetPrefix)
+          ? value.slice(appAssetPrefix.length)
+          : null;
+      if (!assetRemainder) return match;
+      const explicitAssetPath = appendQueryParamToPath(
+        `/vm/${handle}/apps/${slug}/assets/${assetRemainder}`,
+        APP_ASSET_ROUTE_TOKEN_PARAM,
+        assetToken,
+      );
+      return `${attr}=${quote}${explicitAssetPath}${quote}`;
+    },
+  );
+
+  let rewritten = '';
+  let cursor = 0;
+  while (cursor < html.length) {
+    const tagStart = html.indexOf('<', cursor);
+    if (tagStart === -1) {
+      rewritten += html.slice(cursor);
+      break;
+    }
+    const tagEnd = html.indexOf('>', tagStart + 1);
+    if (tagEnd === -1) {
+      rewritten += html.slice(cursor);
+      break;
+    }
+    rewritten += html.slice(cursor, tagStart);
+    const tag = html.slice(tagStart, tagEnd + 1);
+    const tagName = tag.match(/^<\s*([a-zA-Z][a-zA-Z0-9-]*)\b/)?.[1]?.toLowerCase();
+    const shouldRewriteTag = tagName === 'script' || tagName === 'link';
+    rewritten += shouldRewriteTag ? rewriteTag(tag) : tag;
+    cursor = tagEnd + 1;
+
+    if (tagName === 'script' && !/\/\s*>$/.test(tag)) {
+      const scriptCloseStart = html.toLowerCase().indexOf('</script', cursor);
+      if (scriptCloseStart === -1) continue;
+      const scriptCloseEnd = html.indexOf('>', scriptCloseStart + '</script'.length);
+      if (scriptCloseEnd === -1) continue;
+      rewritten += html.slice(cursor, scriptCloseEnd + 1);
+      cursor = scriptCloseEnd + 1;
+    }
+  }
+  return rewritten;
+}
+
+function rewriteSandboxedViteJsAssetImports(js: string, assetToken: string | null): string {
+  if (!assetToken) return js;
+  return js.replace(
+    /((?:\bimport\s*\(\s*)|(?:\bimport\s*)|(?:\b(?:import|export)[^"']*?\bfrom\s*))(["'])(\.\/[^"']+\.(?:js|css)(?:\?[^"'#]*)?(?:#[^"']*)?)\2/g,
+    (match: string, prefix: string, quote: string, value: string) => {
+      if (value.includes(`${APP_ASSET_ROUTE_TOKEN_PARAM}=`)) return match;
+      return `${prefix}${quote}${appendQueryParamToPath(value, APP_ASSET_ROUTE_TOKEN_PARAM, assetToken)}${quote}`;
+    },
+  );
+}
+
+async function buildAppDomainProxyResponse(input: {
+  upstream: Response;
+  responseHeaders: Headers;
+  path: string;
+  handle: string;
+  platformSecret: string;
+  assetRouteToken?: string | null;
+}): Promise<Response> {
+  if (getViteAppHtmlSlug(input.path) && input.responseHeaders.get('content-type')?.includes('text/html')) {
+    const html = await input.upstream.text();
+    input.responseHeaders.delete('content-length');
+    return new Response(rewriteSandboxedViteAppAssetUrls(html, input.handle, input.path, input.platformSecret), {
+      status: input.upstream.status,
+      headers: input.responseHeaders,
+    });
+  }
+  if (
+    getViteAppAssetSlug(input.path) &&
+    input.assetRouteToken &&
+    input.responseHeaders.get('content-type')?.includes('javascript')
+  ) {
+    const js = await input.upstream.text();
+    input.responseHeaders.delete('content-length');
+    return new Response(rewriteSandboxedViteJsAssetImports(js, input.assetRouteToken), {
+      status: input.upstream.status,
+      headers: input.responseHeaders,
+    });
+  }
+  return new Response(input.upstream.body, {
+    status: input.upstream.status,
+    headers: input.responseHeaders,
+  });
 }
 
 function buildCodeDomainProxyHeaders(
@@ -2653,6 +2949,39 @@ export function createApp(deps: {
   }
   app.capturePlatformEvent = capturePlatformEvent;
 
+  async function proxyAuthShell(c: Context, host: string): Promise<Response> {
+    const upstream = new URL(c.req.url);
+    const targetUrl = `${getAuthShellOrigin(appEnv)}${upstream.pathname}${upstream.search}`;
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(c.req.header())) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey !== 'host' && value) {
+        headers.set(key, value);
+      }
+    }
+    headers.set('host', new URL(getAuthShellOrigin(appEnv)).host);
+    headers.set('x-forwarded-host', host);
+    headers.set('x-forwarded-proto', 'https');
+    headers.set('accept-encoding', 'identity');
+    headers.set('connection', 'close');
+
+    try {
+      const response = await fetch(targetUrl, {
+        method: c.req.method,
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+      });
+      return new Response(response.body, {
+        status: response.status,
+        headers: sanitizeProxyResponseHeaders(response.headers),
+      });
+    } catch (err: unknown) {
+      logPlatformRouteError('app-domain auth-shell proxy', err);
+      return c.text('Matrix OS shell unavailable', 502);
+    }
+  }
+
   async function resolveBillingClerkUserId(c: Context): Promise<string | null> {
     try {
       if (!clerkAuth) return null;
@@ -3202,6 +3531,9 @@ export function createApp(deps: {
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
+    if (isAppDomain && reqPath === '/service-worker.js') {
+      return appDomainServiceWorkerResponse();
+    }
     if (isAppDomain && (
       reqPath === '/auth/device' ||
       reqPath.startsWith('/auth/device/') ||
@@ -3237,7 +3569,7 @@ export function createApp(deps: {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
 
-      const qs = buildForwardedQueryString(c.req.url);
+      const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
@@ -3283,11 +3615,25 @@ export function createApp(deps: {
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
+    const explicitVmRouteHasValidAppAssetToken = Boolean(
+      explicitVmRoute &&
+      hasValidExplicitVmAppAssetToken({
+        method: c.req.method,
+        rawUrl: c.req.url,
+        route: explicitVmRoute,
+        platformSecret,
+      }),
+    );
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const requestRuntimeSlot = runtimeSelection.slot;
     let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
+    const allowAuthShellUnroutedIdentity = !legacyContainerRoutingEnabled && shouldProxyAuthShellForUnroutedUser({
+      isAppDomain,
+      method: c.req.method,
+      path,
+    });
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -3300,7 +3646,7 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
-      allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
+      allowUnroutedClerkIdentity: Boolean(explicitVmRoute) || allowAuthShellUnroutedIdentity,
       requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
     });
@@ -3315,6 +3661,17 @@ export function createApp(deps: {
           source: 'mobile-session',
         };
       }
+    }
+    if (
+      !identity &&
+      explicitVmRoute &&
+      explicitVmRouteHasValidAppAssetToken
+    ) {
+      identity = {
+        handle: explicitVmRoute.handle,
+        userId: '',
+        source: 'static-route',
+      };
     }
     if (!identity && isAppDomain && isAppDomainStaticAssetPath(path)) {
       const shellRouteHandle = readShellRouteCookie(path, cookieHeader);
@@ -3338,6 +3695,10 @@ export function createApp(deps: {
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
+      if (isAppDomain && explicitVmRoute && isViteAppAssetPath(explicitVmRoute.upstreamPath)) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
@@ -3368,12 +3729,12 @@ export function createApp(deps: {
       return c.text('Invalid Matrix OS computer', 400);
     }
     if (isAppDomain && explicitVmRoute) {
-      if (!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') {
+      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasValidAppAssetToken) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
       const machine = await getActiveUserMachineByHandle(db, explicitVmRoute.handle);
-      if (!machine || machine.clerkUserId !== identity.userId) {
+      if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
@@ -3400,7 +3761,7 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.html(getVpsBootPage({ status: machine.status }), 503);
       }
-      const qs = buildForwardedQueryString(c.req.url);
+      const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
@@ -3427,8 +3788,10 @@ export function createApp(deps: {
       headers.set('connection', 'close');
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
-        headers.set('x-platform-user-id', identity.userId);
-        headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
+        if (identity.userId) {
+          headers.set('x-platform-user-id', identity.userId);
+          headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
+        }
       }
 
       try {
@@ -3442,10 +3805,15 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
-        return new Response(upstream.body, {
-          status: upstream.status,
-          headers: responseHeaders,
+        return await buildAppDomainProxyResponse({
+          upstream,
+          responseHeaders,
+          path: explicitVmRoute.upstreamPath,
+          handle: machine.handle,
+          platformSecret,
+          assetRouteToken: readAppAssetRouteToken(c.req.url),
         });
       } catch (err: unknown) {
         logPlatformRouteError('app-domain explicit vps proxy', err);
@@ -3523,7 +3891,7 @@ export function createApp(deps: {
         ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, appEnv)
       : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
-      const qs = buildForwardedQueryString(c.req.url);
+      const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       if (
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
@@ -3591,6 +3959,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
@@ -3613,6 +3982,16 @@ export function createApp(deps: {
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
         }
 
+        if (isAppDomain) {
+          return await buildAppDomainProxyResponse({
+            upstream,
+            responseHeaders,
+            path,
+            handle: runningMachine.handle,
+            platformSecret,
+            assetRouteToken: readAppAssetRouteToken(c.req.url),
+          });
+        }
         return new Response(upstream.body, {
           status: upstream.status,
           headers: responseHeaders,
@@ -3654,6 +4033,9 @@ export function createApp(deps: {
       if (isCodeDomain || isGatewayPath) {
         return c.json({ error: 'Matrix computer unavailable' }, 503);
       }
+      if (allowAuthShellUnroutedIdentity && identity.handle === '') {
+        return proxyAuthShell(c, host);
+      }
       return c.html(getNoContainerPage(), 503);
     }
 
@@ -3683,7 +4065,7 @@ export function createApp(deps: {
 
     await updateLastActive(db, record.handle);
 
-    const qs = buildForwardedQueryString(c.req.url);
+    const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
     const targetPort = isCodeDomain ? CODE_SERVER_PORT : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
@@ -3753,6 +4135,7 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
@@ -3774,6 +4157,16 @@ export function createApp(deps: {
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
         }
 
+        if (isAppDomain) {
+          return await buildAppDomainProxyResponse({
+            upstream,
+            responseHeaders,
+            path,
+            handle: record.handle,
+            platformSecret,
+            assetRouteToken: readAppAssetRouteToken(c.req.url),
+          });
+        }
         return new Response(upstream.body, {
           status: upstream.status,
           headers: responseHeaders,
@@ -4243,7 +4636,7 @@ export function createApp(deps: {
       return c.json({ error: 'Invalid handle' }, 400);
     }
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
-    const qs = buildForwardedQueryString(c.req.url);
+    const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
     if (runningMachine) {
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);

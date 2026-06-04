@@ -297,6 +297,7 @@ Background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E
 Typography: Orbitron for H1/H2 display only. Inter for everything else (subtitles, body, buttons, labels). JetBrains Mono for code.
 Shapes: buttons/inputs border-radius: 50px (capsule). Cards: 22px. Glass cards: rgba(255,255,255,0.55) + backdrop-filter blur(12px).
 Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters (+, ×, →).
+Launcher app logos: set matrix.json "icon" to the app slug and create ~/system/icons/<slug>.png in the shipped Matrix OS style: light iOS/macOS skeuomorphic artwork, bright warm off-white or pale pastel background, glossy ceramic/glass 3D object, no text/logos, no transparency, no empty padding, and no separate icon frame.
 Animation: stagger fade-up on mount (60ms between siblings). Hover lift on cards/buttons.
 Shadows: rgba(50,53,46,X) — never pure black. Never use #000000.
 Full reference: ~/agents/knowledge/matrix-design-system.md`);

@@ -36,6 +36,10 @@ const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
   regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
+  returnPath: z.string().min(1).max(2048).optional().refine(
+    (value) => value === undefined || isSafeBillingReturnPath(value),
+    { message: 'Invalid return path' },
+  ),
 });
 
 export interface StripeCheckoutSessionInput {
@@ -121,8 +125,8 @@ export function createBillingRoutes(options: {
         automaticTax: true,
         allowPromotionCodes: true,
         regionSlug: parsed.data.regionSlug,
-        successUrl: resolveBillingReturnUrl(env, 'success'),
-        cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
+        successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
+        cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
@@ -238,11 +242,33 @@ function resolvePriceId(
   return env[key];
 }
 
-function resolveBillingReturnUrl(env: NodeJS.ProcessEnv, state: 'success' | 'canceled' | 'portal'): string {
+function isSafeBillingReturnPath(value: string): boolean {
+  if (!value.startsWith('/') || value.startsWith('//')) return false;
+  try {
+    const url = new URL(value, 'https://matrix-os-return.invalid');
+    return url.pathname.startsWith('/');
+  } catch (err: unknown) {
+    if (err instanceof TypeError || err instanceof Error) return false;
+    return false;
+  }
+}
+
+function resolveBillingReturnUrl(
+  env: NodeJS.ProcessEnv,
+  state: 'success' | 'canceled' | 'portal',
+  returnPath?: string,
+): string {
+  const appUrl = env.NEXT_PUBLIC_MATRIX_APP_URL ?? env.PLATFORM_PUBLIC_URL ?? 'https://app.matrix-os.com';
+  if (returnPath && state !== 'portal') {
+    const appBase = new URL(appUrl);
+    const url = new URL(returnPath, appBase.origin);
+    url.searchParams.set('billing', state);
+    if (state === 'success') url.searchParams.set('checkout', 'success');
+    return url.toString();
+  }
   if (state === 'success' && env.STRIPE_CHECKOUT_SUCCESS_URL) return env.STRIPE_CHECKOUT_SUCCESS_URL;
   if (state === 'canceled' && env.STRIPE_CHECKOUT_CANCEL_URL) return env.STRIPE_CHECKOUT_CANCEL_URL;
   if (state === 'portal' && env.STRIPE_PORTAL_RETURN_URL) return env.STRIPE_PORTAL_RETURN_URL;
-  const appUrl = env.NEXT_PUBLIC_MATRIX_APP_URL ?? env.PLATFORM_PUBLIC_URL ?? 'https://app.matrix-os.com';
   const url = new URL(appUrl);
   url.searchParams.set('billing', state);
   if (state === 'success') url.searchParams.set('checkout', 'success');

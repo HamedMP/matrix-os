@@ -46,12 +46,12 @@ describe('platform billing routes', () => {
     await destroyTestPlatformDb(db);
   });
 
-  function createApp(userId: string | null = 'user_123') {
+  function createApp(userId: string | null = 'user_123', routeEnv: NodeJS.ProcessEnv = env) {
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
       db,
       stripe,
-      env,
+      env: routeEnv,
       resolveClerkUserId: () => Promise.resolve(userId),
       now: () => new Date('2026-05-30T00:00:00.000Z'),
     }));
@@ -83,6 +83,96 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
       expect.not.objectContaining({ payment_method_types: expect.anything() }),
     );
+  });
+
+  it('uses a validated same-origin returnPath for checkout return URLs', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        returnPath: '/auth/device?user_code=BCDF-GHJK',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      successUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      cancelUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
+    }));
+  });
+
+  it('resolves a safe checkout returnPath against the configured app origin', async () => {
+    const app = createApp('user_123', {
+      ...env,
+      NEXT_PUBLIC_MATRIX_APP_URL: 'https://staging.matrix-os.com',
+    });
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        returnPath: '/auth/device?user_code=BCDF-GHJK',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      successUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      cancelUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
+    }));
+  });
+
+  it('prefers a safe checkout returnPath over configured checkout return URLs', async () => {
+    const app = createApp('user_123', {
+      ...env,
+      STRIPE_CHECKOUT_SUCCESS_URL: 'https://app.matrix-os.com/after-success',
+      STRIPE_CHECKOUT_CANCEL_URL: 'https://app.matrix-os.com/after-cancel',
+    });
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        returnPath: '/auth/device?user_code=BCDF-GHJK',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      successUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      cancelUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
+    }));
+  });
+
+  it.each([
+    ['external URL', 'https://evil.example/auth/device?user_code=BCDF-GHJK'],
+    ['protocol-relative URL', '//evil.example/auth/device?user_code=BCDF-GHJK'],
+    ['missing leading slash', 'auth/device?user_code=BCDF-GHJK'],
+    ['oversized path', `/${'x'.repeat(2049)}`],
+  ])('rejects unsafe checkout returnPath values: %s', async (_label, returnPath) => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        returnPath,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
   it('reuses an existing Stripe customer link when one is already known', async () => {

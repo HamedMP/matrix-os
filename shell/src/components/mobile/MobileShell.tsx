@@ -21,6 +21,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatContext } from "@/stores/chat-context";
+import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
@@ -52,10 +53,6 @@ const BUILT_IN_APPS: MobileApp[] = [
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
   { id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" },
 ];
-
-function iconUrl(slug: string): string {
-  return `/icons/${slug}.png`;
-}
 
 const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {
   display: "flex",
@@ -143,7 +140,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [time, setTime] = useState(() => formatClock(new Date()));
+  const [time, setTime] = useState("--:--");
   const stackRef = useRef(openStack);
   const launchPathConsumedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -154,6 +151,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
 
   useEffect(() => {
     const tick = () => setTime(formatClock(new Date()));
+    tick();
     const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
   }, []);
@@ -299,7 +297,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
         className="flex items-center justify-between px-4 text-xs"
         style={{ height: 28, color: "var(--muted-foreground)" }}
       >
-        <span style={{ fontWeight: 600 }}>{time}</span>
+        <span data-testid="mobile-shell-clock" style={{ fontWeight: 600 }}>{time}</span>
         <span style={{ opacity: 0.7 }}>{view === "app" && top ? top.app.name : "Matrix OS"}</span>
         <button
           type="button"
@@ -701,7 +699,7 @@ function DockButton({
 }
 
 function AppIcon({ slug, size }: { slug: string; size: number }) {
-  const [src, setSrc] = useState(() => iconUrl(slug));
+  const [src, setSrc] = useState(() => iconUrlForSlug(slug) ?? "/icon-192.png");
   const triedSvg = useRef(false);
   const prevSlug = useRef(slug);
 
@@ -710,7 +708,7 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
     prevSlug.current = slug;
     triedSvg.current = false;
     // react-doctor-disable-next-line react-doctor/no-derived-state -- `src` is not pure derived state: it is seeded from `slug` but then mutated at runtime by the onError fallback chain (.png -> .svg -> /icon-192.png). Computing it in render would discard the resolved fallback and re-trigger the broken-image flicker on every render. This effect resets the chain only when the slug actually changes.
-    setSrc(iconUrl(slug));
+    setSrc(iconUrlForSlug(slug) ?? "/icon-192.png");
   }, [slug]);
 
   return (
@@ -728,9 +726,10 @@ function AppIcon({ slug, size }: { slug: string; size: number }) {
         objectFit: "contain",
       }}
       onError={() => {
-        if (!triedSvg.current) {
+        const svgUrl = src.replace(/\.[^.]+$/, ".svg");
+        if (!triedSvg.current && src !== svgUrl) {
           triedSvg.current = true;
-          setSrc(`/icons/${slug}.svg`);
+          setSrc(svgUrl);
         } else {
           setSrc("/icon-192.png");
         }
