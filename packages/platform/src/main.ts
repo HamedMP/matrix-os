@@ -337,6 +337,10 @@ function isMissingContainerError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith('No container for handle:');
 }
 
+function isLegacyContainerOrchestrationUnavailable(err: unknown): boolean {
+  return err instanceof LegacyContainerOrchestrationDisabledError;
+}
+
 function logPlatformRouteError(route: string, err: unknown): void {
   console.error(
     `[platform] ${route} failed:`,
@@ -4351,6 +4355,9 @@ export function createApp(deps: {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
       }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }
@@ -4367,6 +4374,9 @@ export function createApp(deps: {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
       }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }
@@ -4382,6 +4392,9 @@ export function createApp(deps: {
     } catch (e: unknown) {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
       }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
@@ -4416,6 +4429,9 @@ export function createApp(deps: {
       const record = await orchestrator.upgrade(handle);
       return c.json(record);
     } catch (e: unknown) {
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       logPlatformRouteError('/containers/:handle/self-upgrade', e);
       return c.json({ error: 'Upgrade failed' }, 500);
     }
@@ -4426,7 +4442,7 @@ export function createApp(deps: {
       const result = await orchestrator.rollingRestart();
       return c.json(result);
     } catch (e: unknown) {
-      if (e instanceof LegacyContainerOrchestrationDisabledError) {
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
         return c.json({ error: 'Not supported in this runtime mode' }, 503);
       }
       logPlatformRouteError('/containers/rolling-restart', e);
@@ -4441,6 +4457,9 @@ export function createApp(deps: {
     } catch (e: unknown) {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
       }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);

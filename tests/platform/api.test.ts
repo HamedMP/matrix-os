@@ -712,7 +712,18 @@ describe('platform/api', () => {
     expect(body.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('POST /containers/rolling-restart returns structured unsupported response in cloud mode', async () => {
+  it.each([
+    ['POST', '/containers/alice/start', adminHeaders],
+    ['POST', '/containers/alice/stop', adminHeaders],
+    ['POST', '/containers/alice/upgrade', adminHeaders],
+    [
+      'POST',
+      '/containers/alice/self-upgrade',
+      { authorization: `Bearer ${createHmac('sha256', platformSecret).update('alice').digest('hex')}` },
+    ],
+    ['POST', '/containers/rolling-restart', adminHeaders],
+    ['DELETE', '/containers/alice', adminHeaders],
+  ])('%s %s returns structured unsupported response in cloud mode', async (method, path, headers) => {
     const cloudApp = createApp({
       db,
       orchestrator: createDisabledOrchestrator({ db }),
@@ -723,9 +734,9 @@ describe('platform/api', () => {
       } as NodeJS.ProcessEnv,
     });
 
-    const res = await cloudApp.request('/containers/rolling-restart', {
-      method: 'POST',
-      headers: adminHeaders,
+    const res = await cloudApp.request(path, {
+      method,
+      headers,
     });
 
     expect(res.status).toBe(503);
