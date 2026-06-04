@@ -365,6 +365,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
 
     return () => {
       disposed = true;
+      deviceSetupStarted.current = false;
       if (pollTimeout !== undefined) window.clearTimeout(pollTimeout);
     };
   }, [deviceReturnPath, getToken, hasBillingAccess, isLoaded, isSignedIn]);
