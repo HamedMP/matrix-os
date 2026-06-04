@@ -16,7 +16,7 @@ export function BillingSection({
   const { active, entitlement, accessReason } = useMatrixBillingAccess();
 
   return (
-    <div className="mx-auto max-w-5xl space-y-3 p-3 sm:p-4">
+    <div className="mx-auto max-w-5xl space-y-3 p-2 sm:p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold">Billing</h2>
