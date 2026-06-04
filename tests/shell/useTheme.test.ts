@@ -52,7 +52,7 @@ describe("theme system", () => {
     expect(DEFAULT_THEME.fonts.sans).toBeDefined();
   });
 
-  it("uses a dark fallback theme for first-run shell state", () => {
+  it("uses a dark fallback theme for desktop and mobile first-run shell state", () => {
     const theme = getThemeFallback();
 
     expect(theme.mode).toBe("dark");

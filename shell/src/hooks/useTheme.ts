@@ -117,6 +117,8 @@ function inferMode(theme: Theme): "light" | "dark" {
 }
 
 export function getThemeFallback(): Theme {
+  // First-run shell fallback is intentionally dark on every surface.
+  // Explicit saved themes, including light themes, still override this.
   return SHELL_FALLBACK_THEME;
 }
 
