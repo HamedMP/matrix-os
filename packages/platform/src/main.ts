@@ -34,7 +34,7 @@ import {
   type HostBundleReleaseRecord,
   type UserMachineRecord,
 } from './db.js';
-import type { Orchestrator } from './orchestrator.js';
+import { LegacyContainerOrchestrationDisabledError, type Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
@@ -4422,8 +4422,16 @@ export function createApp(deps: {
   });
 
   app.post('/containers/rolling-restart', async (c) => {
-    const result = await orchestrator.rollingRestart();
-    return c.json(result);
+    try {
+      const result = await orchestrator.rollingRestart();
+      return c.json(result);
+    } catch (e: unknown) {
+      if (e instanceof LegacyContainerOrchestrationDisabledError) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
+      logPlatformRouteError('/containers/rolling-restart', e);
+      return c.json({ error: 'Rolling restart failed' }, 500);
+    }
   });
 
   app.delete('/containers/:handle', async (c) => {

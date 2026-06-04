@@ -712,6 +712,26 @@ describe('platform/api', () => {
     expect(body.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('POST /containers/rolling-restart returns structured unsupported response in cloud mode', async () => {
+    const cloudApp = createApp({
+      db,
+      orchestrator: createDisabledOrchestrator({ db }),
+      platformSecret,
+      env: {
+        PLATFORM_RUNTIME_MODE: 'cloud_run',
+        CUSTOMER_VPS_ENABLED: 'true',
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await cloudApp.request('/containers/rolling-restart', {
+      method: 'POST',
+      headers: adminHeaders,
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Not supported in this runtime mode' });
+  });
+
   it('DELETE /containers/:handle destroys a container', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
