@@ -553,6 +553,27 @@ describe('platform/api', () => {
     expect(await res.json()).toEqual({ error: 'Container already exists' });
   });
 
+  it('POST /containers/provision returns structured unsupported response when legacy orchestration is disabled', async () => {
+    const cloudApp = createApp({
+      db,
+      orchestrator: createDisabledOrchestrator({ db }),
+      platformSecret,
+      env: {
+        PLATFORM_RUNTIME_MODE: 'cloud_run',
+        CUSTOMER_VPS_ENABLED: 'true',
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await cloudApp.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Not supported in this runtime mode' });
+  });
+
   it('fails closed when admin routes are not configured with a secret', async () => {
     const { docker } = createMockDocker();
     const orchestrator = createOrchestrator({ db, docker: docker as any });

@@ -4342,6 +4342,9 @@ export function createApp(deps: {
       if (e instanceof CustomerVpsError) {
         return c.json({ error: e.publicMessage }, e.status as never);
       }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       logPlatformRouteError('/containers/provision', e);
       return c.json({ error: 'Provision failed' }, 500);
     }
