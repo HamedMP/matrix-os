@@ -349,7 +349,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       if (!provisionResponse.ok && provisionResponse.status !== 409) {
         if (provisionResponse.status === 402) {
           deviceSetupStarted.current = false;
-          setDeviceSetupStatus("idle");
+          setDeviceSetupStatus("failed");
           return;
         }
         setDeviceSetupStatus("failed");
