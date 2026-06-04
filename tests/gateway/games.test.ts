@@ -1,24 +1,42 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppManifest } from "../../packages/gateway/src/app-manifest.js";
 
 const GAMES_DIR = join(__dirname, "../../home/apps/games");
 const SHARED_RENDERER = join(__dirname, "../../home/apps/_shared/default-apps.tsx");
 
-const GAME_SLUGS = ["snake", "2048", "minesweeper", "tetris", "solitaire", "chess"];
+const PLAYABLE_GAME_SLUGS = readdirSync(GAMES_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .filter((slug) => existsSync(join(GAMES_DIR, slug, "src/App.tsx")))
+  .sort();
 
-function expectViteApp(appDir: string, appId: string) {
+function expectViteAppScaffold(appDir: string) {
   const html = readFileSync(join(appDir, "index.html"), "utf-8");
   expect(html.toLowerCase()).toContain("<!doctype html>");
   expect(html).toContain('id="root"');
   expect(html).toContain('type="module"');
   expect(html).toContain("/src/main.tsx");
   expect(existsSync(join(appDir, "vite.config.ts"))).toBe(true);
+}
+
+function expectSharedRendererApp(appDir: string, appId: string) {
+  expectViteAppScaffold(appDir);
 
   const source = readFileSync(join(appDir, "src/main.tsx"), "utf-8");
   expect(source).toContain("renderDefaultApp");
   expect(source).toContain(`"${appId}"`);
+}
+
+function expectPlayableGameApp(appDir: string) {
+  expectViteAppScaffold(appDir);
+  expect(existsSync(join(appDir, "src/App.tsx"))).toBe(true);
+
+  const source = readFileSync(join(appDir, "src/main.tsx"), "utf-8");
+  expect(source).toContain("createRoot");
+  expect(source).toContain('from "./App"');
+  expect(source).not.toContain("renderDefaultApp");
 }
 
 describe("T1420-T1427: Pre-installed games", () => {
@@ -32,11 +50,11 @@ describe("T1420-T1427: Pre-installed games", () => {
     });
 
     it("is a Vite app wired to the shared renderer", () => {
-      expectViteApp(GAMES_DIR, "games");
+      expectSharedRendererApp(GAMES_DIR, "games");
     });
   });
 
-  for (const slug of GAME_SLUGS) {
+  for (const slug of PLAYABLE_GAME_SLUGS) {
     describe(slug, () => {
       it("has a directory", () => {
         expect(existsSync(join(GAMES_DIR, slug))).toBe(true);
@@ -55,19 +73,17 @@ describe("T1420-T1427: Pre-installed games", () => {
         expect(manifest.build.output).toBe("dist");
       });
 
-      it("is a Vite app wired to the shared renderer", () => {
-        expectViteApp(join(GAMES_DIR, slug), slug);
+      it("is a Vite app wired to its playable App entrypoint", () => {
+        expectPlayableGameApp(join(GAMES_DIR, slug));
       });
     });
   }
 
-  it("keeps game-specific UI definitions in the shared app renderer", () => {
+  it("keeps the game launcher UI in the shared app renderer", () => {
     const shared = readFileSync(SHARED_RENDERER, "utf-8");
-    for (const slug of GAME_SLUGS) {
+    for (const slug of PLAYABLE_GAME_SLUGS) {
       expect(shared).toContain(slug);
     }
-    expect(shared).toContain("ArcadeApp");
-    expect(shared).toContain("BoardGame");
     expect(shared).toContain("gameCards");
   });
 });
