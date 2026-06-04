@@ -32,9 +32,23 @@ export async function handlePostHogProxyRequest(
   const targetHost = routeClass === "asset" ? ASSET_HOST : API_HOST;
   const upstreamUrl = `https://${targetHost}${url.pathname}${url.search}`;
   const upstreamRequest = await buildPostHogUpstreamRequest(request, upstreamUrl);
-  const response = await fetch(upstreamRequest, {
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-  });
+  let response: Response;
+  try {
+    response = await fetch(upstreamRequest, {
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (err: unknown) {
+    const status = isTimeoutError(err) ? 504 : 502;
+    console.error(`[neo-worker] upstream_${status === 504 ? "timeout" : "failure"}`);
+    return new Response("upstream unavailable", {
+      status,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+        "cdn-cache-control": "no-store",
+      },
+    });
+  }
 
   if (routeClass === "asset") {
     ctx.waitUntil(cacheAsset(request, response.clone()));
@@ -75,6 +89,10 @@ function sanitizeForwardedIp(value: string | null): string | null {
   const trimmed = value?.trim();
   if (!trimmed || trimmed.length > 64) return null;
   return /^[0-9A-Fa-f:.]+$/.test(trimmed) ? trimmed : null;
+}
+
+function isTimeoutError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "TimeoutError";
 }
 
 type WorkerCacheStorage = CacheStorage & { default?: Cache };
