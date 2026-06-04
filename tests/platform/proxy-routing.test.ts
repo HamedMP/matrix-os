@@ -3337,6 +3337,41 @@ describe("platform proxy routing", () => {
     }
   });
 
+  it("serves an unregistering app-domain service worker without auth", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue({ authenticated: false });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_123";
+    try {
+      const res = await app.request("/service-worker.js", {
+        headers: {
+          host: "app.matrix-os.com",
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/javascript");
+      expect(res.headers.get("cache-control")).toBe("no-store, private");
+      expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+      expect(res.headers.get("service-worker-allowed")).toBe("/");
+      expect(await res.text()).toContain("registration.unregister()");
+      expect(verifyToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    }
+  });
+
   it("routes app-domain shell static assets with the short-lived shell route cookie", async () => {
     await insertUserMachine(db, {
       machineId: "machine-alice",

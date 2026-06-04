@@ -739,6 +739,42 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Expires', '0');
 }
 
+const APP_DOMAIN_UNREGISTER_SERVICE_WORKER = `
+self.addEventListener("install", () => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter((key) => key.startsWith("matrix-os-"))
+      .map((key) => caches.delete(key)));
+    await self.clients.claim();
+    await self.registration.unregister();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  event.respondWith(fetch(event.request));
+});
+`.trim();
+
+function appDomainServiceWorkerResponse(): Response {
+  return new Response(APP_DOMAIN_UNREGISTER_SERVICE_WORKER, {
+    status: 200,
+    headers: {
+      'content-type': 'text/javascript; charset=utf-8',
+      'cache-control': 'no-store, private',
+      'cdn-cache-control': 'no-store',
+      'cloudflare-cdn-cache-control': 'no-store',
+      'pragma': 'no-cache',
+      'expires': '0',
+      'service-worker-allowed': '/',
+    },
+  });
+}
+
 function isPostgresUniqueViolation(err: unknown): boolean {
   return err instanceof Error && (err as Error & { code?: unknown }).code === '23505';
 }
@@ -3495,6 +3531,9 @@ export function createApp(deps: {
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
+    if (isAppDomain && reqPath === '/service-worker.js') {
+      return appDomainServiceWorkerResponse();
+    }
     if (isAppDomain && (
       reqPath === '/auth/device' ||
       reqPath.startsWith('/auth/device/') ||
