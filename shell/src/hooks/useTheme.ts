@@ -45,7 +45,7 @@ export const DEFAULT_THEME: Theme = {
   radius: "0.75rem",
 };
 
-const SHELL_FALLBACK_THEME: Theme = getPreset("dark")!;
+const SHELL_FALLBACK_THEME: Theme = getPreset("dark") ?? DEFAULT_THEME;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
