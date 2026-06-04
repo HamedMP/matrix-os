@@ -45,7 +45,7 @@ export const DEFAULT_THEME: Theme = {
   radius: "0.75rem",
 };
 
-const MOBILE_FALLBACK_THEME: Theme = getPreset("dark")!;
+const SHELL_FALLBACK_THEME: Theme = getPreset("dark")!;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,7 +58,7 @@ function stringEntries(value: unknown): Record<string, string> {
   );
 }
 
-export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_THEME): Theme {
+export function normalizeTheme(value: unknown, fallbackTheme: Theme = SHELL_FALLBACK_THEME): Theme {
   if (!isRecord(value)) return fallbackTheme;
 
   return {
@@ -116,16 +116,12 @@ function inferMode(theme: Theme): "light" | "dark" {
   return luminance < 0.5 ? "dark" : "light";
 }
 
-export interface UseThemeOptions {
-  mobileDefaultDark?: boolean;
+export function getThemeFallback(): Theme {
+  return SHELL_FALLBACK_THEME;
 }
 
-export function getThemeFallback(options: UseThemeOptions = {}): Theme {
-  return options.mobileDefaultDark ? MOBILE_FALLBACK_THEME : DEFAULT_THEME;
-}
-
-export function useTheme(options: UseThemeOptions = {}) {
-  const fallbackTheme = getThemeFallback(options);
+export function useTheme() {
+  const fallbackTheme = getThemeFallback();
   const [theme, setTheme] = useState<Theme>(fallbackTheme);
 
   // Fetch theme from server on mount
@@ -156,7 +152,7 @@ export async function saveTheme(theme: Theme): Promise<void> {
   });
 }
 
-async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
+async function fetchTheme(defaultTheme: Theme = SHELL_FALLBACK_THEME): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {

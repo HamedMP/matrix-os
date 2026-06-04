@@ -39,7 +39,7 @@ const getLaunchPathServerSnapshot = (): string | null => null;
 
 export function ShellHome() {
   const isMobile = useMobileViewport();
-  useTheme({ mobileDefaultDark: isMobile });
+  useTheme();
   useDesktopConfig();
 
   const chat = useChatState();
