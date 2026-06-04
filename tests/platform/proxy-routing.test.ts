@@ -1838,6 +1838,42 @@ describe("platform proxy routing", () => {
     delete process.env.AUTH_SHELL_PORT;
   });
 
+  it("keeps legacy no-container app-domain users on the platform auth page", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("auth shell", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("fetch('/api/auth/provision-runtime'");
+    expect(html).toContain("Billing required");
+    expect(html).not.toBe("auth shell");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not trust a stale app session cookie over a different Clerk session", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;

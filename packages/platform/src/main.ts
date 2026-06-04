@@ -3363,7 +3363,7 @@ export function createApp(deps: {
     let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
-    const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
+    const allowAuthShellUnroutedIdentity = !legacyContainerRoutingEnabled && shouldProxyAuthShellForUnroutedUser({
       isAppDomain,
       method: c.req.method,
       path,
