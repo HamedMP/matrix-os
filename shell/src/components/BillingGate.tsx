@@ -268,6 +268,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!deviceReturnPath || !hasBillingAccess || !isLoaded || !isSignedIn) return;
     if (deviceSetupStarted.current) return;
+    const activeDeviceReturnPath = deviceReturnPath;
     deviceSetupStarted.current = true;
     let disposed = false;
     let pollCount = 0;
@@ -302,7 +303,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         method: "POST",
         credentials: "include",
         headers: await authHeaders(),
-        body: JSON.stringify({ redirectTo: deviceReturnPath }),
+        body: JSON.stringify({ redirectTo: activeDeviceReturnPath }),
       });
       if (disposed) return;
 
@@ -325,7 +326,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       if (disposed) return;
 
       if (readyResponse.ok) {
-        window.location.replace(deviceReturnPath);
+        window.location.replace(activeDeviceReturnPath);
         return;
       }
 
