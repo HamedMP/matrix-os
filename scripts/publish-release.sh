@@ -81,7 +81,7 @@ fi
 : "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID}"
 : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"
 R2_BUCKET="${R2_BUCKET:-matrixos-sync}"
-R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+R2_ENDPOINT="${R2_ENDPOINT:-https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}"
 PLATFORM_PUBLIC_URL="${PLATFORM_PUBLIC_URL:-https://app.matrix-os.com}"
 
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
