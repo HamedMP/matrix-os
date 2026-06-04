@@ -6,7 +6,7 @@ import { installPostHogHonoErrorTracking, MATRIX_TELEMETRY_EVENTS, type MatrixTe
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
-import Dockerode from 'dockerode';
+import type Dockerode from 'dockerode';
 import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
@@ -34,7 +34,7 @@ import {
   type HostBundleReleaseRecord,
   type UserMachineRecord,
 } from './db.js';
-import type { Orchestrator } from './orchestrator.js';
+import { LegacyContainerOrchestrationDisabledError, type Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
@@ -88,6 +88,10 @@ import {
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
+import {
+  PlatformStartupConfigError,
+  loadPlatformRuntimeConfig,
+} from './runtime-mode.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -331,6 +335,10 @@ async function importRuntimeModule<T>(specifier: string): Promise<T> {
 
 function isMissingContainerError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith('No container for handle:');
+}
+
+function isLegacyContainerOrchestrationUnavailable(err: unknown): boolean {
+  return err instanceof LegacyContainerOrchestrationDisabledError;
 }
 
 function logPlatformRouteError(route: string, err: unknown): void {
@@ -4373,6 +4381,9 @@ export function createApp(deps: {
       if (e instanceof CustomerVpsError) {
         return c.json({ error: e.publicMessage }, e.status as never);
       }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       logPlatformRouteError('/containers/provision', e);
       return c.json({ error: 'Provision failed' }, 500);
     }
@@ -4385,6 +4396,9 @@ export function createApp(deps: {
     } catch (e: unknown) {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
       }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
@@ -4402,6 +4416,9 @@ export function createApp(deps: {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
       }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }
@@ -4417,6 +4434,9 @@ export function createApp(deps: {
     } catch (e: unknown) {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
       }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
@@ -4451,14 +4471,25 @@ export function createApp(deps: {
       const record = await orchestrator.upgrade(handle);
       return c.json(record);
     } catch (e: unknown) {
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
       logPlatformRouteError('/containers/:handle/self-upgrade', e);
       return c.json({ error: 'Upgrade failed' }, 500);
     }
   });
 
   app.post('/containers/rolling-restart', async (c) => {
-    const result = await orchestrator.rollingRestart();
-    return c.json(result);
+    try {
+      const result = await orchestrator.rollingRestart();
+      return c.json(result);
+    } catch (e: unknown) {
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
+      }
+      logPlatformRouteError('/containers/rolling-restart', e);
+      return c.json({ error: 'Rolling restart failed' }, 500);
+    }
   });
 
   app.delete('/containers/:handle', async (c) => {
@@ -4468,6 +4499,9 @@ export function createApp(deps: {
     } catch (e: unknown) {
       if (e instanceof Error && e.message === 'Invalid handle') {
         return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isLegacyContainerOrchestrationUnavailable(e)) {
+        return c.json({ error: 'Not supported in this runtime mode' }, 503);
       }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
@@ -4735,41 +4769,66 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   if (checkUnsafeDefaultSecrets().length > 0) {
     process.exit(1);
   }
-  const platformDatabaseUrl = process.env.PLATFORM_DATABASE_URL ??
-    (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
-  const db = platformDatabaseUrl ? createPlatformDb(platformDatabaseUrl) : createPlatformDb();
+  let runtimeConfig;
+  try {
+    runtimeConfig = loadPlatformRuntimeConfig();
+  } catch (err: unknown) {
+    if (err instanceof PlatformStartupConfigError) {
+      console.error(`[platform] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+  const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
-  const docker = new Dockerode();
 
   checkHomeMirrorS3Env();
 
-  const [{ createOrchestrator }, { createLifecycleManager }] = await Promise.all([
-    import('./orchestrator.js'),
-    import('./lifecycle.js'),
-  ]);
-  const orchestrator = createOrchestrator({
-    db,
-    docker,
-    image: process.env.PLATFORM_IMAGE,
-    dataDir: process.env.PLATFORM_DATA_DIR,
-    platformSecret: PLATFORM_SECRET,
-    publicTelemetryEnv: collectTenantPublicTelemetryEnv(),
-    postgresUrl: process.env.POSTGRES_URL,
-  });
+  let docker: Dockerode | undefined;
+  let orchestrator: Orchestrator;
+  if (runtimeConfig.legacyContainerOrchestrationEnabled) {
+    const [
+      { default: DockerodeCtor },
+      { createOrchestrator },
+      { createLifecycleManager },
+      { createStatsCollector },
+    ] = await Promise.all([
+      import('dockerode'),
+      import('./orchestrator.js'),
+      import('./lifecycle.js'),
+      import('./stats-collector.js'),
+    ]);
+    docker = new DockerodeCtor();
+    orchestrator = createOrchestrator({
+      db,
+      docker,
+      image: process.env.PLATFORM_IMAGE,
+      dataDir: process.env.PLATFORM_DATA_DIR,
+      platformSecret: PLATFORM_SECRET,
+      publicTelemetryEnv: collectTenantPublicTelemetryEnv(),
+      postgresUrl: process.env.POSTGRES_URL,
+    });
 
-  const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
-  const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
-  lifecycle.start();
+    const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
+    const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
+    lifecycle.start();
 
-  const { createStatsCollector } = await import('./stats-collector.js');
-  const statsCollector = createStatsCollector({
-    docker,
-    listRunning: () => listContainers(db, 'running'),
-    onResolvedContainerId: async (handle, containerId) => {
-      await updateContainerStatus(db, handle, 'running', containerId);
-    },
-  });
-  statsCollector.start();
+    const statsCollector = createStatsCollector({
+      docker,
+      listRunning: () => listContainers(db, 'running'),
+      onResolvedContainerId: async (handle, containerId) => {
+        await updateContainerStatus(db, handle, 'running', containerId);
+      },
+    });
+    statsCollector.start();
+  } else {
+    const { createDisabledOrchestrator } = await import('./orchestrator.js');
+    orchestrator = createDisabledOrchestrator({
+      db,
+      image: process.env.PLATFORM_IMAGE ?? 'customer-vps',
+    });
+    console.log('[platform] Cloud Run mode enabled; legacy Docker container orchestration is disabled');
+  }
 
   // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
   let clerkAuth: ClerkAuth | undefined;
@@ -4917,7 +4976,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   let customerVpsService: CustomerVpsService | undefined;
   let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
   let customerVpsReconciliationPromise: Promise<void> | undefined;
-  if (process.env.CUSTOMER_VPS_ENABLED === 'true') {
+  if (runtimeConfig.customerVpsEnabled) {
     const [
       { createCustomerVpsService },
       { loadCustomerVpsConfig },

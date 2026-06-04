@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import pg from 'pg';
 import { type PlatformDB, getContainer } from '../../packages/platform/src/db.js';
-import { createOrchestrator, type Orchestrator } from '../../packages/platform/src/orchestrator.js';
+import {
+  LegacyContainerOrchestrationDisabledError,
+  createDisabledOrchestrator,
+  createOrchestrator,
+  type Orchestrator,
+} from '../../packages/platform/src/orchestrator.js';
 
 function createMockDocker() {
   const mockContainer = {
@@ -32,6 +37,16 @@ describe('platform/orchestrator', () => {
 
   afterEach(async () => {
     await destroyTestPlatformDb(db);
+  });
+
+  it('can disable Docker-backed orchestration while preserving read-only container views', async () => {
+    const orch = createDisabledOrchestrator({ db, image: 'customer-vps' });
+
+    await expect(orch.provision('alice', 'clerk_1')).rejects.toBeInstanceOf(
+      LegacyContainerOrchestrationDisabledError,
+    );
+    await expect(orch.listAll()).resolves.toEqual([]);
+    expect(orch.getImage()).toBe('customer-vps');
   });
 
   it('provisions a container', async () => {
