@@ -32,6 +32,7 @@
     "docker:logs": "docker compose -f docker-compose.dev.yml logs -f dev",
     "docker:shell": "docker compose -f docker-compose.dev.yml exec -u matrixos dev sh",
     "docker:build": "docker compose -f docker-compose.dev.yml build --no-cache",
+    "cleanup:local-artifacts": "node scripts/cleanup-local-artifacts.mjs",
     "test": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest run \"$@\"' --",
     "test:watch": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest \"$@\"' --",
     "test:integration": "vitest run --config vitest.integration.config.ts",
