@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import type { ReactNode } from "react";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import type { AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasGroups } from "@/stores/canvas-groups";
 import { useCanvasLabels } from "@/stores/canvas-labels";
@@ -22,6 +23,16 @@ interface CanvasRendererProps {
   children?: ReactNode;
 }
 
+interface CanvasWindowMountProps {
+  win: AppWindow;
+  focusedWindowId: string | null;
+  zoom: number;
+  panX: number;
+  panY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
 export function shouldHydrateCanvasWindow(input: {
   window: { x: number; y: number; width: number; height: number; path: string; minimized?: boolean };
   focusedWindowId: string | null;
@@ -31,7 +42,9 @@ export function shouldHydrateCanvasWindow(input: {
   panY: number;
   viewportWidth: number;
   viewportHeight: number;
+  hydratedOnce?: boolean;
 }): boolean {
+  if (input.hydratedOnce) return true;
   if (input.window.path.startsWith("__")) return true;
   if (input.focusedWindowId === input.windowId) return true;
 
@@ -151,22 +164,16 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
         )}
         {children}
         {windows.map((win) => {
-          const hydrateContent = shouldHydrateCanvasWindow({
-            window: win,
-            windowId: win.id,
-            focusedWindowId,
-            zoom,
-            panX,
-            panY,
-            viewportWidth,
-            viewportHeight,
-          });
           return (
-            <CanvasWindow
+            <CanvasWindowMount
               key={win.id}
               win={win}
-              hidden={win.minimized}
-              deferAppContent={!hydrateContent}
+              focusedWindowId={focusedWindowId}
+              zoom={zoom}
+              panX={panX}
+              panY={panY}
+              viewportWidth={viewportWidth}
+              viewportHeight={viewportHeight}
             />
           );
         })}
@@ -174,5 +181,38 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
       <WorkspaceCanvas />
       <CanvasMinimap />
     </div>
+  );
+}
+
+function CanvasWindowMount({
+  win,
+  focusedWindowId,
+  zoom,
+  panX,
+  panY,
+  viewportWidth,
+  viewportHeight,
+}: CanvasWindowMountProps) {
+  const shouldHydrateNow = shouldHydrateCanvasWindow({
+    window: win,
+    windowId: win.id,
+    focusedWindowId,
+    zoom,
+    panX,
+    panY,
+    viewportWidth,
+    viewportHeight,
+  });
+  const [hydratedOnce, setHydratedOnce] = useState(shouldHydrateNow);
+  if (shouldHydrateNow && !hydratedOnce) {
+    setHydratedOnce(true);
+  }
+
+  return (
+    <CanvasWindow
+      win={win}
+      hidden={win.minimized}
+      deferAppContent={!(shouldHydrateNow || hydratedOnce)}
+    />
   );
 }

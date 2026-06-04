@@ -123,6 +123,13 @@ describe("Canvas Renderer Integration", () => {
 
     expect(shouldHydrateCanvasWindow({
       ...base,
+      hydratedOnce: true,
+      windowId: "hydrated-offscreen-app",
+      window: { path: "apps/legacy/index.html", x: 5000, y: 100, width: 640, height: 480 },
+    })).toBe(true);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
       windowId: "terminal",
       window: { path: "__terminal__:restored", x: 5000, y: 100, width: 640, height: 480 },
     })).toBe(true);
