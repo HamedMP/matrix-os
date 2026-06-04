@@ -159,7 +159,7 @@ function CheckoutPanel({
   }
 
   return (
-    <div className="rounded-2xl border border-forest/15 bg-card p-4">
+    <div className="rounded-2xl border border-forest/15 bg-card p-3 sm:p-4">
       {mode === "provisioning" && (
         <div className="mb-2">
           <p className="text-sm font-semibold text-deep">Start checkout &amp; provision</p>
@@ -487,7 +487,7 @@ function ServerProfileGrid({
   onSelect: (featureSlug: string) => void;
 }) {
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {MATRIX_BILLING_SERVER_PROFILES.map((profile, index) => {
         const selected = profile.featureSlug === selectedFeature;
         return (
@@ -496,14 +496,14 @@ function ServerProfileGrid({
           key={profile.featureSlug}
           aria-pressed={selected}
           onClick={() => onSelect(profile.featureSlug)}
-          className={`group flex min-h-[154px] flex-col rounded-2xl border p-3 text-left transition-all ${
+          className={`group flex min-h-[154px] min-w-0 flex-col rounded-2xl border p-3 text-left transition-all ${
             selected
               ? "border-ember bg-[#fff7ec] shadow-[0_18px_50px_rgba(83,68,48,0.16)]"
               : "border-forest/12 bg-white hover:-translate-y-0.5 hover:border-forest/25 hover:shadow-[0_14px_34px_rgba(83,68,48,0.08)]"
           }`}
         >
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <span
                 className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                   selected ? "bg-ember text-ember-foreground" : "bg-forest/8 text-forest/70"
@@ -511,13 +511,13 @@ function ServerProfileGrid({
               >
                 {profileLabels[index] ?? "Plan"}
               </span>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-deep">
+              <p className="mt-2 truncate text-lg font-semibold tracking-tight text-deep">
                 {profile.label}
               </p>
               <p className="text-xs font-medium text-forest/45">{profile.hetznerType}</p>
             </div>
-            <div className="text-right">
-              <p className="text-2xl font-semibold tracking-tight text-deep">
+            <div className="shrink-0 text-right">
+              <p className="text-xl font-semibold tracking-tight text-deep sm:text-2xl">
                 ${profilePrice(profile, billingInterval)}
               </p>
               <p className="text-xs text-forest/50">
@@ -545,7 +545,7 @@ function ServerProfileGrid({
           </div>
 
           <div className="mt-auto flex items-center justify-between pt-2.5">
-            <span className="text-xs text-forest/50">
+            <span className="min-w-0 truncate text-xs text-forest/50">
               {profileSpec(profile)}
             </span>
             <span
@@ -573,7 +573,7 @@ function RegionList({
   onSelect: (featureSlug: string) => void;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-4">
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       {MATRIX_BILLING_REGIONS.map((region) => (
         <button
           type="button"
@@ -620,12 +620,12 @@ function PlanSummary({
   billingInterval: BillingInterval;
 }) {
   return (
-    <div className="rounded-2xl border border-forest/15 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-forest/15 bg-white p-4 shadow-sm sm:p-5">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
         Plan summary
       </p>
       <div className="mt-4 rounded-2xl bg-[#f4efe3] p-4">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-lg font-semibold tracking-tight text-deep">
               {selectedProfile.label}
@@ -634,7 +634,7 @@ function PlanSummary({
               {profileSpec(selectedProfile)}
             </p>
           </div>
-          <p className="text-3xl font-semibold tracking-tight text-deep">
+          <p className="text-2xl font-semibold tracking-tight text-deep sm:text-3xl">
             ${profilePrice(selectedProfile, billingInterval)}
           </p>
         </div>
@@ -671,7 +671,7 @@ function HeroSelectionPreview({
   billingInterval: BillingInterval;
 }) {
   return (
-    <div className="mt-4 grid max-w-2xl gap-3 sm:grid-cols-2">
+    <div className="mt-4 grid max-w-2xl gap-3 md:grid-cols-2">
       <div className="rounded-2xl border border-forest/10 bg-white/60 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -833,12 +833,12 @@ export function BillingPanel({
 
   return (
     <div className="space-y-3">
-      <section className="grid gap-4 rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <section className="grid gap-4 rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-3 sm:p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
             {mode === "provisioning" ? "Provisioning" : "Billing"}
           </p>
-          <h3 className="mt-2 max-w-3xl text-2xl font-semibold tracking-tight text-deep sm:text-3xl">
+          <h3 className="mt-2 max-w-3xl text-xl font-semibold tracking-tight text-deep sm:text-2xl lg:text-3xl">
             {mode === "provisioning"
               ? "Pick the cloud computer Matrix boots on"
               : "Manage your hosted Matrix computer"}
@@ -865,8 +865,8 @@ export function BillingPanel({
         />
       </section>
 
-      <section className="rounded-[22px] border border-forest/12 bg-white p-3.5">
-        <div className="mb-3 flex items-center justify-between gap-4 px-1">
+      <section className="rounded-[22px] border border-forest/12 bg-white p-3 sm:p-3.5">
+        <div className="mb-3 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <h4 className="text-sm font-semibold text-deep">Computer</h4>
           <p className="text-xs text-forest/45">Launch tiers: CPX22 / CPX32 / CPX52</p>
         </div>
@@ -877,8 +877,8 @@ export function BillingPanel({
         />
       </section>
 
-      <section className="rounded-[22px] border border-forest/12 bg-white p-3.5">
-        <div className="mb-3 flex items-center justify-between gap-4 px-1">
+      <section className="rounded-[22px] border border-forest/12 bg-white p-3 sm:p-3.5">
+        <div className="mb-3 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <h4 className="text-sm font-semibold text-deep">Region</h4>
           <p className="text-xs text-forest/45">
             Closest location is selected automatically

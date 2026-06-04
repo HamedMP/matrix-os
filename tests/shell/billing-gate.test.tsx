@@ -22,6 +22,19 @@ vi.mock("@clerk/nextjs", () => ({
   SignUp: () => (
     <div data-testid="sign-up-component">Mock SignUp</div>
   ),
+  UserButton: Object.assign(
+    ({ children }: { children?: React.ReactNode }) => (
+      <div data-testid="clerk-user-button">{children}</div>
+    ),
+    {
+      MenuItems: ({ children }: { children?: React.ReactNode }) => (
+        <div data-testid="clerk-user-button-menu">{children}</div>
+      ),
+      Link: ({ label }: { label: string }) => (
+        <a href="/runtime">{label}</a>
+      ),
+    },
+  ),
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,

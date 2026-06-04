@@ -24,6 +24,7 @@ import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
 import { BillingSection } from "./settings/sections/BillingSection";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
+import { UserButton as AccountButton } from "./UserButton";
 
 
 const sections = [
@@ -78,6 +79,20 @@ function TrafficLights({ onClose, closeDisabled = false }: { onClose: () => void
         disabled
       />
     </div>
+  );
+}
+
+function SettingsAccountFooter() {
+  return (
+    <section
+      aria-label="Account"
+      className="sticky bottom-0 z-10 mt-2 flex shrink-0 items-center justify-between gap-3 border-t border-border/40 bg-card/95 px-2 py-2 backdrop-blur sm:static sm:mt-auto sm:justify-center sm:bg-transparent sm:px-0 sm:pt-3 sm:backdrop-blur-none"
+    >
+      <div className="min-w-0 sm:hidden">
+        <p className="text-xs font-semibold text-foreground">Account</p>
+      </div>
+      <AccountButton />
+    </section>
   );
 }
 
@@ -203,8 +218,11 @@ export function Settings({
           </header>
 
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-            <aside className="w-full shrink-0 border-b border-border/40 bg-card/50 p-2 sm:w-48 sm:border-b-0 sm:border-r sm:overflow-y-auto">
-              <nav className="flex gap-1 overflow-x-auto pb-1 sm:flex-col sm:gap-0.5 sm:overflow-x-visible sm:pb-0">
+            <aside className="flex w-full shrink-0 flex-col border-b border-border/40 bg-card/50 p-2 sm:w-52 sm:border-b-0 sm:border-r">
+              <nav
+                aria-label="Settings sections"
+                className="flex gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
+              >
                 {sections.map((section) => {
                   const Icon = section.icon;
                   const active = activeSection === section.id;
@@ -237,9 +255,10 @@ export function Settings({
                   );
                 })}
               </nav>
+              <SettingsAccountFooter />
             </aside>
 
-            <main className="min-w-0 flex-1 overflow-y-auto">
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "agent" && <AgentSection />}
               {activeSection === "channels" && <ChannelsSection />}
