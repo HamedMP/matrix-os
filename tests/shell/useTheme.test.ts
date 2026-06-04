@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DEFAULT_THEME, getThemeFallback, normalizeTheme, type Theme } from "../../shell/src/hooks/useTheme";
+
+vi.mock("../../shell/src/hooks/useFileWatcher", () => ({
+  useFileWatcher: () => undefined,
+}));
 
 function themeToCssVars(theme: Theme): Record<string, string> {
   const vars: Record<string, string> = {};

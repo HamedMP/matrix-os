@@ -151,6 +151,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
 
   useEffect(() => {
     const tick = () => setTime(formatClock(new Date()));
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- intentional hydration-stable clock: SSR renders "--:--" and the mount effect fills client-local time; covered by the mobile shell hydration placeholder regression test.
     tick();
     const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
