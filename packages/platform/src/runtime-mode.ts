@@ -5,7 +5,6 @@ const LOCAL_DATABASE_HOSTS = new Set([
   'localhost',
   '127.0.0.1',
   '0.0.0.0',
-  '::1',
   '[::1]',
 ]);
 
@@ -15,7 +14,6 @@ export interface PlatformRuntimeConfig {
   mode: PlatformRuntimeMode;
   platformDatabaseUrl: string;
   customerVpsEnabled: boolean;
-  dockerRequired: boolean;
   legacyContainerOrchestrationEnabled: boolean;
 }
 
@@ -76,7 +74,6 @@ export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
     mode,
     platformDatabaseUrl,
     customerVpsEnabled,
-    dockerRequired: mode !== 'cloud_run',
     legacyContainerOrchestrationEnabled: mode !== 'cloud_run',
   };
 }

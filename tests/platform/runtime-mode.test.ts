@@ -12,7 +12,6 @@ describe('platform/runtime-mode', () => {
 
     expect(config.mode).toBe('compose');
     expect(config.platformDatabaseUrl).toBe('postgres://postgres:postgres@db:5432/matrixos_platform');
-    expect(config.dockerRequired).toBe(true);
     expect(config.legacyContainerOrchestrationEnabled).toBe(true);
   });
 
@@ -24,7 +23,6 @@ describe('platform/runtime-mode', () => {
     });
 
     expect(config.mode).toBe('cloud_run');
-    expect(config.dockerRequired).toBe(false);
     expect(config.legacyContainerOrchestrationEnabled).toBe(false);
     expect(config.platformDatabaseUrl).toContain('neon.tech/matrixos_platform');
   });
