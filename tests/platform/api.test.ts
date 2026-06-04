@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createHmac } from 'node:crypto';
 import { type PlatformDB, insertContainer, insertUserMachine, updateUserMachine } from '../../packages/platform/src/db.js';
-import { createOrchestrator } from '../../packages/platform/src/orchestrator.js';
+import { createDisabledOrchestrator, createOrchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { metricsRegistry } from '../../packages/platform/src/metrics.js';
 
@@ -217,6 +217,41 @@ describe('platform/api', () => {
       expect(await second.text()).toContain('matrix_vps_healthy{handle="alice"} 1');
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('serves the admin dashboard when the legacy proxy usage service is absent', async () => {
+    const cloudApp = createApp({
+      db,
+      orchestrator: createDisabledOrchestrator({ db }),
+      platformSecret,
+      env: {
+        PLATFORM_RUNTIME_MODE: 'cloud_run',
+        CUSTOMER_VPS_ENABLED: 'true',
+      } as NodeJS.ProcessEnv,
+    });
+    const originalFetch = globalThis.fetch;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+    try {
+      const res = await cloudApp.request('/admin/dashboard', { headers: adminHeaders });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        summary: {
+          total: 0,
+          running: 0,
+          stopped: 0,
+        },
+        containers: [],
+        stoppedContainers: [],
+        usageSummary: null,
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith('http://proxy:8080/usage/summary', {
+        signal: expect.any(AbortSignal),
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      warnSpy.mockRestore();
     }
   });
 

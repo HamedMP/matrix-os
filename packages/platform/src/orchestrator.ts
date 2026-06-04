@@ -55,6 +55,42 @@ export interface Orchestrator {
   syncStates(): Promise<void>;
 }
 
+export class LegacyContainerOrchestrationDisabledError extends Error {
+  constructor() {
+    super('Legacy container orchestration is disabled in this platform runtime mode');
+    this.name = 'LegacyContainerOrchestrationDisabledError';
+  }
+}
+
+export function createDisabledOrchestrator(config: {
+  db: PlatformDB;
+  image?: string;
+}): Orchestrator {
+  const { db, image = 'customer-vps' } = config;
+  const unavailable = async (): Promise<never> => {
+    throw new LegacyContainerOrchestrationDisabledError();
+  };
+
+  return {
+    provision: unavailable,
+    start: unavailable,
+    stop: unavailable,
+    destroy: unavailable,
+    upgrade: unavailable,
+    rollingRestart: unavailable,
+    async getInfo(handle) {
+      return getContainer(db, handle);
+    },
+    getImage() {
+      return image;
+    },
+    async listAll(status?) {
+      return listContainers(db, status);
+    },
+    async syncStates() {},
+  };
+}
+
 export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   const {
     db,
