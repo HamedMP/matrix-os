@@ -95,7 +95,9 @@ export async function collectHostBundleCandidates({ roots, olderThanDays, now = 
           path: candidate.path,
           realpath: candidate.realpath,
           mtime: candidateStat.mtime,
-          sizeBytes: candidateStat.size,
+          // Directory stat size is not recursive disk usage. Keep the field
+          // explicit so future reporting does not confuse it for freed bytes.
+          dirEntrySizeBytes: candidateStat.size,
         });
       }
     }
@@ -160,6 +162,14 @@ function parseNumber(value, name) {
   return parsed;
 }
 
+function readOptionValue(argv, index, arg) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${arg} requires a value`);
+  }
+  return value;
+}
+
 export function parseArgs(argv, env = process.env) {
   const roots = [];
   const options = {
@@ -181,15 +191,21 @@ export function parseArgs(argv, env = process.env) {
       case "--dry-run":
         options.dryRun = true;
         break;
-      case "--root":
-        roots.push(argv[++index]);
+      case "--root": {
+        roots.push(readOptionValue(argv, index, arg));
+        index += 1;
         break;
-      case "--worktrees-root":
-        roots.push(argv[++index]);
+      }
+      case "--worktrees-root": {
+        roots.push(readOptionValue(argv, index, arg));
+        index += 1;
         break;
-      case "--older-than-days":
-        options.olderThanDays = parseNumber(argv[++index], "--older-than-days");
+      }
+      case "--older-than-days": {
+        options.olderThanDays = parseNumber(readOptionValue(argv, index, arg), "--older-than-days");
+        index += 1;
         break;
+      }
       case "--docker":
         options.includeDocker = true;
         break;
@@ -202,12 +218,16 @@ export function parseArgs(argv, env = process.env) {
       case "--skip-builder":
         options.pruneBuilder = false;
         break;
-      case "--image-until":
-        options.imageUntil = argv[++index];
+      case "--image-until": {
+        options.imageUntil = readOptionValue(argv, index, arg);
+        index += 1;
         break;
-      case "--builder-keep-storage":
-        options.builderKeepStorage = argv[++index];
+      }
+      case "--builder-keep-storage": {
+        options.builderKeepStorage = readOptionValue(argv, index, arg);
+        index += 1;
         break;
+      }
       case "--help":
         options.help = true;
         break;

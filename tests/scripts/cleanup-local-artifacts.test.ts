@@ -7,6 +7,7 @@ import {
   buildDockerCleanupPlan,
   collectHostBundleCandidates,
   isHostBundlePath,
+  parseArgs,
   runHostBundleCleanup,
 } from "../../scripts/cleanup-local-artifacts.mjs";
 
@@ -48,6 +49,11 @@ describe("cleanup-local-artifacts", () => {
     });
 
     expect(candidates.map((candidate) => candidate.path)).toEqual([oldBundle]);
+    expect(candidates[0]).toMatchObject({
+      path: oldBundle,
+      dirEntrySizeBytes: expect.any(Number),
+    });
+    expect(candidates[0]).not.toHaveProperty("sizeBytes");
   });
 
   it("keeps dry-run cleanup non-destructive and applies only eligible bundle removals", async () => {
@@ -105,5 +111,18 @@ describe("cleanup-local-artifacts", () => {
       },
     ]);
     expect(plan.flatMap((entry) => entry.args)).not.toContain("volume");
+  });
+
+  it("rejects value-consuming CLI flags when their value is missing or another flag", () => {
+    expect(() => parseArgs(["--root"])).toThrow("--root requires a value");
+    expect(() => parseArgs(["--root", "--docker"])).toThrow("--root requires a value");
+    expect(() => parseArgs(["--worktrees-root"])).toThrow("--worktrees-root requires a value");
+    expect(() => parseArgs(["--older-than-days", "--docker"])).toThrow(
+      "--older-than-days requires a value",
+    );
+    expect(() => parseArgs(["--image-until"])).toThrow("--image-until requires a value");
+    expect(() => parseArgs(["--builder-keep-storage", "--apply"])).toThrow(
+      "--builder-keep-storage requires a value",
+    );
   });
 });
