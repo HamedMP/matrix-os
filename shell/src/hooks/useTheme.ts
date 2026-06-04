@@ -60,9 +60,12 @@ function stringEntries(value: unknown): Record<string, string> {
 
 export function normalizeTheme(value: unknown, fallbackTheme: Theme = SHELL_FALLBACK_THEME): Theme {
   if (!isRecord(value)) return fallbackTheme;
+  if (Object.keys(value).length === 0) return fallbackTheme;
+
+  const { mode: _fallbackMode, ...fallbackWithoutMode } = fallbackTheme;
 
   return {
-    ...fallbackTheme,
+    ...fallbackWithoutMode,
     name: typeof value.name === "string" && value.name.trim() ? value.name : fallbackTheme.name,
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
     ...(value.style === "flat" || value.style === "neumorphic" ? { style: value.style } : {}),

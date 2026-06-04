@@ -89,6 +89,20 @@ describe("theme system", () => {
     expect(theme.colors.foreground).toBe("#111111");
   });
 
+  it("preserves legacy saved light themes that omit mode", () => {
+    const theme = normalizeTheme({
+      name: "legacy-light",
+      colors: {
+        background: "#ffffff",
+        foreground: "#111111",
+      },
+    });
+
+    expect(theme.mode).toBeUndefined();
+    expect(theme.colors.background).toBe("#ffffff");
+    expect(theme.colors.foreground).toBe("#111111");
+  });
+
   it("converts theme to CSS variables", () => {
     const vars = themeToCssVars(DEFAULT_THEME);
     expect(vars["--background"]).toBe("#FAFAF9");
