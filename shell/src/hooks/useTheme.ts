@@ -45,34 +45,7 @@ export const DEFAULT_THEME: Theme = {
   radius: "0.75rem",
 };
 
-const MOBILE_FALLBACK_THEME: Theme = getPreset("dark") ?? {
-  ...DEFAULT_THEME,
-  name: "default-dark",
-  mode: "dark",
-  colors: {
-    ...DEFAULT_THEME.colors,
-    background: "#1a1a2e",
-    foreground: "#e0e0e0",
-    card: "#232340",
-    "card-foreground": "#e0e0e0",
-    popover: "#232340",
-    "popover-foreground": "#e0e0e0",
-    primary: "#7c6ff7",
-    "primary-foreground": "#ffffff",
-    secondary: "#2a2a45",
-    "secondary-foreground": "#b0b0c0",
-    muted: "#2a2a45",
-    "muted-foreground": "#8888a0",
-    accent: "#2a2a45",
-    "accent-foreground": "#b0b0c0",
-    destructive: "#ef4444",
-    success: "#34d399",
-    warning: "#fbbf24",
-    border: "#3a3a5c",
-    input: "#3a3a5c",
-    ring: "#7c6ff7",
-  },
-};
+const MOBILE_FALLBACK_THEME: Theme = getPreset("dark")!;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
