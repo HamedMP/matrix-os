@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const billingState = vi.hoisted(() => ({
@@ -67,9 +68,9 @@ describe("Settings panel", () => {
 
     render(<Settings open onOpenChange={() => {}} />);
 
-    const accountRegion = screen.getByLabelText("Account");
-    expect(accountRegion).toBeTruthy();
-    expect(screen.getByTestId("settings-clerk-user-button")).toBeTruthy();
+    const accountRegion = screen.getByRole("region", { name: "Account" });
+    await waitFor(() => expect(accountRegion).toBeVisible());
+    expect(screen.getByTestId("settings-clerk-user-button")).toBeVisible();
     expect(accountRegion.className).toContain("sm:mt-auto");
   });
 
@@ -89,16 +90,21 @@ describe("Settings panel", () => {
     );
 
     expect(screen.getByText("Billing settings provisioning")).toBeTruthy();
-    expect(screen.getByLabelText("Account")).toBeTruthy();
-    expect(screen.getByTestId("settings-clerk-user-button")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "Account" })).toBeVisible(),
+    );
+    expect(screen.getByTestId("settings-clerk-user-button")).toBeVisible();
   });
 
-  it("uses the mobile sticky account footer placement below the settings tabs", async () => {
+  it("keeps the account footer visible outside the desktop navigation scroll area", async () => {
     const { Settings } = await import("../../shell/src/components/Settings.js");
 
     render(<Settings open onOpenChange={() => {}} />);
 
-    const accountRegion = screen.getByLabelText("Account");
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    const accountRegion = screen.getByRole("region", { name: "Account" });
+    expect(nav).not.toContainElement(accountRegion);
+    expect(nav.className).toContain("sm:overflow-y-auto");
     expect(accountRegion.className).toContain("sticky");
     expect(accountRegion.className).toContain("sm:static");
   });
