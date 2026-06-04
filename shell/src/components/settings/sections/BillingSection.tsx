@@ -7,9 +7,11 @@ import { BillingPanel, type BillingPanelMode } from "./BillingPanel";
 export function BillingSection({
   mode = "settings",
   onCheckoutIntent,
+  checkoutReturnPath,
 }: {
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
+  checkoutReturnPath?: string;
 }) {
   const { active, entitlement, accessReason } = useMatrixBillingAccess();
 
@@ -44,6 +46,7 @@ export function BillingSection({
         accessReason={accessReason}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
+        checkoutReturnPath={checkoutReturnPath}
       />
     </div>
   );

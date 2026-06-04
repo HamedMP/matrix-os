@@ -82,6 +82,7 @@ function captureBillingTelemetry(
 function CheckoutPanel({
   mode,
   onCheckoutIntent,
+  checkoutReturnPath,
   telemetryProperties,
   planSlug,
   regionSlug,
@@ -90,6 +91,7 @@ function CheckoutPanel({
 }: {
   mode: BillingPanelMode;
   onCheckoutIntent?: () => void;
+  checkoutReturnPath?: string;
   telemetryProperties: BillingTelemetryProperties;
   planSlug: string;
   regionSlug: string;
@@ -125,7 +127,12 @@ function CheckoutPanel({
           "content-type": "application/json",
           accept: "application/json",
         },
-        body: JSON.stringify({ planSlug, interval: billingInterval, regionSlug }),
+        body: JSON.stringify({
+          planSlug,
+          interval: billingInterval,
+          regionSlug,
+          ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
+        }),
       });
       const body = (await response.json().catch((err: unknown) => {
         captureBillingTelemetry("checkout_response_parse_error", {
@@ -716,12 +723,14 @@ export function BillingPanel({
   accessReason,
   mode = "settings",
   onCheckoutIntent,
+  checkoutReturnPath,
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
   accessReason?: string | null;
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
+  checkoutReturnPath?: string;
 }) {
   const [selectedProfileSlug, setSelectedProfileSlug] = useState<string>(
     MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
@@ -847,6 +856,7 @@ export function BillingPanel({
         <CheckoutPanel
           mode={mode}
           onCheckoutIntent={onCheckoutIntent}
+          checkoutReturnPath={checkoutReturnPath}
           telemetryProperties={telemetryProperties}
           planSlug={selectedProfile.planSlug}
           regionSlug={selectedRegion.featureSlug}

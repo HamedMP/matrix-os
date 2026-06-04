@@ -564,6 +564,29 @@ function shouldProxyShellForBillingGate(input: {
   );
 }
 
+function shouldProxyAuthShellForUnroutedUser(input: {
+  isAppDomain: boolean;
+  method: string;
+  path: string;
+}): boolean {
+  return (
+    input.isAppDomain &&
+    (input.method === 'GET' || input.method === 'HEAD') &&
+    !input.path.startsWith('/api/') &&
+    !input.path.startsWith('/vps') &&
+    !input.path.startsWith('/internal/') &&
+    !input.path.startsWith('/billing/') &&
+    !input.path.startsWith('/ws') &&
+    input.path !== '/metrics'
+  );
+}
+
+function getAuthShellOrigin(env: NodeJS.ProcessEnv): string {
+  const host = env.AUTH_SHELL_HOST?.trim() || '127.0.0.1';
+  const port = env.AUTH_SHELL_PORT?.trim() || '3200';
+  return `http://${host}:${port}`;
+}
+
 interface ExplicitVmRoute {
   handle: string;
   upstreamPath: string;
@@ -2890,6 +2913,39 @@ export function createApp(deps: {
   }
   app.capturePlatformEvent = capturePlatformEvent;
 
+  async function proxyAuthShell(c: Context, host: string): Promise<Response> {
+    const upstream = new URL(c.req.url);
+    const targetUrl = `${getAuthShellOrigin(appEnv)}${upstream.pathname}${upstream.search}`;
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(c.req.header())) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey !== 'host' && value) {
+        headers.set(key, value);
+      }
+    }
+    headers.set('host', new URL(getAuthShellOrigin(appEnv)).host);
+    headers.set('x-forwarded-host', host);
+    headers.set('x-forwarded-proto', 'https');
+    headers.set('accept-encoding', 'identity');
+    headers.set('connection', 'close');
+
+    try {
+      const response = await fetch(targetUrl, {
+        method: c.req.method,
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+      });
+      return new Response(response.body, {
+        status: response.status,
+        headers: sanitizeProxyResponseHeaders(response.headers),
+      });
+    } catch (err: unknown) {
+      logPlatformRouteError('app-domain auth-shell proxy', err);
+      return c.text('Matrix OS shell unavailable', 502);
+    }
+  }
+
   async function resolveBillingClerkUserId(c: Context): Promise<string | null> {
     try {
       if (!clerkAuth) return null;
@@ -3534,6 +3590,11 @@ export function createApp(deps: {
     let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
+    const allowAuthShellUnroutedIdentity = !legacyContainerRoutingEnabled && shouldProxyAuthShellForUnroutedUser({
+      isAppDomain,
+      method: c.req.method,
+      path,
+    });
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -3546,7 +3607,7 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
-      allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
+      allowUnroutedClerkIdentity: Boolean(explicitVmRoute) || allowAuthShellUnroutedIdentity,
       requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
     });
@@ -3932,6 +3993,9 @@ export function createApp(deps: {
       applyNoStoreHeaders(c);
       if (isCodeDomain || isGatewayPath) {
         return c.json({ error: 'Matrix computer unavailable' }, 503);
+      }
+      if (allowAuthShellUnroutedIdentity && identity.handle === '') {
+        return proxyAuthShell(c, host);
       }
       return c.html(getNoContainerPage(), 503);
     }

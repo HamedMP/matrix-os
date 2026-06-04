@@ -9,6 +9,7 @@ const clerkState = vi.hoisted(() => ({
   isSignedIn: true,
   userId: "user_123",
   activePlan: null as string | null,
+  getToken: vi.fn(async () => "clerk-token"),
 }));
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@clerk/nextjs", () => ({
     isSignedIn: clerkState.isSignedIn,
     userId: clerkState.userId,
     has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
+    getToken: clerkState.getToken,
   }),
 }));
 
@@ -43,6 +45,7 @@ describe("BillingGate", () => {
     );
     resetMatrixBillingAccessCacheForTests();
     vi.restoreAllMocks();
+    clerkState.getToken.mockResolvedValue("clerk-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
@@ -234,6 +237,143 @@ describe("BillingGate", () => {
 
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(navigationState.replace).toHaveBeenCalledWith("/");
+  });
+
+  it("provisions and polls with the CLI device return path once billing is active", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState(
+      {},
+      "",
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    clerkState.getToken.mockResolvedValue("clerk-token");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/status") {
+        return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (input === "/api/auth/provision-runtime") {
+        return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/auth/app-session") {
+        return new Response(JSON.stringify({ error: "Matrix computer unavailable" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("", { status: 503 });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/auth/provision-runtime",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({}),
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/auth/app-session",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ redirectTo: "/auth/device?user_code=BCDF-GHJK" }),
+        }),
+      ),
+    );
+    expect(navigationState.replace).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a retry state when CLI device runtime provisioning fails", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState(
+      {},
+      "",
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    clerkState.getToken.mockResolvedValue("clerk-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/status") {
+        return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (input === "/api/auth/provision-runtime") {
+        return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
+      }
+      return new Response("", { status: 503 });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
+  });
+
+  it("surfaces a retry state when CLI device billing has not propagated to provisioning", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState(
+      {},
+      "",
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    clerkState.getToken.mockResolvedValue("clerk-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/status") {
+        return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (input === "/api/auth/provision-runtime") {
+        return new Response("{}", { status: 402, headers: { "content-type": "application/json" } });
+      }
+      return new Response("", { status: 503 });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
   it("keeps direct checkout success navigation on the checkout panel", async () => {
