@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
+import { getPreset } from "@/lib/theme-presets";
 
 export interface Theme {
   name: string;
@@ -43,6 +44,39 @@ export const DEFAULT_THEME: Theme = {
   },
   radius: "0.75rem",
 };
+
+const MOBILE_FALLBACK_THEME: Theme = getPreset("dark") ?? {
+  ...DEFAULT_THEME,
+  name: "default-dark",
+  mode: "dark",
+  colors: {
+    ...DEFAULT_THEME.colors,
+    background: "#1a1a2e",
+    foreground: "#e0e0e0",
+    card: "#232340",
+    "card-foreground": "#e0e0e0",
+    popover: "#232340",
+    "popover-foreground": "#e0e0e0",
+    primary: "#7c6ff7",
+    "primary-foreground": "#ffffff",
+    secondary: "#2a2a45",
+    "secondary-foreground": "#b0b0c0",
+    muted: "#2a2a45",
+    "muted-foreground": "#8888a0",
+    accent: "#2a2a45",
+    "accent-foreground": "#b0b0c0",
+    destructive: "#ef4444",
+    success: "#34d399",
+    warning: "#fbbf24",
+    border: "#3a3a5c",
+    input: "#3a3a5c",
+    ring: "#7c6ff7",
+  },
+};
+
+export interface UseThemeOptions {
+  mobileDefaultDark?: boolean;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -113,13 +147,15 @@ function inferMode(theme: Theme): "light" | "dark" {
   return luminance < 0.5 ? "dark" : "light";
 }
 
-export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
+export function useTheme(options: UseThemeOptions = {}) {
+  const { mobileDefaultDark = false } = options;
+  const fallbackTheme = mobileDefaultDark ? MOBILE_FALLBACK_THEME : DEFAULT_THEME;
+  const [theme, setTheme] = useState<Theme>(fallbackTheme);
 
   // Fetch theme from server on mount
   useEffect(() => {
-    fetchTheme().then(setTheme);
-  }, []);
+    fetchTheme(fallbackTheme).then(setTheme);
+  }, [fallbackTheme]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -144,7 +180,7 @@ export async function saveTheme(theme: Theme): Promise<void> {
   });
 }
 
-async function fetchTheme(): Promise<Theme> {
+async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
@@ -154,5 +190,5 @@ async function fetchTheme(): Promise<Theme> {
   } catch (err: unknown) {
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }
-  return DEFAULT_THEME;
+  return defaultTheme;
 }

@@ -21,7 +21,6 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatContext } from "@/stores/chat-context";
-import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
@@ -139,7 +138,6 @@ interface MobileShellProps {
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
 export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShellProps) {
   const chat = useChatContext();
-  useTheme();
 
   const [apps, setApps] = useState<MobileApp[]>(BUILT_IN_APPS);
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
