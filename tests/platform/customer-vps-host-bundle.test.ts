@@ -150,6 +150,8 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('--metadata "sha256=$SHA256"');
     expect(publishScript).toContain('upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"');
     expect(publishScript).toContain('upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"');
+    expect(publishScript).toContain(': "${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID or R2_ENDPOINT}"');
+    expect(publishScript).toContain('if [ -z "${R2_ENDPOINT:-}" ]; then');
     expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
   });
 
@@ -167,6 +169,9 @@ describe('customer VPS host bundle', () => {
     expect(nodePublisher).toContain('R2_ACCESS_KEY_ID');
     expect(nodePublisher).toContain('R2_SECRET_ACCESS_KEY');
     expect(nodePublisher).toContain('AbortSignal.timeout(30_000)');
+    expect(nodePublisher).toContain('const accountId = process.env.R2_ACCOUNT_ID;');
+    expect(nodePublisher).toContain('process.env.R2_ENDPOINT ||');
+    expect(nodePublisher).toContain('(accountId ? `https://${accountId}.r2.cloudflarestorage.com` : required("R2_ACCOUNT_ID"))');
   });
 
   it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {

@@ -191,11 +191,13 @@ if (dryRun) {
   process.exit(0);
 }
 
-const accountId = required("R2_ACCOUNT_ID");
+const accountId = process.env.R2_ACCOUNT_ID;
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID || required("R2_ACCESS_KEY_ID");
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY || required("R2_SECRET_ACCESS_KEY");
 const platformSecret = required("PLATFORM_SECRET");
-const endpoint = process.env.R2_ENDPOINT || `https://${accountId}.r2.cloudflarestorage.com`;
+const endpoint =
+  process.env.R2_ENDPOINT ||
+  (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : required("R2_ACCOUNT_ID"));
 const s3 = new S3Client({
   region: "auto",
   endpoint,
