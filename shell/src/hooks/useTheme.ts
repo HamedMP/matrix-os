@@ -58,23 +58,23 @@ function stringEntries(value: unknown): Record<string, string> {
   );
 }
 
-export function normalizeTheme(value: unknown): Theme {
-  if (!isRecord(value)) return DEFAULT_THEME;
+export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_THEME): Theme {
+  if (!isRecord(value)) return fallbackTheme;
 
   return {
-    ...DEFAULT_THEME,
-    name: typeof value.name === "string" && value.name.trim() ? value.name : DEFAULT_THEME.name,
+    ...fallbackTheme,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : fallbackTheme.name,
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
     ...(value.style === "flat" || value.style === "neumorphic" ? { style: value.style } : {}),
     colors: {
-      ...DEFAULT_THEME.colors,
+      ...fallbackTheme.colors,
       ...stringEntries(value.colors),
     },
     fonts: {
-      ...DEFAULT_THEME.fonts,
+      ...fallbackTheme.fonts,
       ...stringEntries(value.fonts),
     },
-    radius: typeof value.radius === "string" && value.radius.trim() ? value.radius : DEFAULT_THEME.radius,
+    radius: typeof value.radius === "string" && value.radius.trim() ? value.radius : fallbackTheme.radius,
   };
 }
 
@@ -162,7 +162,7 @@ async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.ok) return normalizeTheme(await res.json());
+    if (res.ok) return normalizeTheme(await res.json(), defaultTheme);
   } catch (err: unknown) {
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }

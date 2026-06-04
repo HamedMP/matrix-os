@@ -64,6 +64,21 @@ describe("theme system", () => {
     expect(theme.colors.background).not.toBe(DEFAULT_THEME.colors.background);
   });
 
+  it("normalizes empty first-run theme responses against the selected mobile fallback", () => {
+    const fallback = getThemeFallback({ mobileDefaultDark: true });
+    const theme = normalizeTheme({}, fallback);
+
+    expect(theme.mode).toBe("dark");
+    expect(theme.colors.background).toBe(fallback.colors.background);
+  });
+
+  it("normalizes invalid theme responses against the selected fallback", () => {
+    const fallback = getThemeFallback({ mobileDefaultDark: true });
+
+    expect(normalizeTheme(null, fallback)).toBe(fallback);
+    expect(normalizeTheme([], fallback)).toBe(fallback);
+  });
+
   it("converts theme to CSS variables", () => {
     const vars = themeToCssVars(DEFAULT_THEME);
     expect(vars["--background"]).toBe("#FAFAF9");
