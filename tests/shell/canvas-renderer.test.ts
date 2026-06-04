@@ -111,6 +111,12 @@ describe("Canvas Renderer Integration", () => {
 
     expect(shouldHydrateCanvasWindow({
       ...base,
+      windowId: "minimized-app",
+      window: { path: "apps/notes/index.html", x: 100, y: 100, width: 640, height: 480, minimized: true },
+    })).toBe(true);
+
+    expect(shouldHydrateCanvasWindow({
+      ...base,
       windowId: "offscreen-app",
       window: { path: "apps/legacy/index.html", x: 5000, y: 100, width: 640, height: 480 },
     })).toBe(false);

@@ -32,7 +32,6 @@ export function shouldHydrateCanvasWindow(input: {
   viewportWidth: number;
   viewportHeight: number;
 }): boolean {
-  if (input.window.minimized) return false;
   if (input.window.path.startsWith("__")) return true;
   if (input.focusedWindowId === input.windowId) return true;
 
@@ -84,8 +83,9 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   };
 
   // Minimized windows stay mounted (display:none in CanvasWindow) so their
-  // iframe / terminal state survives a minimize -> restore round-trip. We
-  // still derive a visible-windows list for empty-state and fit-all logic.
+  // iframe / terminal state survives a minimize -> restore round-trip. Offscreen
+  // non-built-in app windows can still defer at boot via shouldHydrateCanvasWindow.
+  // We still derive a visible-windows list for empty-state and fit-all logic.
   const visibleWindows = windows.filter((w) => !w.minimized);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: this handler is a dependency of the keydown-listener effect below and re-binds the global window keydown listener on identity change. Inlining would detach/reattach the listener every render.
