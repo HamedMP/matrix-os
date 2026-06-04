@@ -300,6 +300,44 @@ describe("BillingGate", () => {
     expect(navigationState.replace).not.toHaveBeenCalled();
   });
 
+  it("surfaces a retry state when CLI device runtime provisioning fails", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState(
+      {},
+      "",
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    clerkState.getToken.mockResolvedValue("clerk-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/status") {
+        return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (input === "/api/auth/provision-runtime") {
+        return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
+      }
+      return new Response("", { status: 503 });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
+  });
+
   it("keeps direct checkout success navigation on the checkout panel", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");

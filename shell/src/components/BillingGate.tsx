@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2Icon, LogInIcon } from "lucide-react";
+import { AlertCircleIcon, Loader2Icon, LogInIcon } from "lucide-react";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
@@ -144,7 +144,19 @@ function SignInRedirecting() {
   );
 }
 
-function SubscriptionConfirmationPending() {
+function reloadCurrentPage(): void {
+  window.location.assign(window.location.href);
+}
+
+function SubscriptionConfirmationPending({
+  status = "preparing",
+  onRefresh = () => window.location.assign(getMatrixBillingSuccessRedirectUrl()),
+}: {
+  status?: "preparing" | "failed";
+  onRefresh?: () => void;
+}) {
+  const failed = status === "failed";
+
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-deep/30 px-4 py-8 text-deep backdrop-blur-md">
       <section className="relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl border border-forest/15 bg-page-bg/95 shadow-[0_40px_120px_rgba(50,53,46,0.35)]">
@@ -159,26 +171,31 @@ function SubscriptionConfirmationPending() {
 
         <div className="relative flex flex-col items-center gap-5 p-8 text-center">
           <div className="flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-white shadow-sm">
-            <Loader2Icon className="size-6 animate-spin text-ember" aria-hidden="true" />
+            {failed ? (
+              <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
+            ) : (
+              <Loader2Icon className="size-6 animate-spin text-ember" aria-hidden="true" />
+            )}
           </div>
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
               Matrix OS · Billing
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-deep">
-              Confirming your subscription
+              {failed ? "Matrix setup needs attention" : "Confirming your subscription"}
             </h1>
             <p className="mx-auto max-w-xs text-sm leading-6 text-forest/75">
-              Stripe is activating billing for your Matrix computer. This usually takes a few
-              seconds — your shell will open automatically.
+              {failed
+                ? "Billing is active, but your Matrix computer did not finish starting. Try again to continue CLI login."
+                : "Stripe is activating billing for your Matrix computer. This usually takes a few seconds — your shell will open automatically."}
             </p>
           </div>
           <button
             type="button"
-            onClick={() => window.location.assign(getMatrixBillingSuccessRedirectUrl())}
+            onClick={onRefresh}
             className="inline-flex h-10 items-center rounded-xl border border-forest/15 bg-white px-5 text-sm font-semibold text-forest transition-colors hover:bg-cream/60"
           >
-            Refresh status
+            {failed ? "Try again" : "Refresh status"}
           </button>
         </div>
       </section>
@@ -220,7 +237,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   const billingChecking = isSignedIn && billingActive === null;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
-  const [, setDeviceSetupStatus] = useState<"idle" | "preparing" | "failed">("idle");
+  const [deviceSetupStatus, setDeviceSetupStatus] = useState<"idle" | "preparing" | "failed">("idle");
   const lastTrackedState = useRef<string | null>(null);
   const deviceSetupStarted = useRef(false);
 
@@ -287,12 +304,13 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         headers: await authHeaders(),
         body: JSON.stringify({ redirectTo: deviceReturnPath }),
       });
+      if (disposed) return;
 
       if (!sessionResponse.ok) {
         pollTimeout = window.setTimeout(() => {
           void pollRuntimeReady().catch((error: unknown) => {
             console.warn("[billing] device runtime poll failed", error instanceof Error ? error.name : typeof error);
-            setDeviceSetupStatus("failed");
+            if (!disposed) setDeviceSetupStatus("failed");
           });
         }, DEVICE_SETUP_POLL_MS);
         return;
@@ -304,6 +322,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         cache: "no-store",
         headers: { Accept: "text/html" },
       });
+      if (disposed) return;
 
       if (readyResponse.ok) {
         window.location.replace(deviceReturnPath);
@@ -313,7 +332,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       pollTimeout = window.setTimeout(() => {
         void pollRuntimeReady().catch((error: unknown) => {
           console.warn("[billing] device runtime readiness failed", error instanceof Error ? error.name : typeof error);
-          setDeviceSetupStatus("failed");
+          if (!disposed) setDeviceSetupStatus("failed");
         });
       }, DEVICE_SETUP_POLL_MS);
     }
@@ -326,6 +345,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         headers: await authHeaders(),
         body: JSON.stringify({}),
       });
+      if (disposed) return;
       if (!provisionResponse.ok && provisionResponse.status !== 409) {
         if (provisionResponse.status === 402) {
           deviceSetupStarted.current = false;
@@ -340,7 +360,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
 
     void startDeviceRuntimeSetup().catch((error: unknown) => {
       console.warn("[billing] device runtime setup failed", error instanceof Error ? error.name : typeof error);
-      setDeviceSetupStatus("failed");
+      if (!disposed) setDeviceSetupStatus("failed");
     });
 
     return () => {
@@ -425,7 +445,10 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
           {children}
         </div>
-        <SubscriptionConfirmationPending />
+        <SubscriptionConfirmationPending
+          status={deviceSetupStatus === "failed" ? "failed" : "preparing"}
+          onRefresh={reloadCurrentPage}
+        />
       </>
     );
   }
