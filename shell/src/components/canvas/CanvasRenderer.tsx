@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import type { ReactNode } from "react";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import type { AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasGroups } from "@/stores/canvas-groups";
 import { useCanvasLabels } from "@/stores/canvas-labels";
@@ -16,9 +17,47 @@ import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { CanvasMinimap } from "./CanvasMinimap";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+const APP_HYDRATION_MARGIN_PX = 320;
 
 interface CanvasRendererProps {
   children?: ReactNode;
+}
+
+interface CanvasWindowMountProps {
+  win: AppWindow;
+  focusedWindowId: string | null;
+  zoom: number;
+  panX: number;
+  panY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+export function shouldHydrateCanvasWindow(input: {
+  window: { x: number; y: number; width: number; height: number; path: string; minimized?: boolean };
+  focusedWindowId: string | null;
+  windowId: string;
+  zoom: number;
+  panX: number;
+  panY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  hydratedOnce?: boolean;
+}): boolean {
+  if (input.hydratedOnce) return true;
+  if (input.window.path.startsWith("__")) return true;
+  if (input.focusedWindowId === input.windowId) return true;
+
+  const left = (input.window.x + input.panX) * input.zoom;
+  const top = (input.window.y + input.panY) * input.zoom;
+  const right = left + input.window.width * input.zoom;
+  const bottom = top + input.window.height * input.zoom;
+  return (
+    right >= -APP_HYDRATION_MARGIN_PX &&
+    bottom >= -APP_HYDRATION_MARGIN_PX &&
+    left <= input.viewportWidth + APP_HYDRATION_MARGIN_PX &&
+    top <= input.viewportHeight + APP_HYDRATION_MARGIN_PX
+  );
 }
 
 export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
@@ -26,10 +65,16 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const clearFocus = useWindowManager((s) => s.clearFocus);
   const fitAll = useCanvasTransform((s) => s.fitAll);
+  const zoom = useCanvasTransform((s) => s.zoom);
+  const panX = useCanvasTransform((s) => s.panX);
+  const panY = useCanvasTransform((s) => s.panY);
+  const containerRect = useCanvasTransform((s) => s.containerRect);
   const groups = useCanvasGroups((s) => s.groups);
   const createGroup = useCanvasGroups((s) => s.createGroup);
   const addToGroup = useCanvasGroups((s) => s.addToGroup);
   const labels = useCanvasLabels((s) => s.labels);
+  const viewportWidth = containerRect?.width ?? (typeof window !== "undefined" ? window.innerWidth : 0);
+  const viewportHeight = containerRect?.height ?? (typeof window !== "undefined" ? window.innerHeight : 0);
 
   const onSelect = (windowIds: string[]) => {
     if (windowIds.length < 2) return;
@@ -51,8 +96,9 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   };
 
   // Minimized windows stay mounted (display:none in CanvasWindow) so their
-  // iframe / terminal state survives a minimize -> restore round-trip. We
-  // still derive a visible-windows list for empty-state and fit-all logic.
+  // iframe / terminal state survives a minimize -> restore round-trip. Offscreen
+  // non-built-in app windows can still defer at boot via shouldHydrateCanvasWindow.
+  // We still derive a visible-windows list for empty-state and fit-all logic.
   const visibleWindows = windows.filter((w) => !w.minimized);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity required: this handler is a dependency of the keydown-listener effect below and re-binds the global window keydown listener on identity change. Inlining would detach/reattach the listener every render.
@@ -117,12 +163,56 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
           </div>
         )}
         {children}
-        {windows.map((win) => (
-          <CanvasWindow key={win.id} win={win} hidden={win.minimized} />
-        ))}
+        {windows.map((win) => {
+          return (
+            <CanvasWindowMount
+              key={win.id}
+              win={win}
+              focusedWindowId={focusedWindowId}
+              zoom={zoom}
+              panX={panX}
+              panY={panY}
+              viewportWidth={viewportWidth}
+              viewportHeight={viewportHeight}
+            />
+          );
+        })}
       </CanvasTransform>
       <WorkspaceCanvas />
       <CanvasMinimap />
     </div>
+  );
+}
+
+function CanvasWindowMount({
+  win,
+  focusedWindowId,
+  zoom,
+  panX,
+  panY,
+  viewportWidth,
+  viewportHeight,
+}: CanvasWindowMountProps) {
+  const shouldHydrateNow = shouldHydrateCanvasWindow({
+    window: win,
+    windowId: win.id,
+    focusedWindowId,
+    zoom,
+    panX,
+    panY,
+    viewportWidth,
+    viewportHeight,
+  });
+  const [hydratedOnce, setHydratedOnce] = useState(shouldHydrateNow);
+  if (shouldHydrateNow && !hydratedOnce) {
+    setHydratedOnce(true);
+  }
+
+  return (
+    <CanvasWindow
+      win={win}
+      hidden={win.minimized}
+      deferAppContent={!(shouldHydrateNow || hydratedOnce)}
+    />
   );
 }

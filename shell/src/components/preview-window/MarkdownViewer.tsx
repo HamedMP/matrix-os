@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
+import { useMemo, useState, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -83,11 +83,9 @@ function MarkdownSvgPreview({
     () => resolveSvgPreviewSource(src, sourcePath),
     [src, sourcePath],
   );
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    setFailed(false);
-  }, [resolved.ok ? resolved.src : src]);
+  const resolvedKey = resolved.ok ? resolved.src : src;
+  const [failedSrc, setFailedSrc] = useState<string | undefined>();
+  const failed = failedSrc === resolvedKey;
 
   if (!resolved.ok || failed) {
     return <SvgPreviewFallback alt={alt} />;
@@ -102,7 +100,7 @@ function MarkdownSvgPreview({
         decoding="async"
         draggable={false}
         loading="lazy"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(resolved.src)}
         referrerPolicy="no-referrer"
         src={resolved.src}
         title={title}
