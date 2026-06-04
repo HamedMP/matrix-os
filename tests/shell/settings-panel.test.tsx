@@ -60,6 +60,7 @@ vi.mock("../../shell/src/components/settings/sections/BillingSection.js", () => 
 
 describe("Settings panel", () => {
   beforeEach(() => {
+    vi.resetModules();
     billingState.active = true;
   });
 
