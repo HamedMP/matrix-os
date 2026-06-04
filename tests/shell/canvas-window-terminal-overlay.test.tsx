@@ -6,12 +6,17 @@ import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js"
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 
+const appViewerRender = vi.hoisted(() => vi.fn());
+
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: () => <button type="button">Terminal tab one</button>,
 }));
 
 vi.mock("../../shell/src/components/AppViewer.js", () => ({
-  AppViewer: () => <iframe title="App iframe" />,
+  AppViewer: (props: { path: string }) => {
+    appViewerRender(props);
+    return <iframe title="App iframe" />;
+  },
 }));
 
 vi.mock("../../shell/src/components/file-browser/FileBrowser.js", () => ({
@@ -55,6 +60,7 @@ const iframeWindow: AppWindow = {
 
 describe("CanvasWindow terminal interactivity", () => {
   beforeEach(() => {
+    appViewerRender.mockClear();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useWindowManager.setState({
       windows: [],
@@ -77,6 +83,15 @@ describe("CanvasWindow terminal interactivity", () => {
   it("keeps the click shield for iframe app windows", () => {
     const { container } = render(<CanvasWindow win={iframeWindow} />);
 
+    expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
+  });
+
+  it("does not mount AppViewer when Canvas defers offscreen app content", () => {
+    const { container } = render(<CanvasWindow win={iframeWindow} deferAppContent />);
+
+    expect(appViewerRender).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("App iframe")).toBeNull();
+    expect(screen.getByLabelText("Notes will load when visible")).toBeTruthy();
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
   });
 });

@@ -16,9 +16,36 @@ import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { CanvasMinimap } from "./CanvasMinimap";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+const APP_HYDRATION_MARGIN_PX = 320;
 
 interface CanvasRendererProps {
   children?: ReactNode;
+}
+
+export function shouldHydrateCanvasWindow(input: {
+  window: { x: number; y: number; width: number; height: number; path: string; minimized?: boolean };
+  focusedWindowId: string | null;
+  windowId: string;
+  zoom: number;
+  panX: number;
+  panY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}): boolean {
+  if (input.window.minimized) return false;
+  if (input.window.path.startsWith("__")) return true;
+  if (input.focusedWindowId === input.windowId) return true;
+
+  const left = (input.window.x + input.panX) * input.zoom;
+  const top = (input.window.y + input.panY) * input.zoom;
+  const right = left + input.window.width * input.zoom;
+  const bottom = top + input.window.height * input.zoom;
+  return (
+    right >= -APP_HYDRATION_MARGIN_PX &&
+    bottom >= -APP_HYDRATION_MARGIN_PX &&
+    left <= input.viewportWidth + APP_HYDRATION_MARGIN_PX &&
+    top <= input.viewportHeight + APP_HYDRATION_MARGIN_PX
+  );
 }
 
 export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
@@ -26,10 +53,16 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const clearFocus = useWindowManager((s) => s.clearFocus);
   const fitAll = useCanvasTransform((s) => s.fitAll);
+  const zoom = useCanvasTransform((s) => s.zoom);
+  const panX = useCanvasTransform((s) => s.panX);
+  const panY = useCanvasTransform((s) => s.panY);
+  const containerRect = useCanvasTransform((s) => s.containerRect);
   const groups = useCanvasGroups((s) => s.groups);
   const createGroup = useCanvasGroups((s) => s.createGroup);
   const addToGroup = useCanvasGroups((s) => s.addToGroup);
   const labels = useCanvasLabels((s) => s.labels);
+  const viewportWidth = containerRect?.width ?? (typeof window !== "undefined" ? window.innerWidth : 0);
+  const viewportHeight = containerRect?.height ?? (typeof window !== "undefined" ? window.innerHeight : 0);
 
   const onSelect = (windowIds: string[]) => {
     if (windowIds.length < 2) return;
@@ -117,9 +150,26 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
           </div>
         )}
         {children}
-        {windows.map((win) => (
-          <CanvasWindow key={win.id} win={win} hidden={win.minimized} />
-        ))}
+        {windows.map((win) => {
+          const hydrateContent = shouldHydrateCanvasWindow({
+            window: win,
+            windowId: win.id,
+            focusedWindowId,
+            zoom,
+            panX,
+            panY,
+            viewportWidth,
+            viewportHeight,
+          });
+          return (
+            <CanvasWindow
+              key={win.id}
+              win={win}
+              hidden={win.minimized}
+              deferAppContent={!hydrateContent}
+            />
+          );
+        })}
       </CanvasTransform>
       <WorkspaceCanvas />
       <CanvasMinimap />

@@ -46,10 +46,12 @@ interface CanvasWindowProps {
   /** When true, the window stays mounted but is visually hidden so iframe
       state, terminal sockets, and React state survive minimize -> restore. */
   hidden?: boolean;
+  /** Defers expensive app iframe hydration for offscreen Canvas windows. */
+  deferAppContent?: boolean;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-window renderer: the bulk is two theme-specific title-bar JSX trees (mac vs win98) plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
-export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
+export function CanvasWindow({ win, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const panX = useCanvasTransform((s) => s.panX);
@@ -453,6 +455,20 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
               onSubmit={chatState.submitMessage}
               mobile={isMobile}
             />
+          )}
+        </div>
+      ) : deferAppContent ? (
+        <div
+          className="h-full w-full flex items-center justify-center bg-card"
+          aria-label={`${win.title} will load when visible`}
+        >
+          {iconUrl ? (
+            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
+            <img src={iconUrl} alt="" className="size-16 rounded-2xl object-cover opacity-45" draggable={false} />
+          ) : (
+            <span className="text-3xl font-semibold text-muted-foreground/20">
+              {win.title.charAt(0).toUpperCase()}
+            </span>
           )}
         </div>
       ) : (
