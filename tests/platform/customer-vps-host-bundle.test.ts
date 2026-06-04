@@ -178,6 +178,10 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ steps.channel.outputs.channel }}');
     expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ needs.build.outputs.channel }}');
     expect(workflow).toContain("PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}");
+    expect(workflow).toContain('R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}');
+    expect(workflow).toContain('AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}');
+    expect(workflow).toContain('AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}');
+    expect(workflow).toContain("R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}");
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy"');
     expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
     expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');

@@ -1,0 +1,7 @@
+name = "matrix-neo-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-04"
+
+routes = [
+  { pattern = "neo.matrix-os.com", custom_domain = true }
+]

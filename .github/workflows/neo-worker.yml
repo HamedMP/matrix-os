@@ -1,0 +1,76 @@
+name: Neo Edge Worker
+
+on:
+  pull_request:
+    paths:
+      - "packages/neo-worker/**"
+      - "tests/neo-worker/**"
+      - ".github/workflows/neo-worker.yml"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy the Worker to neo.matrix-os.com"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test Neo worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @matrix-os/neo-worker typecheck
+
+      - name: Test
+        run: pnpm --filter @matrix-os/neo-worker test
+
+      - name: Wrangler dry run
+        run: pnpm --filter @matrix-os/neo-worker exec wrangler deploy --dry-run
+
+  deploy:
+    name: Deploy Neo worker
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Production
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm --filter @matrix-os/neo-worker exec wrangler deploy
