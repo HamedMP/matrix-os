@@ -197,6 +197,8 @@ describe("Neo Worker", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
     await expect(response.text()).resolves.toBe("ok");
     expect(fetchMock).not.toHaveBeenCalled();
 

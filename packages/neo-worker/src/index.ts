@@ -25,6 +25,7 @@ export async function handlePostHogProxyRequest(
       headers: {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store",
+        "cdn-cache-control": "no-store",
       },
     });
   }
