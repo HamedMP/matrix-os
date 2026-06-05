@@ -98,6 +98,17 @@ public struct WorkspaceSession: Identifiable, Equatable, Sendable {
     public var isActive: Bool { status == "active" }
 }
 
+/// A project the user can open/clone (project picker + Projects UI).
+public struct ProjectSummary: Identifiable, Equatable, Sendable {
+    public let slug: String
+    public let name: String
+    public let remote: String?
+    public var id: String { slug }
+    public init(slug: String, name: String, remote: String? = nil) {
+        self.slug = slug; self.name = name; self.remote = remote
+    }
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
@@ -106,6 +117,10 @@ public final class AppModel: ObservableObject {
     @Published public var section: AppSection = .board
     /// Live zellij sessions for the Terminals section.
     @Published public private(set) var sessions: [WorkspaceSession] = []
+    /// The user's projects (for the project picker / Projects UI).
+    @Published public private(set) var projects: [ProjectSummary] = []
+    /// Command palette (⌘K) visibility.
+    @Published public var showCommandPalette = false
 
     /// The currently selected connection profile (nil → onboarding).
     @Published public private(set) var profile: ConnectionProfile?
@@ -341,6 +356,7 @@ public final class AppModel: ObservableObject {
             phase = .connecting
         }
         await resolveProjectIfNeeded()
+        await loadProjects()
         await loadSessions()
         await board.load(projectSlug: projectSlug)
         switch board.state {
@@ -382,6 +398,65 @@ public final class AppModel: ObservableObject {
         }
         if let response: SessionsResponse = try? await client.get("/api/sessions") {
             sessions = response.sessions.map { WorkspaceSession(name: $0.name, status: $0.status) }
+        }
+    }
+
+    /// Loads the user's projects (project picker / Projects UI).
+    public func loadProjects() async {
+        guard let client = gatewayClient() else { return }
+        struct ProjectsResponse: Decodable {
+            struct Project: Decodable { let slug: String; let name: String?; let remote: String? }
+            let projects: [Project]
+        }
+        if let response: ProjectsResponse = try? await client.get("/api/workspace/projects") {
+            projects = response.projects.map { ProjectSummary(slug: $0.slug, name: $0.name ?? $0.slug, remote: $0.remote) }
+        }
+    }
+
+    /// Switches the active project and reloads its board.
+    public func openProject(slug: String) {
+        guard slug != projectSlug, let client = gatewayClient() else { return }
+        projectSlug = slug
+        board = BoardStore(loader: makeLoader(client))
+        section = .board
+        Task { await refresh() }
+    }
+
+    /// Creates a project (optionally from a git remote) and opens it.
+    public func createProject(name: String, remote: String?) {
+        guard let client = gatewayClient() else { return }
+        Task { [weak self] in
+            struct CreateProjectRequest: Encodable { let name: String; let remote: String? }
+            struct CreateProjectResponse: Decodable { let project: Project?; struct Project: Decodable { let slug: String } }
+            do {
+                let response: CreateProjectResponse = try await client.post(
+                    "/api/projects", body: CreateProjectRequest(name: name, remote: remote)
+                )
+                await self?.loadProjects()
+                if let slug = response.project?.slug { self?.openProject(slug: slug) }
+            } catch {
+                // Silent-safe.
+            }
+        }
+    }
+
+    /// Moves a card to a new column/order (drag-to-move). Optimistic + persisted
+    /// via PATCH; refreshes on completion to reconcile.
+    public func updateTaskStatus(cardId: String, to status: TaskStatus, order: Double?) {
+        guard let client = gatewayClient() else { return }
+        let slug = projectSlug
+        Task { [weak self] in
+            struct UpdateTaskRequest: Encodable { let status: String; let order: Double? }
+            struct UpdateTaskResponse: Decodable {}
+            do {
+                let _: UpdateTaskResponse = try await client.patch(
+                    "/api/projects/\(slug)/tasks/\(cardId)",
+                    body: UpdateTaskRequest(status: status.rawValue, order: order)
+                )
+                await self?.refresh()
+            } catch {
+                await self?.refresh() // reconcile on failure too
+            }
         }
     }
 
