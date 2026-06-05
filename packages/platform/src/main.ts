@@ -2819,6 +2819,7 @@ export function createApp(deps: {
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   customerVpsObjectStore?: CustomerVpsObjectStore;
+  hostBundleObjectStore?: CustomerVpsObjectStore;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -3072,13 +3073,14 @@ export function createApp(deps: {
   });
 
   async function getSignedBundleUrl(release: HostBundleReleaseRecord): Promise<string> {
-    if (!deps.customerVpsObjectStore) {
+    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    if (!hostBundleObjectStore) {
       throw new Error('Host bundle storage unavailable');
     }
-    if (!deps.customerVpsObjectStore.getPresignedGetUrl) {
+    if (!hostBundleObjectStore.getPresignedGetUrl) {
       throw new Error('Host bundle storage cannot create signed URLs');
     }
-    return deps.customerVpsObjectStore.getPresignedGetUrl(release.bundleKey, 3600);
+    return hostBundleObjectStore.getPresignedGetUrl(release.bundleKey, 3600);
   }
 
   function requireHostBundleAdmin(c: Context): Response | null {
@@ -3210,7 +3212,8 @@ export function createApp(deps: {
   // Public, immutable host-service bundles used by customer VPS cloud-init.
   // Metadata comes from Postgres; R2 only stores the bytes.
   app.get('/system-bundles/:imageVersion/:file', async (c) => {
-    if (!deps.customerVpsObjectStore) {
+    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    if (!hostBundleObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
     }
 
@@ -3254,7 +3257,7 @@ export function createApp(deps: {
       return c.json({ error: 'Not found' }, 404);
     }
 
-    if (file.endsWith('.tar.gz') && deps.customerVpsObjectStore.getPresignedGetUrl) {
+    if (file.endsWith('.tar.gz') && hostBundleObjectStore.getPresignedGetUrl) {
       try {
         const url = await getSignedBundleUrl(release);
         return c.redirect(url, 302);
@@ -3298,7 +3301,7 @@ export function createApp(deps: {
     }
 
     try {
-      const object = await deps.customerVpsObjectStore.getObject(
+      const object = await hostBundleObjectStore.getObject(
         release.bundleKey,
         { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
       );
@@ -3330,7 +3333,8 @@ export function createApp(deps: {
   });
 
   app.get('/system-bundles/channels/:channel', async (c) => {
-    if (!deps.customerVpsObjectStore) {
+    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    if (!hostBundleObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
     }
 
@@ -4933,29 +4937,20 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
 
   let internalSyncRoutes: Hono | undefined;
-  let customerVpsObjectStore:
-    | {
-        putObject(
-          key: string,
-          body: string | Uint8Array | ReadableStream<Uint8Array>,
-          options?: { signal?: AbortSignal },
-        ): Promise<{ etag?: string }>;
-        getObject(
-          key: string,
-          options?: { signal?: AbortSignal },
-        ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
-      }
-    | undefined;
+  let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
+  let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
   const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
   const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+  let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
   if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
-    const [{ createR2Client }, { createInternalSyncRoutes }] = await Promise.all([
+    const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
       importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
+    createR2Client = r2ClientModule.createR2Client;
     const r2 = await createR2Client({
       accessKeyId: s3AccessKey,
       secretAccessKey: s3SecretKey,
@@ -4971,6 +4966,25 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       platformSecret: PLATFORM_SECRET,
     });
     customerVpsObjectStore = r2;
+    hostBundleObjectStore = r2;
+  }
+
+  const bundleS3Bucket = process.env.S3_BUNDLES_BUCKET ?? process.env.R2_BUNDLES_BUCKET;
+  const bundleS3AccessKey = process.env.S3_BUNDLES_ACCESS_KEY_ID ?? process.env.R2_BUNDLES_ACCESS_KEY_ID;
+  const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
+  if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
+    createR2Client ??= (
+      await importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js')
+    ).createR2Client;
+    hostBundleObjectStore = await createR2Client({
+      accessKeyId: bundleS3AccessKey,
+      secretAccessKey: bundleS3SecretKey,
+      bucket: bundleS3Bucket,
+      endpoint: process.env.S3_BUNDLES_ENDPOINT ?? process.env.R2_BUNDLES_ENDPOINT,
+      publicEndpoint: process.env.S3_BUNDLES_PUBLIC_ENDPOINT ?? process.env.R2_BUNDLES_PUBLIC_ENDPOINT,
+      accountId: process.env.S3_BUNDLES_ACCOUNT_ID ?? process.env.R2_BUNDLES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID,
+      forcePathStyle: process.env.S3_BUNDLES_FORCE_PATH_STYLE === 'true',
+    });
   }
 
   let customerVpsService: CustomerVpsService | undefined;
@@ -5055,6 +5069,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     internalSyncRoutes,
     customerVpsService,
     customerVpsObjectStore,
+    hostBundleObjectStore,
   });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {

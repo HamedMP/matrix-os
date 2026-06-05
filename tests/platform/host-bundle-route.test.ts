@@ -94,6 +94,36 @@ describe('platform host bundle route', () => {
     expect(getObject).not.toHaveBeenCalled();
   });
 
+  it('uses dedicated host bundle object storage when configured', async () => {
+    await seedRelease();
+    const syncGetPresignedGetUrl = vi.fn().mockResolvedValue('https://sync.example/wrong-bucket');
+    const bundleGetPresignedGetUrl = vi.fn().mockResolvedValue('https://bundles.example/signed-host-bundle');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: syncGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+      hostBundleObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: bundleGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz');
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://bundles.example/signed-host-bundle');
+    expect(bundleGetPresignedGetUrl).toHaveBeenCalledWith(
+      'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
+      3600,
+    );
+    expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
+  });
+
   it('returns JSON 502 when release metadata cannot mint a signed URL', async () => {
     await seedRelease();
     const getPresignedGetUrl = vi.fn().mockRejectedValue(new Error('r2 unavailable'));
@@ -165,6 +195,41 @@ describe('platform host bundle route', () => {
       'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
       3600,
     );
+  });
+
+  it('uses dedicated host bundle object storage for channel manifests', async () => {
+    await seedRelease();
+    await promoteHostBundleChannel(db, 'stable', 'v2026.05.12-1');
+    const syncGetPresignedGetUrl = vi.fn().mockResolvedValue('https://sync.example/wrong-bucket');
+    const bundleGetPresignedGetUrl = vi.fn().mockResolvedValue('https://bundles.example/stable-host-bundle');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: syncGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+      hostBundleObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: bundleGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/channels/stable.json');
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-1',
+      channel: 'stable',
+      url: 'https://bundles.example/stable-host-bundle',
+    });
+    expect(bundleGetPresignedGetUrl).toHaveBeenCalledWith(
+      'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
+      3600,
+    );
+    expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
   });
 
   it('serializes the requested channel for promoted channel aliases', async () => {
