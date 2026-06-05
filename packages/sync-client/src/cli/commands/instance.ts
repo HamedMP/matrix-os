@@ -3,8 +3,30 @@ import { formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
 import { requireCliAuthToken } from "../auth-state.js";
 
+const INSTANCE_USAGE = "Usage: matrix instance info|restart|logs";
+const INSTANCE_SUBCOMMANDS = new Set(["info", "restart", "logs"]);
+const INSTANCE_VALUE_OPTIONS = new Set(["--profile", "--platform", "--token"]);
+
 interface InstanceRequestOptions {
   method?: "GET" | "POST";
+}
+
+function hasInstanceSubCommand(rawArgs: string[] | undefined): boolean {
+  if (!Array.isArray(rawArgs)) {
+    return false;
+  }
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg.startsWith("--")) {
+      const [option] = arg.split("=", 1);
+      if (INSTANCE_VALUE_OPTIONS.has(option) && !arg.includes("=")) {
+        i += 1;
+      }
+      continue;
+    }
+    return INSTANCE_SUBCOMMANDS.has(arg);
+  }
+  return false;
 }
 
 function writeError(err: unknown, json: boolean): void {
@@ -84,7 +106,9 @@ export const instanceCommand = defineCommand({
       run: async ({ args }) => runInstanceCommand(args, "/api/instance/logs"),
     }),
   },
-  run: () => {
-    console.log("Usage: matrix instance info|restart|logs");
+  run: ({ rawArgs }) => {
+    if (!hasInstanceSubCommand(rawArgs)) {
+      console.log(INSTANCE_USAGE);
+    }
   },
 });

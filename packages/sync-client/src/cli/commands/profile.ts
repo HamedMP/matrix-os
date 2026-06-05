@@ -7,9 +7,25 @@ import {
 } from "../../lib/profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 
+const PROFILE_USAGE = "Usage: matrix profile ls|show|use|set";
+const PROFILE_SUBCOMMANDS = new Set(["ls", "show", "use", "set"]);
+
 interface ProfileView extends Profile {
   name: string;
   active: boolean;
+}
+
+function hasProfileSubCommand(rawArgs: string[] | undefined): boolean {
+  if (!Array.isArray(rawArgs)) {
+    return false;
+  }
+  for (const arg of rawArgs) {
+    if (arg.startsWith("--")) {
+      continue;
+    }
+    return PROFILE_SUBCOMMANDS.has(arg);
+  }
+  return false;
 }
 
 function profileView(name: string, profile: Profile, active: string): ProfileView {
@@ -157,7 +173,9 @@ export const profileCommand = defineCommand({
       }),
     }),
   },
-  run: () => {
-    console.log("Usage: matrix profile ls|show|use|set");
+  run: ({ rawArgs }) => {
+    if (!hasProfileSubCommand(rawArgs)) {
+      console.log(PROFILE_USAGE);
+    }
   },
 });
