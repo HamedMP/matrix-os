@@ -85,13 +85,38 @@ jobs:
           set -euo pipefail
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${GITHUB_SHA::12}"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
-          gcloud builds submit . \
+          build_id=$(gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --config cloudbuild.platform.yaml \
             --substitutions "_IMAGE=$image" \
-            --suppress-logs \
-            --timeout=1200s
+            --async \
+            --format 'value(metadata.build.id)' \
+            --timeout=1200s)
+          if [ -z "$build_id" ]; then
+            echo "Cloud Build did not return a build id" >&2
+            exit 1
+          fi
+
+          for attempt in $(seq 1 240); do
+            status=$(gcloud builds describe "$build_id" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format 'value(status)')
+            case "$status" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build $build_id ended with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo "Timed out waiting for Cloud Build $build_id" >&2
+          exit 1
 
       - name: Deploy tagged revision
         run: |
