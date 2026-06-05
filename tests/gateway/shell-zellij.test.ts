@@ -69,29 +69,28 @@ describe("zellij adapter", () => {
     await expect(adapter.listSessions()).resolves.toEqual([]);
   });
 
-  it("sanitizes stderr before surfacing errors", async () => {
+  it("sanitizes stderr before surfacing execFile errors", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(new Error("boom"), "", "failed in /home/alice/.ssh with zellij internals");
       return childProcess();
     });
     const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
 
-    await expect(adapter.createSession({ name: "main" })).rejects.toMatchObject({
+    await expect(adapter.createTab("main", { name: "tools" })).rejects.toMatchObject({
       code: "zellij_failed",
       safeMessage: "Shell operation failed",
     });
   });
 
-  it("classifies a missing zellij binary for server diagnostics", async () => {
+  it("classifies a missing zellij binary during session creation for server diagnostics", async () => {
     const missing = Object.assign(new Error("spawn zellij ENOENT"), {
       code: "ENOENT",
       syscall: "spawn zellij",
     });
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(missing, "", "");
-      return childProcess();
+    const spawnPty = vi.fn(() => {
+      throw missing;
     });
-    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
 
     await expect(adapter.createSession({ name: "main" })).rejects.toMatchObject({
       code: "zellij_failed",
@@ -227,22 +226,28 @@ describe("zellij adapter", () => {
     expect(pty.resize).toHaveBeenCalledWith(140, 50);
   });
 
-  it("creates sessions in the requested cwd using headless attach", async () => {
-    const child = childProcess();
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(null, "", "");
-      return child;
+  it("creates sessions in the requested cwd using a retained PTY", async () => {
+    const pty = ptyProcess();
+    const execFile = vi.fn();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({
+      execFile,
+      spawnPty,
+      timeoutMs: 25,
+      startupDelayMs: 1,
     });
-    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
 
     await adapter.createSession({ name: "main", cwd: "/home/alice/work" });
 
-    expect(execFile).toHaveBeenCalledWith(
+    expect(execFile).not.toHaveBeenCalled();
+    expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["--session", "main", "attach", "--create-background", "main"],
+      ["--session", "main"],
       expect.objectContaining({
-        timeout: 25,
         cwd: "/home/alice/work",
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
         env: expect.objectContaining({
           TERM: "xterm-256color",
           COLORTERM: "truecolor",
@@ -250,17 +255,13 @@ describe("zellij adapter", () => {
           FORCE_COLOR: "3",
         }),
       }),
-      expect.any(Function),
     );
   });
 
   it("creates command sessions with the command as the initial focused pane", async () => {
-    const child = childProcess();
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(null, "", "");
-      return child;
-    });
-    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1 });
 
     await adapter.createSession({
       name: "bench",
@@ -268,20 +269,79 @@ describe("zellij adapter", () => {
       cmd: "node -e 'process.stdout.write(\"MATRIX_BENCH_READY\\n\")'",
     });
 
-    expect(execFile).toHaveBeenCalledTimes(1);
-    const args = execFile.mock.calls[0]?.[1];
+    expect(spawnPty).toHaveBeenCalledTimes(1);
+    const args = spawnPty.mock.calls[0]?.[1];
     expect(args).toEqual([
       "--session",
       "bench",
       "--layout-string",
       expect.stringContaining('command="node"'),
-      "attach",
-      "--create-background",
-      "bench",
     ]);
     expect(String(args?.[3])).toContain('cwd="/home/alice/work"');
     expect(String(args?.[3])).toContain('args "-e"');
     expect(String(args?.[3])).toContain("MATRIX_BENCH_READY");
+  });
+
+  it("rejects session creation when the retained PTY exits during startup", async () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => {
+      setTimeout(() => pty.emitExit(1), 0);
+      return pty;
+    });
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 10 });
+
+    await expect(adapter.createSession({ name: "broken" })).rejects.toMatchObject({
+      code: "zellij_failed",
+      safeMessage: "Shell operation failed",
+      diagnostic: {
+        binary: "zellij",
+        kind: "process_failed",
+        exitCode: 1,
+      },
+    });
+  });
+
+  it("kills retained creation PTYs when deleting sessions", async () => {
+    const pty = ptyProcess();
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({ execFile, spawnPty, timeoutMs: 25, startupDelayMs: 1 });
+
+    await adapter.createSession({ name: "main" });
+    await adapter.deleteSession("main", { force: true });
+
+    expect(pty.kill).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["delete-session", "main", "--force"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it("evicts the oldest retained creation PTY when the cap is reached", async () => {
+    const first = ptyProcess();
+    const second = ptyProcess();
+    const spawnPty = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+    const adapter = createZellijAdapter({
+      execFile: vi.fn(),
+      spawnPty,
+      timeoutMs: 25,
+      startupDelayMs: 1,
+      maxRetainedPtys: 1,
+    });
+
+    await adapter.createSession({ name: "first" });
+    await adapter.createSession({ name: "second" });
+
+    expect(first.kill).toHaveBeenCalledTimes(1);
+    expect(second.kill).not.toHaveBeenCalled();
   });
 
   it("creates tabs and panes with terminal-capable environment at process launch", async () => {
