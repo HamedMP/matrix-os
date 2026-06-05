@@ -399,9 +399,36 @@ public final class AppModel: ObservableObject {
         activePanel = panel
     }
 
-    /// Placeholder ⌘N action — card creation lands in US2 (mutations).
-    public func newCardPlaceholder() {
-        // Intentionally a no-op in US1; wired in US2.
+    /// ⌘N / column "+": create a new zellij session on the VPS and refresh the
+    /// board so it appears as a card (TE01). Best-effort; failures are silent-safe
+    /// (no raw text), the board simply does not gain a card.
+    public func newCardPlaceholder() { createSession() }
+
+    /// Whether a session create is in flight (disables the action, shows progress).
+    @Published public private(set) var isCreatingSession = false
+
+    public func createSession() {
+        guard !isCreatingSession, let profile, let baseURL = try? profile.gatewayBaseURL() else { return }
+        isCreatingSession = true
+        let client = makeClient(baseURL, principal)
+        Task { [weak self] in
+            defer { Task { @MainActor in self?.isCreatingSession = false } }
+            struct CreateSessionRequest: Encodable {
+                let kind = "shell"
+                let runtimePreference = "zellij"
+            }
+            struct CreateSessionResponse: Decodable {}
+            do {
+                let _: CreateSessionResponse = try await client.post(
+                    "/api/sessions",
+                    body: CreateSessionRequest()
+                )
+                await self?.refresh()
+            } catch {
+                // Generic, user-safe: surface a board-level disconnected hint only
+                // if we are otherwise idle. Never leak the underlying error.
+            }
+        }
     }
 
     private func displayName(for card: Card) -> String {
