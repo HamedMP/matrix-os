@@ -103,6 +103,7 @@ describe("device routes", () => {
       expect(verificationUri.searchParams.get("redirect_uri")).toBe(
         "matrixos://auth?status=approved",
       );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
     });
 
     it("ignores native callbacks for other clients or invalid schemes", async () => {
@@ -424,9 +425,53 @@ describe("device routes", () => {
       const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
         /device_csrf=([^;]+)/,
       )![1];
+      const verificationUri = new URL(code.verificationUri);
+      const redirectSig = verificationUri.searchParams.get("redirect_sig");
       const html = await setCookieRes.text();
       expect(html).toContain('id="native-redirect-uri"');
+      expect(html).toContain('id="native-redirect-sig"');
       expect(html).toContain("matrixos://auth?status=approved");
+      expect(redirectSig).toEqual(expect.any(String));
+
+      const approveRes = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-alice",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf,
+          redirectUri: "matrixos://auth?status=approved",
+          redirectSig: redirectSig ?? "",
+        }).toString(),
+      });
+
+      expect(approveRes.status).toBe(200);
+      const successHtml = await approveRes.text();
+      expect(successHtml).toContain("Return to Matrix OS");
+      expect(successHtml).toContain("matrixos://auth?status=approved");
+      expect(successHtml).toContain('http-equiv="refresh"');
+    });
+
+    it("ignores manually appended native callbacks without the macOS signature", async () => {
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}&redirect_uri=${encodeURIComponent("matrixos://auth?status=approved")}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+      const html = await setCookieRes.text();
+      expect(html).not.toContain("matrixos://auth?status=approved");
 
       const approveRes = await app.request("/auth/device/approve", {
         method: "POST",
@@ -444,9 +489,8 @@ describe("device routes", () => {
 
       expect(approveRes.status).toBe(200);
       const successHtml = await approveRes.text();
-      expect(successHtml).toContain("Return to Matrix OS");
-      expect(successHtml).toContain("matrixos://auth?status=approved");
-      expect(successHtml).toContain('http-equiv="refresh"');
+      expect(successHtml).not.toContain("matrixos://auth?status=approved");
+      expect(successHtml).not.toContain('http-equiv="refresh"');
     });
 
     it("leaves the device code pending when approval only carries the CSRF cookie", async () => {

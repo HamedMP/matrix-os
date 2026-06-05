@@ -26,6 +26,7 @@ describe("shell name and path validation", () => {
     expect(validateSessionName("main")).toBe("main");
     expect(validateSessionName("1")).toBe("1");
     expect(validateSessionName("matrix-sess_abc123")).toBe("matrix-sess_abc123");
+    expect(validateSessionName("a".repeat(64))).toBe("a".repeat(64));
     expect(validateLayoutName("dev-workspace-1")).toBe("dev-workspace-1");
     expect(validateProfileName("local")).toBe("local");
   });
