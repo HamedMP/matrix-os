@@ -128,13 +128,15 @@ describe("cli/file-transfer-client", () => {
 
   it("reports missing remote files clearly on download", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
+    const destination = join(tempDir, "new-parent/missing.txt");
 
     await expect(
       downloadRemoteFile(
         { gatewayUrl: "https://gateway.example", token: "token" },
         "missing.txt",
-        join(tempDir, "missing.txt"),
+        destination,
       ),
     ).rejects.toMatchObject({ code: "remote_file_not_found" });
+    await expect(stat(join(tempDir, "new-parent"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

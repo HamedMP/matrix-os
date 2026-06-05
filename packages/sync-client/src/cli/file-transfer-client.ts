@@ -100,7 +100,6 @@ export async function downloadRemoteFile(
   options: DownloadOptions = {},
 ): Promise<{ ok: true; path: string; size: number }> {
   const resolvedLocal = expandLocalPath(localPath);
-  await mkdir(dirname(resolvedLocal), { recursive: true, mode: 0o700 });
   try {
     const existing = await lstat(resolvedLocal);
     if (existing.isSymbolicLink()) {
@@ -128,6 +127,7 @@ export async function downloadRemoteFile(
   }
 
   const bytes = Buffer.from(await res.arrayBuffer());
+  await mkdir(dirname(resolvedLocal), { recursive: true, mode: 0o700 });
   const tmpPath = `${resolvedLocal}.matrix-download-${randomUUID()}.tmp`;
   const mode = options.secret ? 0o600 : 0o644;
   try {
