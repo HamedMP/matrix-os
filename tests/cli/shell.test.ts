@@ -394,6 +394,124 @@ describe("shell CLI command", () => {
     expect(stderrWrites.join("")).toContain("REMOTE_BYTES");
   });
 
+  it("honors connect --json without writing terminal bytes to stdout", async () => {
+    class OutputWebSocket {
+      static instances = 0;
+      constructor(_url: string, _options?: unknown) {
+        OutputWebSocket.instances += 1;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CONNECT_BYTES" })));
+        }
+        if (event === "close") {
+          queueMicrotask(() => listener());
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+
+    await shellCommand.subCommands!.connect.run!({
+      args: { name: "main", dev: true, token: "tok", json: true, WebSocketImpl: OutputWebSocket },
+    } as never);
+
+    expect(OutputWebSocket.instances).toBe(1);
+    expect(logs.map((line) => JSON.parse(line))).toEqual([
+      { v: 1, ok: true, data: { detached: true } },
+    ]);
+    expect(stdoutWrites.join("")).not.toContain("CONNECT_BYTES");
+    expect(stderrWrites.join("")).toContain("CONNECT_BYTES");
+  });
+
+  it("honors connect -c --json by creating and attaching", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (/\/api\/(?:terminal\/)?sessions$/.test(url) && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    class CreateThenOutputWebSocket {
+      static instances = 0;
+      private readonly instance: number;
+      constructor(_url: string, _options?: unknown) {
+        CreateThenOutputWebSocket.instances += 1;
+        this.instance = CreateThenOutputWebSocket.instances;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message" && this.instance === 1) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "error", code: "session_not_found" })));
+        }
+        if (event === "message" && this.instance === 2) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CREATED_CONNECT_BYTES" })));
+        }
+        if (event === "close" && this.instance === 2) {
+          queueMicrotask(() => listener());
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+
+    await shellCommand.subCommands!.connect.run!({
+      args: { name: "main", create: true, dev: true, token: "tok", json: true, WebSocketImpl: CreateThenOutputWebSocket },
+    } as never);
+
+    expect(CreateThenOutputWebSocket.instances).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/terminal\/sessions$/),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(logs.map((line) => JSON.parse(line))).toEqual([
+      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: true } },
+    ]);
+    expect(stdoutWrites.join("")).not.toContain("CREATED_CONNECT_BYTES");
+    expect(stderrWrites.join("")).toContain("CREATED_CONNECT_BYTES");
+  });
+
   it("creates missing sessions with connect -c", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/api/sessions") && init?.method === "POST") {
