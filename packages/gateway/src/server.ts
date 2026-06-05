@@ -33,6 +33,7 @@ import { listDirectory } from "./files-tree.js";
 import { getMissingFileFallback } from "./file-fallbacks.js";
 import { getMimeType } from "./file-utils.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
+import { createFileBlobRoutes } from "./file-blob-routes.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
@@ -2816,6 +2817,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     return c.json(result);
   });
+  app.route("/api/files", createFileBlobRoutes({ homePath }));
 
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });

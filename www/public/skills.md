@@ -41,6 +41,7 @@ Or just read this URL and follow the steps.
 - Do not paste Matrix tokens, Clerk tokens, GitHub tokens, Claude keys, Codex keys, or OAuth codes into third-party websites.
 - Prefer hosted `matrix login --profile cloud` and browser/device flows over copying secrets into chat.
 - For first-run hosted onboarding, use the `cloud` profile explicitly. Do not use `--dev`, `--profile local`, `matrix profile use local`, localhost URLs, `MATRIXOS_PLATFORM_URL`, or `MATRIXOS_GATEWAY_URL` unless the human explicitly asks for Matrix local-stack development.
+- If the human wants to reuse local AI-agent credentials, use Matrix CLI transfer commands only. Do not read, print, summarize, or paste credential file contents into chat.
 - Treat the Matrix VPS as the user's computer. Ask before deleting files, resetting sessions, or installing global packages that may change their environment.
 - Use named shell sessions for setup so the human can reattach from the Matrix web terminal.
 
@@ -75,6 +76,7 @@ Authenticate:
 matrix login --profile cloud
 matrix status
 matrix instance info
+matrix agent auth scan
 ```
 
 If `matrix login --profile cloud` says no Matrix instance exists yet, ask the human to sign up at:
@@ -85,30 +87,42 @@ https://app.matrix-os.com
 
 After the VPS is provisioned, run `matrix login --profile cloud` again.
 
+## Agent Credential Setup
+
+After `matrix agent auth scan`, ask the human which found credentials they want copied to the Matrix VPS. Only run the matching command after they approve:
+
+```bash
+matrix upload --secret ~/.codex/auth.json .codex/auth.json
+matrix upload --secret ~/.claude/.credentials.json .claude/.credentials.json
+matrix upload --secret ~/.local/share/opencode/auth.json .local/share/opencode/auth.json
+matrix upload --secret ~/.pi/agent/auth.json .pi/agent/auth.json
+```
+
+These commands transfer files through Matrix CLI without exposing token contents to the agent transcript. If Claude Code is logged in only through macOS Keychain, do not try to extract it; launch Claude once on the Matrix VPS and let the human complete the remote login flow.
+
 ## Interactive Setup
 
 Interactive commands must use Matrix shell sessions. Do not invent a separate SSH path.
 
 ```text
 local terminal
-  matrix run -it -- claude
+  matrix run -it --session setup -- claude
     -> gateway WebSocket /ws/terminal
       -> zellij session on the user's Matrix VPS
-        -> pane running claude/codex/gh auth login/etc
+        -> pane running the selected agent
 ```
 
 Use these commands:
 
 ```bash
-# Bring your own agent: Claude, Codex, or another terminal agent.
-matrix run -it -- claude
-matrix run -it -- codex
-
 # Use a named setup session so the human and web terminal can reattach.
 matrix shell connect -c setup
 matrix run -it --session setup -- gh auth login
 matrix run -it --session setup -- claude
+matrix run -it --session setup -- codex
 ```
+
+Run either Claude or Codex according to the human's choice; do not start both unless the human explicitly asks.
 
 `matrix shell connect -c setup` creates the named session if it does not exist, then connects to it. If the human already has a working web terminal or CLI session, reuse that session instead of requiring a new one named `setup`.
 
@@ -254,10 +268,13 @@ matrix status
 matrix doctor
 matrix instance info
 matrix instance logs
+matrix agent auth scan
 matrix shell ls
 matrix shell new setup --cmd bash
 matrix shell connect setup
 matrix shell connect -c setup
+matrix upload --secret ~/.codex/auth.json .codex/auth.json
+matrix upload --secret ~/.claude/.credentials.json .claude/.credentials.json
 matrix run -it --session setup -- claude
 matrix run -it --session setup -- codex
 matrix run -it --session setup -- gh auth login

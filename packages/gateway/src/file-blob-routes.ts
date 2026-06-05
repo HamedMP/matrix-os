@@ -1,0 +1,129 @@
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, extname } from "node:path";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
+import { getMimeType } from "./file-utils.js";
+import {
+  resolveExistingFileApiPath,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
+
+const FILE_BLOB_BODY_LIMIT = 10 * 1024 * 1024;
+
+const BoolQuerySchema = z
+  .enum(["true", "false"])
+  .optional()
+  .transform((value) => value === "true");
+
+const BlobQuerySchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+  force: BoolQuerySchema,
+  secret: BoolQuerySchema,
+});
+
+export interface FileBlobRouteDeps {
+  homePath: string;
+}
+
+function invalidPath(c: Context) {
+  return c.json({ error: "invalid_path" }, 400);
+}
+
+async function safeUnlink(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return;
+    }
+    throw err;
+  }
+}
+
+export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
+  const app = new Hono();
+  const putBodyLimit = bodyLimit({
+    maxSize: FILE_BLOB_BODY_LIMIT,
+    onError: (c) => c.json({ error: "payload_too_large" }, 413),
+  });
+
+  function parseQuery(c: Context) {
+    const parsed = BlobQuerySchema.safeParse({
+      path: c.req.query("path"),
+      force: c.req.query("force"),
+      secret: c.req.query("secret"),
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  app.get("/blob", async (c) => {
+    const parsed = parseQuery(c);
+    if (!parsed) return invalidPath(c);
+
+    const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
+    if (!resolved) return c.json({ error: "not_found" }, 404);
+
+    const stats = await stat(resolved);
+    if (!stats.isFile()) return c.json({ error: "not_file" }, 400);
+    if (stats.size > FILE_BLOB_BODY_LIMIT) return c.json({ error: "payload_too_large" }, 413);
+
+    const body = await readFile(resolved);
+    return c.body(body, 200, {
+      "Content-Type": getMimeType(extname(basename(resolved))),
+      "Content-Length": String(stats.size),
+    });
+  });
+
+  app.put("/blob", putBodyLimit, async (c) => {
+    const parsed = parseQuery(c);
+    if (!parsed) return invalidPath(c);
+
+    const resolved = resolveWritableFileApiPath(deps.homePath, parsed.path);
+    if (!resolved) return invalidPath(c);
+
+    try {
+      const existing = await lstat(resolved);
+      if (existing.isDirectory()) return c.json({ error: "not_file" }, 400);
+      if (!parsed.force) return c.json({ error: "file_exists" }, 409);
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        throw err;
+      }
+    }
+
+    const body = Buffer.from(await c.req.arrayBuffer());
+    const parent = dirname(resolved);
+    const tmpPath = `${resolved}.matrix-upload-${randomUUID()}.tmp`;
+    const mode = parsed.secret ? 0o600 : 0o644;
+
+    try {
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+      await writeFile(tmpPath, body, { flag: "wx", mode });
+      await rename(tmpPath, resolved);
+      return c.json({ ok: true, path: parsed.path, size: body.byteLength });
+    } catch (err: unknown) {
+      await safeUnlink(tmpPath);
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return invalidPath(c);
+      }
+      console.error("[file-blob] upload failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "write_failed" }, 500);
+    }
+  });
+
+  return app;
+}

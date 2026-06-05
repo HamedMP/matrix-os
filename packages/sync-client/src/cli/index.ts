@@ -12,6 +12,9 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
 import { runCommand } from "./commands/run.js";
+import { uploadCommand } from "./commands/upload.js";
+import { downloadCommand } from "./commands/download.js";
+import { agentCommand } from "./commands/agent.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../../package.json") as { version: string };
@@ -33,6 +36,9 @@ const main = defineCommand({
     whoami: whoamiCommand,
     status: statusCommand,
     run: runCommand,
+    upload: uploadCommand,
+    download: downloadCommand,
+    agent: agentCommand,
     doctor: doctorCommand,
     instance: instanceCommand,
     completion: completionCommand,
