@@ -124,6 +124,31 @@ description: "Task list for 086 Matrix OS native macOS app"
 
 ---
 
+## Phase 4b — Expansion (US7–US10) — see phase2-expansion.md
+
+**US7 — fresh session per card**
+- [ ] TE01 [US7] ⌘N + column "+" create a card → `POST /api/sessions` (idempotent), link new `linkedSessionId`, optimistic add; open attaches terminal.
+- [ ] TE02 [US7] "New terminal" on a card → zellij `createTab`; tabs strip switches tabs.
+
+**US8 — projects: clone / new / GitHub auth**
+- [ ] TE03 [US8] Project picker in board chrome (replace hardcoded slug); `GET /api/workspace/projects`; persist last project.
+- [ ] TE04 [US8] "New project" → `POST /api/projects` (name + optional remote); idempotent unique-slug.
+- [ ] TE05 [US8] "Clone repo" → session terminal runs the clone into `~/projects/<slug>` (or gateway clone route if present); progress in the card terminal.
+- [ ] TE06 [US8] "Connect GitHub" → card terminal pre-runs `gh auth login`; reflect `GET /api/github/status`.
+
+**US9 — ticket import**
+- [ ] TE07 [US9] GitHub issues import → tasks (title/body/labels/state→column); idempotent on issue id.
+- [ ] TE08 [US9] Linear import via **platform-owned** proxy (`PLATFORM_INTERNAL_URL`; no `PIPEDREAM_*` on VPS); idempotent on Linear id.
+
+**US10 — labels & assignment (incl. Symphony)**
+- [ ] TE09 [US10] Server delta (TDD-first, Kysely migration): `tasks.tags string[]` + `tasks.assignee`; PATCH support; revision-guarded; `bodyLimit`; generic errors. Tests in `tests/gateway/`.
+- [ ] TE10 [US10] Label add/remove + assignee UI on cards; validated `SAFE_SLUG`, capped.
+- [ ] TE11 [US10] "Assign to Symphony" → start a Symphony run scoped to the task/session; card shows run status + agent activity (ties US5).
+
+**Notes**: TE09 is the only hard server delta; clone/gh/import can run largely in-terminal + existing task POSTs first, then graduate to dedicated routes. Each sub-group is its own stacked PR; Greptile 5/5.
+
+---
+
 ## Dependencies & Execution Order
 
 - **Phase 0** (spikes) → unblocks risky areas; do first.
