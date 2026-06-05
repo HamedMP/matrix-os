@@ -1,17 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { DEFAULT_TERMINAL_THEME_ID, type TerminalThemeId } from "./terminal-defaults";
 
-export type TerminalThemeId =
-  | "system"
-  | "one-dark"
-  | "one-light"
-  | "catppuccin-mocha"
-  | "dracula"
-  | "solarized-dark"
-  | "solarized-light"
-  | "nord"
-  | "github-dark"
-  | "github-light";
+export { DEFAULT_TERMINAL_THEME_ID, type TerminalThemeId } from "./terminal-defaults";
 
 export const TERMINAL_FONT_FAMILIES = ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"] as const;
 export type TerminalFontFamily = (typeof TERMINAL_FONT_FAMILIES)[number];
@@ -37,7 +28,7 @@ interface TerminalSettings {
 export const useTerminalSettings = create<TerminalSettings>()(
   persist(
     (set) => ({
-      themeId: "system",
+      themeId: DEFAULT_TERMINAL_THEME_ID,
       fontSize: 13,
       fontFamily: "MesloLGS NF",
       ligatures: true,

@@ -52,18 +52,18 @@ describe("theme system", () => {
     expect(DEFAULT_THEME.fonts.sans).toBeDefined();
   });
 
-  it("uses a dark fallback theme for desktop and mobile first-run shell state", () => {
+  it("uses the light default theme for first-run shell state", () => {
     const theme = getThemeFallback();
 
-    expect(theme.mode).toBe("dark");
-    expect(theme.colors.background).not.toBe(DEFAULT_THEME.colors.background);
+    expect(theme).toBe(DEFAULT_THEME);
+    expect(theme.colors.background).toBe("#FAFAF9");
   });
 
-  it("normalizes empty first-run theme responses against the dark shell fallback", () => {
+  it("normalizes empty first-run theme responses against the light shell fallback", () => {
     const fallback = getThemeFallback();
     const theme = normalizeTheme({}, fallback);
 
-    expect(theme.mode).toBe("dark");
+    expect(theme.mode).toBeUndefined();
     expect(theme.colors.background).toBe(fallback.colors.background);
   });
 
@@ -74,7 +74,7 @@ describe("theme system", () => {
     expect(normalizeTheme([], fallback)).toBe(fallback);
   });
 
-  it("preserves explicit saved light themes over the dark shell fallback", () => {
+  it("preserves explicit saved light themes over the shell fallback", () => {
     const theme = normalizeTheme({
       name: "saved-light",
       mode: "light",
@@ -87,6 +87,21 @@ describe("theme system", () => {
     expect(theme.mode).toBe("light");
     expect(theme.colors.background).toBe("#ffffff");
     expect(theme.colors.foreground).toBe("#111111");
+  });
+
+  it("preserves explicit saved dark themes over the shell fallback", () => {
+    const theme = normalizeTheme({
+      name: "saved-dark",
+      mode: "dark",
+      colors: {
+        background: "#111111",
+        foreground: "#ffffff",
+      },
+    });
+
+    expect(theme.mode).toBe("dark");
+    expect(theme.colors.background).toBe("#111111");
+    expect(theme.colors.foreground).toBe("#ffffff");
   });
 
   it("preserves legacy saved light themes that omit mode", () => {
