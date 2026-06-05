@@ -1,0 +1,157 @@
+name: Platform Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment to deploy
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      promote:
+        description: Promote the deployed revision to 100% traffic
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: platform-cloud-run-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy platform
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
+      MATRIX_APP_URL: ${{ vars.MATRIX_APP_URL }}
+      MATRIX_APP_DOMAIN_HOSTS: ${{ vars.MATRIX_APP_DOMAIN_HOSTS }}
+      MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
+      CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}
+      POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+      POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || 'https://neo.matrix-os.com' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate deployment configuration
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            GCP_PROJECT_ID \
+            GCP_REGION \
+            ARTIFACT_REPOSITORY \
+            CLOUD_RUN_SERVICE \
+            CLOUD_RUN_SERVICE_ACCOUNT \
+            PLATFORM_PUBLIC_URL \
+            MATRIX_APP_URL \
+            MATRIX_APP_DOMAIN_HOSTS \
+            MATRIX_CODE_DOMAIN_HOSTS \
+            CUSTOMER_VPS_IMAGE_VERSION; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub environment variable(s): %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v4
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v4
+
+      - name: Build platform image
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${GITHUB_SHA::12}"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          gcloud builds submit . \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --config cloudbuild.platform.yaml \
+            --substitutions "_IMAGE=$image" \
+            --timeout=1200s
+
+      - name: Deploy tagged revision
+        run: |
+          set -euo pipefail
+          service_exists=0
+          if gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" >/dev/null 2>&1; then
+            service_exists=1
+          fi
+
+          traffic_flags=(--tag candidate)
+          if [ "$service_exists" = "1" ]; then
+            traffic_flags+=(--no-traffic)
+          fi
+
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
+            --platform managed \
+            --port 8080 \
+            --cpu 1 \
+            --memory 1Gi \
+            --concurrency 30 \
+            --timeout 300 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --ingress all \
+            --allow-unauthenticated \
+            "${traffic_flags[@]}" \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=true,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest"
+
+      - name: Smoke candidate revision
+        run: |
+          set -euo pipefail
+          candidate_url=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format 'value(status.traffic[?tag=="candidate"].url)')
+          if [ -z "$candidate_url" ]; then
+            echo "No tagged candidate Cloud Run URL found; refusing to smoke the live service URL." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 10 "$candidate_url/health" >/dev/null
+
+      - name: Promote revision
+        if: ${{ inputs.promote }}
+        run: |
+          set -euo pipefail
+          revision=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format 'value(status.traffic[?tag=="candidate"].revisionName)')
+          if [ -z "$revision" ]; then
+            echo "No candidate revision found" >&2
+            exit 1
+          fi
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-revisions "$revision=100"
