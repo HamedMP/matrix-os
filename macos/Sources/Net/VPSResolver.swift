@@ -52,6 +52,28 @@ public enum VPSResolver {
         return url
     }
 
+    /// Auto-create terminal URL: `/ws/terminal[?cwd=...]` (no session param) so the
+    /// gateway creates a new zellij session and attaches. Used when a card has no
+    /// linked session yet (matrix-shell connect-or-create semantics).
+    public static func autoCreateTerminalURL(
+        gatewayHost: String,
+        runtimeSlot: String?,
+        cwd: String?
+    ) throws -> URL {
+        let host = gatewayHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { throw GatewayError.misconfigured }
+        var comps = URLComponents()
+        comps.scheme = "wss"
+        comps.host = host
+        comps.path = "/ws/terminal"
+        var items: [URLQueryItem] = []
+        if let cwd, !cwd.isEmpty { items.append(URLQueryItem(name: "cwd", value: cwd)) }
+        if let slot = normalizedSlot(runtimeSlot) { items.append(URLQueryItem(name: "runtime", value: slot)) }
+        comps.queryItems = items.isEmpty ? nil : items
+        guard let url = comps.url else { throw GatewayError.misconfigured }
+        return url
+    }
+
     /// "primary" and empty/whitespace are treated as the default slot (no param).
     private static func normalizedSlot(_ slot: String?) -> String? {
         guard let raw = slot?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -87,5 +109,9 @@ public struct ConnectionProfile: Equatable, Sendable {
             session: session,
             fromSeq: fromSeq
         )
+    }
+
+    public func autoCreateTerminalURL(cwd: String?) throws -> URL {
+        try VPSResolver.autoCreateTerminalURL(gatewayHost: gatewayHost, runtimeSlot: runtimeSlot, cwd: cwd)
     }
 }
