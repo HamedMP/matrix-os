@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import { lstat, readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
+import { once } from "node:events";
 
 export interface PresignedUrl {
   path: string;
@@ -11,6 +13,11 @@ export interface PresignedUrl {
 export interface GatewayClient {
   gatewayUrl: string;
   token: string;
+}
+
+export interface DownloadFileOptions {
+  expectedSize?: number;
+  maxBytes?: number;
 }
 
 export class AuthRejectedError extends Error {
@@ -81,6 +88,7 @@ export async function downloadFile(
   presignedUrl: string,
   localPath: string,
   expectedHash?: string,
+  options: DownloadFileOptions = {},
 ): Promise<void> {
   const res = await fetch(presignedUrl, {
     signal: AbortSignal.timeout(30_000),
@@ -90,17 +98,24 @@ export async function downloadFile(
     throw new Error(`Download failed: ${res.status}`);
   }
 
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (expectedHash) {
-    const actualHash = `sha256:${createHash("sha256").update(buffer).digest("hex")}`;
-    if (actualHash !== expectedHash) {
-      throw new Error("Downloaded content hash did not match expected hash");
-    }
+  const contentLength = Number(res.headers.get("content-length") ?? "");
+  if (
+    options.maxBytes !== undefined &&
+    Number.isFinite(contentLength) &&
+    contentLength > options.maxBytes
+  ) {
+    throw new Error(`Downloaded content exceeded ${options.maxBytes} bytes`);
   }
   await mkdir(dirname(localPath), { recursive: true, mode: 0o700 });
   const tmpPath = `${localPath}.matrixos-${randomUUID()}.tmp`;
   try {
-    await writeFile(tmpPath, buffer, { flag: "wx", mode: 0o600 });
+    const { size, hash } = await writeResponseBodyToTempFile(res, tmpPath, options);
+    if (options.expectedSize !== undefined && size !== options.expectedSize) {
+      throw new Error("Downloaded content size did not match expected size");
+    }
+    if (expectedHash && hash !== expectedHash) {
+      throw new Error("Downloaded content hash did not match expected hash");
+    }
     try {
       const localStat = await lstat(localPath);
       if (localStat.isSymbolicLink()) {
@@ -130,6 +145,67 @@ export async function downloadFile(
     }
     throw err;
   }
+}
+
+async function writeResponseBodyToTempFile(
+  res: Response,
+  tmpPath: string,
+  options: DownloadFileOptions,
+): Promise<{ size: number; hash: string }> {
+  const hash = createHash("sha256");
+  let size = 0;
+  const writer = createWriteStream(tmpPath, {
+    flags: "wx",
+    mode: 0o600,
+  });
+  const writerError = new Promise<never>((_, reject) => {
+    writer.once("error", reject);
+  });
+  const writerClosed = once(writer, "close");
+
+  const writeChunk = async (chunk: Uint8Array): Promise<void> => {
+    size += chunk.byteLength;
+    if (options.maxBytes !== undefined && size > options.maxBytes) {
+      throw new Error(`Downloaded content exceeded ${options.maxBytes} bytes`);
+    }
+    hash.update(chunk);
+    if (!writer.write(chunk)) {
+      await Promise.race([once(writer, "drain"), writerError]);
+    }
+  };
+
+  try {
+    if (!res.body) {
+      const buffer = Buffer.from(await res.arrayBuffer());
+      await writeChunk(buffer);
+    } else {
+      const reader = res.body.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            await writeChunk(value);
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    await Promise.race([
+      new Promise<void>((resolve) => writer.end(resolve)),
+      writerError,
+    ]);
+  } catch (err: unknown) {
+    writer.destroy();
+    await writerClosed;
+    throw err;
+  }
+
+  return {
+    size,
+    hash: `sha256:${hash.digest("hex")}`,
+  };
 }
 
 export async function commitFiles(

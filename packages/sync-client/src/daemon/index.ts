@@ -38,9 +38,12 @@ import {
   fetchManifest,
   AuthRejectedError,
   VersionConflictError,
+  type GatewayClient,
+  type PresignedUrl,
 } from "./r2-client.js";
 import {
   RemoteManifestEnvelopeSchema,
+  type ManifestEntry,
   type LocalFileState,
   type RemoteManifestEnvelope,
   type SyncChangeEvent,
@@ -53,6 +56,9 @@ const socketPath = join(configDir, "daemon.sock");
 const pidFile = join(configDir, "daemon.pid");
 const SYNC_STATE_FILE_CAP = 50_000;
 const SYNC_STATE_CONFLICT_CAP = 500;
+const INITIAL_PULL_PRESIGN_BATCH_SIZE = 100;
+const INITIAL_PULL_CONCURRENCY = 4;
+const INITIAL_PULL_PROGRESS_EVERY = 100;
 
 interface PollLogger {
   info: (msg: string) => void;
@@ -876,6 +882,195 @@ export function parseRemoteManifestEnvelope(body: unknown): RemoteManifestEnvelo
   return parsed.data;
 }
 
+export interface InitialPullLogger {
+  info: (obj: unknown, msg?: string) => void;
+  warn: (obj: unknown, msg?: string) => void;
+  error: (obj: unknown, msg?: string) => void;
+}
+
+export interface InitialPullOptions {
+  gatewayClient: GatewayClient;
+  syncRoot: string;
+  syncState: SyncState;
+  remoteFiles: Record<string, ManifestEntry>;
+  toLocal: (remotePath: string) => string | null;
+  toRemote: (localRel: string) => string;
+  logger: InitialPullLogger;
+  requestPresignedUrls?: typeof requestPresignedUrls;
+  reconcileRemoteFileChange?: typeof reconcileRemoteFileChange;
+  downloadFile?: typeof downloadFile;
+  saveSyncState: () => Promise<void>;
+  refreshConflictCopyPathIndex: () => void;
+  concurrency?: number;
+  presignBatchSize?: number;
+  progressEvery?: number;
+}
+
+export interface InitialPullResult {
+  pulled: number;
+  skipped: number;
+  failed: number;
+}
+
+interface InitialPullFile {
+  remotePath: string;
+  localRel: string;
+  entry: ManifestEntry;
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  const limit = Math.max(1, Math.floor(concurrency));
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      for (;;) {
+        const index = nextIndex++;
+        const item = items[index];
+        if (!item) {
+          return;
+        }
+        await worker(item);
+      }
+    },
+  );
+  await Promise.all(workers);
+}
+
+function chunkInitialPullFiles(
+  files: InitialPullFile[],
+  chunkSize: number,
+): InitialPullFile[][] {
+  const size = Math.max(1, Math.floor(chunkSize));
+  const chunks: InitialPullFile[][] = [];
+  for (let start = 0; start < files.length; start += size) {
+    chunks.push(files.slice(start, start + size));
+  }
+  return chunks;
+}
+
+export async function runInitialPull(
+  options: InitialPullOptions,
+): Promise<InitialPullResult> {
+  const requestPresign = options.requestPresignedUrls ?? requestPresignedUrls;
+  const reconcileRemote = options.reconcileRemoteFileChange ?? reconcileRemoteFileChange;
+  const downloadRemoteFile = options.downloadFile ?? downloadFile;
+  const concurrency = options.concurrency ?? INITIAL_PULL_CONCURRENCY;
+  const presignBatchSize = options.presignBatchSize ?? INITIAL_PULL_PRESIGN_BATCH_SIZE;
+  const progressEvery = options.progressEvery ?? INITIAL_PULL_PROGRESS_EVERY;
+  const result: InitialPullResult = { pulled: 0, skipped: 0, failed: 0 };
+  let completed = 0;
+  const filesToPull: InitialPullFile[] = [];
+  const recordCompleted = () => {
+    completed++;
+    if (progressEvery > 0 && completed % progressEvery === 0) {
+      options.logger.info(
+        { completed, total: filesToPull.length, skipped: result.skipped, failed: result.failed },
+        "Initial pull progress",
+      );
+    }
+  };
+
+  for (const [remotePath, entry] of Object.entries(options.remoteFiles)) {
+    if (!entry?.hash) continue;
+    const localRel = options.toLocal(remotePath);
+    if (!localRel) continue;
+    const cached = options.syncState.files[remotePath];
+    if (cached?.lastSyncedHash === entry.hash) {
+      result.skipped++;
+      continue;
+    }
+    filesToPull.push({ remotePath, localRel, entry });
+  }
+
+  for (const batch of chunkInitialPullFiles(filesToPull, presignBatchSize)) {
+    let urls: PresignedUrl[];
+    try {
+      urls = await requestPresign(
+        options.gatewayClient,
+        batch.map(({ remotePath }) => ({ path: remotePath, action: "get" as const })),
+      );
+    } catch (err: unknown) {
+      if (err instanceof AuthRejectedError) {
+        throw err;
+      }
+      for (const { remotePath } of batch) {
+        result.failed++;
+        recordCompleted();
+        options.logger.error({ err, path: remotePath }, "Initial-pull failed");
+      }
+      continue;
+    }
+    const urlsByPath = new Map<string, PresignedUrl>(
+      urls.map((url) => [url.path, url]),
+    );
+
+    await runWithConcurrency(batch, concurrency, async ({ remotePath, localRel, entry }) => {
+      const url = urlsByPath.get(remotePath);
+      if (!url) {
+        result.failed++;
+        recordCompleted();
+        options.logger.error({ path: remotePath }, "Initial-pull presign missing");
+        return;
+      }
+
+      try {
+        const reconcileResult = await reconcileRemote(options.syncState, {
+          syncRoot: options.syncRoot,
+          localRel,
+          remotePath,
+          remoteHash: entry.hash,
+          remoteSize: entry.size,
+          remotePeerId: entry.peerId,
+          toRemotePath: options.toRemote,
+          onConflictCleanupError: (cleanupErr, conflictPath) => {
+            options.logger.warn(
+              { err: cleanupErr, path: conflictPath },
+              "Failed to clean up reserved conflict path after download error",
+            );
+          },
+          downloadRemote: (targetPath) => downloadRemoteFile(
+            url.url,
+            targetPath,
+            entry.hash,
+            {
+              expectedSize: entry.size,
+              maxBytes: entry.size,
+            },
+          ),
+        });
+        if (reconcileResult.status === "conflict-created") {
+          options.logger.warn(
+            { path: remotePath, conflictPath: reconcileResult.conflictPath },
+            "Initial pull conflicted with local edits; preserved both files",
+          );
+        }
+        options.refreshConflictCopyPathIndex();
+        result.pulled++;
+      } catch (err: unknown) {
+        if (err instanceof AuthRejectedError) {
+          throw err;
+        }
+        result.failed++;
+        options.logger.error({ err, path: remotePath }, "Initial-pull failed");
+      } finally {
+        recordCompleted();
+      }
+    });
+  }
+
+  if (result.pulled > 0 || result.skipped > 0) {
+    await options.saveSyncState();
+    options.logger.info(result, "Initial pull complete");
+  }
+
+  return result;
+}
+
 export interface DaemonAuthResolution {
   auth: AuthData | null;
   profileName: string;
@@ -1309,64 +1504,17 @@ export async function startDaemon(): Promise<void> {
     }
 
     const remoteFiles = remoteEnvelope.manifest.files;
-    let pulled = 0;
-    let skipped = 0;
-    for (const [remotePath, entry] of Object.entries(remoteFiles)) {
-      if (!entry?.hash) continue;
-      // Only pull files that belong to our prefix. A daemon for `~/audit`
-      // doesn't materialize `notes/...` from the same gateway.
-      const localRel = toLocal(remotePath);
-      if (!localRel) continue;
-
-      const cached = syncState.files[remotePath];
-      if (cached?.lastSyncedHash === entry.hash) {
-        skipped++;
-        continue;
-      }
-
-      try {
-        const urls = await requestPresignedUrls(gatewayClient, [
-          { path: remotePath, action: "get" },
-        ]);
-        if (!urls[0]) continue;
-
-        const result = await reconcileRemoteFileChange(syncState, {
-          syncRoot: config.syncPath,
-          localRel,
-          remotePath,
-          remoteHash: entry.hash,
-          remoteSize: entry.size,
-          remotePeerId: entry.peerId,
-          toRemotePath: toRemote,
-          onConflictCleanupError: (cleanupErr, conflictPath) => {
-            logger.warn(
-              { err: cleanupErr, path: conflictPath },
-              "Failed to clean up reserved conflict path after download error",
-            );
-          },
-          downloadRemote: (targetPath) => downloadFile(
-            urls[0]!.url,
-            targetPath,
-            entry.hash,
-          ),
-        });
-        if (result.status === "conflict-created") {
-          logger.warn(
-            { path: remotePath, conflictPath: result.conflictPath },
-            "Initial pull conflicted with local edits; preserved both files",
-          );
-        }
-        refreshConflictCopyPathIndex();
-        pulled++;
-      } catch (err) {
-        if (exitOnAuthFailure(err, logger)) return;
-        logger.error({ err, path: remotePath }, "Initial-pull failed");
-      }
-    }
-    if (pulled > 0 || skipped > 0) {
-      await saveSyncState(stateFile, syncState);
-      logger.info({ pulled, skipped }, "Initial pull complete");
-    }
+    await runInitialPull({
+      gatewayClient,
+      syncRoot: config.syncPath,
+      syncState,
+      remoteFiles,
+      toLocal,
+      toRemote,
+      logger,
+      saveSyncState: () => saveSyncState(stateFile, syncState),
+      refreshConflictCopyPathIndex,
+    });
   } catch (err) {
     if (exitOnAuthFailure(err, logger)) return;
     logger.warn(
