@@ -137,6 +137,36 @@ Scope sync to a subtree of your instance with `--folder`:
 matrix sync ~/work-projects --folder projects
 ```
 
+## Single-file transfer
+
+Use `matrix upload` and `matrix download` for one-off files that should not start the sync daemon or touch R2 sync state.
+
+```bash
+matrix upload ./README.md projects/demo/README.md
+matrix upload --force ./config.json system/config.json
+matrix download projects/demo/README.md ./README.remote.md
+matrix download --force projects/demo/README.md ./README.remote.md
+```
+
+For credential files, add `--secret` so the remote file is written owner-only:
+
+```bash
+matrix upload --secret ~/.codex/auth.json .codex/auth.json
+```
+
+Agents should run the Matrix CLI command and must not print credential file contents.
+
+## Agent auth scan
+
+`matrix agent auth scan` checks for local AI-agent credential files without reading or printing tokens.
+
+```bash
+matrix agent auth scan
+matrix agent auth scan --json
+```
+
+The scan can detect transfer-ready files for Codex, Claude Code file credentials, OpenCode, and Pi. macOS Keychain-only Claude Code credentials are reported as manual because they cannot be moved through generic file upload.
+
 ## Instance ops
 
 ```bash
