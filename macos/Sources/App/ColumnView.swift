@@ -37,7 +37,7 @@ struct ColumnView: View {
                 .padding(.bottom, Spacing.x4)
             }
         }
-        .frame(width: 264)
+        .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.surfaceRail)
         .overlay(alignment: .trailing) {
             // Subtle vertical hairline between columns.

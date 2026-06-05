@@ -13,6 +13,13 @@ import MatrixTerminal
 
 struct BoardView: View {
     @ObservedObject var model: AppModel
+    /// Board zoom (Conductor-style). ⌘+/⌘-/⌘0 and pinch.
+    @State private var zoom: CGFloat = 1
+    @GestureState private var pinch: CGFloat = 1
+
+    private static let minZoom: CGFloat = 0.5
+    private static let maxZoom: CGFloat = 1.6
+    private func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, Self.minZoom), Self.maxZoom) }
 
     var body: some View {
         ZStack {
@@ -67,18 +74,41 @@ struct BoardView: View {
     }
 
     private var columns: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(model.board.columns) { column in
-                    ColumnView(
-                        column: column,
-                        selectedCardID: model.selectedCard?.id,
-                        onOpenCard: openCard
-                    )
-                    .frame(maxHeight: .infinity, alignment: .top)
-                }
+        // Five lifecycle lanes fill the available width evenly (no dead space).
+        // Pinch / ⌘+/⌘-/⌘0 scale the lanes (Conductor-style zoom).
+        let effectiveZoom = clampZoom(zoom * pinch)
+        return HStack(alignment: .top, spacing: 0) {
+            ForEach(model.board.columns) { column in
+                ColumnView(
+                    column: column,
+                    selectedCardID: model.selectedCard?.id,
+                    onOpenCard: openCard
+                )
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scaleEffect(effectiveZoom, anchor: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .gesture(
+            MagnificationGesture()
+                .updating($pinch) { value, state, _ in state = value }
+                .onEnded { value in zoom = clampZoom(zoom * value) }
+        )
+        .background(zoomShortcuts)
+    }
+
+    /// Hidden buttons providing ⌘+/⌘-/⌘0 zoom shortcuts.
+    private var zoomShortcuts: some View {
+        ZStack {
+            Button("") { zoom = clampZoom(zoom + 0.1) }
+                .keyboardShortcut("=", modifiers: .command)
+            Button("") { zoom = clampZoom(zoom - 0.1) }
+                .keyboardShortcut("-", modifiers: .command)
+            Button("") { zoom = 1 }
+                .keyboardShortcut("0", modifiers: .command)
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
     }
 
     // MARK: - Detail pane (panel switcher + terminal)

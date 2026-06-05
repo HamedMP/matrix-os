@@ -93,8 +93,11 @@ public final class TerminalSession: ObservableObject {
     }
 
     /// Forwards a resize to the client and remembers it for re-send after attach.
+    /// De-duplicates identical sizes so layout passes that report the same grid do
+    /// not spam the server (which made zellij thrash/rearrange panes).
     public func resize(cols: Int, rows: Int) {
         guard cols > 0, rows > 0 else { return }
+        if let last = lastSize, last.cols == cols, last.rows == rows { return }
         lastSize = (cols, rows)
         let client = self.client
         Task { await client.resize(cols: cols, rows: rows) }
