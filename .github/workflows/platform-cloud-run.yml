@@ -90,6 +90,7 @@ jobs:
             --region "$GCP_REGION" \
             --config cloudbuild.platform.yaml \
             --substitutions "_IMAGE=$image" \
+            --suppress-logs \
             --timeout=1200s
 
       - name: Deploy tagged revision
