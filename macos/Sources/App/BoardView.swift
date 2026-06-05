@@ -78,7 +78,10 @@ struct BoardView: View {
                     column: column,
                     selectedCardID: selectedBoardCard?.id,
                     onOpenCard: openCard,
-                    onAddCard: { model.createTask(status: $0) }
+                    onAddCard: { model.createTask(status: $0) },
+                    onMoveCard: { id, status in
+                        model.updateTaskStatus(cardId: id, to: status, order: nil)
+                    }
                 )
             }
         }
