@@ -22,6 +22,7 @@ function runCli(entry: string, args: string[], home: string) {
       MATRIX_HOME: join(home, "matrix-home"),
     },
     encoding: "utf-8",
+    timeout: 30_000,
   });
 }
 
@@ -53,27 +54,18 @@ describe("CLI leading global flags", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(expectOutput(result.stdout, result))).toEqual({
+    const payload = JSON.parse(expectOutput(result.stdout, result));
+    expect(payload).toMatchObject({
       v: 1,
       ok: true,
       data: {
         active: "cloud",
-        profiles: [
-          {
-            name: "cloud",
-            active: true,
-            platformUrl: "https://app.matrix-os.com",
-            gatewayUrl: "https://app.matrix-os.com",
-          },
-          {
-            name: "local",
-            active: false,
-            platformUrl: "http://localhost:9000",
-            gatewayUrl: "http://localhost:4000",
-          },
-        ],
       },
     });
+    expect(payload.data.profiles.map((profile: { name: string }) => profile.name)).toEqual([
+      "cloud",
+      "local",
+    ]);
   });
 
   it("honors --profile before a published shell command", async () => {

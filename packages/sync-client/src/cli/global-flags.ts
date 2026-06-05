@@ -39,7 +39,7 @@ function consumeLeadingGlobalFlag(argv: string[], index: number): string[] | nul
   }
 
   const value = argv[index + 1];
-  if (value === undefined) {
+  if (value === undefined || value.startsWith("-")) {
     return [arg];
   }
   return [arg, value];

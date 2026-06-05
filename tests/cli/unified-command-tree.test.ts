@@ -56,6 +56,11 @@ describe("unified CLI command tree", () => {
       "--quiet",
       "-v",
     ]);
+    expect(normalizeLeadingGlobalFlags(["--profile", "--json", "status"])).toEqual([
+      "status",
+      "--profile",
+      "--json",
+    ]);
   });
 
   it("redirects published commands when documented global flags lead", () => {
