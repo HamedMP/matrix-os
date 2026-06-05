@@ -119,6 +119,9 @@ function attachOptionsFromArgs(args: Record<string, unknown>) {
   const options: ShellAttachOptions = {
     fromSeq: parseFromSeq(args.fromSeq),
   };
+  if (args.json === true) {
+    options.output = process.stderr;
+  }
   if (args.noMouse === true) {
     options.mouse = false;
   }
