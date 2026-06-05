@@ -55,7 +55,7 @@ private struct RootView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        BoardView(model: model)
+        RootShellView(model: model)
             .background(WindowVibrancy())
             .preferredColorScheme(.dark)
     }
