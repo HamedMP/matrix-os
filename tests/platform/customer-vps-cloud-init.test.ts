@@ -434,4 +434,22 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('""|[!a-z0-9]*|*[^a-z0-9-]*|*-) fail "invalid runtime slot"');
     expect(cloudInit).toContain('{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}');
   });
+
+  it('bounds matrixctl R2 aws operations in host scripts and cloud-init', () => {
+    const root = process.cwd();
+    const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    for (const script of [matrixctl, cloudInit]) {
+      expect(script).toContain('MATRIX_R2_OPERATION_TIMEOUT_SECONDS="${MATRIX_R2_OPERATION_TIMEOUT_SECONDS:-300}"');
+      expect(script).toContain('MATRIX_R2_CONNECT_TIMEOUT_SECONDS="${MATRIX_R2_CONNECT_TIMEOUT_SECONDS:-10}"');
+      expect(script).toContain('MATRIX_R2_READ_TIMEOUT_SECONDS="${MATRIX_R2_READ_TIMEOUT_SECONDS:-60}"');
+      expect(script).toContain('timeout --preserve-status "$MATRIX_R2_OPERATION_TIMEOUT_SECONDS"');
+      expect(script).toContain('--cli-connect-timeout "$MATRIX_R2_CONNECT_TIMEOUT_SECONDS"');
+      expect(script).toContain('--cli-read-timeout "$MATRIX_R2_READ_TIMEOUT_SECONDS"');
+      expect(script).toContain('aws_s3 s3 cp "$src" "s3://${R2_BUCKET}/${key}"');
+      expect(script).toContain('aws_s3 s3 cp "s3://${R2_BUCKET}/${key}" "$dest"');
+      expect(script).toContain('aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key"');
+    }
+  });
 });
