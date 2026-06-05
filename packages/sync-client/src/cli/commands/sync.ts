@@ -2,19 +2,39 @@ import { defineCommand } from "citty";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { loadConfig, saveConfig, defaultSyncPath, generatePeerId } from "../../lib/config.js";
-import { sendCommand, isDaemonRunning } from "../daemon-client.js";
+import {
+  isDaemonClientError,
+  sendCommand,
+  isDaemonRunning,
+} from "../daemon-client.js";
 import { installService, startService } from "../../daemon/service.js";
 import { resolveCliProfile } from "../profiles.js";
+import { formatCliError, formatCliSuccess } from "../output.js";
 
 const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
 
-async function runStatus(): Promise<void> {
+function writeSyncError(err: unknown, json: boolean): void {
+  const code = isDaemonClientError(err) ? err.code : "sync_failed";
+  const message = isDaemonClientError(err) ? err.message : "Sync command failed.";
+  console.error(json ? formatCliError(code, message) : `Error: ${message}`);
+  process.exitCode = 1;
+}
+
+async function runStatus(json: boolean): Promise<void> {
   const running = await isDaemonRunning();
   if (!running) {
+    if (json) {
+      console.log(formatCliSuccess({ running: false }));
+      return;
+    }
     console.log("Sync daemon is not running.");
     return;
   }
   const status = await sendCommand("status");
+  if (json) {
+    console.log(formatCliSuccess({ ...status, running: true }));
+    return;
+  }
   console.log("Sync status:");
   console.log(`  Syncing: ${status.syncing ? "yes" : "paused"}`);
   console.log(`  Manifest version: ${status.manifestVersion}`);
@@ -121,6 +141,12 @@ export const syncCommand = defineCommand({
       description: "Override bearer token for this command",
       required: false,
     },
+    json: {
+      type: "boolean",
+      description: "Emit machine-readable JSON output",
+      required: false,
+      default: false,
+    },
     path: {
       type: "string",
       alias: "p",
@@ -137,19 +163,25 @@ export const syncCommand = defineCommand({
   },
   run: async ({ args, rawArgs }) => {
     const first = rawArgs?.find((a) => !a.startsWith("-"));
+    const json = args.json === true;
 
     if (first && SUBCOMMANDS.has(first)) {
-      switch (first) {
-        case "status":
-          return runStatus();
-        case "pause":
-          await sendCommand("pause");
-          console.log("Sync paused.");
-          return;
-        case "resume":
-          await sendCommand("resume");
-          console.log("Sync resumed.");
-          return;
+      try {
+        switch (first) {
+          case "status":
+            return runStatus(json);
+          case "pause":
+            await sendCommand("pause");
+            console.log(json ? formatCliSuccess({ paused: true }) : "Sync paused.");
+            return;
+          case "resume":
+            await sendCommand("resume");
+            console.log(json ? formatCliSuccess({ resumed: true }) : "Sync resumed.");
+            return;
+        }
+      } catch (err: unknown) {
+        writeSyncError(err, json);
+        return;
       }
     }
 

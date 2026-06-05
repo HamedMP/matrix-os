@@ -4,6 +4,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  DAEMON_UNAVAILABLE_CODE,
+  DAEMON_UNAVAILABLE_MESSAGE,
   IPC_MAX_RESPONSE_BYTES,
   probeDaemonSocket,
   sendCommand,
@@ -90,6 +92,13 @@ describe("sendCommand", () => {
       for (const socket of sockets) socket.destroy();
       await closeServer(server);
     }
+  });
+
+  it("rejects missing daemon sockets with a safe stable error", async () => {
+    await expect(sendCommand("pause", {}, 100)).rejects.toMatchObject({
+      code: DAEMON_UNAVAILABLE_CODE,
+      message: DAEMON_UNAVAILABLE_MESSAGE,
+    });
   });
 
   it("rejects oversized daemon responses before timing out", async () => {
