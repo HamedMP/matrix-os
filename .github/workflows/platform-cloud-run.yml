@@ -94,7 +94,16 @@ jobs:
             --format 'value(metadata.build.id)' \
             --timeout=1200s)
           if [ -z "$build_id" ]; then
-            echo "Cloud Build did not return a build id" >&2
+            build_id=$(gcloud builds list \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --filter "images:$image" \
+              --sort-by '~createTime' \
+              --limit 1 \
+              --format 'value(id)')
+          fi
+          if [ -z "$build_id" ]; then
+            echo "Could not resolve Cloud Build id for $image" >&2
             exit 1
           fi
 
