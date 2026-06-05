@@ -17,6 +17,9 @@ import MatrixBoard
 import MatrixModel
 import MatrixNet
 import MatrixTerminal
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Within the App module, `ConnectionProfile` means the MatrixNet one (carries
 /// gateway/WS URL resolution). MatrixModel also defines a Keychain-ref profile;
@@ -54,6 +57,18 @@ public enum OpenCardError: Error, Equatable, Sendable {
     }
 }
 
+/// Device-authorization sign-in progress (drives the onboarding UI).
+public enum SignInState: Equatable, Sendable {
+    /// Not signing in.
+    case idle
+    /// Requesting a device code from the platform.
+    case starting
+    /// Waiting for the user to approve in the browser. Shows the user code.
+    case awaitingApproval(userCode: String, verificationUri: String)
+    /// Sign-in failed; generic, user-safe message (no internal leakage).
+    case failed(String)
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
@@ -72,10 +87,20 @@ public final class AppModel: ObservableObject {
     @Published public var activePanel: Panel = .terminal
     /// A generic, user-safe error to surface in chrome (nil when clear).
     @Published public private(set) var openError: OpenCardError?
+    /// Device-auth sign-in progress (drives the onboarding sign-in UI).
+    @Published public private(set) var signIn: SignInState = .idle
 
     // MARK: - Dependencies
 
     private let principal: PrincipalProvider
+    /// Device-authorization client for in-app sign-in (same flow as the `matrix` CLI).
+    private let deviceAuth: any DeviceAuthorizing
+    /// Opens an external URL (browser) for device approval. Injected for tests.
+    private let openExternalURL: @Sendable (URL) -> Void
+    /// Gateway host for the profile created after a successful sign-in.
+    private let signInGatewayHost: String
+    /// In-flight sign-in task, so a re-tap cancels the previous attempt.
+    private var signInTask: Task<Void, Never>?
     /// The project whose tasks the board renders.
     public private(set) var projectSlug: String
 
@@ -112,7 +137,12 @@ public final class AppModel: ObservableObject {
                 transport: URLSessionShellTransport()
             )
             return TerminalSession(displayName: name, client: client)
-        }
+        },
+        deviceAuth: any DeviceAuthorizing = DeviceAuthClient(
+            platformURL: URL(string: "https://app.matrix-os.com")!
+        ),
+        signInGatewayHost: String = "app.matrix-os.com",
+        openExternalURL: @escaping @Sendable (URL) -> Void = AppModel.defaultOpenExternalURL
     ) {
         self.principal = principal
         self.projectSlug = projectSlug
@@ -120,6 +150,9 @@ public final class AppModel: ObservableObject {
         self.makeClient = makeClient
         self.makeLoader = makeLoader
         self.makeTerminal = makeTerminal
+        self.deviceAuth = deviceAuth
+        self.signInGatewayHost = signInGatewayHost
+        self.openExternalURL = openExternalURL
         // A placeholder loader so `board` is non-nil before a profile is selected.
         // Replaced on `selectProfile`. The placeholder never fetches (no profile).
         self.board = BoardStore(loader: UnconfiguredBoardLoader())
@@ -136,6 +169,72 @@ public final class AppModel: ObservableObject {
             projectSlug: projectSlug,
             profile: profile
         )
+    }
+
+    // MARK: - Sign in (device authorization)
+
+    /// Default browser opener used outside tests.
+    public static let defaultOpenExternalURL: @Sendable (URL) -> Void = { url in
+        #if canImport(AppKit)
+        NSWorkspace.shared.open(url)
+        #endif
+    }
+
+    /// Starts the device-authorization sign-in: requests a device code, opens the
+    /// verification page in the browser, and polls until approved. On success it
+    /// stores the principal token, builds a profile, and loads the board.
+    public func beginSignIn() {
+        signInTask?.cancel()
+        signIn = .starting
+        signInTask = Task { [weak self] in await self?.runSignIn() }
+    }
+
+    /// Cancels an in-flight sign-in and returns to the idle onboarding state.
+    public func cancelSignIn() {
+        signInTask?.cancel()
+        signInTask = nil
+        signIn = .idle
+    }
+
+    private func runSignIn() async {
+        do {
+            let start = try await deviceAuth.startDeviceAuth()
+            if Task.isCancelled { return }
+            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: start.verificationUri)
+            if let url = URL(string: start.verificationUri) {
+                openExternalURL(url)
+            }
+
+            let deadline = Date().addingTimeInterval(TimeInterval(max(1, start.expiresIn)))
+            var interval = max(1, start.interval)
+            while Date() < deadline {
+                try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+                if Task.isCancelled { return }
+                let result = try await deviceAuth.pollForToken(deviceCode: start.deviceCode)
+                switch result {
+                case .pending:
+                    continue
+                case .slowDown:
+                    interval += 5
+                case .expired:
+                    signIn = .failed("Sign-in expired. Try again.")
+                    return
+                case let .approved(token):
+                    try await principal.setToken(token.accessToken)
+                    signIn = .idle
+                    let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
+                    selectProfile(ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil))
+                    await refresh()
+                    return
+                }
+            }
+            signIn = .failed("Sign-in timed out. Try again.")
+        } catch is CancellationError {
+            // Cancelled by a re-tap or sign-out; leave state as set by the canceller.
+        } catch {
+            // Generic, user-safe — never surface raw gateway/provider text.
+            signIn = .failed("Sign-in failed. Check your connection and try again.")
+        }
     }
 
     // MARK: - Profile selection

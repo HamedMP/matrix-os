@@ -26,7 +26,12 @@ struct BoardView: View {
     private var content: some View {
         switch model.phase {
         case .needsProfile:
-            NoProfileView(onCreate: openCreateFlow)
+            NoProfileView(
+                onCreate: openCreateFlow,
+                onSignIn: { model.beginSignIn() },
+                onCancelSignIn: { model.cancelSignIn() },
+                signIn: model.signIn
+            )
         case .connecting:
             BoardSkeletonView()
         case .ready, .disconnected:
