@@ -962,10 +962,8 @@ public final class AppModel: ObservableObject {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
         let wasActive = activeTabID == id
         openTabs.remove(at: index)
+        shutdownTerminalSession(for: id)
         if !wasActive { return }
-        if let session = terminalSessions.removeValue(forKey: id) {
-            session.shutdown()
-        }
         terminal = nil
         selectedCard = nil
         openError = nil
@@ -989,6 +987,15 @@ public final class AppModel: ObservableObject {
         terminal = nil
         selectedCard = nil
         openError = nil
+    }
+
+    private func shutdownTerminalSession(for tabID: String) {
+        if let current = terminal, terminalSessions[tabID] === current {
+            terminal = nil
+        }
+        if let session = terminalSessions.removeValue(forKey: tabID) {
+            session.shutdown()
+        }
     }
 
     public func closeSession(named name: String) {
@@ -1401,7 +1408,12 @@ public final class AppModel: ObservableObject {
         } else {
             openTabs.append(tab)
             if openTabs.count > 16 {
-                openTabs.removeFirst(openTabs.count - 16)
+                let overflow = openTabs.count - 16
+                let evictedIDs = openTabs.prefix(overflow).map(\.id)
+                openTabs.removeFirst(overflow)
+                for id in evictedIDs {
+                    shutdownTerminalSession(for: id)
+                }
             }
         }
         activeTabID = tab.id
