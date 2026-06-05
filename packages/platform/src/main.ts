@@ -2027,7 +2027,7 @@ function getAuthPage(
           }, 10000);
         })
       ]).finally(function() {
-        if (timeoutId) window.clearTimeout(timeoutId);
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       });
     }
     function redirectAfterSignOutIssue(err) {
@@ -3455,7 +3455,11 @@ export function createApp(deps: {
         try {
           clerkSessionRevoked = await clerkAuth.revokeSession(result.sessionId);
         } catch (err: unknown) {
-          console.warn('[auth/app-session] Clerk session revoke failed', err instanceof Error ? err.name : typeof err);
+          if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+            console.warn('[auth/app-session] Clerk session revoke timed out', err.name);
+          } else {
+            console.warn('[auth/app-session] Clerk session revoke failed', err instanceof Error ? err.name : typeof err);
+          }
         }
       }
     }

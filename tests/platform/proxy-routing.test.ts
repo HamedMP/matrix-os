@@ -1158,6 +1158,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("fetch('/api/auth/app-session'");
     expect(html).toContain("function clerkSignOutWithTimeout()");
     expect(html).toContain("window.setTimeout(function() {");
+    expect(html).toContain("if (timeoutId !== undefined) window.clearTimeout(timeoutId);");
     expect(html).toContain("window.location.replace(signOutTarget)");
     expect(html).toContain("[matrix] Clerk.signOut did not finish");
     expect(html).not.toContain("window.location.replace(redirectTarget)");
@@ -1477,6 +1478,40 @@ describe("platform proxy routing", () => {
     expect(setCookie).toContain("__session=;");
     expect(setCookie).toContain("__client_uat=;");
     expect(errorSpy).toHaveBeenCalledWith("[auth/app-session] Clerk session revoke failed", "Error");
+  });
+
+  it("logs Clerk revoke timeouts specifically while returning generic sign-out success", async () => {
+    const errorSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const timeoutError = new Error("operation timed out");
+    timeoutError.name = "TimeoutError";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice", sid: "sess_123" }),
+        revokeSession: vi.fn().mockRejectedValue(timeoutError),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/app-session", {
+      method: "DELETE",
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_app_session=matrix-token; __session=clerk-token",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      cleared: true,
+      clerkSessionRevoked: false,
+    });
+    expect(combinedSetCookie(res.headers)).toContain("__session=;");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[auth/app-session] Clerk session revoke timed out",
+      "TimeoutError",
+    );
   });
 
   it("lets a signed-in checkout return start hosted runtime provisioning without admin credentials", async () => {
