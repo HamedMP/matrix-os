@@ -1,16 +1,21 @@
 export interface ClerkTokenPayload {
   sub: string;
+  sid?: unknown;
   [key: string]: unknown;
 }
 
 export interface VerifyResult {
   authenticated: boolean;
   userId?: string;
+  sessionId?: string;
   error?: string;
 }
 
+export const CLERK_SESSION_REVOKE_TIMEOUT_MS = 10_000;
+
 export interface ClerkAuthDeps {
   verifyToken: (token: string) => Promise<ClerkTokenPayload>;
+  revokeSession?: (sessionId: string) => Promise<void>;
 }
 
 export interface ClerkAuth {
@@ -23,10 +28,46 @@ export interface ClerkAuth {
     token: string,
     expectedUserId: string,
   ): Promise<VerifyResult>;
+  revokeSession(sessionId: string): Promise<boolean>;
   isPublicPath(path: string): boolean;
 }
 
 const PUBLIC_PATHS = ["/health"];
+
+export function createClerkSessionRevoker(opts: {
+  secretKey: string;
+  apiUrl?: string;
+  fetchImpl?: typeof fetch;
+}): (sessionId: string) => Promise<void> {
+  const apiUrl = opts.apiUrl ?? "https://api.clerk.com";
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  return async (sessionId) => {
+    const response = await fetchImpl(
+      `${apiUrl}/v1/sessions/${encodeURIComponent(sessionId)}/revoke`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${opts.secretKey}`,
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(CLERK_SESSION_REVOKE_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) {
+      throw new Error("Clerk session revoke failed");
+    }
+  };
+}
+
+function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
+  return {
+    authenticated: true,
+    userId: payload.sub,
+    ...(typeof payload.sid === "string" && payload.sid.length > 0
+      ? { sessionId: payload.sid }
+      : {}),
+  };
+}
 
 export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
   return {
@@ -48,7 +89,7 @@ export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
     async verify(token) {
       try {
         const payload = await deps.verifyToken(token);
-        return { authenticated: true, userId: payload.sub };
+        return verifiedResultFromPayload(payload);
       } catch (err) {
         return {
           authenticated: false,
@@ -63,13 +104,19 @@ export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
         if (payload.sub !== expectedUserId) {
           return { authenticated: false, error: "User mismatch" };
         }
-        return { authenticated: true, userId: payload.sub };
+        return verifiedResultFromPayload(payload);
       } catch (err) {
         return {
           authenticated: false,
           error: err instanceof Error ? err.message : "Token verification failed",
         };
       }
+    },
+
+    async revokeSession(sessionId) {
+      if (!deps.revokeSession) return false;
+      await deps.revokeSession(sessionId);
+      return true;
     },
 
     isPublicPath(path) {

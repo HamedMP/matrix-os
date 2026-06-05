@@ -17,10 +17,13 @@ const clerkState = vi.hoisted(() => ({
   openUserProfile: vi.fn(),
 }));
 
+const replaceMock = vi.hoisted(() => vi.fn());
+
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
+    signOut: clerkState.signOut,
   }),
   useUser: () => ({
     user: clerkState.user,
@@ -52,6 +55,14 @@ describe("UserButton", () => {
         headers: { "content-type": "application/json" },
       }),
     );
+    replaceMock.mockReset();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        origin: "http://localhost:3000",
+        replace: replaceMock,
+      },
+    });
   });
 
   afterEach(() => {
@@ -122,7 +133,7 @@ describe("UserButton", () => {
     });
   });
 
-  it("re-enables sign out when Clerk sign-out does not settle", async () => {
+  it("redirects after platform cleanup when Clerk sign-out does not settle", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     clerkState.signOut.mockImplementation(() => new Promise(() => {}));
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
@@ -145,6 +156,25 @@ describe("UserButton", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith("[auth] Clerk sign-out timed out");
-    expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
+    expect(replaceMock).toHaveBeenCalledWith("http://localhost:3000/sign-in");
+  });
+
+  it("redirects after platform cleanup when Clerk sign-out rejects", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    clerkState.signOut.mockRejectedValue(new Error("boom"));
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+
+    fireEvent.click(await openAccountMenu());
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/auth/app-session",
+        expect.objectContaining({ method: "DELETE" }),
+      );
+      expect(errorSpy).toHaveBeenCalledWith("[auth] Clerk sign-out failed", "Error");
+      expect(replaceMock).toHaveBeenCalledWith("http://localhost:3000/sign-in");
+    });
   });
 });
