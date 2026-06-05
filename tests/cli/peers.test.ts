@@ -165,4 +165,31 @@ describe("peers CLI command", () => {
     });
     expect(errors[0]).not.toContain("provider exploded");
   });
+
+  it("emits the profile_not_found code in JSON for a missing profile", async () => {
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+    const errors = captureErrors();
+
+    await peersCommand.run!({ args: { profile: "missing", json: true } } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(errors[0]!)).toEqual({
+      v: 1,
+      error: { code: "profile_not_found", message: "Request failed" },
+    });
+  });
+
+  it("emits the profile_not_found code in human mode for a missing profile", async () => {
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+    const errors = captureErrors();
+
+    await peersCommand.run!({ args: { profile: "missing" } } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(errors).toEqual(["Error: Request failed (profile_not_found)"]);
+  });
 });
