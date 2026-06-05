@@ -44,6 +44,29 @@ describe("cli/file-transfer-client", () => {
     expect(Buffer.from(await (init?.body as Blob).arrayBuffer()).toString("utf8")).toBe('{"token":"secret"}');
   });
 
+  it("uploads symlinked local credential files", async () => {
+    const target = join(tempDir, "target-auth.json");
+    const link = join(tempDir, "auth-link.json");
+    await writeFile(target, '{"token":"from-symlink"}');
+    await symlink(target, link);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, path: ".claude/.credentials.json", size: 24 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await uploadLocalFile(
+      { gatewayUrl: "https://gateway.example", token: "token" },
+      link,
+      ".claude/.credentials.json",
+      { secret: true },
+    );
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(Buffer.from(await (init?.body as Blob).arrayBuffer()).toString("utf8")).toBe('{"token":"from-symlink"}');
+  });
+
   it("rejects missing local files and local directories before upload", async () => {
     await expect(
       uploadLocalFile(
@@ -87,5 +110,17 @@ describe("cli/file-transfer-client", () => {
         link,
       ),
     ).rejects.toThrow(/symlink/i);
+  });
+
+  it("reports missing remote files clearly on download", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
+
+    await expect(
+      downloadRemoteFile(
+        { gatewayUrl: "https://gateway.example", token: "token" },
+        "missing.txt",
+        join(tempDir, "missing.txt"),
+      ),
+    ).rejects.toMatchObject({ code: "remote_file_not_found" });
   });
 });

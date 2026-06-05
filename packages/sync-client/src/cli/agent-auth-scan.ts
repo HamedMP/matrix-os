@@ -61,14 +61,8 @@ async function exists(path: string): Promise<boolean> {
     await access(path);
     return true;
   } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return false;
-    }
-    throw err;
+    void err;
+    return false;
   }
 }
 

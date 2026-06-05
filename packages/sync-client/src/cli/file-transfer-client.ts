@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -43,6 +43,9 @@ function errorForResponse(res: Response, fallback: string): Error {
   if (res.status === 401 || res.status === 403) {
     return codedError("Auth token rejected or expired. Run `matrix login` again.", "auth_rejected");
   }
+  if (res.status === 404) {
+    return codedError("Remote file not found.", "remote_file_not_found");
+  }
   if (res.status === 409) {
     return codedError("Remote file already exists. Re-run with --force to overwrite.", "remote_file_exists");
   }
@@ -61,7 +64,7 @@ export async function uploadLocalFile(
   const resolvedLocal = expandLocalPath(localPath);
   let localStat;
   try {
-    localStat = await lstat(resolvedLocal);
+    localStat = await stat(resolvedLocal);
   } catch (err: unknown) {
     if (
       err instanceof Error &&

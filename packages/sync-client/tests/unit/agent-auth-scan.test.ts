@@ -59,4 +59,18 @@ describe("agent auth scan", () => {
       },
     ]));
   });
+
+  it("treats inaccessible or malformed credential paths as missing instead of crashing", async () => {
+    await writeFile(join(homeDir, ".pi"), "not a directory");
+
+    const result = await scanAgentAuth({ homeDir });
+
+    expect(result.providers.find((provider) => provider.provider === "pi")).toEqual({
+      provider: "pi",
+      status: "missing",
+      localPath: "~/.pi/agent/auth.json",
+      remotePath: ".pi/agent/auth.json",
+      transferable: false,
+    });
+  });
 });
