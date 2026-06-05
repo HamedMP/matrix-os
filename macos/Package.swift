@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "MatrixModel", targets: ["MatrixModel"]),
         .library(name: "MatrixNet", targets: ["MatrixNet"]),
         .library(name: "MatrixTerminal", targets: ["MatrixTerminal"]),
+        .library(name: "MatrixBoard", targets: ["MatrixBoard"]),
     ],
     dependencies: [
         // SwiftTerm: battle-tested VT100/xterm emulator used by the Terminal panel.
@@ -45,9 +46,18 @@ let package = Package(
         ),
         .target(
             name: "MatrixTerminal",
-            // ShellWSClient (Phase 2) is pure URLSession — Foundation-only, independent.
-            // SwiftTerm view + Model wiring land in Phase 3 (T034).
+            dependencies: [
+                "DesignSystem",
+                // SwiftTerm-backed TerminalPanelView lands in US1 (T034).
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             path: "Sources/Terminal",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .target(
+            name: "MatrixBoard",
+            dependencies: ["MatrixNet", "MatrixModel"],
+            path: "Sources/Board",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
@@ -57,7 +67,7 @@ let package = Package(
                 "MatrixModel",
                 "MatrixNet",
                 "MatrixTerminal",
-                // "SwiftTerm", // TODO(086): enable when Terminal panel view is implemented (T034).
+                "MatrixBoard",
             ],
             path: "Sources/App",
             swiftSettings: [
@@ -88,6 +98,12 @@ let package = Package(
             name: "TerminalTests",
             dependencies: ["MatrixTerminal"],
             path: "Tests/TerminalTests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "BoardTests",
+            dependencies: ["MatrixBoard"],
+            path: "Tests/BoardTests",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
