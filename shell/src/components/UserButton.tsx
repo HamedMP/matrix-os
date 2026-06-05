@@ -109,7 +109,7 @@ export function UserButton({ variant = "dock" }: { variant?: UserButtonVariant }
 }
 
 function MountedUserButton({ variant }: { variant: UserButtonVariant }) {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, signOut } = useAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
@@ -133,14 +133,14 @@ function MountedUserButton({ variant }: { variant: UserButtonVariant }) {
     const redirectUrl = getSignInRedirectUrl();
     await clearMatrixAppSession();
     try {
-      await clerkSignOutWithTimeout(clerk.signOut, redirectUrl);
+      await clerkSignOutWithTimeout(signOut, redirectUrl);
+      window.location.replace(redirectUrl);
     } catch (error: unknown) {
-      setSigningOut(false);
       if (isTimeoutError(error)) {
         console.warn("[auth] Clerk sign-out timed out");
-        return;
+      } else {
+        console.error("[auth] Clerk sign-out failed", error instanceof Error ? error.name : typeof error);
       }
-      console.error("[auth] Clerk sign-out failed", error instanceof Error ? error.name : typeof error);
       window.location.replace(redirectUrl);
     }
   }

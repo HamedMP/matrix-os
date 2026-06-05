@@ -38,7 +38,7 @@ import { LegacyContainerOrchestrationDisabledError, type Orchestrator } from './
 import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
-import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
+import { createClerkAuth, createClerkSessionRevoker, type ClerkAuth } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
@@ -111,11 +111,15 @@ const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
 const APP_SESSION_COOKIE = 'matrix_app_session';
+const CLERK_SESSION_COOKIE = '__session';
+const CLERK_CLIENT_UAT_COOKIE = '__client_uat';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
 const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
 const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
+const SAFE_CLERK_CLEAR_COOKIE_NAME = /^(?:__session|__client_uat)_[A-Za-z0-9_-]{1,128}$/;
+const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
@@ -737,6 +741,51 @@ function buildClearAppSessionCookie(): string {
     'SameSite=Lax',
     'Max-Age=0',
   ].join('; ');
+}
+
+function buildClearBrowserCookie(name: string, domain?: string): string {
+  return [
+    `${name}=`,
+    'Path=/',
+    ...(domain ? [`Domain=${domain}`] : []),
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ].join('; ');
+}
+
+function matrixCookieDomainForHost(hostHeader: string | undefined): string | null {
+  const hostname = (hostHeader ?? '').split(':', 1)[0]?.toLowerCase() ?? '';
+  if (hostname === 'matrix-os.com' || hostname.endsWith('.matrix-os.com')) {
+    return 'matrix-os.com';
+  }
+  return null;
+}
+
+function clerkCookieClearNames(cookieHeader: string | undefined): string[] {
+  const names = new Set<string>([CLERK_SESSION_COOKIE, CLERK_CLIENT_UAT_COOKIE]);
+  for (const part of (cookieHeader ?? '').split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const equalsIndex = trimmed.indexOf('=');
+    const name = equalsIndex === -1 ? trimmed : trimmed.slice(0, equalsIndex);
+    if (SAFE_CLERK_CLEAR_COOKIE_NAME.test(name)) {
+      names.add(name);
+    }
+  }
+  return [...names];
+}
+
+function appendSignOutClearCookies(c: import('hono').Context): void {
+  const cookieHeader = c.req.header('cookie');
+  const domain = matrixCookieDomainForHost(c.req.header('host'));
+  c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
+  for (const name of clerkCookieClearNames(cookieHeader)) {
+    c.header('Set-Cookie', buildClearBrowserCookie(name), { append: true });
+    if (domain) {
+      c.header('Set-Cookie', buildClearBrowserCookie(name, domain), { append: true });
+    }
+  }
 }
 
 function applyNoStoreHeaders(c: import('hono').Context): void {
@@ -1912,6 +1961,7 @@ function getAuthPage(
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
     var signOutTarget = ${signOutTargetJson};
+    var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
@@ -1967,6 +2017,25 @@ function getAuthPage(
         footerActionLink: 'font-medium'
       }
     };
+    function clerkSignOutWithTimeout() {
+      var timeoutId;
+      return Promise.race([
+        Promise.resolve(window.Clerk.signOut({ redirectUrl: signOutTarget })),
+        new Promise(function(_, reject) {
+          timeoutId = window.setTimeout(function() {
+            var err = new Error('Clerk sign-out timed out');
+            err.name = 'TimeoutError';
+            reject(err);
+          }, SIGN_OUT_TIMEOUT_MS);
+        })
+      ]).finally(function() {
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      });
+    }
+    function redirectAfterSignOutIssue(err) {
+      console.warn('[matrix] Clerk.signOut did not finish', err instanceof Error ? err.name : String(typeof err));
+      window.location.replace(signOutTarget);
+    }
     function renderSessionState(title, detail, primaryLabel, primaryHandler) {
       var el = document.getElementById('auth');
       el.innerHTML = '';
@@ -2006,16 +2075,12 @@ function getAuthPage(
             console.error('[matrix] App session clear failed', err instanceof Error ? err.message : String(err));
           })
           .then(function() {
-            return window.Clerk.signOut();
+            return clerkSignOutWithTimeout();
           })
           .then(function() {
             window.location.replace(signOutTarget);
           })
-          .catch(function(err) {
-            console.error('[matrix] Clerk.signOut failed', err instanceof Error ? err.message : String(err));
-            signOutButton.disabled = false;
-            signOutButton.textContent = 'Sign out';
-          });
+          .catch(redirectAfterSignOutIssue);
       });
       actions.appendChild(signOutButton);
 
@@ -3384,9 +3449,25 @@ export function createApp(deps: {
   }
 
   app.delete('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
+    let clerkSessionRevoked = false;
+    const clerkToken = clerkAuth?.extractToken(undefined, c.req.header('cookie'));
+    if (clerkAuth && clerkToken) {
+      const result = await clerkAuth.verify(clerkToken);
+      if (result.authenticated && result.sessionId) {
+        try {
+          clerkSessionRevoked = await clerkAuth.revokeSession(result.sessionId);
+        } catch (err: unknown) {
+          if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+            console.warn('[auth/app-session] Clerk session revoke timed out', err.name);
+          } else {
+            console.warn('[auth/app-session] Clerk session revoke failed', err instanceof Error ? err.name : typeof err);
+          }
+        }
+      }
+    }
     applyNoStoreHeaders(c);
-    c.header('Set-Cookie', buildClearAppSessionCookie());
-    return c.json({ cleared: true });
+    appendSignOutClearCookies(c);
+    return c.json({ cleared: true, clerkSessionRevoked });
   });
 
   app.post('/api/auth/provision-runtime', bodyLimit({ maxSize: 1024 }), async (c) => {
@@ -4836,13 +4917,15 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
   let clerkAuth: ClerkAuth | undefined;
-  if (process.env.CLERK_SECRET_KEY) {
+  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+  if (clerkSecretKey) {
     const { verifyToken } = await import('@clerk/backend');
     clerkAuth = createClerkAuth({
       verifyToken: async (token: string) => {
-        const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY! });
+        const payload = await verifyToken(token, { secretKey: clerkSecretKey });
         return payload as { sub: string; [key: string]: unknown };
       },
+      revokeSession: createClerkSessionRevoker({ secretKey: clerkSecretKey }),
     });
   }
 

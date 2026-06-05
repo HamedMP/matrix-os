@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  CLERK_SESSION_REVOKE_TIMEOUT_MS,
   createClerkAuth,
+  createClerkSessionRevoker,
   type ClerkAuth,
 } from "../../packages/platform/src/clerk-auth.js";
 
@@ -76,5 +78,43 @@ describe("T800: Clerk JWT verification on subdomain proxy", () => {
   it("other paths are not public", () => {
     expect(auth.isPublicPath("/api/message")).toBe(false);
     expect(auth.isPublicPath("/ws")).toBe(false);
+  });
+
+  it("extracts the Clerk session id from verified JWT claims", async () => {
+    const verifyFn = vi.fn().mockResolvedValue({ sub: "user_abc123", sid: "sess_123" });
+    auth = createClerkAuth({ verifyToken: verifyFn });
+
+    const result = await auth.verify("tok_test");
+
+    expect(result).toEqual({
+      authenticated: true,
+      userId: "user_abc123",
+      sessionId: "sess_123",
+    });
+  });
+
+  it("revokes Clerk sessions with a bounded direct Backend API fetch", async () => {
+    const signal = AbortSignal.abort();
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const revokeSession = createClerkSessionRevoker({
+      secretKey: "sk_test_matrix",
+      fetchImpl: fetchMock,
+    });
+
+    await revokeSession("sess/with/slashes");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(CLERK_SESSION_REVOKE_TIMEOUT_MS);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.clerk.com/v1/sessions/sess%2Fwith%2Fslashes/revoke",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          Authorization: "Bearer sk_test_matrix",
+          Accept: "application/json",
+        },
+        signal,
+      }),
+    );
   });
 });

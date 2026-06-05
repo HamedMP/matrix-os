@@ -81,6 +81,14 @@ function stubDocker(inspectInfo: { id?: string; ipAddress?: string; running?: bo
   } as unknown as Dockerode;
 }
 
+function combinedSetCookie(headers: Headers): string {
+  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+  if (typeof getSetCookie === "function") {
+    return getSetCookie.call(headers).join("\n");
+  }
+  return headers.get("set-cookie") ?? "";
+}
+
 describe("platform proxy routing", () => {
   let db: PlatformDB;
 
@@ -1148,7 +1156,13 @@ describe("platform proxy routing", () => {
     expect(html).toContain('var signOutTarget = "/sign-in";');
     expect(html).toContain("continueWithClerkSession");
     expect(html).toContain("fetch('/api/auth/app-session'");
-    expect(html).toContain("[matrix] Clerk.signOut failed");
+    expect(html).toContain("function clerkSignOutWithTimeout()");
+    expect(html).toContain("var SIGN_OUT_TIMEOUT_MS = 10000;");
+    expect(html).toContain("window.setTimeout(function() {");
+    expect(html).toContain("}, SIGN_OUT_TIMEOUT_MS);");
+    expect(html).toContain("if (timeoutId !== undefined) window.clearTimeout(timeoutId);");
+    expect(html).toContain("window.location.replace(signOutTarget)");
+    expect(html).toContain("[matrix] Clerk.signOut did not finish");
     expect(html).not.toContain("window.location.replace(redirectTarget)");
   });
 
@@ -1390,6 +1404,116 @@ describe("platform proxy routing", () => {
     });
     expect(exchange.headers.get("set-cookie")).toContain("matrix_app_session=;");
     expect(exchange.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("revokes the current Clerk session and clears Matrix and Clerk cookies on sign-out", async () => {
+    const revokeSession = vi.fn().mockResolvedValue(undefined);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice", sid: "sess_123" }),
+        revokeSession,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/app-session", {
+      method: "DELETE",
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: [
+          "matrix_app_session=matrix-token",
+          "__session=clerk-token",
+          "__client_uat=123",
+          "__session_safeSuffix-123=clerk-token",
+          "__client_uat_safeSuffix_456=456",
+          "__session_unsafe.suffix=ignored",
+          "other=value",
+        ].join("; "),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      cleared: true,
+      clerkSessionRevoked: true,
+    });
+    expect(revokeSession).toHaveBeenCalledWith("sess_123");
+    const setCookie = combinedSetCookie(res.headers);
+    expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("__session=;");
+    expect(setCookie).toContain("__client_uat=;");
+    expect(setCookie).toContain("__session_safeSuffix-123=;");
+    expect(setCookie).toContain("__client_uat_safeSuffix_456=;");
+    expect(setCookie).not.toContain("__session_unsafe.suffix=;");
+    expect(setCookie).toContain("Domain=matrix-os.com");
+  });
+
+  it("returns generic sign-out success and clears cookies when Clerk revoke fails", async () => {
+    const errorSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice", sid: "sess_123" }),
+        revokeSession: vi.fn().mockRejectedValue(new Error("provider exploded")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/app-session", {
+      method: "DELETE",
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_app_session=matrix-token; __session=clerk-token; __client_uat=123",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      cleared: true,
+      clerkSessionRevoked: false,
+    });
+    const setCookie = combinedSetCookie(res.headers);
+    expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("__session=;");
+    expect(setCookie).toContain("__client_uat=;");
+    expect(errorSpy).toHaveBeenCalledWith("[auth/app-session] Clerk session revoke failed", "Error");
+  });
+
+  it("logs Clerk revoke timeouts specifically while returning generic sign-out success", async () => {
+    const errorSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const timeoutError = new Error("operation timed out");
+    timeoutError.name = "TimeoutError";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice", sid: "sess_123" }),
+        revokeSession: vi.fn().mockRejectedValue(timeoutError),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/app-session", {
+      method: "DELETE",
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_app_session=matrix-token; __session=clerk-token",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      cleared: true,
+      clerkSessionRevoked: false,
+    });
+    expect(combinedSetCookie(res.headers)).toContain("__session=;");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[auth/app-session] Clerk session revoke timed out",
+      "TimeoutError",
+    );
   });
 
   it("lets a signed-in checkout return start hosted runtime provisioning without admin credentials", async () => {
@@ -1817,6 +1941,8 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain("window.Clerk.session.getToken()");
     expect(html).toContain("fetch('/api/auth/app-session'");
+    expect(html).toContain("function clerkSignOutWithTimeout()");
+    expect(html).toContain("window.location.replace(signOutTarget)");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).toContain("signal: controller.signal");
     expect(html).toContain("window.clearTimeout(timeoutId);");
