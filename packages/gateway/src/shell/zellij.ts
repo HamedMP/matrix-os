@@ -308,22 +308,24 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         throw safeZellijError(err);
       }
       const startup = { exited: null as PtyExitEvent | null };
+      const retained: RetainedCreatePty = {
+        process: pty,
+        startedAtMs: nowMs(),
+        exitDisposable: null,
+      };
+      retainedCreatePtys.set(options.name, retained);
       const exitDisposable = pty.onExit((event) => {
         startup.exited = event;
         releaseRetainedCreatePty(options.name);
       });
-      retainedCreatePtys.set(options.name, {
-        process: pty,
-        startedAtMs: nowMs(),
-        exitDisposable,
-      });
+      retained.exitDisposable = exitDisposable;
 
       await delay(startupDelayMs);
       if (startup.exited) {
         releaseRetainedCreatePty(options.name);
         const err = Object.assign(new Error("zellij exited during startup"), {
           code: startup.exited.exitCode,
-          signal: startup.exited.signal,
+          signal: startup.exited.signal == null ? undefined : String(startup.exited.signal),
         });
         throw safeZellijError(err);
       }

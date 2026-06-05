@@ -16,7 +16,7 @@ function childProcess() {
 
 function ptyProcess() {
   const dataListeners = new Set<(data: string) => void>();
-  const exitListeners = new Set<(event: { exitCode: number }) => void>();
+  const exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
   return {
     writes: [] as string[],
     resize: vi.fn(),
@@ -28,15 +28,15 @@ function ptyProcess() {
       dataListeners.add(listener);
       return { dispose: () => dataListeners.delete(listener) };
     },
-    onExit(listener: (event: { exitCode: number }) => void) {
+    onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
       exitListeners.add(listener);
       return { dispose: () => exitListeners.delete(listener) };
     },
     emitData(data: string) {
       for (const listener of dataListeners) listener(data);
     },
-    emitExit(exitCode: number) {
-      for (const listener of exitListeners) listener({ exitCode });
+    emitExit(exitCode: number, signal?: number) {
+      for (const listener of exitListeners) listener({ exitCode, signal });
     },
   };
 }
@@ -297,6 +297,25 @@ describe("zellij adapter", () => {
         binary: "zellij",
         kind: "process_failed",
         exitCode: 1,
+      },
+    });
+  });
+
+  it("preserves numeric PTY signals in startup failure diagnostics", async () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => {
+      setTimeout(() => pty.emitExit(0, 15), 0);
+      return pty;
+    });
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 10 });
+
+    await expect(adapter.createSession({ name: "signaled" })).rejects.toMatchObject({
+      code: "zellij_failed",
+      diagnostic: {
+        binary: "zellij",
+        kind: "process_failed",
+        exitCode: 0,
+        signal: "15",
       },
     });
   });
