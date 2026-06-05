@@ -127,7 +127,9 @@ public final class AppModel: ObservableObject {
             GatewayHTTPClient(baseURL: url, tokenProvider: provider)
         },
         makeLoader: @escaping @Sendable (GatewayHTTPClient) -> any BoardLoading = { client in
-            GatewayBoardLoader(client: client)
+            // Render the user's live zellij sessions as cards (their original intent;
+            // a fresh VPS has sessions but no tasks). Task-backed boards land in US2.
+            SessionsBoardLoader(client: client)
         },
         makeTerminal: @escaping @MainActor (URL, String, String, String) -> TerminalSession = { url, token, session, name in
             let client = ShellWSClient(
@@ -153,13 +155,20 @@ public final class AppModel: ObservableObject {
         self.deviceAuth = deviceAuth
         self.signInGatewayHost = signInGatewayHost
         self.openExternalURL = openExternalURL
-        // A placeholder loader so `board` is non-nil before a profile is selected.
-        // Replaced on `selectProfile`. The placeholder never fetches (no profile).
-        self.board = BoardStore(loader: UnconfiguredBoardLoader())
-        self.phase = profile == nil ? .needsProfile : .connecting
+        // If a profile is already known (persisted sign-in), wire the real board
+        // loader immediately so the first `refresh()` fetches. Otherwise a
+        // placeholder keeps `board` non-nil until `selectProfile`.
+        if let profile, let baseURL = try? profile.gatewayBaseURL() {
+            self.board = BoardStore(loader: makeLoader(makeClient(baseURL, principal)))
+            self.phase = .connecting
+        } else {
+            self.board = BoardStore(loader: UnconfiguredBoardLoader())
+            self.phase = .needsProfile
+        }
     }
 
     /// Convenience production initializer: Keychain principal, default app domain.
+    /// Falls back to a persisted profile so a signed-in user stays signed in.
     public static func live(
         projectSlug: String,
         profile: ConnectionProfile? = nil
@@ -167,8 +176,30 @@ public final class AppModel: ObservableObject {
         AppModel(
             principal: PrincipalProvider(store: KeychainStore()),
             projectSlug: projectSlug,
-            profile: profile
+            profile: profile ?? loadPersistedProfile()
         )
+    }
+
+    // MARK: - Profile persistence (handle/host/slot only — token stays in Keychain)
+
+    private static let handleKey = "matrix.profile.handle"
+    private static let hostKey = "matrix.profile.host"
+    private static let slotKey = "matrix.profile.slot"
+
+    /// Loads a previously signed-in profile (non-secret) from UserDefaults.
+    public static func loadPersistedProfile() -> ConnectionProfile? {
+        let d = UserDefaults.standard
+        guard let handle = d.string(forKey: handleKey), !handle.isEmpty else { return nil }
+        let host = d.string(forKey: hostKey) ?? "app.matrix-os.com"
+        let slot = d.string(forKey: slotKey)
+        return ConnectionProfile(handle: handle, gatewayHost: host, runtimeSlot: slot)
+    }
+
+    private func persistProfile(_ profile: ConnectionProfile) {
+        let d = UserDefaults.standard
+        d.set(profile.handle, forKey: Self.handleKey)
+        d.set(profile.gatewayHost, forKey: Self.hostKey)
+        d.set(profile.runtimeSlot, forKey: Self.slotKey)
     }
 
     // MARK: - Sign in (device authorization)
@@ -223,7 +254,9 @@ public final class AppModel: ObservableObject {
                     try await principal.setToken(token.accessToken)
                     signIn = .idle
                     let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
-                    selectProfile(ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil))
+                    let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
+                    persistProfile(newProfile)
+                    selectProfile(newProfile)
                     await refresh()
                     return
                 }
@@ -335,7 +368,7 @@ public final class AppModel: ObservableObject {
         let wsURL: URL
         do {
             wsURL = try profile.webSocketURL(
-                path: "/shell",
+                path: "/ws/terminal/session",
                 session: sessionId,
                 fromSeq: Int?.none
             )
