@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useEffectEvent, useRef } from "react";
-import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
+import { useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useIsClient } from "@/hooks/useIsClient";
-import { CreditCardIcon, SearchIcon, ServerIcon, UserIcon } from "lucide-react";
+import { CreditCardIcon, SearchIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
+import { UserButton } from "./UserButton";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 
@@ -75,7 +76,7 @@ function MenuBarUser() {
   }
 
   return (
-    <div className="flex items-center gap-1.5 [&_.cl-avatarBox]:!size-[18px] [&_.cl-userButtonTrigger]:!p-0 [&_.cl-userButtonTrigger]:!rounded-full [&_.cl-userButtonTrigger]:!shadow-none [&_.cl-userButtonTrigger]:!border-0">
+    <div className="flex items-center gap-1.5">
       <span
         className={`hidden items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium sm:inline-flex ${
           billingActive === true
@@ -86,23 +87,7 @@ function MenuBarUser() {
         <CreditCardIcon className="size-3" aria-hidden="true" />
         {billingActive === true ? "Active" : "Billing"}
       </span>
-      <ClerkUserButton
-        appearance={{
-          elements: {
-            avatarBox: "!w-[18px] !h-[18px] !min-w-[18px] !min-h-[18px]",
-            userButtonTrigger: "!p-0 !rounded-full !shadow-none !border-0",
-          },
-        }}
-        afterSignOutUrl="https://app.matrix-os.com/sign-in"
-      >
-        <ClerkUserButton.MenuItems>
-          <ClerkUserButton.Link
-            label="Switch computer"
-            labelIcon={<ServerIcon className="size-4" aria-hidden="true" />}
-            href="/runtime"
-          />
-        </ClerkUserButton.MenuItems>
-      </ClerkUserButton>
+      <UserButton variant="menubar" />
     </div>
   );
 }
