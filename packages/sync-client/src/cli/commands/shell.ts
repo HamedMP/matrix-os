@@ -251,13 +251,24 @@ export const shellCommand = defineCommand({
         try {
           const client = await clientFromArgs(args);
           const data = await client.createSession(sessionCreateInput(args));
-          if (json || args.attach !== true) {
+          if (args.attach !== true) {
             console.log(json ? formatCliSuccess(data) : `Created shell session ${args.name}`);
             return;
           }
-          console.log(`Created shell session ${args.name}. Attaching...`);
-          await client.attachSession(String(args.name), attachOptionsFromArgs(args));
-          console.log(`Detached. Reattach: matrix shell connect ${args.name}`);
+          if (!json) {
+            console.log(`Created shell session ${args.name}. Attaching...`);
+          }
+          const attachOptions = attachOptionsFromArgs(args);
+          if (json) {
+            attachOptions.output = process.stderr;
+            attachOptions.errorOutput = process.stderr;
+          }
+          const result = await client.attachSession(String(args.name), attachOptions);
+          console.log(
+            json
+              ? formatCliSuccess({ created: data, detached: result.detached })
+              : `Detached. Reattach: matrix shell connect ${args.name}`,
+          );
         } catch (err) {
           writeError(err, json);
           process.exitCode = 1;

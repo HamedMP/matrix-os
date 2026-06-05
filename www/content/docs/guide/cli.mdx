@@ -37,7 +37,8 @@ matrix doctor
 ```bash
 matrix login --profile cloud # opens a browser, completes the hosted device flow
 matrix whoami                # confirms handle, gateway, token expiry
-matrix shell new main        # creates and attaches to your "main" session
+matrix shell new main          # creates your "main" session
+matrix shell new main --attach # creates and attaches in one step
 ```
 
 If you do not have a Matrix account yet, `matrix login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
@@ -75,16 +76,17 @@ Every Matrix OS instance ships with [zellij](https://zellij.dev) pre-installed. 
 
 ```bash
 matrix shell ls                         # list sessions
-matrix shell new code                   # create + attach
-matrix shell new code --layout dev      # use a saved layout
-matrix shell new agent --cmd "claude"   # spawn an inline command in the session
+matrix shell new code                   # create a session
+matrix shell new code --attach          # create + attach
+matrix shell new code --layout dev      # create with a saved layout
+matrix shell new agent --cmd "claude"   # create with an inline command
 matrix shell connect code               # reattach to an existing session
 matrix shell connect -c review          # create if missing, then connect
 matrix shell rm code --force            # destroy a session
 ```
 
 <Callout type="info">
-**Detaching.** Press `Ctrl-\` twice in quick succession to leave the session running and return to your shell — the same combo whether you're in `attach` or just created a session with `new`. To kill it instead, exit the shell normally inside the session or run `matrix shell rm <name>`.
+**Detaching.** Press `Ctrl-\` twice in quick succession to leave the session running and return to your shell — the same combo whether you're in `attach`, `connect`, or just created a session with `new --attach`. To kill it instead, exit the shell normally inside the session or run `matrix shell rm <name>`.
 </Callout>
 
 ### Tabs
