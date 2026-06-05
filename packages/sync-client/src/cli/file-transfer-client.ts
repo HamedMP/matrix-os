@@ -127,7 +127,7 @@ export async function downloadRemoteFile(
   }
 
   const bytes = Buffer.from(await res.arrayBuffer());
-  await mkdir(dirname(resolvedLocal), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(resolvedLocal), { recursive: true, mode: options.secret ? 0o700 : 0o755 });
   const tmpPath = `${resolvedLocal}.matrix-download-${randomUUID()}.tmp`;
   const mode = options.secret ? 0o600 : 0o644;
   try {
@@ -136,14 +136,8 @@ export async function downloadRemoteFile(
   } catch (err) {
     try {
       await unlink(tmpPath);
-    } catch (cleanupErr) {
-      if (
-        !(cleanupErr instanceof Error) ||
-        !("code" in cleanupErr) ||
-        (cleanupErr as NodeJS.ErrnoException).code !== "ENOENT"
-      ) {
-        throw cleanupErr;
-      }
+    } catch (cleanupErr: unknown) {
+      void cleanupErr;
     }
     throw err;
   }

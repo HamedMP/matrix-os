@@ -86,7 +86,8 @@ describe("cli/file-transfer-client", () => {
   });
 
   it("downloads atomically and refuses to replace local symlinks", async () => {
-    const destination = join(tempDir, "downloaded.txt");
+    const parent = join(tempDir, "downloads");
+    const destination = join(parent, "downloaded.txt");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("downloaded", { status: 200 }));
 
     await downloadRemoteFile(
@@ -96,6 +97,7 @@ describe("cli/file-transfer-client", () => {
     );
 
     expect(await readFile(destination, "utf8")).toBe("downloaded");
+    expect((await stat(parent)).mode & 0o777).toBe(0o755);
     expect((await stat(destination)).mode & 0o777).toBe(0o644);
 
     const target = join(tempDir, "target.txt");
