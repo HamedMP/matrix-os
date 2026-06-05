@@ -59,8 +59,9 @@ final class DeviceAuthClientTests: XCTestCase {
 
     func testPollApprovedReturnsToken() async throws {
         MockURLProtocol.setHandler { req in
+            // Platform sends expiresAt as a JSON number (epoch ms), not a string.
             let json = """
-            {"accessToken":"JWT","expiresAt":"2026-01-01T00:00:00Z","userId":"user_1","handle":"hamed"}
+            {"accessToken":"JWT","expiresAt":1893456000000,"userId":"user_1","handle":"hamed"}
             """
             return (httpResponse(req.url!, 200), Data(json.utf8))
         }
