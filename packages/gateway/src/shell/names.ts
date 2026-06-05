@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import { shellError } from "./errors.js";
 
-const SESSION_SLUG = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const SESSION_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const PROFILE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
 const LONG_SLUG = /^[a-z][a-z0-9-]{0,63}$/;
 

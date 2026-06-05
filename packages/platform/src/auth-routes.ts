@@ -126,6 +126,7 @@ function approvalPage(
   csrf: string,
   publishableKey: string | null,
   scriptNonce: string,
+  nativeRedirectUri: string | null,
 ): string {
   // Renders an HTML page that lets a Clerk-authenticated user confirm the
   // device pairing. The Clerk widget is loaded for sign-in if needed; once a
@@ -137,6 +138,7 @@ function approvalPage(
   const escapedPublishableKey = publishableKey
     ? escapeHtmlAttr(publishableKey)
     : null;
+  const escapedNativeRedirectUri = nativeRedirectUri ? escapeHtmlAttr(nativeRedirectUri) : '';
   const clerkScript = publishableKey
     ? `
   <script nonce="${scriptNonce}">
@@ -361,6 +363,8 @@ function approvalPage(
         }
 
         var body = new URLSearchParams({ userCode: userCode, csrf: csrf });
+        var nativeRedirectUri = document.getElementById('native-redirect-uri')?.value || '';
+        if (nativeRedirectUri) body.set('redirectUri', nativeRedirectUri);
         var res = await fetchWithTimeout('/auth/device/approve', {
           method: 'POST',
           headers: {
@@ -557,6 +561,7 @@ function approvalPage(
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">
         <input type="hidden" name="csrf" value="${escapedCsrf}">
+        <input id="native-redirect-uri" type="hidden" name="redirectUri" value="${escapedNativeRedirectUri}">
         <button id="confirm-button" type="submit" disabled>approve login</button>
       </form>
       <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
@@ -568,11 +573,34 @@ function approvalPage(
 </html>`;
 }
 
-function approvalSuccessPage(): string {
+function approvalSuccessPage(nativeRedirectUri: string | null = null): string {
+  const redirectMeta = nativeRedirectUri
+    ? `<meta http-equiv="refresh" content="0; url=${escapeHtmlAttr(nativeRedirectUri)}">`
+    : '';
+  const redirectLink = nativeRedirectUri
+    ? `<p><a href="${escapeHtmlAttr(nativeRedirectUri)}">Return to Matrix OS</a></p>`
+    : '';
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Authorized</title>
+<html lang="en"><head><meta charset="utf-8">${redirectMeta}<title>Authorized</title>
 <style>body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#eee;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{max-width:380px;padding:2rem;background:#141414;border:1px solid #222;border-radius:8px;text-align:center}</style></head>
-<body><div class="card"><h1>Login successful</h1><p>You can close this tab and return to your terminal.</p></div></body></html>`;
+<body><div class="card"><h1>Login successful</h1><p>You can close this tab and return to Matrix OS.</p>${redirectLink}</div></body></html>`;
+}
+
+function normalizeNativeRedirectUri(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 512) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'matrixos:' || url.hostname !== 'auth') return null;
+    return url.toString();
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.error(
+        '[device-flow] Native redirect URI parse failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    return null;
+  }
 }
 
 function applyNoFrameHeaders(
@@ -664,7 +692,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       // Read body to engage bodyLimit and validate the clientId. RFC 8628
       // doesn't require a clientId, but we keep one for usage analytics
       // and to lay the groundwork for per-client policy.
-      let body: { clientId?: unknown };
+      let body: { clientId?: unknown; redirectUri?: unknown };
       try {
         body = await c.req.json();
       } catch (err: unknown) {
@@ -680,13 +708,18 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
 
       try {
         const issued = await flow.createDeviceCode();
+        const nativeRedirectUri = normalizeNativeRedirectUri(body.redirectUri);
+        const verificationUrl = new URL(issued.verificationUri);
+        if (nativeRedirectUri && body.clientId === 'matrix-os-macos') {
+          verificationUrl.searchParams.set('redirect_uri', nativeRedirectUri);
+        }
         captureAuthEvent("cli_device_code_created", {
           client_id: body.clientId,
         });
         return c.json({
           deviceCode: issued.deviceCode,
           userCode: issued.userCode,
-          verificationUri: issued.verificationUri,
+          verificationUri: verificationUrl.toString(),
           expiresIn: issued.expiresIn,
           interval: issued.interval,
         });
@@ -748,6 +781,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
   // GET /auth/device?user_code=ABCD-EFGH -- public; renders approval HTML.
   app.get('/auth/device', (c) => {
     const userCodeRaw = c.req.query('user_code') ?? '';
+    const nativeRedirectUri = normalizeNativeRedirectUri(c.req.query('redirect_uri'));
     if (!userCodeRaw) {
       return c.text('Missing user_code', 400);
     }
@@ -763,7 +797,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       `device_csrf=${csrf}; Path=/auth/device; Max-Age=900; HttpOnly; SameSite=Strict${secure}`,
     );
     applyNoFrameHeaders(c, scriptNonce, { allowClerkCaptcha: true });
-    return c.html(approvalPage(userCodeRaw, csrf, publishableKey, scriptNonce));
+    return c.html(approvalPage(userCodeRaw, csrf, publishableKey, scriptNonce, nativeRedirectUri));
   });
 
   // POST /auth/device/approve -- requires Clerk session + CSRF cookie/form match.
@@ -795,10 +829,12 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       const cookieCsrf = readCsrfCookie(c.req.header('cookie'));
       let formCsrf: string | undefined;
       let userCode: string | undefined;
+      let nativeRedirectUri: string | null = null;
       try {
         const form = await c.req.parseBody();
         formCsrf = typeof form.csrf === 'string' ? form.csrf : undefined;
         userCode = typeof form.userCode === 'string' ? form.userCode : undefined;
+        nativeRedirectUri = normalizeNativeRedirectUri(form.redirectUri);
       } catch (err: unknown) {
         console.error(
           '[device-flow] Form parse failed:',
@@ -830,7 +866,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       }
 
       applyNoFrameHeaders(c);
-      return c.html(approvalSuccessPage());
+      return c.html(approvalSuccessPage(nativeRedirectUri));
     },
   );
 
