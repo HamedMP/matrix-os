@@ -8,7 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { LogOutIcon, ServerIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { Loader2Icon, LogOutIcon, ServerIcon, SettingsIcon, UserIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
@@ -200,13 +200,18 @@ function MountedUserButton({ variant }: { variant: UserButtonVariant }) {
           </DropdownMenuPrimitive.Item>
           <DropdownMenuPrimitive.Item
             className="flex cursor-default items-center gap-3 border-t border-border/60 px-4 py-3 text-sm font-medium outline-none transition-colors hover:bg-muted/70 focus:bg-muted/70"
+            aria-busy={signingOut}
             disabled={signingOut}
             onSelect={(event) => {
               event.preventDefault();
               void handleSignOut();
             }}
           >
-            <LogOutIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+            {signingOut ? (
+              <Loader2Icon className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <LogOutIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+            )}
             {signingOut ? "Signing out..." : "Sign out"}
           </DropdownMenuPrimitive.Item>
           <div className="border-t border-border/60 px-4 py-3 text-center text-xs font-semibold text-muted-foreground">

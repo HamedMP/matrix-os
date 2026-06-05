@@ -145,7 +145,10 @@ describe("UserButton", () => {
     vi.useFakeTimers();
     fireEvent.click(signOutItem);
 
-    expect(screen.getByText("Signing out...")).toBeTruthy();
+    const pendingSignOutItem = screen.getByRole("menuitem", { name: "Signing out..." });
+    expect(pendingSignOutItem.getAttribute("aria-disabled")).toBe("true");
+    expect(pendingSignOutItem.getAttribute("aria-busy")).toBe("true");
+    expect(pendingSignOutItem.querySelector("svg.animate-spin")).toBeTruthy();
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
