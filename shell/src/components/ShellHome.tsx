@@ -38,6 +38,7 @@ const subscribeLaunchPathNoop = () => () => {};
 const getLaunchPathServerSnapshot = (): string | null => null;
 
 export function ShellHome() {
+  const isMobile = useMobileViewport();
   useTheme();
   useDesktopConfig();
 
@@ -48,7 +49,6 @@ export function ShellHome() {
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
   );
-  const isMobile = useMobileViewport();
   const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(
