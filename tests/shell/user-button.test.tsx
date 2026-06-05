@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -40,6 +40,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 describe("UserButton", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
     clerkState.user.username = "kongfupanda13";
@@ -52,6 +53,18 @@ describe("UserButton", () => {
       }),
     );
   });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function openAccountMenu() {
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    return screen.findByRole("menuitem", { name: "Sign out" });
+  }
 
   it("renders the settings account control as a left-aligned row with the user's name", async () => {
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
@@ -69,11 +82,7 @@ describe("UserButton", () => {
 
     render(<UserButton variant="settings" />);
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+    fireEvent.click(await openAccountMenu());
 
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -88,5 +97,54 @@ describe("UserButton", () => {
         redirectUrl: "http://localhost:3000/sign-in",
       });
     });
+  });
+
+  it("logs non-OK Matrix app-session cleanup responses before Clerk sign-out", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Session unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+
+    fireEvent.click(await openAccountMenu());
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[auth] Matrix app session clear returned non-OK status",
+        503,
+      );
+      expect(clerkState.signOut).toHaveBeenCalled();
+    });
+  });
+
+  it("re-enables sign out when Clerk sign-out does not settle", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    clerkState.signOut.mockImplementation(() => new Promise(() => {}));
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+
+    const signOutItem = await openAccountMenu();
+    vi.useFakeTimers();
+    fireEvent.click(signOutItem);
+
+    expect(screen.getByText("Signing out...")).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(clerkState.signOut).toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith("[auth] Clerk sign-out timed out");
+    expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
   });
 });
