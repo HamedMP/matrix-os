@@ -4,6 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: true }),
+  useUser: () => ({
+    user: {
+      fullName: null,
+      username: "test-user",
+      imageUrl: "",
+      primaryEmailAddress: { emailAddress: "test@example.com" },
+    },
+  }),
+  useClerk: () => ({
+    signOut: vi.fn(async () => undefined),
+    openUserProfile: vi.fn(),
+  }),
   UserButton: () => <div data-testid="clerk-user-button" data-clerk-component="UserButton" />,
 }));
 

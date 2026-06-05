@@ -42,6 +42,18 @@ vi.mock("@clerk/nextjs", () => ({
     has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
     getToken: clerkState.getToken,
   }),
+  useUser: () => ({
+    user: {
+      fullName: null,
+      username: "test-user",
+      imageUrl: "",
+      primaryEmailAddress: { emailAddress: "test@example.com" },
+    },
+  }),
+  useClerk: () => ({
+    signOut: vi.fn(async () => undefined),
+    openUserProfile: vi.fn(),
+  }),
 }));
 
 vi.mock("next/navigation", () => ({
