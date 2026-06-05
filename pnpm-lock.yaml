@@ -434,6 +434,9 @@ importers:
 
   packages/platform:
     dependencies:
+      '@clerk/backend':
+        specifier: 2.33.0
+        version: 2.33.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.11(hono@4.12.8)
@@ -464,6 +467,9 @@ importers:
       ws:
         specifier: ^8.19.0
         version: 8.19.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@electric-sql/pglite':
         specifier: ^0.4.0

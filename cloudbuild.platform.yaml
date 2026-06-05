@@ -1,0 +1,15 @@
+substitutions:
+  _IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-platform:manual
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.platform
+      - -t
+      - ${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
