@@ -16,6 +16,7 @@ export type TerminalThemeId =
 export const TERMINAL_FONT_FAMILIES = ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"] as const;
 export type TerminalFontFamily = (typeof TERMINAL_FONT_FAMILIES)[number];
 export type TerminalCursorStyle = "block" | "bar" | "underline";
+export const DEFAULT_TERMINAL_THEME_ID: TerminalThemeId = "one-dark";
 
 interface TerminalSettings {
   themeId: TerminalThemeId;
@@ -37,7 +38,7 @@ interface TerminalSettings {
 export const useTerminalSettings = create<TerminalSettings>()(
   persist(
     (set) => ({
-      themeId: "system",
+      themeId: DEFAULT_TERMINAL_THEME_ID,
       fontSize: 13,
       fontFamily: "MesloLGS NF",
       ligatures: true,

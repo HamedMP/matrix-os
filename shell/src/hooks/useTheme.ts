@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
-import { getPreset } from "@/lib/theme-presets";
 
 export interface Theme {
   name: string;
@@ -45,8 +44,6 @@ export const DEFAULT_THEME: Theme = {
   radius: "0.75rem",
 };
 
-const SHELL_FALLBACK_THEME: Theme = getPreset("dark") ?? DEFAULT_THEME;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,17 +55,18 @@ function stringEntries(value: unknown): Record<string, string> {
   );
 }
 
-export function normalizeTheme(value: unknown, fallbackTheme: Theme = SHELL_FALLBACK_THEME): Theme {
+export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_THEME): Theme {
   if (!isRecord(value)) return fallbackTheme;
   if (Object.keys(value).length === 0) return fallbackTheme;
 
-  const { mode: _fallbackMode, ...fallbackWithoutMode } = fallbackTheme;
-
   return {
-    ...fallbackWithoutMode,
     name: typeof value.name === "string" && value.name.trim() ? value.name : fallbackTheme.name,
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
-    ...(value.style === "flat" || value.style === "neumorphic" ? { style: value.style } : {}),
+    ...(value.style === "flat" || value.style === "neumorphic"
+      ? { style: value.style }
+      : fallbackTheme.style
+        ? { style: fallbackTheme.style }
+        : {}),
     colors: {
       ...fallbackTheme.colors,
       ...stringEntries(value.colors),
@@ -120,9 +118,9 @@ function inferMode(theme: Theme): "light" | "dark" {
 }
 
 export function getThemeFallback(): Theme {
-  // First-run shell fallback is intentionally dark on every surface.
-  // Explicit saved themes, including light themes, still override this.
-  return SHELL_FALLBACK_THEME;
+  // First-run shell fallback stays light. Terminal readability is handled by
+  // terminal-specific settings, not by changing global shell theme tokens.
+  return DEFAULT_THEME;
 }
 
 export function useTheme() {
@@ -157,7 +155,7 @@ export async function saveTheme(theme: Theme): Promise<void> {
   });
 }
 
-async function fetchTheme(defaultTheme: Theme = SHELL_FALLBACK_THEME): Promise<Theme> {
+async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
