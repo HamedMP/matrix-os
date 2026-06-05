@@ -1,99 +1,99 @@
-// Matrix OS — native macOS app entrypoint (Phase 1 scaffold).
+// Matrix OS — native macOS app entrypoint (US1 / T033).
 //
-// Minimal SwiftUI `App` hosting a placeholder board-shell view. Real board/terminal/panel
-// implementation lands in later phases (see specs/086-macos-native-shell/tasks.md). This
-// file exists so the package builds headlessly via `swift build` and the OPERATOR design
-// tokens render in a window.
-
+// SwiftUI `App` hosting the real OPERATOR board. `AppModel` coordinates the
+// connection profile, principal token, gateway client, board store, and the
+// open-card → terminal wiring. The root view renders onboarding, the loading
+// skeleton, the live board, or the read-only disconnected board depending on
+// `AppModel.phase`. Window chrome is titlebar-transparent with a unified toolbar
+// so the machined void/grain shows through floating chrome (design.md §7).
+//
+// US1 boots into the onboarding empty state (no profile selected). Selecting a
+// runtime and signing in lands with US2/auth wiring; the device-auth client and
+// VPS resolver already exist in MatrixNet and are composed here when a profile
+// is supplied. Set MATRIX_DEV_GATEWAY_HOST + MATRIX_DEV_HANDLE in the environment
+// to auto-select a dev profile for local source dev.
 import SwiftUI
 import DesignSystem
+import MatrixNet
 
 @main
 struct MatrixOSApp: App {
+    @StateObject private var model: AppModel
+
+    init() {
+        let model = AppModel.live(
+            projectSlug: ProcessInfo.processInfo.environment["MATRIX_PROJECT_SLUG"] ?? "default",
+            profile: Self.devProfile()
+        )
+        _model = StateObject(wrappedValue: model)
+    }
+
     var body: some Scene {
         WindowGroup("Matrix OS") {
-            BoardShellScaffold()
-                .frame(minWidth: 960, minHeight: 600)
+            RootView(model: model)
+                .frame(minWidth: 1024, minHeight: 640)
+                .task { await model.refresh() }
         }
         .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .commands { OperatorCommands(model: model) }
+    }
+
+    /// Optional dev profile from environment for local source dev only. Production
+    /// boots into onboarding until the user selects a runtime + signs in.
+    private static func devProfile() -> ConnectionProfile? {
+        let env = ProcessInfo.processInfo.environment
+        let host = env["MATRIX_DEV_GATEWAY_HOST"] ?? "app.matrix-os.com"
+        guard let handle = env["MATRIX_DEV_HANDLE"], !handle.isEmpty else { return nil }
+        let slot = env["MATRIX_DEV_RUNTIME_SLOT"]
+        return ConnectionProfile(handle: handle, gatewayHost: host, runtimeSlot: slot)
     }
 }
 
-/// Placeholder board-shell: a row of lifecycle columns rendered with OPERATOR tokens so the
-/// design system is exercised end-to-end. Replaced by the real `BoardView` in Phase 3 (US1).
-struct BoardShellScaffold: View {
-    private let columns = ["TODO", "RUNNING", "WAITING", "BLOCKED", "COMPLETE"]
+/// Root view: binds the OPERATOR look to the window and renders the board.
+private struct RootView: View {
+    @ObservedObject var model: AppModel
 
     var body: some View {
-        ZStack {
-            Color.canvasVoid.ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: Spacing.x5) {
-                header
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: Spacing.x4) {
-                        ForEach(columns, id: \.self) { column in
-                            ColumnScaffold(title: column)
-                        }
-                    }
-                    .padding(.horizontal, Spacing.x5)
-                }
-            }
-            .padding(.vertical, Spacing.x5)
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: Spacing.x3) {
-            Circle()
-                .fill(Color.signalLive)
-                .frame(width: 8, height: 8)
-            Text("MATRIX OS — OPERATOR")
-                .font(.plexMono(11, weight: .semibold))
-                .tracking(1.2)
-                .foregroundStyle(Color.inkSecondary)
-            Spacer()
-        }
-        .padding(.horizontal, Spacing.x5)
+        BoardView(model: model)
+            .background(WindowVibrancy())
+            .preferredColorScheme(.dark)
     }
 }
 
-/// A single empty lifecycle column rendered with OPERATOR surfaces, hairlines, and spacing.
-private struct ColumnScaffold: View {
-    let title: String
+/// Operator-grade keyboard model (design.md §7). US1 wires panel switching and
+/// dismiss; ⌘N is a placeholder until US2 mutations land.
+private struct OperatorCommands: Commands {
+    let model: AppModel
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.x3) {
-            Text(title)
-                .font(.plexMono(11, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(Color.inkTertiary)
-                .padding(.bottom, Spacing.x1)
-
-            EmptyColumnPlaceholder()
+    var body: some Commands {
+        CommandMenu("Operator") {
+            Button("New Card") { model.newCardPlaceholder() }
+                .keyboardShortcut("n", modifiers: .command)
+            Divider()
+            Button("Terminal Panel") { model.switchPanel(.terminal) }
+                .keyboardShortcut("1", modifiers: .command)
+            Button("Shell Panel") { model.switchPanel(.shell) }
+                .keyboardShortcut("2", modifiers: .command)
+            Button("App Panel") { model.switchPanel(.app(slug: "")) }
+                .keyboardShortcut("3", modifiers: .command)
+            Divider()
+            Button("Close Card") { model.closeCard() }
+                .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(Spacing.x3)
-        .frame(width: 240, alignment: .leading)
-        .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.card)
-                .strokeBorder(Color.hairlineHighlight, lineWidth: 1)
-        )
     }
 }
 
-private struct EmptyColumnPlaceholder: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: Radius.control)
-            .strokeBorder(
-                Color.inkDisabled,
-                style: StrokeStyle(lineWidth: 1, dash: [4, 4])
-            )
-            .frame(height: 64)
-            .overlay(
-                Text("Drop a task here or ⌘N")
-                    .font(.plexSans(13))
-                    .foregroundStyle(Color.inkTertiary)
-            )
+/// True window vibrancy: the machined void/grain shows faintly through floating
+/// chrome (design.md §7). Honors Reduce Transparency automatically (NSVisualEffectView).
+private struct WindowVibrancy: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
     }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
