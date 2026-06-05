@@ -21,6 +21,18 @@ vi.mock("@clerk/nextjs", () => ({
     isSignedIn: true,
     has: () => false,
   }),
+  useUser: () => ({
+    user: {
+      fullName: null,
+      username: "test-user",
+      imageUrl: "",
+      primaryEmailAddress: { emailAddress: "test@example.com" },
+    },
+  }),
+  useClerk: () => ({
+    signOut: vi.fn(async () => undefined),
+    openUserProfile: vi.fn(),
+  }),
   UserButton: Object.assign(
     ({ children }: { children?: React.ReactNode }) => <div data-testid="clerk-user-button">{children}</div>,
     {

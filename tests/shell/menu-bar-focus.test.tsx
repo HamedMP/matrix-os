@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
@@ -8,6 +8,18 @@ let MenuBar: typeof import("../../shell/src/components/MenuBar.js").MenuBar;
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: true }),
+  useUser: () => ({
+    user: {
+      fullName: null,
+      username: "test-user",
+      imageUrl: "",
+      primaryEmailAddress: { emailAddress: "test@example.com" },
+    },
+  }),
+  useClerk: () => ({
+    signOut: vi.fn(async () => undefined),
+    openUserProfile: vi.fn(),
+  }),
   UserButton: Object.assign(
     ({ children }: { children?: React.ReactNode }) => <div data-testid="clerk-user-button">{children}</div>,
     {
@@ -71,7 +83,7 @@ describe("MenuBar focus display", () => {
     expect(screen.queryByRole("button", { name: "Matrix OS" })).toBeNull();
   });
 
-  it("puts switch-computer under the Clerk user button instead of the top menu", () => {
+  it("puts switch-computer under the account menu instead of the top menu", async () => {
     render(
       <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}}>
         <button type="button">Fit</button>
@@ -79,6 +91,10 @@ describe("MenuBar focus display", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Computer" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Switch computer" }).getAttribute("href")).toBe("/runtime");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for test-user" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect((await screen.findByRole("menuitem", { name: "Switch computer" })).getAttribute("href")).toBe("/runtime");
   });
 });
