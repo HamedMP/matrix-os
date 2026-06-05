@@ -47,13 +47,22 @@ macOS requires the user to turn on the Finder extension manually in System Setti
 
 ### F19. Shared-folder data plane still fail-closed
 
-Share CRUD/listing landed, but the actual presign/commit path for a grantee syncing an owner's folder is not wired yet. The current routes still operate on the caller's own namespace only; `checkSharePermission()` exists, but owner-scoped JWTs and daemon-side shared-folder plumbing have not shipped.
+Share CRUD/listing landed, but shared-folder sync is **not end-to-end** yet. The actual data plane for a grantee syncing an owner's folder is still intentionally fail-closed:
 
-Before enabling shared-folder sync:
+- `/api/sync/manifest`, `/api/sync/presign`, and `/api/sync/commit` operate on the authenticated caller's own namespace only.
+- `checkSharePermission()` exists and is unit-tested, but the data-plane routes do not call it.
+- Sync JWTs identify the caller; they do not carry a target owner/share scope.
+- The daemon parses/handles file change events only; `sync:share-invite` and `sync:access-revoked` are not mounted into a shared local tree.
+- Change broadcasts fan out to peers in one owner namespace; they do not notify authorized grantee peers for shared prefixes.
 
-- Add owner-scoped sync auth so the gateway can distinguish "caller" from "target owner" on presign/commit.
-- Wire `checkSharePermission()` into those presign/commit paths using the owner scope from the auth context.
-- Finish daemon shared-folder handling (`sync:share-invite` / `sync:access-revoked`) so accepted shares mount under `~/matrixos/shared/{owner}/...`.
+Do not implement this as one large PR. Split it into safe, reviewable slices:
+
+1. **Gateway owner-scope contract PR**: add a validated target-owner/share-scope contract for sync data-plane requests. Keep it fail-closed and covered by route tests; do not grant R2 access yet.
+2. **Gateway shared read PR**: filter owner manifests and presign GETs through accepted, unexpired shares. Grantees must only see entries under their shared prefixes.
+3. **Gateway shared write PR**: wire PUT/delete commit paths through `checkSharePermission()`, owner-scoped manifest locks, owner R2 keys, and role checks. Viewer cannot write; editor cannot delete.
+4. **WebSocket fanout PR**: deliver owner shared-prefix changes to authorized grantee peers, and stop delivery after revoke.
+5. **Daemon event/mount PR**: parse `sync:share-invite` and `sync:access-revoked`, accept/mount shared folders under `~/matrixos/shared/{owner}/...`, stop syncing on revoke, and keep local copies.
+6. **End-to-end PR**: add a full owner-share-accept-sync-edit-revoke regression covering gateway + daemon behavior.
 
 Until then, shared-folder access remains intentionally fail-closed instead of silently granting the wrong namespace.
 
