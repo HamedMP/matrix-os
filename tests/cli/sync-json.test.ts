@@ -71,6 +71,18 @@ async function startDaemon(home: string): Promise<Server> {
   return server;
 }
 
+async function startInvalidStatusDaemon(home: string): Promise<Server> {
+  const configDir = join(home, ".matrixos");
+  await mkdir(configDir, { recursive: true });
+  const server = createServer((socket) => {
+    socket.on("data", () => {
+      socket.write("not-json\n");
+    });
+  });
+  await listen(server, join(configDir, "daemon.sock"));
+  return server;
+}
+
 function expectSafeNoDaemonStderr(stderr: string, home: string): void {
   expect(stderr).not.toContain(home);
   expect(stderr).not.toContain(".matrixos");
@@ -157,6 +169,28 @@ describe("sync CLI JSON output", () => {
           message: "Sync daemon is not running.",
         },
       });
+    }
+  });
+
+  it("emits safe JSON when status IPC fails after the daemon probe", async () => {
+    const home = await tempHome();
+    const server = await startInvalidStatusDaemon(home);
+
+    try {
+      const result = await runCli(home, ["sync", "status", "--json"]);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expectSafeNoDaemonStderr(result.stderr, home);
+      expect(JSON.parse(result.stderr)).toEqual({
+        v: 1,
+        error: {
+          code: "sync_failed",
+          message: "Sync command failed.",
+        },
+      });
+    } finally {
+      await closeServer(server);
     }
   });
 

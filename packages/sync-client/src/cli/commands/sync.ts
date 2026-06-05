@@ -169,7 +169,7 @@ export const syncCommand = defineCommand({
       try {
         switch (first) {
           case "status":
-            return runStatus(json);
+            return await runStatus(json);
           case "pause":
             await sendCommand("pause");
             console.log(json ? formatCliSuccess({ paused: true }) : "Sync paused.");
