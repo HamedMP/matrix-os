@@ -38,14 +38,15 @@ let package = Package(
         ),
         .target(
             name: "MatrixNet",
-            dependencies: ["MatrixModel"],
+            // Independent in Phase 2 (Foundation-only) so swarm agents build in isolation
+            // via `swift build --target MatrixNet`. Integrated in the App/Board layer later.
             path: "Sources/Net",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(
             name: "MatrixTerminal",
-            dependencies: ["MatrixNet", "MatrixModel"],
-            // SwiftTerm view lands in Phase 3 (T034); ShellWSClient (Phase 2) is pure URLSession.
+            // ShellWSClient (Phase 2) is pure URLSession — Foundation-only, independent.
+            // SwiftTerm view + Model wiring land in Phase 3 (T034).
             path: "Sources/Terminal",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
