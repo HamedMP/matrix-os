@@ -26,6 +26,13 @@ struct RootShellView: View {
             }
         }
         .background(Color.canvasVoid)
+        .overlay {
+            if model.showCommandPalette {
+                CommandPalette(model: model)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Motion.hover, value: model.showCommandPalette)
     }
 
     @ViewBuilder
@@ -45,11 +52,14 @@ private struct Sidebar: View {
 
     var body: some View {
         VStack(spacing: Spacing.x2) {
+            ProjectPickerRail(model: model)
+            Divider().overlay(Color.hairlineDark).padding(.vertical, Spacing.x1)
             ForEach(AppSection.allCases, id: \.self) { section in
                 railButton(section)
             }
             Divider().overlay(Color.hairlineDark).padding(.vertical, Spacing.x1)
             addButton
+            commandButton
             Spacer()
             handleBadge
         }
@@ -93,6 +103,23 @@ private struct Sidebar: View {
         .buttonStyle(.plain)
         .disabled(model.isCreatingSession)
         .help(model.section == .terminals ? "New session" : "New task (⌘N)")
+    }
+
+    private var commandButton: some View {
+        Button { model.showCommandPalette = true } label: {
+            Image(systemName: "command")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.inkSecondary)
+                .frame(width: 30, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                        .fill(Color.surfaceCard)
+                        .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                            .strokeBorder(Color.hairlineHighlight, lineWidth: 1))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Command palette (⌘K)")
     }
 
     private var handleBadge: some View {
