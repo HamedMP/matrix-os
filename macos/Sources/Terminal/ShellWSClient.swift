@@ -13,7 +13,7 @@ import Foundation
 ///   scrollback ring buffer with eviction (R1).
 public actor ShellWSClient {
     private let baseURL: URL
-    private let token: String
+    private let tokenProvider: @Sendable () async -> String?
     private let session: String
     private let transport: ShellTransport
     private let backoff: BackoffPolicy
@@ -32,7 +32,7 @@ public actor ShellWSClient {
 
     public init(
         url: URL,
-        token: String,
+        tokenProvider: @escaping @Sendable () async -> String?,
         session: String,
         transport: ShellTransport,
         backoff: BackoffPolicy = .default,
@@ -40,7 +40,7 @@ public actor ShellWSClient {
         scrollbackCapacity: Int = 5_000
     ) {
         self.baseURL = url
-        self.token = token
+        self.tokenProvider = tokenProvider
         self.session = session
         self.transport = transport
         self.backoff = backoff
@@ -98,7 +98,13 @@ public actor ShellWSClient {
         while !stopped && !Task.isCancelled {
             // Fresh connect → live tail; reconnect → resume at lastSeq + 1.
             let fromSeq = lastSeqValue > 0 ? lastSeqValue + 1 : SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
-            let request = makeRequest(fromSeq: fromSeq)
+            guard let request = await makeRequest(fromSeq: fromSeq) else {
+                eventContinuation.yield(.error(code: "unauthorized", message: "Missing principal token."))
+                eventContinuation.yield(.reconnecting)
+                attempt += 1
+                await clock.sleep(seconds: backoff.delay(forAttempt: attempt))
+                continue
+            }
             let frames = await transport.open(request)
             let cleanly = await consume(frames)
             if stopped || Task.isCancelled { break }
@@ -162,7 +168,8 @@ public actor ShellWSClient {
 
     // MARK: - Request building
 
-    private func makeRequest(fromSeq: Int) -> URLRequest {
+    private func makeRequest(fromSeq: Int) async -> URLRequest? {
+        guard let token = await tokenProvider(), !token.isEmpty else { return nil }
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         var items = components?.queryItems ?? []
         items.removeAll { $0.name == "session" || $0.name == "fromSeq" || $0.name == "token" }

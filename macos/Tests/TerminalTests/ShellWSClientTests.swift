@@ -153,7 +153,7 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let transport = MockShellTransport()
         let client = ShellWSClient(
             url: URL(string: "wss://vps.example/ws/terminal/session")!,
-            token: "secret-token",
+            tokenProvider: { "secret-token" },
             session: "main",
             transport: transport,
             backoff: .test,
@@ -168,6 +168,35 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         XCTAssertFalse(query.contains("token="), "token must not be in query: \(query)")
         XCTAssertTrue(query.contains("session=main"))
         XCTAssertTrue(query.contains("fromSeq=\(SHELL_ATTACH_LIVE_TAIL_FROM_SEQ)"))
+        await client.shutdown()
+    }
+
+    func testReconnectFetchesFreshToken() async throws {
+        let transport = MockShellTransport()
+        let clock = MockClock()
+        let tokenProvider = MutableTokenProvider("token-1")
+        let client = ShellWSClient(
+            url: URL(string: "wss://vps.example/ws/terminal/session")!,
+            tokenProvider: { await tokenProvider.token() },
+            session: "main",
+            transport: transport,
+            backoff: .test,
+            clock: clock
+        )
+
+        await client.connect()
+        await transport.waitForConnect(count: 1)
+        let first = await transport.lastConnectRequest
+        XCTAssertEqual(first?.value(forHTTPHeaderField: "Authorization"), "Bearer token-1")
+
+        await tokenProvider.set("token-2")
+        await transport.failCurrent()
+        await clock.waitForSleeper()
+        await clock.advanceAll()
+        await transport.waitForConnect(count: 2)
+
+        let reconnect = await transport.lastConnectRequest
+        XCTAssertEqual(reconnect?.value(forHTTPHeaderField: "Authorization"), "Bearer token-2")
         await client.shutdown()
     }
 
@@ -287,7 +316,7 @@ final class ShellWSClientStateMachineTests: XCTestCase {
     private func makeClient(transport: MockShellTransport, clock: MockClock = MockClock()) -> ShellWSClient {
         ShellWSClient(
             url: URL(string: "wss://vps.example/ws/terminal/session")!,
-            token: "secret-token",
+            tokenProvider: { "secret-token" },
             session: "main",
             transport: transport,
             backoff: .test,

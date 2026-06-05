@@ -59,6 +59,22 @@ enum ShellTransportError: Error {
     case disconnected
 }
 
+actor MutableTokenProvider {
+    private var value: String
+
+    init(_ value: String) {
+        self.value = value
+    }
+
+    func token() -> String {
+        value
+    }
+
+    func set(_ value: String) {
+        self.value = value
+    }
+}
+
 /// A clock whose sleeps complete only when the test advances them. Uses a latch
 /// so an `advanceAll()` that arrives before the run loop parks is not lost — the
 /// next `sleep` returns immediately. Also exposes `waitForSleeper()` so tests can

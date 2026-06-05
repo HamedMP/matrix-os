@@ -299,9 +299,10 @@ public final class AppModel: ObservableObject {
     /// Factory for a board loader given a gateway client. Injected for tests.
     private let makeLoader: @Sendable (GatewayHTTPClient) -> any BoardLoading
 
-    /// Factory for a terminal session given a resolved WS URL, token, and session id.
+    /// Factory for a terminal session given a resolved WS URL, principal, and session id.
     /// Injected so tests can supply a mock event source instead of a real socket.
-    private let makeTerminal: @MainActor (URL, String, String, String) -> TerminalSession
+    private let makeTerminal: @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession
+    private var activeDeviceAuthStart: DeviceAuthStart?
 
     // MARK: - Init
 
@@ -319,10 +320,10 @@ public final class AppModel: ObservableObject {
             // also surfaced so a fresh VPS never opens to an empty board.
             CompositeBoardLoader(client: client)
         },
-        makeTerminal: @escaping @MainActor (URL, String, String, String) -> TerminalSession = { url, token, session, name in
+        makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, principal, session, name in
             let client = ShellWSClient(
                 url: url,
-                token: token,
+                tokenProvider: { await principal.token() },
                 session: session,
                 transport: URLSessionShellTransport()
             )
@@ -412,6 +413,7 @@ public final class AppModel: ObservableObject {
     public func cancelSignIn() {
         signInTask?.cancel()
         signInTask = nil
+        activeDeviceAuthStart = nil
         signIn = .idle
     }
 
@@ -423,12 +425,17 @@ public final class AppModel: ObservableObject {
             .value
         switch status {
         case "approved":
-            if case let .awaitingApproval(code, uri) = signIn {
-                signIn = .awaitingApproval(userCode: code, verificationUri: uri)
+            if case .awaitingApproval = signIn, let start = activeDeviceAuthStart {
+                signInTask?.cancel()
+                signInTask = Task { [weak self] in
+                    await self?.runApprovedCallbackPoll(start: start)
+                }
             }
         case "expired":
+            activeDeviceAuthStart = nil
             signIn = .failed("Sign-in expired. Try again.")
         case "error":
+            activeDeviceAuthStart = nil
             signIn = .failed("Sign-in failed. Check your connection and try again.")
         default:
             break
@@ -439,43 +446,71 @@ public final class AppModel: ObservableObject {
         do {
             let start = try await deviceAuth.startDeviceAuth()
             if Task.isCancelled { return }
+            activeDeviceAuthStart = start
             signIn = .awaitingApproval(userCode: start.userCode, verificationUri: start.verificationUri)
             if let url = URL(string: start.verificationUri) {
                 openExternalURL(url)
             }
 
-            let deadline = Date().addingTimeInterval(TimeInterval(max(1, start.expiresIn)))
-            var interval = max(1, start.interval)
-            while Date() < deadline {
-                try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
-                if Task.isCancelled { return }
-                let result = try await deviceAuth.pollForToken(deviceCode: start.deviceCode)
-                switch result {
-                case .pending:
-                    continue
-                case .slowDown:
-                    interval += 5
-                case .expired:
-                    signIn = .failed("Sign-in expired. Try again.")
-                    return
-                case let .approved(token):
-                    try await principal.setToken(token.accessToken)
-                    signIn = .idle
-                    let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
-                    let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
-                    persistProfile(newProfile)
-                    selectProfile(newProfile)
-                    await refresh()
-                    return
-                }
-            }
-            signIn = .failed("Sign-in timed out. Try again.")
+            try await pollDeviceAuth(start: start, pollImmediately: false)
         } catch is CancellationError {
             // Cancelled by a re-tap or sign-out; leave state as set by the canceller.
         } catch {
             // Generic, user-safe — never surface raw gateway/provider text.
             signIn = .failed("Sign-in failed. Check your connection and try again.")
         }
+    }
+
+    private func runApprovedCallbackPoll(start: DeviceAuthStart) async {
+        do {
+            try await pollDeviceAuth(start: start, pollImmediately: true)
+        } catch is CancellationError {
+            // Superseded by a newer sign-in attempt.
+        } catch {
+            activeDeviceAuthStart = nil
+            signIn = .failed("Sign-in failed. Check your connection and try again.")
+        }
+    }
+
+    private func pollDeviceAuth(start: DeviceAuthStart, pollImmediately: Bool) async throws {
+        let deadline = Date().addingTimeInterval(TimeInterval(max(1, start.expiresIn)))
+        var interval = max(1, start.interval)
+        var shouldPollImmediately = pollImmediately
+        while Date() < deadline {
+            if shouldPollImmediately {
+                shouldPollImmediately = false
+            } else {
+                try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+            }
+            if Task.isCancelled { throw CancellationError() }
+            let result = try await deviceAuth.pollForToken(deviceCode: start.deviceCode)
+            switch result {
+            case .pending:
+                continue
+            case .slowDown:
+                interval += 5
+            case .expired:
+                activeDeviceAuthStart = nil
+                signIn = .failed("Sign-in expired. Try again.")
+                return
+            case let .approved(token):
+                try await finishSignIn(with: token)
+                return
+            }
+        }
+        activeDeviceAuthStart = nil
+        signIn = .failed("Sign-in timed out. Try again.")
+    }
+
+    private func finishSignIn(with token: DeviceAuthToken) async throws {
+        activeDeviceAuthStart = nil
+        try await principal.setToken(token.accessToken)
+        signIn = .idle
+        let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
+        let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
+        persistProfile(newProfile)
+        selectProfile(newProfile)
+        await refresh()
     }
 
     // MARK: - Profile selection
@@ -857,7 +892,7 @@ public final class AppModel: ObservableObject {
             openError = err
             throw err
         }
-        guard let token = await principal.token() else {
+        guard await principal.token() != nil else {
             let err = OperatorError.unauthorized
             openError = err
             throw err
@@ -886,7 +921,7 @@ public final class AppModel: ObservableObject {
         }
 
         let label = hasSession ? attachSession : card.title
-        let session = makeTerminal(wsURL, token, attachSession, label)
+        let session = makeTerminal(wsURL, principal, attachSession, label)
         terminalSessions[tabID] = session
         terminal = session
         session.start()

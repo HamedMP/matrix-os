@@ -22,8 +22,6 @@ public actor PrincipalProvider: TokenProviding {
         self.cached = try? store.get(key: Self.tokenKey)
     }
 
-    public func currentToken() -> String? { cached }
-
     public func token() -> String? { cached }
 
     /// Persists and caches a freshly issued token (after device auth).

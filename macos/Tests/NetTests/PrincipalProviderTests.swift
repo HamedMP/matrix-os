@@ -27,13 +27,13 @@ final class PrincipalProviderTests: XCTestCase {
         let backing = InMemoryTokenStore()
         try backing.set(key: PrincipalProvider.tokenKey, value: "stored-token")
         let provider = PrincipalProvider(store: backing)
-        let token = await provider.currentToken()
+        let token = await provider.token()
         XCTAssertEqual(token, "stored-token")
     }
 
     func testStartsNilWhenNothingStored() async {
         let provider = PrincipalProvider(store: InMemoryTokenStore())
-        let token = await provider.currentToken()
+        let token = await provider.token()
         XCTAssertNil(token)
     }
 
@@ -41,7 +41,7 @@ final class PrincipalProviderTests: XCTestCase {
         let backing = InMemoryTokenStore()
         let provider = PrincipalProvider(store: backing)
         try await provider.setToken("new-token")
-        let token = await provider.currentToken()
+        let token = await provider.token()
         XCTAssertEqual(token, "new-token")
         XCTAssertEqual(try backing.get(key: PrincipalProvider.tokenKey), "new-token")
     }
@@ -51,7 +51,7 @@ final class PrincipalProviderTests: XCTestCase {
         let provider = PrincipalProvider(store: backing)
         try await provider.setToken("token")
         try await provider.clear()
-        let token = await provider.currentToken()
+        let token = await provider.token()
         XCTAssertNil(token)
         XCTAssertNil(try backing.get(key: PrincipalProvider.tokenKey))
     }
