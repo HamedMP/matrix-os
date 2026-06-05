@@ -107,6 +107,7 @@ describe("UserButton", () => {
       expect(clerkState.signOut).toHaveBeenCalledWith({
         redirectUrl: "http://localhost:3000/sign-in",
       });
+      expect(replaceMock).toHaveBeenCalledWith("http://localhost:3000/sign-in");
     });
   });
 

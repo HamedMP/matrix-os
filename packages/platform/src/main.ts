@@ -119,6 +119,7 @@ const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
 const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
 const SAFE_CLERK_CLEAR_COOKIE_NAME = /^(?:__session|__client_uat)_[A-Za-z0-9_-]{1,128}$/;
+const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
@@ -1960,6 +1961,7 @@ function getAuthPage(
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
     var signOutTarget = ${signOutTargetJson};
+    var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
@@ -2024,7 +2026,7 @@ function getAuthPage(
             var err = new Error('Clerk sign-out timed out');
             err.name = 'TimeoutError';
             reject(err);
-          }, 10000);
+          }, SIGN_OUT_TIMEOUT_MS);
         })
       ]).finally(function() {
         if (timeoutId !== undefined) window.clearTimeout(timeoutId);

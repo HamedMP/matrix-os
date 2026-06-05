@@ -134,6 +134,7 @@ function MountedUserButton({ variant }: { variant: UserButtonVariant }) {
     await clearMatrixAppSession();
     try {
       await clerkSignOutWithTimeout(signOut, redirectUrl);
+      window.location.replace(redirectUrl);
     } catch (error: unknown) {
       if (isTimeoutError(error)) {
         console.warn("[auth] Clerk sign-out timed out");

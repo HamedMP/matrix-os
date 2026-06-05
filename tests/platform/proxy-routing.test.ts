@@ -1157,7 +1157,9 @@ describe("platform proxy routing", () => {
     expect(html).toContain("continueWithClerkSession");
     expect(html).toContain("fetch('/api/auth/app-session'");
     expect(html).toContain("function clerkSignOutWithTimeout()");
+    expect(html).toContain("var SIGN_OUT_TIMEOUT_MS = 10000;");
     expect(html).toContain("window.setTimeout(function() {");
+    expect(html).toContain("}, SIGN_OUT_TIMEOUT_MS);");
     expect(html).toContain("if (timeoutId !== undefined) window.clearTimeout(timeoutId);");
     expect(html).toContain("window.location.replace(signOutTarget)");
     expect(html).toContain("[matrix] Clerk.signOut did not finish");
