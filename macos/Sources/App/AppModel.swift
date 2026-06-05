@@ -456,24 +456,26 @@ public final class AppModel: ObservableObject {
             openError = err
             throw err
         }
-        guard let sessionId = card.linkedSessionId, !sessionId.isEmpty else {
-            let err = OpenCardError.noSession
-            openError = err
-            throw err
-        }
         guard let token = await principal.token() else {
             let err = OpenCardError.unauthorized
             openError = err
             throw err
         }
 
+        // Existing session → attach by name. No session yet → connect to
+        // `/ws/terminal?cwd=` which auto-creates one (matrix shell connect -c).
+        let hasSession = !(card.linkedSessionId ?? "").isEmpty
         let wsURL: URL
         do {
-            wsURL = try profile.webSocketURL(
-                path: "/ws/terminal/session",
-                session: sessionId,
-                fromSeq: Int?.none
-            )
+            if hasSession {
+                wsURL = try profile.webSocketURL(
+                    path: "/ws/terminal/session",
+                    session: card.linkedSessionId!,
+                    fromSeq: Int?.none
+                )
+            } else {
+                wsURL = try profile.autoCreateTerminalURL(cwd: nil)
+            }
         } catch {
             let err = OpenCardError.misconfigured
             openError = err
@@ -482,9 +484,17 @@ public final class AppModel: ObservableObject {
 
         // Tear down any previously open session before swapping in the new one.
         terminal?.shutdown()
-        let session = makeTerminal(wsURL, token, sessionId, displayName(for: card))
+        let label = hasSession ? card.linkedSessionId! : card.title
+        let session = makeTerminal(wsURL, token, card.linkedSessionId ?? "", label)
         terminal = session
         session.start()
+        // After it opens, refresh the session list so the new session is tracked.
+        if !hasSession {
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                await self?.loadSessions()
+            }
+        }
         return session
     }
 
