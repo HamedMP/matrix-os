@@ -15,6 +15,7 @@ export interface UploadOptions {
 
 export interface DownloadOptions {
   force?: boolean;
+  secret?: boolean;
 }
 
 function codedError(message: string, code: string): Error {
@@ -128,8 +129,9 @@ export async function downloadRemoteFile(
 
   const bytes = Buffer.from(await res.arrayBuffer());
   const tmpPath = `${resolvedLocal}.matrix-download-${randomUUID()}.tmp`;
+  const mode = options.secret ? 0o600 : 0o644;
   try {
-    await writeFile(tmpPath, bytes, { flag: "wx", mode: 0o600 });
+    await writeFile(tmpPath, bytes, { flag: "wx", mode });
     await rename(tmpPath, resolvedLocal);
   } catch (err) {
     try {

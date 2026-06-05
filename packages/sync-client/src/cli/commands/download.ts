@@ -22,6 +22,7 @@ export const downloadCommand = defineCommand({
     remote: { type: "positional", required: true },
     local: { type: "positional", required: true },
     force: { type: "boolean", required: false, default: false },
+    secret: { type: "boolean", required: false, default: false },
     profile: { type: "string", required: false },
     dev: { type: "boolean", required: false, default: false },
     gateway: { type: "string", required: false },
@@ -37,7 +38,7 @@ export const downloadCommand = defineCommand({
         { gatewayUrl: profile.gatewayUrl, token },
         String(args.remote),
         String(args.local),
-        { force: args.force === true },
+        { force: args.force === true, secret: args.secret === true },
       );
       console.log(
         json

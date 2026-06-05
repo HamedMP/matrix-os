@@ -146,9 +146,11 @@ matrix upload ./README.md projects/demo/README.md
 matrix upload --force ./config.json system/config.json
 matrix download projects/demo/README.md ./README.remote.md
 matrix download --force projects/demo/README.md ./README.remote.md
+matrix download --secret .codex/auth.json ~/.codex/auth.json
 ```
 
-For credential files, add `--secret` so the remote file is written owner-only:
+For credential files, add `--secret` so transferred files are written owner-only.
+Regular downloads are written with standard user-readable file permissions.
 
 ```bash
 matrix upload --secret ~/.codex/auth.json .codex/auth.json

@@ -96,7 +96,7 @@ describe("cli/file-transfer-client", () => {
     );
 
     expect(await readFile(destination, "utf8")).toBe("downloaded");
-    expect((await stat(destination)).mode & 0o777).toBe(0o600);
+    expect((await stat(destination)).mode & 0o777).toBe(0o644);
 
     const target = join(tempDir, "target.txt");
     const link = join(tempDir, "link.txt");
@@ -110,6 +110,20 @@ describe("cli/file-transfer-client", () => {
         link,
       ),
     ).rejects.toThrow(/symlink/i);
+  });
+
+  it("downloads secret files with owner-only permissions", async () => {
+    const destination = join(tempDir, "secret.json");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("secret", { status: 200 }));
+
+    await downloadRemoteFile(
+      { gatewayUrl: "https://gateway.example", token: "token" },
+      ".codex/auth.json",
+      destination,
+      { secret: true },
+    );
+
+    expect((await stat(destination)).mode & 0o777).toBe(0o600);
   });
 
   it("reports missing remote files clearly on download", async () => {
