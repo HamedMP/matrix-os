@@ -22,7 +22,8 @@ public struct DeviceAuthStart: Codable, Equatable, Sendable {
 /// A successfully issued principal token + identity metadata.
 public struct DeviceAuthToken: Codable, Equatable, Sendable {
     public let accessToken: String
-    public let expiresAt: String?
+    /// Epoch milliseconds when the token expires (the platform sends a JSON number).
+    public let expiresAt: Double?
     public let userId: String?
     public let handle: String?
 }
