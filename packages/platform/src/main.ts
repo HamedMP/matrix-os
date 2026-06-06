@@ -163,7 +163,12 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
-const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
+const SENSITIVE_PROXY_HEADERS = new Set([
+  'authorization',
+  'cookie',
+  EDGE_SECRET_HEADER,
+  'x-matrix-code-proxy-token',
+]);
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -1237,7 +1242,7 @@ function buildCodeDomainProxyHeaders(
 ): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(requestHeaders)) {
-    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && key !== 'x-matrix-code-proxy-token' && value) {
+    if (shouldForwardProxyHeader(key, value)) {
       headers.set(key, value);
     }
   }
@@ -1249,6 +1254,11 @@ function buildCodeDomainProxyHeaders(
   headers.set('x-forwarded-proto', 'https');
   headers.set('connection', 'close');
   return headers;
+}
+
+function shouldForwardProxyHeader(key: string, value: string | undefined): value is string {
+  const lowerKey = key.toLowerCase();
+  return lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && Boolean(value);
 }
 
 function firstHeaderValue(value: HeaderValue): string | undefined {
@@ -3784,8 +3794,7 @@ export function createApp(deps: {
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -3975,7 +3984,7 @@ export function createApp(deps: {
       }
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -4124,7 +4133,7 @@ export function createApp(deps: {
         : new Headers();
       if (!isCodeDomain) {
         for (const [key, value] of Object.entries(c.req.header())) {
-          if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          if (shouldForwardProxyHeader(key, value)) {
             headers.set(key, value);
           }
         }
@@ -4284,7 +4293,7 @@ export function createApp(deps: {
       : new Headers();
     if (!isCodeDomain) {
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -4880,8 +4889,7 @@ export function createApp(deps: {
         const headers = new Headers();
         const originalHost = c.req.header('host') ?? `${handle}.matrix-os.com`;
         for (const [key, value] of Object.entries(c.req.header())) {
-          const lowerKey = key.toLowerCase();
-          if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+          if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
         }
         headers.set('host', `${handle}.matrix-os.com`);
         headers.set('x-forwarded-host', originalHost);
@@ -4931,8 +4939,7 @@ export function createApp(deps: {
       const headers = new Headers();
       const originalHost = c.req.header('host') ?? '';
       for (const [key, value] of Object.entries(c.req.header())) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+        if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');

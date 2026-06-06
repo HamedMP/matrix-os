@@ -1499,6 +1499,7 @@ describe("platform proxy routing", () => {
     expect(url).toBe("http://matrixos-alice:3000/");
     const headers = init?.headers as Headers;
     expect(headers.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(headers.get("x-matrix-edge-secret")).toBeNull();
   });
 
   it("uses x-forwarded-host for code-domain routing behind Cloud Run", async () => {
@@ -1542,6 +1543,7 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("host")).toBe("code.matrix-os.com");
     expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-matrix-edge-secret")).toBeNull();
   });
 
   it("does not trust x-forwarded-host for app-domain routing without the edge secret", async () => {
@@ -3254,12 +3256,15 @@ describe("platform proxy routing", () => {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
+        "x-matrix-edge-secret": "edge-secret",
       },
     });
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("explicit shell");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.28:443/");
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("x-matrix-edge-secret")).toBeNull();
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
   });
 
