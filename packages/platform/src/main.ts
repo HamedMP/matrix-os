@@ -98,6 +98,7 @@ const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
 const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
+const DEFAULT_SYNC_BUCKET = 'matrixos-sync';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
@@ -1385,7 +1386,7 @@ export function checkHostBundleStorageEnv(
   if (!bundleBucket) {
     problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET');
   } else {
-    const syncBucket = env.S3_BUCKET ?? env.R2_BUCKET ?? 'matrixos-sync';
+    const syncBucket = env.S3_BUCKET ?? env.R2_BUCKET ?? DEFAULT_SYNC_BUCKET;
     if (bundleBucket === syncBucket) {
       problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET must not equal S3_BUCKET/R2_BUCKET');
     }

@@ -456,8 +456,13 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
     expect(workflow).toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
     expect(workflow).toContain("jq -r '.url // empty'");
-    expect(workflow).toContain("grep -q 'matrixos-sync'");
-    expect(workflow).toContain('Candidate host bundle signer returned the sync bucket; refusing to promote.');
+    expect(workflow).toContain('sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"');
+    expect(workflow).toContain('bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"');
+    expect(workflow).toContain('Dedicated host bundle bucket secret matches the sync bucket secret; refusing to promote.');
+    expect(workflow).toContain('grep -Fq -- "$sync_bucket"');
+    expect(workflow).toContain('Candidate host bundle signer returned the configured sync bucket; refusing to promote.');
+    expect(workflow).toContain("grep -Fq 'r2.cloudflarestorage.com'");
+    expect(workflow).toContain('Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote.');
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url"');
   });
 });

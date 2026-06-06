@@ -206,8 +206,22 @@ jobs:
             echo "Candidate host bundle channel smoke did not return a signed bundle URL." >&2
             exit 1
           fi
-          if printf '%s\n' "$bundle_url" | grep -q 'matrixos-sync'; then
-            echo "Candidate host bundle signer returned the sync bucket; refusing to promote." >&2
+          sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"
+          bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"
+          if [ -z "$sync_bucket" ] || [ -z "$bundle_bucket" ]; then
+            echo "Candidate host bundle smoke could not read required bucket secret names." >&2
+            exit 1
+          fi
+          if [ "$bundle_bucket" = "$sync_bucket" ]; then
+            echo "Dedicated host bundle bucket secret matches the sync bucket secret; refusing to promote." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$bundle_url" | grep -Fq -- "$sync_bucket"; then
+            echo "Candidate host bundle signer returned the configured sync bucket; refusing to promote." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$bundle_url" | grep -Fq 'r2.cloudflarestorage.com' && ! printf '%s\n' "$bundle_url" | grep -Fq -- "$bundle_bucket"; then
+            echo "Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote." >&2
             exit 1
           fi
           curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
