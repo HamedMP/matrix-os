@@ -607,10 +607,6 @@ public final class AppModel: ObservableObject {
         let label = hasSession ? card.linkedSessionId! : card.title
         let session = makeTerminal(wsURL, principal, card.linkedSessionId ?? "", label)
         terminal = session
-<<<<<<< HEAD
-        // After it opens, refresh the session list so the new session is tracked.
-=======
->>>>>>> 6d9343d5 (feat(086): project service layer + app icon)
         if !hasSession {
             session.onNextAttach { [weak self] in
                 Task { await self?.loadSessions() }
