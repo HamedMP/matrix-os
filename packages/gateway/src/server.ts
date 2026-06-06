@@ -206,6 +206,7 @@ import {
   ScrollbackStore,
   ShellPreferencesStore,
   createPendingTerminalInputQueue,
+  createShellCommandRunner,
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
@@ -1648,6 +1649,7 @@ export async function createGateway(config: GatewayConfig) {
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
     layouts: shellLayoutStore,
+    commandRunner: createShellCommandRunner({ homePath }),
   };
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route("/api", createShellRoutes(shellRouteDeps));
