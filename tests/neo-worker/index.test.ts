@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyPostHogProxyPath, handlePostHogProxyRequest } from "../../packages/neo-worker/src/index";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function createContext() {
   return {
@@ -35,9 +39,33 @@ function stubWorkerCache() {
 describe("Neo Worker", () => {
   it("classifies PostHog asset, ingest, and health routes", () => {
     expect(classifyPostHogProxyPath("/health")).toBe("health");
+    expect(classifyPostHogProxyPath("/service-worker.js")).toBe("service-worker");
     expect(classifyPostHogProxyPath("/static/posthog.js")).toBe("asset");
     expect(classifyPostHogProxyPath("/array/config")).toBe("asset");
     expect(classifyPostHogProxyPath("/i/v0/e")).toBe("ingest");
+  });
+
+  it("serves a cleanup service worker for browsers that previously loaded the shell from neo", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await handlePostHogProxyRequest(
+      new Request("https://neo.matrix-os.com/service-worker.js"),
+      {},
+      createContext(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/javascript");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("service-worker-allowed")).toBe("/");
+    const body = await response.text();
+    expect(body).toContain("registration.unregister()");
+    expect(body).toContain(".catch((err) =>");
+    expect(body).toContain('new Response("offline",');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockRestore();
   });
 
   it("forwards static assets to the EU asset host without cookies", async () => {
@@ -59,12 +87,24 @@ describe("Neo Worker", () => {
     const upstream = fetchMock.mock.calls[0]?.[0];
     expect(upstream).toBeInstanceOf(Request);
     const upstreamRequest = upstream as Request;
-    expect(upstreamRequest.url).toBe("https://eu-assets.i.posthog.com/static/posthog.js?v=1");
+    expect(upstreamRequest.url).toBe("https://eu-assets.i.posthog.com/static/array.js?v=1");
     expect(upstreamRequest.headers.get("cookie")).toBeNull();
     expect(upstreamRequest.headers.get("X-Forwarded-For")).toBe("203.0.113.10");
     expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+  });
 
-    fetchMock.mockRestore();
+  it("aliases the legacy PostHog loader path to the current array.js asset", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("asset"));
+
+    await handlePostHogProxyRequest(
+      new Request("https://neo.matrix-os.com/static/posthog.js?v=1.376.0"),
+      {},
+      createContext(),
+    );
+
+    const upstream = fetchMock.mock.calls[0]?.[0];
+    expect(upstream).toBeInstanceOf(Request);
+    expect((upstream as Request).url).toBe("https://eu-assets.i.posthog.com/static/array.js?v=1.376.0");
   });
 
   it("caches successful GET asset responses through the Worker cache", async () => {
