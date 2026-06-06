@@ -7,6 +7,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   zellij_failed: "Shell backend unavailable. Your Matrix OS instance could not start a shell session.",
   unsupported_node: "Matrix CLI requires Node.js 24 or newer.",
   attach_failed: "Shell attach failed.",
+  login_failed: "Login failed. Run `mos login` to retry.",
   unknown_command: "Request failed",
   unsupported_version: "Request failed",
   auth_expired: "Matrix CLI auth expired. Run `mos login` to refresh your session.",

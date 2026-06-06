@@ -41,6 +41,16 @@ describe("CLI machine-readable output", () => {
     });
   });
 
+  it("formats login failures with actionable safe guidance", () => {
+    expect(JSON.parse(formatCliError("login_failed"))).toEqual({
+      v: 1,
+      error: {
+        code: "login_failed",
+        message: "Login failed. Run `mos login` to retry.",
+      },
+    });
+  });
+
   it("formats NDJSON stream events", () => {
     expect(formatNdjsonEvent("output", { bytes: "abc" })).toBe(
       `${JSON.stringify({ v: 1, type: "output", data: { bytes: "abc" } })}\n`,

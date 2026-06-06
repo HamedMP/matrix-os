@@ -43,6 +43,12 @@ describe("doctor CLI command", () => {
       headers: { Authorization: "Bearer tok" },
       signal: expect.any(AbortSignal),
     });
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "daemon")).toEqual({
+      name: "daemon",
+      ok: false,
+      code: "daemon_unavailable",
+      hint: "Start sync with `mos sync`.",
+    });
   });
 
   it("reports shell backend failures with a safe doctor hint", async () => {
@@ -125,5 +131,29 @@ describe("doctor CLI command", () => {
       signal: expect.any(AbortSignal),
     });
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("maps terminal health auth failures to auth_expired instead of shell backend failure", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/terminal/health")) {
+        return new Response(JSON.stringify({ error: { code: "auth_expired" } }), { status: 401 });
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await doctorCommand.run!({ args: { dev: true, json: true } } as never);
+
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "shell-backend")).toEqual({
+      name: "shell-backend",
+      ok: false,
+      code: "auth_expired",
+      hint: "Run `mos login --profile local` to refresh.",
+    });
   });
 });

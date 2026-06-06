@@ -20,6 +20,9 @@ async function probeShellBackendHealth(gatewayUrl: string, token?: string): Prom
     ...(headers ? { headers } : {}),
     signal: AbortSignal.timeout(10_000),
   });
+  if (res.status === 401) {
+    return { ok: false, code: "auth_expired" };
+  }
   let body: unknown = null;
   try {
     body = await res.json();
@@ -85,7 +88,7 @@ export const doctorCommand = defineCommand({
 
     checks.push((await isDaemonRunning())
       ? { name: "daemon", ok: true }
-      : { name: "daemon", ok: false, code: "daemon_unavailable", hint: "Start sync with `matrix sync`." });
+      : { name: "daemon", ok: false, code: "daemon_unavailable", hint: "Start sync with `mos sync`." });
 
     if (profile) {
       let gatewayReachable = false;
@@ -107,7 +110,9 @@ export const doctorCommand = defineCommand({
                 name: "shell-backend",
                 ok: false,
                 code: shell.code === "ok" ? "zellij_failed" : shell.code,
-                hint: `Run \`mos doctor --profile ${profile.name}\`; managed VPSes may need the latest host bundle deployed.`,
+                hint: shell.code === "auth_expired"
+                  ? `Run \`mos login --profile ${profile.name}\` to refresh.`
+                  : `Run \`mos doctor --profile ${profile.name}\`; managed VPSes may need the latest host bundle deployed.`,
               });
         } catch (_err: unknown) {
           checks.push({
