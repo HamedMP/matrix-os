@@ -11,6 +11,8 @@ const COMMANDS = [
   "whoami",
   "status",
   "run",
+  "port",
+  "forward",
   "upload",
   "download",
   "agent",
