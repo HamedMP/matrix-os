@@ -87,10 +87,10 @@ private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private static func recoverIfOffscreen(_ window: NSWindow) {
         let frame = window.frame
-        let isFullyVisible = NSScreen.screens.contains { screen in
-            screen.visibleFrame.contains(frame)
+        let isReachable = NSScreen.screens.contains { screen in
+            screen.visibleFrame.intersects(frame)
         }
-        guard !isFullyVisible else { return }
+        guard !isReachable else { return }
 
         if let screen = NSScreen.main ?? NSScreen.screens.first {
             let visibleFrame = screen.visibleFrame
