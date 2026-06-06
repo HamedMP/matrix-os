@@ -457,7 +457,6 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           )}
           {upgrading && (
             <output
-              aria-live="polite"
               className="overflow-hidden rounded-lg border border-blue-500/20 bg-blue-500/10"
             >
               <div className="flex gap-3 p-4">
