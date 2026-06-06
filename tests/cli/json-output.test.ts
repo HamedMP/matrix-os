@@ -51,6 +51,16 @@ describe("CLI machine-readable output", () => {
     });
   });
 
+  it("formats attach timeouts with actionable safe guidance", () => {
+    expect(JSON.parse(formatCliError("attach_timeout"))).toEqual({
+      v: 1,
+      error: {
+        code: "attach_timeout",
+        message: "Shell attach timed out. Try again or run `mos doctor`.",
+      },
+    });
+  });
+
   it("formats NDJSON stream events", () => {
     expect(formatNdjsonEvent("output", { bytes: "abc" })).toBe(
       `${JSON.stringify({ v: 1, type: "output", data: { bytes: "abc" } })}\n`,
