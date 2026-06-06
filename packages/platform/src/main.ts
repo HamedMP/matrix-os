@@ -330,7 +330,7 @@ interface GatewayR2ClientModule {
     endpoint?: string;
     publicEndpoint?: string;
     forcePathStyle?: boolean;
-  }): GatewayR2Client;
+  }): Promise<GatewayR2Client>;
 }
 
 async function importRuntimeModule<T>(specifier: string): Promise<T> {
@@ -5030,7 +5030,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
   if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
     const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
-      importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js'),
+      importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
     createR2Client = r2ClientModule.createR2Client;
@@ -5057,7 +5057,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
   if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
     createR2Client ??= (
-      await importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js')
+      await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')
     ).createR2Client;
     hostBundleObjectStore = await createR2Client({
       accessKeyId: bundleS3AccessKey,
