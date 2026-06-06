@@ -84,9 +84,7 @@ export async function createOrAttachRunSession(
   if (input.mouse !== undefined) {
     attachOptions.mouse = input.mouse;
   }
-  return Object.keys(attachOptions).length === 0
-    ? await client.attachSession(input.name)
-    : await client.attachSession(input.name, attachOptions);
+  return await client.attachSession(input.name, attachOptions);
 }
 
 function isInteractive(args: Record<string, unknown>, rawArgs: string[] | undefined): boolean {

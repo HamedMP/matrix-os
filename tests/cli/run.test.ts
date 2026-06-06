@@ -66,7 +66,7 @@ async function runMatrixCli(args: string[]) {
       signal: NodeJS.Signals | null;
       stdout: string;
       stderr: string;
-    }>((resolve) => {
+    }>((resolve, reject) => {
       const child = spawn(process.execPath, [bin, ...args], {
         cwd: process.cwd(),
         env: { ...process.env, HOME: home, FORCE_COLOR: "0", NO_COLOR: "1" },
@@ -76,6 +76,9 @@ async function runMatrixCli(args: string[]) {
       const stderr: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (err) => {
+        reject(err);
+      });
       child.on("close", (status, signal) => {
         resolve({
           status,
@@ -128,7 +131,7 @@ describe("run CLI command", () => {
         sessionProvided: true,
       }),
     ).resolves.toEqual({ detached: true });
-    expect(client.attachSession).toHaveBeenCalledWith("setup");
+    expect(client.attachSession).toHaveBeenCalledWith("setup", {});
   });
 
   it("passes no-mouse mode through interactive run attach", async () => {
