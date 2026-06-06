@@ -1,0 +1,12 @@
+name = "matrix-edge-router"
+main = "src/index.ts"
+compatibility_date = "2026-06-06"
+
+routes = [
+  { pattern = "api.matrix-os.com", custom_domain = true },
+  { pattern = "app.matrix-os.com", custom_domain = true },
+  { pattern = "code.matrix-os.com", custom_domain = true }
+]
+
+[vars]
+PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"

@@ -44,6 +44,7 @@ import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
   getSessionRoutedWebSocketHost,
+  getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
   isCodeDomainHost,
@@ -3685,7 +3686,7 @@ export function createApp(deps: {
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
   app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c, next) => {
-    const host = c.req.header('host') ?? '';
+    const host = getWebSocketUpgradeHost(c.req.header('host'), c.req.header('x-forwarded-host'));
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();

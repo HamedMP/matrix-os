@@ -1425,6 +1425,76 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://matrixos-alice:3000/");
   });
 
+  it("uses x-forwarded-host for app-domain routing behind Cloud Run", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("shell");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://matrixos-alice:3000/");
+    const headers = init?.headers as Headers;
+    expect(headers.get("x-forwarded-host")).toBe("app.matrix-os.com");
+  });
+
+  it("uses x-forwarded-host for code-domain routing behind Cloud Run", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff151",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123491,
+      publicIPv4: "203.0.113.91",
+      imageVersion: "matrix-os-host-2026.06.06-1",
+      provisionedAt: "2026-06-06T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?folder=/home/matrix/home", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("editor");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.91:443/?folder=/home/matrix/home");
+    const headers = init?.headers as Headers;
+    expect(headers.get("host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+  });
+
   it("reports no runtime when a signed-in Clerk user has no Matrix computer", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
