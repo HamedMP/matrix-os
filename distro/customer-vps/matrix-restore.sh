@@ -27,10 +27,12 @@ rm -f "$restore_flag"
 check_r2_exists_or_skip_restore() {
   local key="$1"
   local label="$2"
+  local status
   if /opt/matrix/bin/matrixctl r2 exists "$key"; then
     return 0
+  else
+    status="$?"
   fi
-  local status="$?"
   if [ "$status" -eq 1 ]; then
     touch "$restore_flag"
     exit 0

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -59,6 +59,56 @@ describe('platform/customer-vps-cloud-init', () => {
           R2_ENDPOINT: 'https://r2.example',
         },
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  function runRestoreWithFakeMatrixctl(existsStatus: number) {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
+    const fakeMatrixctlPath = join(tempDir, 'matrixctl');
+    const restorePath = join(tempDir, 'matrix-restore.sh');
+    const restoreFlag = join(tempDir, 'restore-complete');
+
+    writeFileSync(
+      fakeMatrixctlPath,
+      `#!/usr/bin/env bash
+if [ "$1" = "r2" ] && [ "$2" = "exists" ]; then
+  exit ${existsStatus}
+fi
+echo "unexpected matrixctl call: $*" >&2
+exit 99
+`,
+    );
+    chmodSync(fakeMatrixctlPath, 0o755);
+
+    const restoreScript = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8')
+      .split('/opt/matrix/bin/matrixctl')
+      .join(fakeMatrixctlPath)
+      .replace('restore_flag="/opt/matrix/restore-complete"', `restore_flag=${JSON.stringify(restoreFlag)}`)
+      .replace('latest_file="/var/lib/matrix/db/latest"', `latest_file=${JSON.stringify(join(tempDir, 'latest'))}`)
+      .replace('snapshot_path="/var/lib/matrix/db/latest.dump"', `snapshot_path=${JSON.stringify(join(tempDir, 'latest.dump'))}`)
+      .replace(
+        'mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db',
+        'mkdir -p "$SECOND_RESTORE_TEST_ROOT/home" "$SECOND_RESTORE_TEST_ROOT/projects" "$SECOND_RESTORE_TEST_ROOT/db"',
+      );
+    writeFileSync(restorePath, restoreScript);
+    chmodSync(restorePath, 0o755);
+
+    try {
+      const result = spawnSync('bash', [restorePath], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SECOND_RESTORE_TEST_ROOT: tempDir,
+        },
+      });
+      return {
+        result,
+        restoreFlagExists: existsSync(restoreFlag),
+      };
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -424,13 +474,30 @@ describe('platform/customer-vps-cloud-init', () => {
 
     for (const script of [restore, cloudInit]) {
       expect(script).toContain('check_r2_exists_or_skip_restore()');
-      expect(script).toContain('local status="$?"');
+      expect(script).toContain('local status');
+      expect(script).toMatch(/else\n\s+status="\$[?]"/);
       expect(script).toContain('if [ "$status" -eq 1 ]; then');
       expect(script).toContain('touch "$restore_flag"');
       expect(script).toContain('matrix-restore: failed to check');
       expect(script).not.toContain('if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then');
       expect(script).not.toContain('if ! /opt/matrix/bin/matrixctl r2 exists "$latest_pointer_key"; then');
     }
+  });
+
+  it('executes restore skip only for not-found R2 exists status', () => {
+    const notFound = runRestoreWithFakeMatrixctl(1);
+    expect(notFound.result.status, notFound.result.stderr).toBe(0);
+    expect(notFound.restoreFlagExists).toBe(true);
+
+    const timeout = runRestoreWithFakeMatrixctl(124);
+    expect(timeout.result.status).toBe(1);
+    expect(timeout.restoreFlagExists).toBe(false);
+    expect(timeout.result.stderr).toContain('matrix-restore: failed to check VPS metadata');
+
+    const operationalError = runRestoreWithFakeMatrixctl(2);
+    expect(operationalError.result.status).toBe(1);
+    expect(operationalError.restoreFlagExists).toBe(false);
+    expect(operationalError.result.stderr).toContain('matrix-restore: failed to check VPS metadata');
   });
 
   it('runs DB backup on an hourly systemd timer', () => {
