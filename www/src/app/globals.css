@@ -6,22 +6,22 @@
 
 @source "../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* ── Brand palette overrides (sage/stone) ── */
+/* ── Brand palette overrides (crisp Fumadocs shell with Matrix accents) ── */
 @theme {
-  --color-fd-background: #FAFAF9;
+  --color-fd-background: #FCFCFB;
   --color-fd-primary: #434E3F;
-  --color-fd-border: #D6D3C8;
-  --color-fd-accent: #F4F1E8;
-  --color-fd-accent-foreground: #434E3F;
-  --color-fd-muted: #F4F1E8;
-  --color-fd-muted-foreground: #5C5A4F;
-  --color-fd-foreground: #32352E;
-  --color-fd-secondary: #F4F1E8;
+  --color-fd-border: #E2E0D8;
+  --color-fd-accent: #F6F4ED;
+  --color-fd-accent-foreground: #272B24;
+  --color-fd-muted: #F7F6F1;
+  --color-fd-muted-foreground: #6E6A5F;
+  --color-fd-foreground: #282C25;
+  --color-fd-secondary: #F7F4EA;
   --color-fd-secondary-foreground: #434E3F;
   --color-fd-card: #FFFFFF;
-  --color-fd-card-foreground: #32352E;
+  --color-fd-card-foreground: #282C25;
   --color-fd-popover: #FFFFFF;
-  --color-fd-popover-foreground: #32352E;
+  --color-fd-popover-foreground: #282C25;
   --color-fd-primary-foreground: #FAFAF5;
   --color-fd-ring: #D06F25;
 }
@@ -48,7 +48,7 @@
 /* ── Sidebar tab highlight colors ── */
 :root {
   --guide-color: #323D2E;
-  --developer-color: #6A8A7A;
+  --developer-color: #D06F25;
 }
 
 .dark {
@@ -68,14 +68,14 @@ html, body {
 }
 
 :root {
-  --font-sans: "Inter", system-ui, sans-serif;
+  --font-sans: var(--font-instrument), "Instrument Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --font-hand: "Caveat", cursive;
   --radius: 0.75rem;
 
   /* Light tokens unified with the landing palette (forest / ember / cream). */
-  --background: #FAFAF9;
-  --foreground: #32352E;
+  --background: #FCFCFB;
+  --foreground: #282C25;
   --card: #FFFFFF;
   --card-foreground: #32352E;
   --popover: #FFFFFF;
@@ -84,9 +84,9 @@ html, body {
   --primary-foreground: #FAFAF5;
   --secondary: #F4F1E8;
   --secondary-foreground: #434E3F;
-  --muted: #F4F1E8;
-  --muted-foreground: #5C5A4F;
-  --accent: #ECE9D8;
+  --muted: #F7F6F1;
+  --muted-foreground: #6E6A5F;
+  --accent: #F6F4ED;
   --accent-foreground: #434E3F;
   --destructive: #EF4444;
   --success: #22C55E;
@@ -107,6 +107,28 @@ html, body {
   --ink: #1C1917;
   --lichen: #9AA48C;
   --pebble: #E5E5E4;
+  --docs-sidebar-bg: #F6F4ED;
+}
+
+html:not(.dark) body {
+  background:
+    radial-gradient(circle at 18% 8%, rgba(208, 111, 37, 0.08), transparent 28rem),
+    linear-gradient(180deg, #fcfcfb 0%, #f7f6f1 100%);
+}
+
+html:not(.dark) body:has(#nd-docs-layout) {
+  background: #fff;
+}
+
+html:not(.dark) #nd-docs-layout,
+html:not(.dark) #nd-page,
+html:not(.dark) #nd-toc {
+  background: #fff;
+}
+
+html:not(.dark) [data-sidebar-placeholder],
+html:not(.dark) #nd-sidebar {
+  background: var(--docs-sidebar-bg) !important;
 }
 
 .dark {
@@ -130,6 +152,7 @@ html, body {
   --border: rgba(140, 199, 190, 0.12);
   --input: rgba(140, 199, 190, 0.15);
   --ring: #8CC7BE;
+  --docs-sidebar-bg: #161A16;
 }
 
 @theme inline {

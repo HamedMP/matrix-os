@@ -7,6 +7,21 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
+<div className="not-prose mb-8 grid gap-3 rounded-2xl border border-fd-border bg-fd-card p-4 shadow-sm sm:grid-cols-3">
+  <div className="rounded-xl bg-[var(--forest)] p-4 text-white">
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">Start</p>
+    <p className="mt-3 text-lg font-semibold leading-tight">Ask for an outcome, not a workflow.</p>
+  </div>
+  <div className="rounded-xl border border-fd-border bg-fd-muted/70 p-4">
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ember)]">Connect</p>
+    <p className="mt-3 text-lg font-semibold leading-tight">Bring email, calendar, files, GitHub, and chat.</p>
+  </div>
+  <div className="rounded-xl border border-fd-border bg-white p-4">
+    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--moss)]">Build</p>
+    <p className="mt-3 text-lg font-semibold leading-tight">Generate useful apps inside your own workspace.</p>
+  </div>
+</div>
+
 Matrix OS is your AI operating system in the cloud. You sign in, connect the tools you already use, and ask Matrix to help you work, organize, communicate, build, remember, and automate.
 
 It is not a dashboard you have to configure by hand. It is a computer with an AI kernel: it can create apps for you, use your integrations with permission, keep your files and data in your own workspace, and show up through the web, chat, and social surfaces.
@@ -14,6 +29,21 @@ It is not a dashboard you have to configure by hand. It is a computer with an AI
 <Callout type="info" title="Start with what you want done">
   You do not need to understand servers, databases, or deployment. Use plain language: "plan my week", "summarize these emails", "make me a budget tracker", "help me ship this project", or "turn this idea into an app".
 </Callout>
+
+<Cards>
+  <Card title="Command Center" href="/docs/guide/getting-started">
+    Open the workspace, ask across your tools, and turn loose intent into action.
+  </Card>
+  <Card title="Cloud Coding" href="/docs/guide/cloud-coding">
+    Run project sessions, terminals, review loops, and GitHub work from Matrix.
+  </Card>
+  <Card title="Skills" href="/docs/developer/skills">
+    Teach Matrix repeatable workflows through markdown skill files.
+  </Card>
+  <Card title="Deployment" href="/docs/deployment/vps-per-user">
+    Understand the per-user VPS runtime and host-bundle release path.
+  </Card>
+</Cards>
 
 ## Quick Start
 

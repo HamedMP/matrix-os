@@ -28,6 +28,10 @@ async function onFeedback(feedback: PageFeedback) {
   return {};
 }
 
+function getGithubDocsPath(slugs: string[]) {
+  return slugs.length > 0 ? slugs.join('/') : 'index';
+}
+
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
 }) {
@@ -42,11 +46,11 @@ export default async function Page(props: {
     <DocsPage toc={page.data.toc} tableOfContent={{ style: 'clerk' }}>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
-      <div className='flex flex-row gap-2 items-center border-b pt-2 pb-6'>
+      <div className="not-prose my-7 flex flex-wrap items-center gap-2 border-b border-fd-border/70 pb-6">
         <LLMCopyButton markdownUrl={`${page.url}.mdx`} />
         <ViewOptions
           markdownUrl={`${page.url}.mdx`}
-          githubUrl={`https://github.com/hamedmp/matrix-os/blob/main/www/content/docs/${page.slugs.join('/')}.mdx`}
+          githubUrl={`https://github.com/hamedmp/matrix-os/blob/main/www/content/docs/${getGithubDocsPath(page.slugs)}.mdx`}
         />
       </div>
       <DocsBody>
