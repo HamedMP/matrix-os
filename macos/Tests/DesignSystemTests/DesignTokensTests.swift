@@ -3,8 +3,8 @@ import XCTest
 
 @testable import DesignSystem
 
-/// Proves the OPERATOR token values from design.md §2–§5/§9 resolve exactly, and that the
-/// DesignSystem target compiles and tests run (Phase 1 gate). Color components are compared
+/// Proves the Matrix OS native token values from DESIGN.md resolve exactly, and that the
+/// DesignSystem target compiles and tests run. Color components are compared
 /// in sRGB with a small tolerance for floating-point division.
 final class DesignTokensTests: XCTestCase {
 
@@ -34,56 +34,58 @@ final class DesignTokensTests: XCTestCase {
         XCTAssertEqual(actual.a, opacity, accuracy: tolerance, "\(message) alpha", file: file, line: line)
     }
 
-    // MARK: §2 Signal colors (the load-bearing semantic tokens)
+    // MARK: Signal colors (the load-bearing semantic tokens)
 
-    func testSignalLiveIsPhosphorLime() {
-        assertColor(.signalLive, hex: 0x9EF01A, "signal.live")
+    func testSignalLiveIsForestPrimary() {
+        assertColor(.signalLive, hex: 0x434E3F, "signal.live")
     }
 
-    func testSignalWaitingIsAmber() {
-        assertColor(.signalWaiting, hex: 0xFFB020, "signal.waiting")
+    func testSignalWaitingIsWarmWarning() {
+        assertColor(.signalWaiting, hex: 0xD49B2A, "signal.waiting")
     }
 
-    func testSignalBlockedIsCoral() {
-        assertColor(.signalBlocked, hex: 0xFF5C5C, "signal.blocked")
+    func testSignalBlockedIsWarmDestructive() {
+        assertColor(.signalBlocked, hex: 0xC4342D, "signal.blocked")
     }
 
-    func testSignalDoneIsTeal() {
-        assertColor(.signalDone, hex: 0x43C59E, "signal.done")
+    func testSignalDoneIsWarmSuccessGreen() {
+        assertColor(.signalDone, hex: 0x3A7D44, "signal.done")
     }
 
-    func testSignalIdleIsGrey() {
-        assertColor(.signalIdle, hex: 0x5C636E, "signal.idle")
+    func testSignalIdleIsWarmMutedGrey() {
+        assertColor(.signalIdle, hex: 0x7A7768, "signal.idle")
     }
 
-    func testSignalGlowLiveIsLimeAt22Percent() {
-        assertColor(.signalGlowLive, hex: 0x9EF01A, opacity: 0.22, "signal.glow.live")
+    func testSignalGlowLiveIsEmberAt16Percent() {
+        assertColor(.signalGlowLive, hex: 0xD06F25, opacity: 0.16, "signal.glow.live")
     }
 
-    // MARK: §2 Canvas & surfaces
+    // MARK: Canvas & surfaces
 
     func testCanvasAndSurfaceTokens() {
-        assertColor(.canvasVoid, hex: 0x0A0B0D, "canvas.void")
-        assertColor(.surfaceRail, hex: 0x101216, "surface.rail")
-        assertColor(.surfaceCard, hex: 0x15171C, "surface.card")
-        assertColor(.surfaceCardRaised, hex: 0x1B1E24, "surface.cardRaised")
+        assertColor(.canvasVoid, hex: 0xFAFAF5, "canvas.void")
+        assertColor(.surfaceRail, hex: 0xF0EDE4, "surface.rail")
+        assertColor(.surfaceCard, hex: 0xFFFFFF, "surface.card")
+        assertColor(.surfaceCardRaised, hex: 0xF7F1E7, "surface.cardRaised")
         assertColor(.surfaceTerminal, hex: 0x0C0D10, "surface.terminal")
     }
 
-    // MARK: §2 Ink
+    // MARK: Ink
 
     func testInkTokens() {
-        assertColor(.inkPrimary, hex: 0xE8EAED, "ink.primary")
-        assertColor(.inkSecondary, hex: 0x9BA1AC, "ink.secondary")
-        assertColor(.inkTertiary, hex: 0x5C636E, "ink.tertiary")
-        assertColor(.inkDisabled, hex: 0x3A3F47, "ink.disabled")
+        assertColor(.inkPrimary, hex: 0x32352E, "ink.primary")
+        assertColor(.inkSecondary, hex: 0x434E3F, "ink.secondary")
+        assertColor(.inkTertiary, hex: 0x7A7768, "ink.tertiary")
+        assertColor(.inkDisabled, hex: 0xD6D3C8, "ink.disabled")
+        assertColor(.terminalInk, hex: 0xE8EAED, "terminal.ink")
+        assertColor(.terminalMutedInk, hex: 0x9BA1AC, "terminal.mutedInk")
     }
 
-    // MARK: §2 Hairline (dual-tone)
+    // MARK: Hairline
 
     func testHairlineTokens() {
-        assertColor(.hairlineDark, hex: 0x000000, opacity: 0.60, "hairline.dark")
-        assertColor(.hairlineHighlight, hex: 0xFFFFFF, opacity: 0.06, "hairline.highlight")
+        assertColor(.hairlineDark, hex: 0xD6D3C8, "hairline.dark")
+        assertColor(.hairlineHighlight, hex: 0xFFFFFF, opacity: 0.75, "hairline.highlight")
     }
 
     // MARK: §4 Spacing scale (4/8/12/16/24/32/48)
@@ -102,7 +104,7 @@ final class DesignTokensTests: XCTestCase {
 
     func testRadiusScale() {
         XCTAssertEqual(Radius.card, 10)
-        XCTAssertEqual(Radius.badge, 5)
+        XCTAssertEqual(Radius.badge, 6)
         XCTAssertEqual(Radius.panel, 14)
         XCTAssertEqual(Radius.control, 8)
     }

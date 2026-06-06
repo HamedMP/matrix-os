@@ -39,20 +39,29 @@ public enum AppPhase: Equatable, Sendable {
     case disconnected
 }
 
-/// Generic, user-safe reason a card couldn't be opened. No raw text (FR-023).
-public enum OpenCardError: Error, Equatable, Sendable {
+/// Generic, user-safe operation errors shown in the board chrome. No raw text (FR-023).
+public enum OperatorError: Error, Equatable, Sendable {
     /// The card has no linked session to attach to.
     case noSession
     /// The profile/runtime is missing or its URL could not be resolved.
     case misconfigured
     /// No principal token — the user must sign in again.
     case unauthorized
+    /// A project create/clone request failed.
+    case createProjectFailed
+    /// A task/card mutation failed.
+    case taskMutationFailed
+    /// A zellij session create request failed.
+    case createSessionFailed
 
     public var message: String {
         switch self {
         case .noSession: return "This card has no live session to open."
         case .misconfigured: return "No computer is connected. Select a runtime to continue."
         case .unauthorized: return "Your session has expired. Please sign in again."
+        case .createProjectFailed: return "Couldn't create that project. Check your connection and try again."
+        case .taskMutationFailed: return "Couldn't update the board. Refresh and try again."
+        case .createSessionFailed: return "Couldn't start a session. Check your connection and try again."
         }
     }
 }
@@ -72,20 +81,23 @@ public enum SignInState: Equatable, Sendable {
 /// Top-level workspace sections (left rail). Board = task kanban; Terminals =
 /// the live zellij session list opened in a full/side terminal.
 public enum AppSection: String, CaseIterable, Sendable {
+    case home
     case board
-    case terminals
+    case shell
 
     public var title: String {
         switch self {
+        case .home: return "Home"
         case .board: return "Board"
-        case .terminals: return "Terminals"
+        case .shell: return "Shell"
         }
     }
 
     public var symbol: String {
         switch self {
+        case .home: return "house"
         case .board: return "rectangle.split.3x1"
-        case .terminals: return "terminal"
+        case .shell: return "terminal"
         }
     }
 }
@@ -93,9 +105,55 @@ public enum AppSection: String, CaseIterable, Sendable {
 /// A live zellij session entry for the Terminals section.
 public struct WorkspaceSession: Identifiable, Equatable, Sendable {
     public let name: String
+    public let attachName: String
     public let status: String
     public var id: String { name }
-    public var isActive: Bool { status == "active" }
+    public var isActive: Bool {
+        ["active", "running", "attached", "ready"].contains(status.lowercased())
+    }
+
+    public init(name: String, attachName: String? = nil, status: String) {
+        self.name = name
+        self.attachName = attachName ?? name
+        self.status = status
+    }
+}
+
+/// Open workspace tab for a task card or raw zellij session. The tab is the
+/// stable unit of work shown in the native chrome.
+public struct WorkspaceTab: Identifiable, Equatable, Sendable {
+    public enum Kind: String, Sendable {
+        case home
+        case task
+        case session
+        case app
+    }
+
+    public let id: String
+    public let title: String
+    public let projectSlug: String
+    public let projectName: String
+    public let kind: Kind
+    public let card: Card?
+    public var panel: Panel
+
+    public init(
+        id: String? = nil,
+        title: String,
+        projectSlug: String,
+        projectName: String,
+        kind: Kind,
+        card: Card? = nil,
+        panel: Panel
+    ) {
+        self.id = id ?? "\(kind.rawValue):\(projectSlug):\(card?.id ?? title)"
+        self.title = title
+        self.projectSlug = projectSlug
+        self.projectName = projectName
+        self.kind = kind
+        self.card = card
+        self.panel = panel
+    }
 }
 
 /// A project the user can open/clone (project picker + Projects UI).
@@ -109,16 +167,96 @@ public struct ProjectSummary: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct WorkspaceFileEntry: Identifiable, Equatable, Sendable {
+    public let name: String
+    public let type: String
+    public let size: Int?
+    public let gitStatus: String?
+    public let changedCount: Int?
+    public var id: String { "\(type):\(name)" }
+}
+
+public struct WorkspaceFileTreeNode: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let type: String
+    public let path: String
+    public let size: Int?
+    public let gitStatus: String?
+    public let changedCount: Int?
+    public var children: [WorkspaceFileTreeNode]?
+    public var expanded: Bool
+
+    public var isDirectory: Bool { type == "directory" }
+}
+
+public struct GitBranchSummary: Identifiable, Equatable, Sendable {
+    public let name: String
+    public var id: String { name }
+}
+
+public struct GitPullRequestSummary: Identifiable, Equatable, Sendable {
+    public let number: Int
+    public let title: String
+    public let headRefName: String?
+    public let baseRefName: String?
+    public var id: Int { number }
+}
+
+public struct GitWorktreeSummary: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let path: String
+    public let currentBranch: String
+    public let dirtyState: String
+    public let dirtyCount: Int?
+}
+
+public struct PreviewSummary: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let url: String
+    public let lastStatus: String
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
 
     /// The active top-level section (left rail selection).
-    @Published public var section: AppSection = .board
+    @Published public var section: AppSection = .home
     /// Live zellij sessions for the Terminals section.
     @Published public private(set) var sessions: [WorkspaceSession] = []
+    /// Open task/session tabs in the workspace. Tabs are project-marked so work
+    /// from multiple Matrix projects stays legible.
+    @Published public private(set) var openTabs: [WorkspaceTab] = []
+    /// The currently active workspace tab, if any.
+    @Published public private(set) var activeTabID: String?
+    /// Terminal sessions are retained per terminal tab so tab switching does not
+    /// tear down sockets or drop zellij output.
+    @Published public private(set) var terminalSessions: [String: TerminalSession] = [:]
     /// The user's projects (for the project picker / Projects UI).
     @Published public private(set) var projects: [ProjectSummary] = []
+    /// Files for the active project/editor panel.
+    @Published public private(set) var fileEntries: [WorkspaceFileEntry] = []
+    /// Expandable file tree for the active project/editor panel.
+    @Published public private(set) var fileTree: [WorkspaceFileTreeNode] = []
+    /// Current directory path shown by the native editor panel.
+    @Published public private(set) var filePanelPath: String = ""
+    /// Selected file path and contents for lightweight native editing.
+    @Published public private(set) var selectedFilePath: String?
+    @Published public private(set) var selectedFileData: Data?
+    @Published public var selectedFileContent: String = ""
+    @Published public private(set) var fileSaveState: String?
+    /// Git branches for the active project.
+    @Published public private(set) var gitBranches: [GitBranchSummary] = []
+    /// Pull requests for the active project, when GitHub is linked.
+    @Published public private(set) var gitPullRequests: [GitPullRequestSummary] = []
+    /// Managed worktrees for the active project.
+    @Published public private(set) var gitWorktrees: [GitWorktreeSummary] = []
+    /// Preview/artifact records for the active project/task/session.
+    @Published public private(set) var previews: [PreviewSummary] = []
+    /// Shared loading flag for secondary panels.
+    @Published public private(set) var isLoadingPanelData = false
     /// Command palette (⌘K) visibility.
     @Published public var showCommandPalette = false
 
@@ -126,16 +264,21 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var profile: ConnectionProfile?
     /// Top-level phase driving the root view.
     @Published public private(set) var phase: AppPhase = .needsProfile
+    /// Whether the user has explicitly opened a project in this session. Until
+    /// then the ready state shows the Matrix home/onboarding surface instead of
+    /// auto-opening a kanban board.
+    @Published public private(set) var hasSelectedProject: Bool
     /// The board the operator is working in (read-only in US1).
     @Published public private(set) var board: BoardStore
     /// The currently selected/open card (detail pane + terminal).
     @Published public private(set) var selectedCard: Card?
     /// The live terminal session for the open card, if one is attached.
     @Published public private(set) var terminal: TerminalSession?
-    /// Which pane the detail view is showing (US1 ships Terminal only).
-    @Published public var activePanel: Panel = .terminal
+    /// Which pane the detail view is showing. The agent terminal is always the
+    /// left split; the right pane defaults to the editor.
+    @Published public var activePanel: Panel = .app(slug: "editor")
     /// A generic, user-safe error to surface in chrome (nil when clear).
-    @Published public private(set) var openError: OpenCardError?
+    @Published public private(set) var openError: OperatorError?
     /// Device-auth sign-in progress (drives the onboarding sign-in UI).
     @Published public private(set) var signIn: SignInState = .idle
 
@@ -152,6 +295,9 @@ public final class AppModel: ObservableObject {
     private var signInTask: Task<Void, Never>?
     /// The project whose tasks the board renders.
     public private(set) var projectSlug: String
+    /// Maps workspace session ids / terminal ids to the zellij shell session name
+    /// required by `/ws/terminal/session`.
+    private var sessionAttachNames: [String: String] = [:]
 
     /// Factory for the gateway client given a resolved base URL + token provider.
     /// Injected so tests can stub it without real networking.
@@ -176,10 +322,9 @@ public final class AppModel: ObservableObject {
             GatewayHTTPClient(baseURL: url, tokenProvider: provider)
         },
         makeLoader: @escaping @Sendable (GatewayHTTPClient) -> any BoardLoading = { client in
-            // The board is the task kanban (Linear/SlayZone-style). Opening a task
-            // attaches/creates its zellij session. The raw session list lives in the
-            // separate Terminals section, not as board cards.
-            GatewayBoardLoader(client: client)
+            // The board is project/task-first, but unlinked live zellij sessions are
+            // also surfaced so a fresh VPS never opens to an empty board.
+            CompositeBoardLoader(client: client)
         },
         makeTerminal: @escaping @MainActor (URL, String, String, String) -> TerminalSession = { url, token, session, name in
             let client = ShellWSClient(
@@ -205,6 +350,7 @@ public final class AppModel: ObservableObject {
         self.deviceAuth = deviceAuth
         self.signInGatewayHost = signInGatewayHost
         self.openExternalURL = openExternalURL
+        self.hasSelectedProject = false
         // If a profile is already known (persisted sign-in), wire the real board
         // loader immediately so the first `refresh()` fetches. Otherwise a
         // placeholder keeps `board` non-nil until `selectProfile`.
@@ -277,6 +423,26 @@ public final class AppModel: ObservableObject {
         signIn = .idle
     }
 
+    public func handleOpenURL(_ url: URL) {
+        guard url.scheme == "matrixos", url.host == "auth" else { return }
+        let status = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "status" })?
+            .value
+        switch status {
+        case "approved":
+            if case let .awaitingApproval(code, uri) = signIn {
+                signIn = .awaitingApproval(userCode: code, verificationUri: uri)
+            }
+        case "expired":
+            signIn = .failed("Sign-in expired. Try again.")
+        case "error":
+            signIn = .failed("Sign-in failed. Check your connection and try again.")
+        default:
+            break
+        }
+    }
+
     private func runSignIn() async {
         do {
             let start = try await deviceAuth.startDeviceAuth()
@@ -337,6 +503,7 @@ public final class AppModel: ObservableObject {
             self.board = BoardStore(loader: UnconfiguredBoardLoader())
             self.phase = .needsProfile
         }
+        ensureHomeTab(select: activeTabID == nil)
     }
 
     // MARK: - Board lifecycle
@@ -350,13 +517,17 @@ public final class AppModel: ObservableObject {
             phase = .needsProfile
             return
         }
+        ensureHomeTab(select: activeTabID == nil)
         if phase == .ready {
             // Keep showing the board while refreshing; only drop to disconnected on failure.
         } else {
             phase = .connecting
         }
-        await resolveProjectIfNeeded()
         await loadProjects()
+        guard hasSelectedProject else {
+            phase = .ready
+            return
+        }
         await loadSessions()
         await board.load(projectSlug: projectSlug)
         switch board.state {
@@ -376,6 +547,49 @@ public final class AppModel: ObservableObject {
         return makeClient(baseURL, principal)
     }
 
+    public func currentBearerToken() async -> String? {
+        await principal.token()
+    }
+
+    public func shellURL() -> URL? {
+        try? profile?.gatewayBaseURL()
+    }
+
+    public func homeTitle() -> String {
+        "Home"
+    }
+
+    public func appURL(slug: String) -> URL? {
+        guard let base = try? profile?.gatewayBaseURL(),
+              var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        comps.path = "/files/apps/\(slug)/index.html"
+        return comps.url
+    }
+
+    public func ensureHomeTab(select: Bool = false) {
+        guard profile != nil else { return }
+        let home = WorkspaceTab(
+            id: "home",
+            title: homeTitle(),
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: .home,
+            panel: .shell
+        )
+        if let index = openTabs.firstIndex(where: { $0.id == home.id }) {
+            openTabs[index] = home
+        } else {
+            openTabs.insert(home, at: 0)
+        }
+        if select || activeTabID == nil {
+            focusTab(id: home.id)
+        }
+    }
+
+    public func openAppTab(slug: String, title: String) {
+        switchPanel(.app(slug: slug))
+    }
+
     /// Resolves the active project slug from the user's projects when unset, so the
     /// board targets a real project instead of a hardcoded "default" (which 404s).
     private func resolveProjectIfNeeded() async {
@@ -392,12 +606,81 @@ public final class AppModel: ObservableObject {
     /// Loads the live zellij session list for the Terminals section.
     public func loadSessions() async {
         guard let client = gatewayClient() else { return }
-        struct SessionsResponse: Decodable {
-            struct Session: Decodable { let name: String; let status: String }
-            let sessions: [Session]
+        struct SessionDTO: Decodable {
+            let name: String
+            let attachName: String
+            let status: String
+            let aliases: [String]
+
+            private enum CodingKeys: String, CodingKey {
+                case name, id, sessionId, terminalSessionId, status, state, runtime
+            }
+
+            private enum RuntimeKeys: String, CodingKey {
+                case status, zellijSession
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let runtime = try? container.nestedContainer(keyedBy: RuntimeKeys.self, forKey: .runtime)
+                let directName = try container.decodeIfPresent(String.self, forKey: .name)
+                let zellijName = try runtime?.decodeIfPresent(String.self, forKey: .zellijSession)
+                let id = try container.decodeIfPresent(String.self, forKey: .id)
+                let terminalId = try container.decodeIfPresent(String.self, forKey: .terminalSessionId)
+                let sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+                name = directName
+                    ?? zellijName
+                    ?? terminalId
+                    ?? sessionId
+                    ?? id
+                    ?? ""
+                attachName = zellijName
+                    ?? directName
+                    ?? terminalId
+                    ?? sessionId
+                    ?? id
+                    ?? ""
+                aliases = [directName, zellijName, id, terminalId, sessionId]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                status = try container.decodeIfPresent(String.self, forKey: .status)
+                    ?? container.decodeIfPresent(String.self, forKey: .state)
+                    ?? runtime?.decodeIfPresent(String.self, forKey: .status)
+                    ?? "active"
+            }
         }
-        if let response: SessionsResponse = try? await client.get("/api/sessions") {
-            sessions = response.sessions.map { WorkspaceSession(name: $0.name, status: $0.status) }
+        struct SessionsResponse: Decodable {
+            let sessions: [SessionDTO]
+        }
+        var byName: [String: WorkspaceSession] = [:]
+        func merge(_ dtos: [SessionDTO]) {
+            for dto in dtos where !dto.name.isEmpty {
+                byName[dto.name] = WorkspaceSession(name: dto.name, attachName: dto.attachName, status: dto.status)
+                for alias in dto.aliases {
+                    sessionAttachNames[alias] = dto.attachName
+                }
+                sessionAttachNames[dto.name] = dto.attachName
+            }
+        }
+        sessionAttachNames.removeAll(keepingCapacity: true)
+        if let response: SessionsResponse = try? await client.get("/api/terminal/sessions") {
+            merge(response.sessions)
+        }
+        if let response: SessionsResponse = try? await client.get("/api/sessions?limit=100") {
+            merge(response.sessions)
+        }
+        if let response: [SessionDTO] = try? await client.get("/api/terminal/pty-sessions") {
+            merge(response)
+        }
+        let loaded = Array(byName.values).sorted { lhs, rhs in
+            if lhs.isActive != rhs.isActive { return lhs.isActive && !rhs.isActive }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+        sessions = loaded
+        if !loaded.isEmpty {
+            if section == .shell, terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
+                openSession(named: first.name)
+            }
         }
     }
 
@@ -416,26 +699,68 @@ public final class AppModel: ObservableObject {
     /// Switches the active project and reloads its board.
     public func openProject(slug: String) {
         guard slug != projectSlug, let client = gatewayClient() else { return }
+        openError = nil
         projectSlug = slug
+        hasSelectedProject = true
+        filePanelPath = "projects/\(slug)"
+        selectedFilePath = nil
+        selectedFileData = nil
+        selectedFileContent = ""
         board = BoardStore(loader: makeLoader(client))
         section = .board
         Task { await refresh() }
     }
 
+    public func openHome() {
+        hasSelectedProject = false
+        selectedCard = nil
+        terminal = nil
+        activeTabID = "home"
+        section = .home
+        activePanel = .shell
+    }
+
+    public var activeProjectName: String {
+        projects.first { $0.slug == projectSlug }?.name ?? projectSlug
+    }
+
+    public var activeTabTitle: String {
+        openTabs.first { $0.id == activeTabID }?.title
+            ?? selectedCard?.title
+            ?? homeTitle()
+    }
+
+    public var activeTerminalSessionName: String? {
+        selectedCard?.linkedSessionId ?? selectedCard?.id
+    }
+
     /// Creates a project (optionally from a git remote) and opens it.
     public func createProject(name: String, remote: String?) {
         guard let client = gatewayClient() else { return }
+        openError = nil
         Task { [weak self] in
-            struct CreateProjectRequest: Encodable { let name: String; let remote: String? }
+            let source = (remote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? remote?.trimmingCharacters(in: .whitespacesAndNewlines)
+                : name.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+            guard !source.isEmpty else {
+                await MainActor.run { self?.openError = .createProjectFailed }
+                return
+            }
+            let slug = name
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .joined(separator: "-")
+            struct CreateProjectRequest: Encodable { let url: String; let slug: String? }
             struct CreateProjectResponse: Decodable { let project: Project?; struct Project: Decodable { let slug: String } }
             do {
                 let response: CreateProjectResponse = try await client.post(
-                    "/api/projects", body: CreateProjectRequest(name: name, remote: remote)
+                    "/api/projects", body: CreateProjectRequest(url: source, slug: slug.isEmpty ? nil : slug)
                 )
                 await self?.loadProjects()
                 if let slug = response.project?.slug { self?.openProject(slug: slug) }
             } catch {
-                // Silent-safe.
+                await MainActor.run { self?.openError = .createProjectFailed }
             }
         }
     }
@@ -444,6 +769,7 @@ public final class AppModel: ObservableObject {
     /// via PATCH; refreshes on completion to reconcile.
     public func updateTaskStatus(cardId: String, to status: TaskStatus, order: Double?) {
         guard let client = gatewayClient() else { return }
+        openError = nil
         let slug = projectSlug
         Task { [weak self] in
             struct UpdateTaskRequest: Encodable { let status: String; let order: Double? }
@@ -455,6 +781,7 @@ public final class AppModel: ObservableObject {
                 )
                 await self?.refresh()
             } catch {
+                await MainActor.run { self?.openError = .taskMutationFailed }
                 await self?.refresh() // reconcile on failure too
             }
         }
@@ -473,22 +800,34 @@ public final class AppModel: ObservableObject {
     /// Creates a new task in the given column and refreshes the board (TE01/US7).
     public func createTask(status: TaskStatus = .todo) {
         guard !isCreatingSession else { return }
+        openError = nil
         isCreatingSession = true
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingSession = false } }
-            guard let self, let client = await self.gatewayClient() else { return }
+            guard let self, let client = self.gatewayClient() else { return }
             await self.resolveProjectIfNeeded()
-            let slug = await self.projectSlug
+            let slug = self.projectSlug
             struct CreateTaskRequest: Encodable { let title: String; let status: String }
-            struct CreateTaskResponse: Decodable {}
+            struct CreateTaskResponse: Decodable {
+                let task: GatewayTaskDTO?
+            }
             do {
-                let _: CreateTaskResponse = try await client.post(
+                let response: CreateTaskResponse = try await client.post(
                     "/api/projects/\(slug)/tasks",
                     body: CreateTaskRequest(title: "New task", status: status.rawValue)
                 )
+                if let task = response.task {
+                    let card = task.toCard()
+                    await MainActor.run {
+                        self.selectedCard = card
+                        self.activePanel = .terminal
+                        _ = self.upsertTab(for: card)
+                    }
+                    Task { try? await self.openCard(card) }
+                }
                 await self.refresh()
             } catch {
-                // Silent-safe: never leak raw error; board simply does not gain a card.
+                await MainActor.run { self.openError = .taskMutationFailed }
             }
         }
     }
@@ -519,48 +858,55 @@ public final class AppModel: ObservableObject {
     /// Opens a card: selects it and, if it has a linked session, builds a
     /// `ShellWSClient` for that session over the profile's WS URL (header bearer
     /// token) and wraps it in a `TerminalSession`. Returns the session, or throws
-    /// a GENERIC `OpenCardError` (no raw text).
+    /// a GENERIC `OperatorError` (no raw text).
     @discardableResult
     public func openCard(_ card: Card) async throws -> TerminalSession {
         openError = nil
         selectedCard = card
+        let tabID = upsertTab(for: card)
         activePanel = .terminal
 
+        if let existing = terminalSessions[tabID] {
+            terminal = existing
+            return existing
+        }
+
         guard let profile else {
-            let err = OpenCardError.misconfigured
+            let err = OperatorError.misconfigured
             openError = err
             throw err
         }
         guard let token = await principal.token() else {
-            let err = OpenCardError.unauthorized
+            let err = OperatorError.unauthorized
             openError = err
             throw err
         }
 
         // Existing session → attach by name. No session yet → connect to
         // `/ws/terminal?cwd=` which auto-creates one (matrix shell connect -c).
-        let hasSession = !(card.linkedSessionId ?? "").isEmpty
+        let requestedSession = card.linkedSessionId ?? ""
+        let attachSession = sessionAttachName(for: requestedSession)
+        let hasSession = !attachSession.isEmpty
         let wsURL: URL
         do {
             if hasSession {
                 wsURL = try profile.webSocketURL(
                     path: "/ws/terminal/session",
-                    session: card.linkedSessionId!,
+                    session: attachSession,
                     fromSeq: Int?.none
                 )
             } else {
                 wsURL = try profile.autoCreateTerminalURL(cwd: nil)
             }
         } catch {
-            let err = OpenCardError.misconfigured
+            let err = OperatorError.misconfigured
             openError = err
             throw err
         }
 
-        // Tear down any previously open session before swapping in the new one.
-        terminal?.shutdown()
-        let label = hasSession ? card.linkedSessionId! : card.title
-        let session = makeTerminal(wsURL, token, card.linkedSessionId ?? "", label)
+        let label = hasSession ? attachSession : card.title
+        let session = makeTerminal(wsURL, token, attachSession, label)
+        terminalSessions[tabID] = session
         terminal = session
         session.start()
         // After it opens, refresh the session list so the new session is tracked.
@@ -573,17 +919,372 @@ public final class AppModel: ObservableObject {
         return session
     }
 
+    /// Opens a workspace tab by reattaching its card/session terminal.
+    public func focusTab(id: String) {
+        guard let tab = openTabs.first(where: { $0.id == id }) else { return }
+        activeTabID = id
+        activePanel = tab.panel
+        selectedCard = tab.card
+        if let cachedTerminal = terminalSessions[id] {
+            terminal = cachedTerminal
+            return
+        }
+        if let card = tab.card {
+            Task { try? await openCard(card) }
+        } else {
+            terminal = nil
+        }
+    }
+
+    /// Closes a workspace tab. If the active tab closes, focus the nearest
+    /// remaining tab; otherwise detach the current terminal.
+    public func closeTab(id: String) {
+        guard id != "home" else {
+            focusTab(id: id)
+            return
+        }
+        guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
+        let wasActive = activeTabID == id
+        openTabs.remove(at: index)
+        if !wasActive { return }
+        if let session = terminalSessions.removeValue(forKey: id) {
+            session.shutdown()
+        }
+        terminal = nil
+        selectedCard = nil
+        openError = nil
+        let nextIndex = min(index, openTabs.count - 1)
+        guard nextIndex >= 0, openTabs.indices.contains(nextIndex) else {
+            activeTabID = nil
+            return
+        }
+        let next = openTabs[nextIndex]
+        activeTabID = next.id
+        focusTab(id: next.id)
+    }
+
     /// Closes the open card's terminal and detail pane (Esc / light-dismiss).
     public func closeCard() {
+        if let activeTabID {
+            closeTab(id: activeTabID)
+            return
+        }
         terminal?.shutdown()
         terminal = nil
         selectedCard = nil
         openError = nil
     }
 
+    public func closeSession(named name: String) {
+        if let tab = openTabs.first(where: { tab in
+            tab.card?.linkedSessionId == name || tab.card?.id == name
+        }) {
+            closeTab(id: tab.id)
+            return
+        }
+        if selectedCard?.linkedSessionId == name || selectedCard?.id == name {
+            closeCard()
+        }
+    }
+
     /// Switches the active detail panel (⌘1/2/3). US1 only renders Terminal.
     public func switchPanel(_ panel: Panel) {
         activePanel = panel
+        if let activeTabID,
+           let index = openTabs.firstIndex(where: { $0.id == activeTabID }) {
+            openTabs[index].panel = panel
+        }
+        Task { await loadPanelData(for: panel) }
+    }
+
+    public func loadSelectedTabPanel() {
+        Task { await loadPanelData(for: activePanel) }
+    }
+
+    public func loadPanelData(for panel: Panel? = nil) async {
+        let panel = panel ?? activePanel
+        guard let client = gatewayClient() else { return }
+        isLoadingPanelData = true
+        defer { isLoadingPanelData = false }
+        switch panel {
+        case .terminal, .shell:
+            return
+        case .app(let slug):
+            switch slug {
+            case "editor":
+                await loadFiles(client: client)
+            case "git":
+                await loadGit(client: client)
+            case "artifacts":
+                await loadPreviews(client: client)
+            case "processes":
+                await loadSessions()
+            default:
+                return
+            }
+        }
+    }
+
+    private func loadFiles(client: GatewayHTTPClient) async {
+        struct FilesResponse: Decodable {
+            struct Entry: Decodable {
+                let name: String
+                let type: String
+                let size: Int?
+                let gitStatus: String?
+                let changedCount: Int?
+            }
+            let entries: [Entry]
+        }
+        if filePanelPath.isEmpty {
+            filePanelPath = "projects/\(projectSlug)"
+        }
+        await loadFileTree(path: filePanelPath, replaceRoot: true, client: client)
+        if let response: FilesResponse = try? await client.get("/api/files/list?path=\(queryValue(filePanelPath))") {
+            fileEntries = response.entries.map {
+                WorkspaceFileEntry(
+                    name: $0.name,
+                    type: $0.type,
+                    size: $0.size,
+                    gitStatus: $0.gitStatus,
+                    changedCount: $0.changedCount
+                )
+            }
+        }
+    }
+
+    private struct FileTreeDTO: Decodable {
+        let name: String
+        let type: String
+        let size: Int?
+        let gitStatus: String?
+        let changedCount: Int?
+    }
+
+    private func loadFileTree(path: String, replaceRoot: Bool, client: GatewayHTTPClient) async {
+        let entries: [FileTreeDTO]
+        do {
+            entries = try await client.get("/api/files/tree?path=\(queryValue(path))")
+        } catch {
+            return
+        }
+        let nodes = entries.map { dto in
+            let childPath = path.isEmpty ? dto.name : "\(path)/\(dto.name)"
+            return WorkspaceFileTreeNode(
+                id: childPath,
+                name: dto.name,
+                type: dto.type,
+                path: childPath,
+                size: dto.size,
+                gitStatus: dto.gitStatus,
+                changedCount: dto.changedCount,
+                children: nil,
+                expanded: false
+            )
+        }
+        if replaceRoot {
+            fileTree = nodes
+        } else {
+            fileTree = updateTree(fileTree, path: path) { node in
+                var next = node
+                next.children = nodes
+                next.expanded = true
+                return next
+            }
+        }
+    }
+
+    public func openFileEntry(_ entry: WorkspaceFileEntry) {
+        guard let client = gatewayClient() else { return }
+        let path = "\(filePanelPath.isEmpty ? "projects/\(projectSlug)" : filePanelPath)/\(entry.name)"
+        fileSaveState = nil
+        if entry.type == "directory" {
+            filePanelPath = path
+            selectedFilePath = nil
+            selectedFileData = nil
+            selectedFileContent = ""
+            Task { await loadFiles(client: client) }
+            return
+        }
+        openFile(path: path, client: client)
+    }
+
+    public func toggleFileTreeNode(_ node: WorkspaceFileTreeNode) {
+        guard node.isDirectory, let client = gatewayClient() else { return }
+        if node.expanded {
+            fileTree = updateTree(fileTree, path: node.path) { current in
+                var next = current
+                next.expanded = false
+                return next
+            }
+            return
+        }
+        Task { await loadFileTree(path: node.path, replaceRoot: false, client: client) }
+    }
+
+    public func openFileTreeNode(_ node: WorkspaceFileTreeNode) {
+        if node.isDirectory {
+            toggleFileTreeNode(node)
+            return
+        }
+        guard let client = gatewayClient() else { return }
+        openFile(path: node.path, client: client)
+    }
+
+    private func openFile(path: String, client: GatewayHTTPClient) {
+        selectedFilePath = path
+        selectedFileData = nil
+        selectedFileContent = ""
+        fileSaveState = nil
+        let route = fileRoute(path)
+        Task { [weak self] in
+            do {
+                let data = try await client.getData(route)
+                let text = String(data: data, encoding: .utf8) ?? ""
+                await MainActor.run {
+                    self?.selectedFileData = data
+                    self?.selectedFileContent = text
+                    self?.fileSaveState = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self?.selectedFileData = nil
+                    self?.selectedFileContent = ""
+                    self?.fileSaveState = "Couldn't open this file."
+                }
+            }
+        }
+    }
+
+    private func updateTree(
+        _ nodes: [WorkspaceFileTreeNode],
+        path: String,
+        transform: (WorkspaceFileTreeNode) -> WorkspaceFileTreeNode
+    ) -> [WorkspaceFileTreeNode] {
+        nodes.map { node in
+            if node.path == path {
+                return transform(node)
+            }
+            var next = node
+            if let children = node.children {
+                next.children = updateTree(children, path: path, transform: transform)
+            }
+            return next
+        }
+    }
+
+    public func goUpInFiles() {
+        guard !filePanelPath.isEmpty else { return }
+        let parts = filePanelPath.split(separator: "/").map(String.init)
+        guard parts.count > 2 else { return }
+        filePanelPath = parts.dropLast().joined(separator: "/")
+        selectedFilePath = nil
+        selectedFileData = nil
+        selectedFileContent = ""
+        Task { await loadPanelData(for: .app(slug: "editor")) }
+    }
+
+    public func saveSelectedFile() {
+        guard let client = gatewayClient(), let path = selectedFilePath else { return }
+        fileSaveState = "Saving..."
+        let content = selectedFileContent
+        let route = fileRoute(path)
+        Task { [weak self] in
+            do {
+                try await client.putData(route, data: Data(content.utf8))
+                await MainActor.run { self?.fileSaveState = "Saved" }
+                await self?.loadPanelData(for: .app(slug: "editor"))
+            } catch {
+                await MainActor.run { self?.fileSaveState = "Couldn't save this file." }
+            }
+        }
+    }
+
+    private func loadGit(client: GatewayHTTPClient) async {
+        struct BranchesResponse: Decodable {
+            struct Branch: Decodable { let name: String }
+            let branches: [Branch]
+        }
+        struct PRsResponse: Decodable {
+            struct PR: Decodable {
+                let number: Int
+                let title: String
+                let headRefName: String?
+                let baseRefName: String?
+            }
+            let prs: [PR]
+        }
+        struct WorktreesResponse: Decodable {
+            struct Worktree: Decodable {
+                let id: String
+                let path: String
+                let currentBranch: String
+                let dirtyState: String
+                let dirtyCount: Int?
+            }
+            let worktrees: [Worktree]
+        }
+        async let branchesResponse: BranchesResponse? = try? client.get("/api/projects/\(projectSlug)/branches")
+        async let prsResponse: PRsResponse? = try? client.get("/api/projects/\(projectSlug)/prs")
+        async let worktreesResponse: WorktreesResponse? = try? client.get("/api/projects/\(projectSlug)/worktrees")
+        let branches = await branchesResponse?.branches ?? []
+        let prs = await prsResponse?.prs ?? []
+        let worktrees = await worktreesResponse?.worktrees ?? []
+        gitBranches = branches.map { GitBranchSummary(name: $0.name) }
+        gitPullRequests = prs.map {
+            GitPullRequestSummary(
+                number: $0.number,
+                title: $0.title,
+                headRefName: $0.headRefName,
+                baseRefName: $0.baseRefName
+            )
+        }
+        gitWorktrees = worktrees.map {
+            GitWorktreeSummary(
+                id: $0.id,
+                path: $0.path,
+                currentBranch: $0.currentBranch,
+                dirtyState: $0.dirtyState,
+                dirtyCount: $0.dirtyCount
+            )
+        }
+    }
+
+    private func loadPreviews(client: GatewayHTTPClient) async {
+        struct PreviewsResponse: Decodable {
+            struct Preview: Decodable {
+                let id: String
+                let label: String
+                let url: String
+                let lastStatus: String
+            }
+            let previews: [Preview]
+        }
+        var path = "/api/projects/\(projectSlug)/previews?limit=50"
+        if let taskId = selectedCard?.id, taskId.hasPrefix("task_") {
+            path += "&taskId=\(queryValue(taskId))"
+        } else if let sessionId = selectedCard?.linkedSessionId ?? selectedCard?.id, !sessionId.isEmpty {
+            path += "&sessionId=\(queryValue(sessionId))"
+        }
+        if let response: PreviewsResponse = try? await client.get(path) {
+            previews = response.previews.map {
+                PreviewSummary(id: $0.id, label: $0.label, url: $0.url, lastStatus: $0.lastStatus)
+            }
+        }
+    }
+
+    public func sendCommandToActiveTerminal(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
+            openSession(named: first.name)
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                await MainActor.run { self?.terminal?.send(trimmed + "\n") }
+            }
+            return
+        }
+        terminal?.send(trimmed + "\n")
     }
 
     /// ⌘N / column "+": create a new task card on the board.
@@ -595,31 +1296,99 @@ public final class AppModel: ObservableObject {
     /// Creates a new zellij session (Terminals section "+") and reloads the list.
     public func createSession() {
         guard !isCreatingSession, let client = gatewayClient() else { return }
+        openError = nil
         isCreatingSession = true
+        let existingSessionNames = Set(sessions.map(\.name))
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingSession = false } }
             struct CreateSessionRequest: Encodable {
                 let kind = "shell"
                 let runtimePreference = "zellij"
+                let projectSlug: String
             }
-            struct CreateSessionResponse: Decodable {}
+            struct CreateSessionResponse: Decodable {
+                struct Session: Decodable {
+                    let name: String
+
+                    private enum CodingKeys: String, CodingKey { case name, id, sessionId }
+
+                    init(from decoder: Decoder) throws {
+                        let container = try decoder.container(keyedBy: CodingKeys.self)
+                        name = try container.decodeIfPresent(String.self, forKey: .name)
+                            ?? container.decodeIfPresent(String.self, forKey: .id)
+                            ?? container.decode(String.self, forKey: .sessionId)
+                    }
+                }
+                let session: Session?
+            }
             do {
-                let _: CreateSessionResponse = try await client.post(
+                let response: CreateSessionResponse = try await client.post(
                     "/api/sessions",
-                    body: CreateSessionRequest()
+                    body: CreateSessionRequest(projectSlug: self?.projectSlug ?? "default")
                 )
                 await self?.loadSessions()
+                if let name = response.session?.name {
+                    await MainActor.run { self?.openSession(named: name) }
+                } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
+                    await MainActor.run { self?.openSession(named: created.name) }
+                }
             } catch {
-                // Silent-safe: never leak the underlying error.
+                await MainActor.run { self?.openError = .createSessionFailed }
             }
         }
     }
 
     private func displayName(for card: Card) -> String {
         if let session = card.linkedSessionId, !session.isEmpty {
-            return session
+            return sessionAttachName(for: session)
         }
         return card.title
+    }
+
+    private func sessionAttachName(for session: String) -> String {
+        sessionAttachNames[session] ?? session
+    }
+
+    private func queryValue(_ value: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&=+?")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
+    private func fileRoute(_ path: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        let encoded = path
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { component in
+                String(component).addingPercentEncoding(withAllowedCharacters: allowed) ?? String(component)
+            }
+            .joined(separator: "/")
+        return "/files/\(encoded)"
+    }
+
+    @discardableResult
+    private func upsertTab(for card: Card) -> String {
+        let kind: WorkspaceTab.Kind = card.id.hasPrefix("task_") ? .task : .session
+        let title = displayName(for: card)
+        let tab = WorkspaceTab(
+            title: title,
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: kind,
+            card: card,
+            panel: .terminal
+        )
+        if let index = openTabs.firstIndex(where: { $0.id == tab.id }) {
+            openTabs[index] = tab
+        } else {
+            openTabs.append(tab)
+            if openTabs.count > 16 {
+                openTabs.removeFirst(openTabs.count - 16)
+            }
+        }
+        activeTabID = tab.id
+        return tab.id
     }
 }
 

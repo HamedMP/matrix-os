@@ -72,9 +72,24 @@ final class TerminalSessionTests: XCTestCase {
         await source.emit(.output(seq: 2, data: "world"))
 
         await eventually({ session.lastSeq == 2 })
-        XCTAssertEqual(fed, ["hello ", "world"])
+        await eventually({ fed == ["hello world"] })
         // A bare output (before an explicit attached) implies attachment.
         XCTAssertEqual(session.connectionState, .attached)
+    }
+
+    func testBurstOutputIsCoalescedBeforeFeedingSink() async {
+        let (session, source) = makeSession()
+        var fed: [String] = []
+        session.setOutputSink { fed.append($0) }
+        session.start()
+
+        for seq in 1...20 {
+            await source.emit(.output(seq: seq, data: "\(seq),"))
+        }
+
+        await eventually({ session.lastSeq == 20 })
+        await eventually({ fed.count == 1 })
+        XCTAssertEqual(fed.first, (1...20).map { "\($0)," }.joined())
     }
 
     func testOutWhileScrolledUpAccumulatesUnseen() async {

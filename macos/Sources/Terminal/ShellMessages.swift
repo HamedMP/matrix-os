@@ -77,7 +77,7 @@ public enum ServerMessage: Sendable, Equatable {
 
 extension ServerMessage: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case type, session, state, fromSeq, nextSeq, seq, data, code, message
+        case type, session, sessionId, state, fromSeq, nextSeq, seq, data, code, message
     }
 
     public init(from decoder: Decoder) throws {
@@ -85,14 +85,16 @@ extension ServerMessage: Decodable {
         let type = try container.decode(String.self, forKey: .type)
         switch type {
         case "attached":
+            let session = try container.decodeIfPresent(String.self, forKey: .session)
+                ?? container.decode(String.self, forKey: .sessionId)
             self = .attached(
-                session: try container.decode(String.self, forKey: .session),
+                session: session,
                 state: try container.decodeIfPresent(String.self, forKey: .state) ?? "running",
                 fromSeq: try container.decodeIfPresent(Int.self, forKey: .fromSeq) ?? 0
             )
         case "output":
             self = .output(
-                seq: try container.decode(Int.self, forKey: .seq),
+                seq: try container.decodeIfPresent(Int.self, forKey: .seq) ?? 0,
                 data: try container.decode(String.self, forKey: .data)
             )
         case "exit":
@@ -125,6 +127,7 @@ public enum ServerEvent: Sendable, Equatable {
     case output(seq: Int, data: String)
     case exit(code: Int)
     case error(code: String, message: String)
+    case reconnecting
     /// Emitted after the client has reset its buffer and re-attached at live tail.
     case replayEvicted
 }

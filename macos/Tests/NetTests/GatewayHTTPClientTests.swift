@@ -36,6 +36,24 @@ final class GatewayHTTPClientTests: XCTestCase {
         XCTAssertEqual(req.url?.path, "/api/workspace/projects")
     }
 
+    func testGetPreservesBaseRuntimeAndRelativeQuery() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("{\"id\":\"abc\",\"count\":3}".utf8))
+        }
+        let client = GatewayHTTPClient(
+            baseURL: URL(string: "https://app.matrix-os.com?runtime=staging")!,
+            tokenProvider: StaticTokenProvider(token: "principal-token"),
+            sessionConfiguration: .mocked()
+        )
+        let _: Sample = try await client.get("/api/files/list?path=projects/matrix-os", as: Sample.self)
+
+        let req = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(req.url?.path, "/api/files/list")
+        let query = req.url?.query ?? ""
+        XCTAssertTrue(query.contains("runtime=staging"), query)
+        XCTAssertTrue(query.contains("path=projects/matrix-os"), query)
+    }
+
     func testTimeoutIsConfiguredOnRequest() async throws {
         MockURLProtocol.setHandler { req in
             (httpResponse(req.url!, 200), Data("{\"id\":\"x\",\"count\":1}".utf8))
@@ -77,6 +95,27 @@ final class GatewayHTTPClientTests: XCTestCase {
         let client = makeClient()
         let _: Sample = try await client.patch("/api/projects/foo/tasks/1", body: Payload(title: "x"), as: Sample.self)
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "PATCH")
+    }
+
+    func testRawGetReturnsData() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("hello".utf8))
+        }
+        let client = makeClient()
+        let data = try await client.getData("/files/projects/demo/README.md")
+        XCTAssertEqual(String(data: data, encoding: .utf8), "hello")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "GET")
+    }
+
+    func testPutDataUsesPutAndContentType() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("{}".utf8))
+        }
+        let client = makeClient()
+        try await client.putData("/files/projects/demo/README.md", data: Data("saved".utf8))
+        let req = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(req.httpMethod, "PUT")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Type"), "text/plain; charset=utf-8")
     }
 
     func testDeleteUsesDeleteMethod() async throws {

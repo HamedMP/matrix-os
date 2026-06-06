@@ -45,7 +45,8 @@ struct CardView: View {
             dragPreview
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(card.title), \(card.status.rawValue), priority \(card.priority.rawValue)")
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityHint("Opens the card terminal")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -185,6 +186,21 @@ struct CardView: View {
         }
     }
 
+    private var accessibilitySummary: String {
+        var parts = [
+            card.title,
+            "status \(card.status.rawValue)",
+            "priority \(card.priority.rawValue)",
+        ]
+        if let session = card.linkedSessionId, !session.isEmpty {
+            parts.append("session \(session)")
+        }
+        if card.isLive {
+            parts.append("live")
+        }
+        return parts.joined(separator: ", ")
+    }
+
     private func metaItem(text: String, separator: Bool = false) -> some View {
         HStack(spacing: Spacing.x1) {
             if separator {
@@ -289,7 +305,6 @@ struct TagPill: View {
             .padding(.horizontal, Spacing.x2)
             .padding(.vertical, 1)
             .frame(maxWidth: 92, alignment: .leading)
-            .fixedSize(horizontal: true, vertical: false)
             .background(
                 Capsule(style: .continuous)
                     .fill(Color.surfaceRail.opacity(0.9))

@@ -43,6 +43,10 @@ public struct GatewayHTTPClient: Sendable {
         try await send(method: "GET", path: path, body: Optional<EmptyBody>.none, timeout: timeout)
     }
 
+    public func getData(_ path: String, timeout: TimeInterval? = nil) async throws -> Data {
+        try await sendRaw(method: "GET", path: path, body: Optional<EmptyBody>.none, timeout: timeout)
+    }
+
     public func post<Body: Encodable, Response: Decodable>(
         _ path: String,
         body: Body,
@@ -59,6 +63,22 @@ public struct GatewayHTTPClient: Sendable {
         timeout: TimeInterval? = nil
     ) async throws -> Response {
         try await send(method: "PATCH", path: path, body: body, timeout: timeout)
+    }
+
+    public func putData(
+        _ path: String,
+        data: Data,
+        contentType: String = "text/plain; charset=utf-8",
+        timeout: TimeInterval? = nil
+    ) async throws {
+        let request = try await makeRawRequest(
+            method: "PUT",
+            path: path,
+            data: data,
+            contentType: contentType,
+            timeout: timeout
+        )
+        _ = try await perform(request)
     }
 
     /// DELETE with no decoded response body.
@@ -92,7 +112,10 @@ public struct GatewayHTTPClient: Sendable {
         timeout: TimeInterval?
     ) async throws -> Data {
         let request = try await makeRequest(method: method, path: path, body: body, timeout: timeout)
+        return try await perform(request)
+    }
 
+    private func perform(_ request: URLRequest) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -140,12 +163,40 @@ public struct GatewayHTTPClient: Sendable {
         return request
     }
 
+    private func makeRawRequest(
+        method: String,
+        path: String,
+        data: Data,
+        contentType: String,
+        timeout: TimeInterval?
+    ) async throws -> URLRequest {
+        guard let url = resolve(path: path) else {
+            throw GatewayError.misconfigured
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = timeout ?? defaultTimeout
+        if let token = await tokenProvider.token() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        return request
+    }
+
     private func resolve(path: String) -> URL? {
         // Preserve any base query (e.g. ?runtime=staging) while appending the path.
         guard var comps = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
-        comps.path = path
+        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        comps.path = String(parts.first ?? "")
+        if parts.count == 2,
+           let relative = URLComponents(string: path),
+           let queryItems = relative.queryItems,
+           !queryItems.isEmpty {
+            comps.queryItems = (comps.queryItems ?? []) + queryItems
+        }
         return comps.url
     }
 }

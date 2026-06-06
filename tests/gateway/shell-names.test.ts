@@ -25,6 +25,7 @@ describe("shell name and path validation", () => {
   it("accepts safe session, layout, and profile slugs", () => {
     expect(validateSessionName("main")).toBe("main");
     expect(validateSessionName("1")).toBe("1");
+    expect(validateSessionName("matrix-sess_abc123")).toBe("matrix-sess_abc123");
     expect(validateLayoutName("dev-workspace-1")).toBe("dev-workspace-1");
     expect(validateProfileName("local")).toBe("local");
   });
@@ -34,11 +35,13 @@ describe("shell name and path validation", () => {
   });
 
   it("rejects unsafe identifiers", () => {
-    for (const value of ["Main", "-main", "main_", "../main", "a".repeat(65)]) {
+    for (const value of ["Main", "-main", "../main", "a".repeat(65)]) {
       expect(() => validateSessionName(value)).toThrow("Invalid request");
       expect(() => validateLayoutName(value)).toThrow("Invalid request");
       expect(() => validateProfileName(value)).toThrow("Invalid request");
     }
+    expect(() => validateLayoutName("main_")).toThrow("Invalid request");
+    expect(() => validateProfileName("main_")).toThrow("Invalid request");
   });
 
   it("resolves cwd inside the owner home", async () => {

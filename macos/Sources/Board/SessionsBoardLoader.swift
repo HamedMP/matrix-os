@@ -20,8 +20,32 @@ private struct SessionDTO: Decodable {
     let status: String
     let updatedAt: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case name, id, sessionId, terminalSessionId, status, state, runtime, updatedAt, lastActivityAt
+    }
+
+    private enum RuntimeKeys: String, CodingKey {
+        case status, zellijSession
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let runtime = try? container.nestedContainer(keyedBy: RuntimeKeys.self, forKey: .runtime)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+            ?? runtime?.decodeIfPresent(String.self, forKey: .zellijSession)
+            ?? container.decodeIfPresent(String.self, forKey: .sessionId)
+            ?? container.decodeIfPresent(String.self, forKey: .terminalSessionId)
+            ?? container.decode(String.self, forKey: .id)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+            ?? container.decodeIfPresent(String.self, forKey: .state)
+            ?? runtime?.decodeIfPresent(String.self, forKey: .status)
+            ?? "active"
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .lastActivityAt)
+    }
+
     func toCard(order: Double) -> Card {
-        let active = status == "active"
+        let active = ["active", "running", "attached", "ready", "idle", "waiting"].contains(status.lowercased())
         return Card(
             id: name,
             projectSlug: "",

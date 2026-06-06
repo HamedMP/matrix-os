@@ -68,6 +68,17 @@ final class ShellMessageCodecTests: XCTestCase {
         XCTAssertEqual(fromSeq, 12)
     }
 
+    func testServerAttachedAcceptsAutoCreateSessionIdShape() throws {
+        let json = #"{"type":"attached","sessionId":"matrix-sess_auto","state":"running"}"#
+        let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
+        guard case let .attached(session, state, fromSeq) = message else {
+            return XCTFail("expected attached, got \(message)")
+        }
+        XCTAssertEqual(session, "matrix-sess_auto")
+        XCTAssertEqual(state, "running")
+        XCTAssertEqual(fromSeq, 0)
+    }
+
     func testServerOutputDecodes() throws {
         let json = #"{"type":"output","seq":7,"data":"hello"}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
@@ -75,6 +86,16 @@ final class ShellMessageCodecTests: XCTestCase {
             return XCTFail("expected output, got \(message)")
         }
         XCTAssertEqual(seq, 7)
+        XCTAssertEqual(data, "hello")
+    }
+
+    func testServerOutputAcceptsLegacyFrameWithoutSeq() throws {
+        let json = #"{"type":"output","data":"hello"}"#
+        let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
+        guard case let .output(seq, data) = message else {
+            return XCTFail("expected output, got \(message)")
+        }
+        XCTAssertEqual(seq, 0)
         XCTAssertEqual(data, "hello")
     }
 
@@ -167,6 +188,32 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         }
         let lastSeq = await client.lastSeq
         XCTAssertEqual(lastSeq, 2)
+        await client.shutdown()
+    }
+
+    func testInputTypedBeforeAttachFlushesAfterAttach() async throws {
+        let transport = MockShellTransport()
+        let client = makeClient(transport: transport)
+
+        await client.sendInput("echo hello\n")
+        let sentBeforeAttach = await transport.sentTexts
+        XCTAssertTrue(sentBeforeAttach.isEmpty)
+
+        await client.connect()
+        await transport.waitForConnect(count: 1)
+        await transport.emit(#"{"type":"attached","session":"main","state":"running","fromSeq":0}"#)
+        _ = await drain(client, count: 1)
+
+        let deadline = Date().addingTimeInterval(1)
+        while await transport.sentTexts.isEmpty, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let sent = await transport.sentTexts
+        XCTAssertEqual(sent.count, 1)
+        let frame = try XCTUnwrap(sent.first)
+        let obj = try JSONSerialization.jsonObject(with: Data(frame.utf8)) as? [String: Any]
+        XCTAssertEqual(obj?["type"] as? String, "input")
+        XCTAssertEqual(obj?["data"] as? String, "echo hello\n")
         await client.shutdown()
     }
 

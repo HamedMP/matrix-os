@@ -1,10 +1,9 @@
-// OPERATOR design system tokens for the Matrix OS macOS app.
+// Matrix OS native design system tokens.
 //
-// These tokens are the single source of truth for the "OPERATOR" look defined in
-// specs/086-macos-native-shell/design.md (§2 color, §3 typography, §4 spacing/radius,
-// §5 motion). Component code MUST reference these tokens only — never inline hex,
-// sizes, or animation timings — so the look stays cohesive and themeable for the
-// later light mode.
+// These tokens bridge the Matrix OS landing-page design contract (`DESIGN.md`) with
+// the macOS native shell. The app shell is light-first: warm off-white canvas,
+// forest/cream navigation, ember accents, and deep text. Terminal surfaces remain
+// dark because terminal legibility and ANSI rendering need a high-contrast console.
 
 import SwiftUI
 
@@ -21,55 +20,59 @@ extension Color {
     }
 }
 
-// MARK: - §2 Color system (dark-first)
+// MARK: - Color system (Matrix OS light-first, DESIGN.md)
 
 extension Color {
     // Canvas & surfaces
-    /// `canvas.void` — window background (machined near-black). `#0A0B0D`
-    public static let canvasVoid = Color(hex: 0x0A0B0D)
-    /// `surface.rail` — column rails / sidebar. `#101216`
-    public static let surfaceRail = Color(hex: 0x101216)
-    /// `surface.card` — card body. `#15171C`
-    public static let surfaceCard = Color(hex: 0x15171C)
-    /// `surface.cardRaised` — hovered/dragging card. `#1B1E24`
-    public static let surfaceCardRaised = Color(hex: 0x1B1E24)
-    /// `surface.terminal` — terminal panel (deeper than cards). `#0C0D10`
+    /// `background` — warm off-white app canvas. `#FAFAF5`
+    public static let canvasVoid = Color(hex: 0xFAFAF5)
+    /// `muted` — sand/cream rail and sidebar surface. `#F0EDE4`
+    public static let surfaceRail = Color(hex: 0xF0EDE4)
+    /// `--card` — white card/panel surface. `#FFFFFF`
+    public static let surfaceCard = Color(hex: 0xFFFFFF)
+    /// Raised/hover surface: sand-light. `#F7F1E7`
+    public static let surfaceCardRaised = Color(hex: 0xF7F1E7)
+    /// Terminal panel remains dark. `#0C0D10`
     public static let surfaceTerminal = Color(hex: 0x0C0D10)
 
-    // Hairline (dual-tone engraved 1px borders, §2)
-    /// Dark line of the engraved hairline: `#000000 @ 60%`.
-    public static let hairlineDark = Color(hex: 0x000000, opacity: 0.60)
-    /// Top highlight of the engraved hairline: `#FFFFFF @ 6%`.
-    public static let hairlineHighlight = Color(hex: 0xFFFFFF, opacity: 0.06)
+    // Hairline / border
+    /// `border` — warm neutral. `#D6D3C8`
+    public static let hairlineDark = Color(hex: 0xD6D3C8)
+    /// Subtle card highlight edge.
+    public static let hairlineHighlight = Color(hex: 0xFFFFFF, opacity: 0.75)
 
     // Ink (text)
-    /// `ink.primary` — titles, terminal text. `#E8EAED`
-    public static let inkPrimary = Color(hex: 0xE8EAED)
-    /// `ink.secondary` — metadata. `#9BA1AC`
-    public static let inkSecondary = Color(hex: 0x9BA1AC)
-    /// `ink.tertiary` — timestamps, hints. `#5C636E`
-    public static let inkTertiary = Color(hex: 0x5C636E)
-    /// `ink.disabled`. `#3A3F47`
-    public static let inkDisabled = Color(hex: 0x3A3F47)
+    /// `foreground` / Deep. `#32352E`
+    public static let inkPrimary = Color(hex: 0x32352E)
+    /// Forest secondary text/emphasis. `#434E3F`
+    public static let inkSecondary = Color(hex: 0x434E3F)
+    /// `muted-foreground`. `#7A7768`
+    public static let inkTertiary = Color(hex: 0x7A7768)
+    /// Disabled/border neutral. `#D6D3C8`
+    public static let inkDisabled = Color(hex: 0xD6D3C8)
+    /// Terminal foreground, separate from app-shell ink.
+    public static let terminalInk = Color(hex: 0xE8EAED)
+    /// Terminal muted foreground.
+    public static let terminalMutedInk = Color(hex: 0x9BA1AC)
 
-    // Signal (the only saturated colors — reserved for state, §2)
-    /// `signal.live` — phosphor lime, running/streaming (the breathing glow). `#9EF01A`
-    public static let signalLive = Color(hex: 0x9EF01A)
-    /// `signal.waiting` — amber, waiting on input/approval. `#FFB020`
-    public static let signalWaiting = Color(hex: 0xFFB020)
-    /// `signal.blocked` — coral, blocked/error. `#FF5C5C`
-    public static let signalBlocked = Color(hex: 0xFF5C5C)
-    /// `signal.done` — teal, complete. `#43C59E`
-    public static let signalDone = Color(hex: 0x43C59E)
-    /// `signal.idle` — grey, todo/exited (no color = no life). `#5C636E`
-    public static let signalIdle = Color(hex: 0x5C636E)
-    /// `signal.glow.live` — edge bloom on active cards: `signal.live @ 22%`.
-    public static let signalGlowLive = Color(hex: 0x9EF01A, opacity: 0.22)
+    // Signal / semantic colors from DESIGN.md
+    /// `primary` / Forest. `#434E3F`
+    public static let signalLive = Color(hex: 0x434E3F)
+    /// `warning`. `#D49B2A`
+    public static let signalWaiting = Color(hex: 0xD49B2A)
+    /// `destructive`. `#C4342D`
+    public static let signalBlocked = Color(hex: 0xC4342D)
+    /// `success`. `#3A7D44`
+    public static let signalDone = Color(hex: 0x3A7D44)
+    /// Muted status gray. `#7A7768`
+    public static let signalIdle = Color(hex: 0x7A7768)
+    /// Ember glow, `rgba(208, 111, 37, 0.16)`.
+    public static let signalGlowLive = Color(hex: 0xD06F25, opacity: 0.16)
 }
 
 // MARK: - §4 Spacing (8pt base with 4pt sub-step)
 
-/// Spacing scale. `space.1=4 … space.7=48` (design.md §4).
+/// Spacing scale. `xs=4 … 2xl=48` (DESIGN.md).
 public enum Spacing {
     /// 4 pt
     public static let x1: CGFloat = 4
@@ -89,15 +92,15 @@ public enum Spacing {
 
 // MARK: - §4 Radius (engraved, not pill-soft)
 
-/// Corner radius scale (design.md §4).
+/// Corner radius scale adapted from DESIGN.md.
 public enum Radius {
-    /// Card corner radius. `radius.card=10`
+    /// Card corner radius. `rounded.md=10`
     public static let card: CGFloat = 10
-    /// Badge corner radius. `radius.badge=5`
-    public static let badge: CGFloat = 5
-    /// Panel corner radius. `radius.panel=14`
+    /// Badge corner radius, compact native adaptation.
+    public static let badge: CGFloat = 6
+    /// Panel corner radius. `rounded.lg=14`
     public static let panel: CGFloat = 14
-    /// Control corner radius. `radius.control=8`
+    /// Control corner radius, between `rounded.sm` and `rounded.md`.
     public static let control: CGFloat = 8
 }
 
@@ -145,7 +148,7 @@ extension Font {
         #endif
     }
 
-    /// IBM Plex Sans — display/chrome/titles (design.md §3).
+    /// Inter-ish UI/body fallback for display/chrome/titles (DESIGN.md typography).
     /// TODO(086): ships the IBM Plex Sans binaries per Resources/Fonts/README.md.
     /// Falls back to a humanist-leaning system font until then.
     public static func plexSans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -155,7 +158,7 @@ extension Font {
         return .system(size: size, weight: weight, design: .default)
     }
 
-    /// IBM Plex Mono — mono/data/terminal/badges, "the voice of the machine" (design.md §3).
+    /// JetBrains Mono-ish mono/data/terminal/badges (DESIGN.md typography).
     /// TODO(086): ships the IBM Plex Mono binaries per Resources/Fonts/README.md.
     /// Falls back to a monospaced system font until then.
     public static func plexMono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {

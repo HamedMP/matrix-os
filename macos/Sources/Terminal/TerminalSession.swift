@@ -32,6 +32,11 @@ public enum TerminalConnectionState: Equatable, Sendable {
 /// - Track scroll-pin ("● LIVE" vs "↓ N new") so the view can render the affordance.
 @MainActor
 public final class TerminalSession: ObservableObject {
+    /// Stable identity used by SwiftUI/AppKit bridges. Terminal tabs must be keyed
+    /// by the session object, otherwise AppKit may reuse a `TerminalView` whose
+    /// delegate still points at a previous zellij session.
+    public let id = UUID()
+
     /// Human-readable session label shown in the top strip.
     public let displayName: String
 
@@ -52,6 +57,11 @@ public final class TerminalSession: ObservableObject {
     /// Sink for decoded PTY output text. The view installs this to feed SwiftTerm.
     /// Called on the main actor.
     private var outputSink: (@MainActor (String) -> Void)?
+    /// Coalesced output waiting to be fed into SwiftTerm. Feeding SwiftTerm once
+    /// per websocket frame can fall behind under zellij bursts, causing zellij to
+    /// disconnect the client. Drain at UI cadence instead.
+    private var pendingOutput = ""
+    private var outputFlushTask: Task<Void, Never>?
     private var consumeTask: Task<Void, Never>?
     private var started = false
     /// Latest requested terminal size, re-sent once after each successful attach.
@@ -64,6 +74,7 @@ public final class TerminalSession: ObservableObject {
 
     deinit {
         consumeTask?.cancel()
+        outputFlushTask?.cancel()
     }
 
     /// Installs the output sink (the SwiftTerm feed) before/while starting.
@@ -114,6 +125,9 @@ public final class TerminalSession: ObservableObject {
     public func shutdown() {
         consumeTask?.cancel()
         consumeTask = nil
+        flushPendingOutput()
+        outputFlushTask?.cancel()
+        outputFlushTask = nil
         let client = self.client
         Task { await client.shutdown() }
     }
@@ -157,7 +171,7 @@ public final class TerminalSession: ObservableObject {
             // A late output frame while still "connecting" implies we're attached.
             if case .connecting = connectionState { connectionState = .attached }
             if case .reconnecting = connectionState { connectionState = .attached }
-            outputSink?(data)
+            enqueueOutput(data)
             if !isPinnedToBottom {
                 unseenLines += 1
             }
@@ -166,6 +180,8 @@ public final class TerminalSession: ObservableObject {
         case let .error(code, _):
             // Never surface raw `message`; keep only the internal code.
             connectionState = .error(code: code)
+        case .reconnecting:
+            markReconnecting()
         case .replayEvicted:
             // Client cleared its buffer and re-attaches at live tail. Reset local seq
             // and show the connecting state until the next `attached`/`output`.
@@ -173,5 +189,26 @@ public final class TerminalSession: ObservableObject {
             unseenLines = 0
             connectionState = .connecting
         }
+    }
+
+    private func enqueueOutput(_ data: String) {
+        pendingOutput += data
+        guard outputFlushTask == nil else { return }
+        outputFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            self?.drainOutput()
+        }
+    }
+
+    private func drainOutput() {
+        outputFlushTask = nil
+        flushPendingOutput()
+    }
+
+    private func flushPendingOutput() {
+        guard !pendingOutput.isEmpty else { return }
+        let chunk = pendingOutput
+        pendingOutput.removeAll(keepingCapacity: true)
+        outputSink?(chunk)
     }
 }
