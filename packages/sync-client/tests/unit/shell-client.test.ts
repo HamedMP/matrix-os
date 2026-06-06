@@ -121,6 +121,7 @@ describe("createShellClient attachSession", () => {
       WebSocketImpl: FakeWebSocket as never,
     });
 
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     FakeWebSocket.last?.emit("close");
     await attach;
 

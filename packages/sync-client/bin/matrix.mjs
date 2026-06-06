@@ -23,14 +23,14 @@ const pkgRoot = resolve(here, '..');
 const tsxLoader = findTsxLoader(pkgRoot);
 if (!tsxLoader) {
   console.error(
-    'matrix CLI: tsx loader not found. Reinstall with `npm i -g @finnaai/matrix`.',
+    'matrix CLI: tsx loader not found. Reinstall or retry with `npx @finnaai/matrix ...` or `pnpm dlx @finnaai/matrix ...`.',
   );
   process.exit(1);
 }
 
 const cliEntry = resolve(pkgRoot, 'src', 'cli', 'index.ts');
 if (!existsSync(cliEntry)) {
-  console.error('matrix CLI: entry not found. Reinstall with `npm i -g @finnaai/matrix`.');
+  console.error('matrix CLI: entry not found. Reinstall or retry with `npx @finnaai/matrix ...` or `pnpm dlx @finnaai/matrix ...`.');
   process.exit(1);
 }
 

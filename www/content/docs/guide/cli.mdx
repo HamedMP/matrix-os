@@ -7,11 +7,27 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 The Matrix OS CLI is a single binary — `matrix` (also installed as `matrixos` and `mos`) — for everything you do against your Matrix OS instance from outside the browser: signing in, syncing files, opening terminal sessions, and (soon) driving the upcoming VSCode extension.
 
-## Install
+## Run Without Installing
 
 <Callout type="info">
-The CLI is published as `@finnaai/matrix` on npm and as a Homebrew formula. It works against the cloud at `app.matrix-os.com` and against a local stack via `--profile local`.
+The CLI is published as `@finnaai/matrix` on npm. `npx` and `pnpm dlx` run the same CLI entrypoint as an installed `matrix` binary, and profile/auth files are stored in `~/.matrixos/` so later installs reuse the same login.
 </Callout>
+
+```bash
+# npm package runner
+npx --yes @finnaai/matrix login --profile cloud
+npx --yes @finnaai/matrix whoami
+
+# pnpm package runner
+pnpm dlx @finnaai/matrix login --profile cloud
+pnpm dlx @finnaai/matrix whoami
+```
+
+If you do not have a Matrix account yet, `login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
+
+The package runner requires Node.js 24 or newer. If your shell uses an older Node runtime, install Node 24+ first and rerun the same command.
+
+## Install Permanently
 
 ```bash
 # Homebrew (macOS / Linux)
@@ -40,8 +56,6 @@ matrix whoami                # confirms handle, gateway, token expiry
 matrix shell new main          # creates your "main" session
 matrix shell new main --attach # creates and attaches in one step
 ```
-
-If you do not have a Matrix account yet, `matrix login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
 
 `Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `mos shell attach main`.
 
