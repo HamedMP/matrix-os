@@ -29,7 +29,10 @@ struct BrowserPageView: View {
             header
             Group {
                 if let currentURL {
-                    BrowserWebView(url: currentURL)
+                    BrowserWebView(url: currentURL) { navigatedURL in
+                        address = navigatedURL.absoluteString
+                        self.currentURL = navigatedURL
+                    }
                         .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
@@ -180,9 +183,10 @@ struct BrowserPageView: View {
 
 private struct BrowserWebView: NSViewRepresentable {
     let url: URL
+    let onURLChange: @MainActor (URL) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onURLChange: onURLChange)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -191,7 +195,7 @@ private struct BrowserWebView: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
-        view.setValue(false, forKey: "drawsBackground")
+        view.underPageBackgroundColor = .clear
         load(url, in: view, coordinator: context.coordinator)
         return view
     }
@@ -210,6 +214,20 @@ private struct BrowserWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastURL: URL?
+
+        private let onURLChange: @MainActor (URL) -> Void
+
+        init(onURLChange: @escaping @MainActor (URL) -> Void) {
+            self.onURLChange = onURLChange
+            super.init()
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard let url = webView.url, lastURL != url else { return }
+            lastURL = url
+            onURLChange(url)
+        }
     }
 }
 #endif
