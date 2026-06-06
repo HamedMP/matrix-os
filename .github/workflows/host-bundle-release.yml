@@ -263,6 +263,8 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Download bundle artifact
         uses: actions/download-artifact@v8
@@ -303,13 +305,30 @@ jobs:
 
       - name: Resolve severity and changelog
         id: meta
+        env:
+          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+          PUBLISH_CHANNEL: ${{ needs.build.outputs.channel }}
+          INPUT_CHANGELOG: ${{ inputs.changelog || '' }}
         run: |
           set -euo pipefail
           # Default to "normal" for push-triggered runs
           SEVERITY="${{ inputs.severity || 'normal' }}"
-          CHANGELOG="${{ inputs.changelog || '' }}"
+          CHANGELOG="$INPUT_CHANGELOG"
+          if [ -z "$CHANGELOG" ] && [ "$PUBLISH_CHANNEL" = "stable" ]; then
+            BASE_SHA="$(curl --fail --silent --show-error --max-time 10 "${PLATFORM_PUBLIC_URL%/}/system-bundles/channels/stable.json" | jq -r '.gitCommit // ""' || true)"
+            if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+              CHANGELOG="$(node scripts/release-changelog.mjs --base "$BASE_SHA" --head "$GITHUB_SHA")"
+            else
+              CHANGELOG="$(node scripts/release-changelog.mjs --head "$GITHUB_SHA")"
+            fi
+          fi
           echo "severity=$SEVERITY" >> "$GITHUB_OUTPUT"
-          echo "changelog=$CHANGELOG" >> "$GITHUB_OUTPUT"
+          DELIMITER="CHANGELOG_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${GITHUB_SHA}"
+          {
+            echo "changelog<<$DELIMITER"
+            printf '%s\n' "$CHANGELOG"
+            echo "$DELIMITER"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         env:
