@@ -15,10 +15,10 @@ description: "Task list for 086 Matrix OS native macOS app"
 
 ## Phase 0: Spike Confirmations (de-risk; do first, cheap)
 
-- [ ] T001 [P] Confirm shell-WS route path and that it authenticates via `Authorization` header (not only query token); document in `research.md`. If header-auth is missing on the shell WS, add it in `packages/gateway/src/shell/` + `server.ts` (mirror canvas WS `requireRequestPrincipal(c)`), test-first in `tests/gateway/shell-ws-auth.test.ts`. (C1, S1)
-- [ ] T002 [P] Confirm whether `task.*` workspace events are delivered over a client-facing WS; if not, design the board-events subscription endpoint (bounded subscriber registry) — note decision in `research.md`. (C2, W1)
-- [ ] T003 [P] Confirm session archive = detach (not terminate) in `workspace-session-orchestrator.ts`; document semantics. (C3)
-- [ ] T004 [P] Confirm platform VPS endpoint-resolution + multi-VM selection contract (`packages/platform/src/customer-vps-routes.ts`, `/runtime`); document client flow. (C4, W2)
+- [x] T001 [P] Confirm shell-WS route path and that it authenticates via `Authorization` header (not only query token); document in `research.md`. If header-auth is missing on the shell WS, add it in `packages/gateway/src/shell/` + `server.ts` (mirror canvas WS `requireRequestPrincipal(c)`), test-first in `tests/gateway/shell-ws-auth.test.ts`. (C1, S1)
+- [x] T002 [P] Confirm whether `task.*` workspace events are delivered over a client-facing WS; if not, design the board-events subscription endpoint (bounded subscriber registry) — note decision in `research.md`. (C2, W1)
+- [x] T003 [P] Confirm session archive = detach (not terminate) in `workspace-session-orchestrator.ts`; document semantics. (C3)
+- [x] T004 [P] Confirm platform VPS endpoint-resolution + multi-VM selection contract (`packages/platform/src/customer-vps-routes.ts`, `/runtime`); document client flow. (C4, W2)
 
 **Checkpoint**: all four confirmations resolved; any required gateway deltas have failing tests written.
 
