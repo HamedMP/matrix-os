@@ -129,23 +129,30 @@ export async function downloadRemoteFile(
   const bytes = Buffer.from(await res.arrayBuffer());
   const parentDir = dirname(resolvedLocal);
   const directoryMode = options.secret ? 0o700 : 0o755;
-  let createdParentDir = false;
-  try {
-    await lstat(parentDir);
-  } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      createdParentDir = true;
-    } else {
+  const missingParentDirs: string[] = [];
+  for (let currentDir = parentDir; ; currentDir = dirname(currentDir)) {
+    try {
+      await lstat(currentDir);
+      break;
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        missingParentDirs.push(currentDir);
+        const nextDir = dirname(currentDir);
+        if (nextDir === currentDir) {
+          break;
+        }
+        continue;
+      }
       throw err;
     }
   }
   await mkdir(parentDir, { recursive: true, mode: directoryMode });
-  if (createdParentDir) {
-    await chmod(parentDir, directoryMode);
+  for (const createdDir of missingParentDirs.reverse()) {
+    await chmod(createdDir, directoryMode);
   }
   const tmpPath = `${resolvedLocal}.matrix-download-${randomUUID()}.tmp`;
   const mode = options.secret ? 0o600 : 0o644;

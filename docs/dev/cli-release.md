@@ -47,13 +47,13 @@ Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.3` 
 npm view @finnaai/matrix version
 npm view @finnaai/matrix dist.tarball
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.0 sh scripts/install.sh
+MATRIX_VERSION=0.3.3 sh scripts/install.sh
 matrix --version
 matrix login --help
 matrix run --help
 ```
 
-For macOS, also verify the GitHub release contains `MatrixSync-0.3.0.pkg` when the macOS job was enabled.
+For macOS, also verify the GitHub release contains `MatrixSync-0.3.3.pkg` when the macOS job was enabled.
 
 ## Rollback
 
