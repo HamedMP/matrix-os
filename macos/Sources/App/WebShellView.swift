@@ -275,11 +275,7 @@ private struct WebShellView: NSViewRepresentable {
                   let host = url.host()?.lowercased(),
                   host == destinationHost else { return false }
             let path = url.path.lowercased()
-<<<<<<< HEAD
             guard !Self.isAppSessionExchangeURL(url) else { return false }
-=======
-            guard path != "/api/auth/app-session" else { return false }
->>>>>>> 6530c950 (fix(086): narrow native auth polish routing)
             return Self.isAuthPath(path)
         }
 
