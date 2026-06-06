@@ -56,7 +56,7 @@ struct BoardView: View {
             if let error = model.openError {
                 GenericErrorBanner(message: error.message, onRetry: nil)
             }
-            if model.selectedCard != nil {
+            if selectedBoardCard != nil {
                 detailPane
             } else {
                 columns
@@ -76,7 +76,7 @@ struct BoardView: View {
             ForEach(model.board.columns) { column in
                 ColumnView(
                     column: column,
-                    selectedCardID: model.selectedCard?.id,
+                    selectedCardID: selectedBoardCard?.id,
                     onOpenCard: openCard,
                     onAddCard: { model.createTask(status: $0) }
                 )
@@ -109,6 +109,13 @@ struct BoardView: View {
 
     // MARK: - Detail pane (panel switcher + terminal)
 
+    private var selectedBoardCard: Card? {
+        guard let selected = model.selectedCard else { return nil }
+        return model.board.columns
+            .flatMap(\.cards)
+            .first { $0.id == selected.id }
+    }
+
     private var detailPane: some View {
         VStack(spacing: 0) {
             detailHeader
@@ -123,7 +130,7 @@ struct BoardView: View {
 
     private var detailHeader: some View {
         HStack(spacing: Spacing.x3) {
-            Text(model.selectedCard?.title ?? "")
+            Text(selectedBoardCard?.title ?? "")
                 .font(.plexSans(14, weight: .medium))
                 .foregroundStyle(Color.inkPrimary)
                 .lineLimit(1)
