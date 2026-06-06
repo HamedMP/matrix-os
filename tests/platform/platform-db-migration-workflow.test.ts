@@ -1,0 +1,47 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+describe('platform DB migration workflow', () => {
+  it('requires explicit confirmation before restoring into managed Postgres', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-db-migration.yml'), 'utf8');
+
+    expect(workflow).toContain('default: verify');
+    expect(workflow).toContain('MIGRATE PLATFORM DB TO MANAGED POSTGRES');
+    expect(workflow).toContain('Refusing destructive migration without the exact confirmation phrase.');
+    expect(workflow).toContain("if: ${{ inputs.mode == 'migrate' }}");
+  });
+
+  it('moves data through a VPS-local snapshot without uploading database dumps as artifacts', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-db-migration.yml'), 'utf8');
+
+    expect(workflow).toContain('docker exec \'$SOURCE_CONTAINER\' pg_dump --format=custom --no-owner --no-acl');
+    expect(workflow).toContain('/home/deploy/backups/platform-migration/platform-${GITHUB_RUN_ID}.dump');
+    expect(workflow).toContain('cat \'$REMOTE_BACKUP\'');
+    expect(workflow).toContain('pg_restore --list platform-source.dump');
+    expect(workflow).not.toContain('actions/upload-artifact');
+  });
+
+  it('reads the managed target from GCP Secret Manager and masks the URL', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-db-migration.yml'), 'utf8');
+
+    expect(workflow).toContain('google-github-actions/auth@v3');
+    expect(workflow).toContain('gcloud secrets versions access latest');
+    expect(workflow).toContain('--secret "$TARGET_SECRET"');
+    expect(workflow).toContain('echo "::add-mask::$target_url"');
+    expect(workflow).toContain('TARGET_DATABASE_URL=$target_url');
+  });
+
+  it('verifies key platform row counts after restore', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-db-migration.yml'), 'utf8');
+
+    expect(workflow).toContain("select 'users=' || count(*) from users");
+    expect(workflow).toContain("select 'user_machines=' || count(*) from user_machines");
+    expect(workflow).toContain("select 'host_bundle_releases=' || count(*) from host_bundle_releases");
+    expect(workflow).toContain('expected machine and release rows after restore');
+  });
+});
