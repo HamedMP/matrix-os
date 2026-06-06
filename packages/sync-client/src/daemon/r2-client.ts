@@ -103,7 +103,9 @@ export async function downloadFile(
     Number.isFinite(contentLength) &&
     contentLength > options.maxBytes
   ) {
-    throw new Error(`Downloaded content exceeded ${options.maxBytes} bytes`);
+    const err = new Error(`Downloaded content exceeded ${options.maxBytes} bytes`);
+    await res.body?.cancel(err);
+    throw err;
   }
   await mkdir(dirname(localPath), { recursive: true, mode: 0o700 });
   const tmpPath = `${localPath}.matrixos-${randomUUID()}.tmp`;
@@ -205,14 +207,23 @@ async function writeResponseBodyToTempFile(
       await writeChunk(buffer);
     } else {
       const reader = res.body.getReader();
+      let streamFinished = false;
       try {
         for (;;) {
           const { value, done } = await reader.read();
-          if (done) break;
+          if (done) {
+            streamFinished = true;
+            break;
+          }
           if (value) {
             await writeChunk(value);
           }
         }
+      } catch (err: unknown) {
+        if (!streamFinished) {
+          await reader.cancel(err);
+        }
+        throw err;
       } finally {
         reader.releaseLock();
       }
