@@ -218,6 +218,23 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("requires bearer auth for /ws/forward and rejects query-token fallback", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    const queryResult = await mw(
+      mockContext("/ws/forward", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(queryResult?.status).toBe(401);
+
+    await mw(
+      mockContext("/ws/forward", "Bearer secret-token", undefined, "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("allows canvas WebSocket paths with query token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

@@ -1,16 +1,49 @@
 const API_HOST = "eu.i.posthog.com";
 const ASSET_HOST = "eu-assets.i.posthog.com";
 const UPSTREAM_TIMEOUT_MS = 10_000;
+const LEGACY_POSTHOG_LOADER_PATH = "/static/posthog.js";
+const CURRENT_POSTHOG_LOADER_PATH = "/static/array.js";
 
 interface WorkerExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-export function classifyPostHogProxyPath(pathname: string): "health" | "asset" | "ingest" {
+export function classifyPostHogProxyPath(pathname: string): "health" | "service-worker" | "asset" | "ingest" {
   if (pathname === "/health") return "health";
+  if (pathname === "/service-worker.js") return "service-worker";
   if (pathname.startsWith("/static/") || pathname.startsWith("/array/")) return "asset";
   return "ingest";
 }
+
+const NEO_CLEANUP_SERVICE_WORKER = `
+self.addEventListener("install", () => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter((key) => key.startsWith("matrix-os-"))
+      .map((key) => caches.delete(key)));
+    await self.clients.claim();
+    await self.registration.unregister();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  event.respondWith(fetch(event.request).catch((err) => {
+    console.warn("[neo-worker cleanup sw] fetch failed:", err?.message ?? err);
+    return new Response("offline", {
+      status: 504,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }));
+});
+`.trim();
 
 export async function handlePostHogProxyRequest(
   request: Request,
@@ -29,9 +62,20 @@ export async function handlePostHogProxyRequest(
       },
     });
   }
+  if (routeClass === "service-worker") {
+    return new Response(NEO_CLEANUP_SERVICE_WORKER, {
+      headers: {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-store",
+        "cdn-cache-control": "no-store",
+        "service-worker-allowed": "/",
+      },
+    });
+  }
 
   const targetHost = routeClass === "asset" ? ASSET_HOST : API_HOST;
-  const upstreamUrl = `https://${targetHost}${url.pathname}${url.search}`;
+  const upstreamPath = normalizePostHogAssetPath(url.pathname);
+  const upstreamUrl = `https://${targetHost}${upstreamPath}${url.search}`;
   const upstreamRequest = await buildPostHogUpstreamRequest(request, upstreamUrl);
   let response: Response;
   try {
@@ -65,6 +109,10 @@ export async function handlePostHogProxyRequest(
     statusText: response.statusText,
     headers,
   });
+}
+
+function normalizePostHogAssetPath(pathname: string): string {
+  return pathname === LEGACY_POSTHOG_LOADER_PATH ? CURRENT_POSTHOG_LOADER_PATH : pathname;
 }
 
 async function buildPostHogUpstreamRequest(request: Request, upstreamUrl: string): Promise<Request> {
