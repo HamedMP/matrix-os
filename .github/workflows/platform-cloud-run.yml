@@ -83,27 +83,11 @@ jobs:
         # Keep this aligned with auth@v3 until google-github-actions publishes v4.
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Ensure edge router secret access
-        env:
-          EDGE_ROUTER_SECRET_VALUE: ${{ secrets.EDGE_ROUTER_SECRET }}
+      - name: Verify edge router secret
         run: |
           set -euo pipefail
-          if ! gcloud secrets describe edge-router-secret \
-            --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
-            if [ -z "${EDGE_ROUTER_SECRET_VALUE:-}" ]; then
-              echo "edge-router-secret is missing and EDGE_ROUTER_SECRET is not configured in the GitHub environment." >&2
-              exit 1
-            fi
-            printf '%s' "$EDGE_ROUTER_SECRET_VALUE" | gcloud secrets create edge-router-secret \
-              --project "$GCP_PROJECT_ID" \
-              --replication-policy=automatic \
-              --data-file=-
-          fi
-          gcloud secrets add-iam-policy-binding edge-router-secret \
-            --project "$GCP_PROJECT_ID" \
-            --member "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-            --role roles/secretmanager.secretAccessor \
-            --quiet >/dev/null
+          gcloud secrets describe edge-router-secret \
+            --project "$GCP_PROJECT_ID" >/dev/null
 
       - name: Build platform image
         run: |
