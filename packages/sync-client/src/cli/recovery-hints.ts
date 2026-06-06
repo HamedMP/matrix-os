@@ -5,7 +5,6 @@ const HINTS: Record<string, string> = {
   timeout: "The request timed out. Check `mos doctor` and retry.",
   request_timeout: "The request timed out. Check `mos doctor` and retry.",
   attach_failed: "Terminal attach failed. Reattach with `mos shell attach <name>`.",
-  attach_timeout: "Terminal attach timed out. Check `mos doctor` and retry.",
   zellij_failed: "Shell backend unavailable. Run `mos doctor --profile cloud`.",
   gateway_unreachable: "Gateway unreachable. Start local dev services or run `mos profile use cloud`.",
   platform_unreachable: "Platform unreachable. Start local platform services, run `mos login --dev`, or run `mos profile use cloud`.",

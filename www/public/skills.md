@@ -164,14 +164,14 @@ For setup, prefer an existing human-created session if one is available. If no s
 mos shell attach -c setup
 ```
 
-`attach -c <session-name>` creates the session if missing and then attaches to it. If creation still fails with `zellij_failed`, ask the human to create or choose a session from the Matrix web terminal, then attach to that existing session:
+`connect -c <session-name>` creates the session if missing and then connects to it. If creation still fails with `zellij_failed`, ask the human to create or choose a session from the Matrix web terminal, then connect to that existing session:
 
 ```bash
 matrix shell ls
 mos shell attach <existing-session>
 ```
 
-`attach` may succeed even when `run -it` fails.
+`connect` may succeed even when `attach` and `run -it` fail.
 
 After `matrix login --profile cloud`, run:
 

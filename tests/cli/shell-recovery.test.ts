@@ -8,7 +8,6 @@ describe("CLI recovery hints", () => {
     expect(recoveryHintForCode("invalid_layout")).toContain("mos shell layout");
     expect(recoveryHintForCode("unsupported_version")).toContain("update");
     expect(recoveryHintForCode("attach_failed")).toContain("Reattach");
-    expect(recoveryHintForCode("attach_timeout")).toContain("mos doctor");
     expect(recoveryHintForCode("auth_expired")).toContain("mos login");
   });
 });

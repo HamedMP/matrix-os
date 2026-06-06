@@ -12,12 +12,7 @@ interface DoctorCheck {
   hint?: string;
 }
 
-const SAFE_SHELL_HEALTH_CODES = new Set([
-  "ok",
-  "zellij_failed",
-  "shell_backend_unavailable",
-  "auth_expired",
-]);
+const SAFE_SHELL_HEALTH_CODE = /^[a-z][a-z0-9_-]{0,31}$/;
 
 async function probeShellBackendHealth(gatewayUrl: string, token?: string): Promise<{ ok: boolean; code: string }> {
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
@@ -41,7 +36,7 @@ async function probeShellBackendHealth(gatewayUrl: string, token?: string): Prom
     body !== null &&
     "shell" in body &&
     typeof (body as { shell?: { code?: unknown } }).shell?.code === "string" &&
-    SAFE_SHELL_HEALTH_CODES.has((body as { shell: { code: string } }).shell.code)
+    SAFE_SHELL_HEALTH_CODE.test((body as { shell: { code: string } }).shell.code)
       ? (body as { shell: { code: string } }).shell.code
       : res.ok
         ? "ok"
