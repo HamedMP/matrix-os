@@ -169,6 +169,7 @@ jobs:
           }
 
           SHA256="$(curl -fsSL --max-time 60 "$TARBALL" | shasum -a 256 | awk '{print $1}')"
+          export TARBALL SHA256
 
           cd tap
           FORMULA="Formula/matrix.rb"
@@ -177,9 +178,18 @@ jobs:
             exit 1
           fi
 
-          perl -0pi -e "s|url \".*matrix-[^\"]+\\.tgz\"|url \"${TARBALL}\"|" "$FORMULA"
-          perl -0pi -e "s|sha256 \"[a-f0-9]{64}\"|sha256 \"${SHA256}\"|" "$FORMULA"
-          perl -0pi -e "s|version \"[^\"]+\"|version \"${VERSION}\"|" "$FORMULA"
+          python3 - <<'PY'
+          import os, re, pathlib
+          path = pathlib.Path("Formula/matrix.rb")
+          tarball = os.environ["TARBALL"]
+          sha = os.environ["SHA256"]
+          version = os.environ["VERSION"]
+          text = path.read_text()
+          text = re.sub(r'url\s+".*"', f'url "{tarball}"', text, count=1)
+          text = re.sub(r'sha256\s+".*"', f'sha256 "{sha}"', text, count=1)
+          text = re.sub(r'version\s+".*"', f'version "{version}"', text, count=1)
+          path.write_text(text)
+          PY
           git diff -- Formula/matrix.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
