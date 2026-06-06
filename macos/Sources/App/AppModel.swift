@@ -163,10 +163,7 @@ public final class AppModel: ObservableObject {
             GatewayHTTPClient(baseURL: url, tokenProvider: provider)
         },
         makeLoader: @escaping @Sendable (GatewayHTTPClient) -> any BoardLoading = { client in
-            // The board is the task kanban (Linear/SlayZone-style). Opening a task
-            // attaches/creates its zellij session. The raw session list lives in the
-            // separate Terminals section, not as board cards.
-            GatewayBoardLoader(client: client)
+            CompositeBoardLoader(client: client)
         },
         makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, provider, session, name in
             let tokenProvider = provider as any TokenProviding
@@ -343,7 +340,7 @@ public final class AppModel: ObservableObject {
         } else {
             phase = .connecting
         }
-        await resolveProjectIfNeeded()
+        guard await resolveProjectIfNeeded() else { return }
         await loadSessions()
         await board.load(projectSlug: projectSlug)
         switch board.state {
@@ -365,14 +362,23 @@ public final class AppModel: ObservableObject {
 
     /// Resolves the active project slug from the user's projects when unset, so the
     /// board targets a real project instead of a hardcoded "default" (which 404s).
-    private func resolveProjectIfNeeded() async {
-        guard projectSlug == "default" || projectSlug.isEmpty, let client = gatewayClient() else { return }
+    private func resolveProjectIfNeeded() async -> Bool {
+        guard projectSlug == "default" || projectSlug.isEmpty else { return true }
+        guard let client = gatewayClient() else {
+            phase = .needsProfile
+            return false
+        }
         struct ProjectsResponse: Decodable { struct Project: Decodable { let slug: String }; let projects: [Project] }
-        if let response: ProjectsResponse = try? await client.get("/api/workspace/projects"),
-           let first = response.projects.first {
+        do {
+            let response: ProjectsResponse = try await client.get("/api/workspace/projects")
+            guard let first = response.projects.first else { return true }
             projectSlug = first.slug
             // Rebuild the board store against the resolved project.
             self.board = BoardStore(loader: makeLoader(client))
+            return true
+        } catch {
+            phase = .disconnected
+            return false
         }
     }
 
@@ -400,12 +406,12 @@ public final class AppModel: ObservableObject {
 
     /// Creates a new task in the given column and refreshes the board (TE01/US7).
     public func createTask(status: TaskStatus = .todo) {
-        guard !isCreatingSession else { return }
-        isCreatingSession = true
+        guard !isCreatingWorkItem else { return }
+        isCreatingWorkItem = true
         Task { [weak self] in
-            defer { Task { @MainActor in self?.isCreatingSession = false } }
+            defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
             guard let self, let client = await self.gatewayClient() else { return }
-            await self.resolveProjectIfNeeded()
+            guard await self.resolveProjectIfNeeded() else { return }
             let slug = await self.projectSlug
             struct CreateTaskRequest: Encodable { let title: String; let status: String }
             struct CreateTaskResponse: Decodable {}
@@ -511,15 +517,15 @@ public final class AppModel: ObservableObject {
     /// ⌘N / column "+": create a new task card on the board.
     public func newCardPlaceholder() { createTask(status: .todo) }
 
-    /// Whether a create (task or session) is in flight.
-    @Published public private(set) var isCreatingSession = false
+    /// Whether a task or terminal-session create request is in flight.
+    @Published public private(set) var isCreatingWorkItem = false
 
     /// Creates a new zellij session (Terminals section "+") and reloads the list.
     public func createSession() {
-        guard !isCreatingSession, let client = gatewayClient() else { return }
-        isCreatingSession = true
+        guard !isCreatingWorkItem, let client = gatewayClient() else { return }
+        isCreatingWorkItem = true
         Task { [weak self] in
-            defer { Task { @MainActor in self?.isCreatingSession = false } }
+            defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
             struct CreateSessionRequest: Encodable {
                 let kind = "shell"
                 let runtimePreference = "zellij"

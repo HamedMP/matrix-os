@@ -49,28 +49,23 @@ struct BoardView: View {
     // MARK: - Board + detail split
 
     private var boardWithDetail: some View {
-        // Native draggable divider: drag to choose how wide the board vs the
-        // detail/terminal are. Each side has a min width so neither collapses.
-        HSplitView {
-            VStack(spacing: 0) {
-                if model.phase == .disconnected {
-                    ReconnectingBar(handle: model.profile?.handle ?? "your computer")
-                }
-                if let error = model.openError {
-                    GenericErrorBanner(message: error.message, onRetry: nil)
-                }
+        VStack(spacing: 0) {
+            if model.phase == .disconnected {
+                ReconnectingBar(handle: model.profile?.handle ?? "your computer")
+            }
+            if let error = model.openError {
+                GenericErrorBanner(message: error.message, onRetry: nil)
+            }
+            if model.selectedCard != nil {
+                detailPane
+            } else {
                 columns
                     .opacity(model.phase == .disconnected ? 0.7 : 1)
                     .saturation(model.phase == .disconnected ? 0.6 : 1)
                     .allowsHitTesting(model.phase != .disconnected)
             }
-            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if model.selectedCard != nil {
-                detailPane
-                    .frame(minWidth: 380, idealWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
-            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var columns: some View {

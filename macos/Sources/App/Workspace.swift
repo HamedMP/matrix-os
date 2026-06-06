@@ -91,7 +91,7 @@ private struct Sidebar: View {
                 .background(Circle().fill(Color.signalLive))
         }
         .buttonStyle(.plain)
-        .disabled(model.isCreatingSession)
+        .disabled(model.isCreatingWorkItem)
         .help(model.section == .terminals ? "New session" : "New task (⌘N)")
     }
 
@@ -137,7 +137,7 @@ private struct TerminalsView: View {
                     Image(systemName: "plus").font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.inkSecondary)
                 }
-                .buttonStyle(.plain).disabled(model.isCreatingSession)
+                .buttonStyle(.plain).disabled(model.isCreatingWorkItem)
             }
             .padding(.horizontal, Spacing.x3).padding(.vertical, Spacing.x3)
 
