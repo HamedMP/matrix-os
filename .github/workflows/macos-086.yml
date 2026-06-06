@@ -30,7 +30,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -switch /Applications/Xcode_26.4.app || xcode-select -p
+        run: |
+          XCODE_PATH="${XCODE_PATH:-/Applications/Xcode_26.4.app}"
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::Required Xcode path not found: $XCODE_PATH"
+            ls -1 /Applications | grep -E '^Xcode' || true
+            exit 1
+          fi
+          sudo xcode-select -switch "$XCODE_PATH"
 
       - name: Swift version
         run: swift --version
