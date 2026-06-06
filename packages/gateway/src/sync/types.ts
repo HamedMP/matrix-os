@@ -121,6 +121,12 @@ export const CompleteMultipartRequestSchema = z.object({
   path: z.string().min(1).max(1024),
   uploadId: z.string().min(1).max(1024),
   parts: z.array(MultipartUploadedPartSchema).min(1).max(10_000),
+}).refine((request) => {
+  const partNumbers = new Set(request.parts.map((part) => part.partNumber));
+  return partNumbers.size === request.parts.length;
+}, {
+  message: "Duplicate multipart part numbers",
+  path: ["parts"],
 });
 export type CompleteMultipartRequest = z.infer<typeof CompleteMultipartRequestSchema>;
 

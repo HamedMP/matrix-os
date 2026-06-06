@@ -49,6 +49,7 @@ import { MissingSyncUserIdentityError } from "../auth.js";
 import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
 
 const SYNC_BODY_LIMIT = 65536;
+const MULTIPART_COMPLETE_BODY_LIMIT = 1024 * 1024;
 
 export interface SyncRouteDeps {
   r2: R2Client;
@@ -62,6 +63,7 @@ export interface SyncRouteDeps {
 export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const app = new Hono();
   const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
+  const multipartCompleteBodyLimit = bodyLimit({ maxSize: MULTIPART_COMPLETE_BODY_LIMIT });
   const store: ManifestStore = { r2: deps.r2, db: deps.db };
   const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
   const commitLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
@@ -159,7 +161,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   });
 
   // POST /multipart/complete
-  app.post("/multipart/complete", mutatingBodyLimit, async (c) => {
+  app.post("/multipart/complete", multipartCompleteBodyLimit, async (c) => {
     const userId = getUserId(c);
     if (!commitLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);

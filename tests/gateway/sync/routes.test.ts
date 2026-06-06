@@ -17,14 +17,14 @@ const mockR2 = {
   getObject: vi.fn(),
   putObject: vi.fn(),
   deleteObject: vi.fn(),
-    getPresignedGetUrl: vi.fn(),
-    getPresignedPutUrl: vi.fn(),
-    createMultipartUpload: vi.fn(),
-    getPresignedPartUrl: vi.fn(),
-    completeMultipartUpload: vi.fn(),
-    abortMultipartUpload: vi.fn(),
-    destroy: vi.fn(),
-  };
+  getPresignedGetUrl: vi.fn(),
+  getPresignedPutUrl: vi.fn(),
+  createMultipartUpload: vi.fn(),
+  getPresignedPartUrl: vi.fn(),
+  completeMultipartUpload: vi.fn(),
+  abortMultipartUpload: vi.fn(),
+  destroy: vi.fn(),
+};
 
 const mockDb = {
   getManifestMeta: vi.fn(),
@@ -279,6 +279,53 @@ describe("POST /api/sync/multipart/complete", () => {
 
     expect(res.status).toBe(400);
     expect(mockR2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate multipart part numbers before calling storage", async () => {
+    const app = createTestApp();
+
+    const res = await app.request(jsonRequest("/api/sync/multipart/complete", {
+      path: "videos/large.mov",
+      uploadId: "upload-123",
+      parts: [
+        { partNumber: 1, etag: '"etag-1a"' },
+        { partNumber: 1, etag: '"etag-1b"' },
+      ],
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Validation error" });
+    expect(mockR2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it("accepts complete bodies over the shared mutating limit within the multipart cap", async () => {
+    const app = createTestApp();
+    const parts = Array.from({ length: 140 }, (_, index) => ({
+      partNumber: index + 1,
+      etag: `"${String(index + 1).padStart(5, "0")}-${"e".repeat(490)}"`,
+    }));
+    const body = JSON.stringify({
+      path: "videos/large.mov",
+      uploadId: "upload-123",
+      parts,
+    });
+
+    expect(Buffer.byteLength(body)).toBeGreaterThan(65_536);
+    expect(Buffer.byteLength(body)).toBeLessThan(1024 * 1024);
+
+    const res = await app.request("/api/sync/multipart/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ etag: '"complete-etag"' });
+    expect(mockR2.completeMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/test-user/files/videos/large.mov",
+      "upload-123",
+      parts,
+    );
   });
 });
 
