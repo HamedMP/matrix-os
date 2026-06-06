@@ -349,6 +349,9 @@ write_files:
       R2_ACCOUNT_ID="${R2_ACCOUNT_ID:-}"
       MATRIX_PLATFORM_URL="${MATRIX_PLATFORM_URL:-${PLATFORM_URL:-}}"
       MATRIX_PLATFORM_TOKEN="${MATRIX_PLATFORM_TOKEN:-${PLATFORM_TOKEN:-}}"
+      MATRIX_R2_OPERATION_TIMEOUT_SECONDS="${MATRIX_R2_OPERATION_TIMEOUT_SECONDS:-300}"
+      MATRIX_R2_CONNECT_TIMEOUT_SECONDS="${MATRIX_R2_CONNECT_TIMEOUT_SECONDS:-10}"
+      MATRIX_R2_READ_TIMEOUT_SECONDS="${MATRIX_R2_READ_TIMEOUT_SECONDS:-60}"
 
       usage() {
         echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
@@ -393,11 +396,11 @@ write_files:
       aws_s3() {
         local endpoint
         endpoint="$(r2_endpoint_arg)"
+        local args=(--cli-connect-timeout "$MATRIX_R2_CONNECT_TIMEOUT_SECONDS" --cli-read-timeout "$MATRIX_R2_READ_TIMEOUT_SECONDS")
         if [ -n "$endpoint" ]; then
-          aws --endpoint-url "$endpoint" "$@"
-        else
-          aws "$@"
+          args=(--endpoint-url "$endpoint" "${args[@]}")
         fi
+        timeout --preserve-status "$MATRIX_R2_OPERATION_TIMEOUT_SECONDS" aws "${args[@]}" "$@"
       }
 
       r2_put() {
@@ -420,12 +423,29 @@ write_files:
       }
 
       r2_exists() {
-        local key
+        local key output status
         key="$(full_key "$1")"
-        if aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null 2>&1; then
+        if output="$(aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" 2>&1 >/dev/null)"; then
           return 0
+        else
+          status="$?"
         fi
-        return 1
+        case "$status" in
+          124|143)
+            echo "matrixctl: r2 exists timed out" >&2
+            return "$status"
+            ;;
+        esac
+        case "$output" in
+          *"(404)"*|*"Not Found"*|*"NotFound"*|*"NoSuchKey"*)
+            return 1
+            ;;
+        esac
+        echo "matrixctl: r2 exists failed" >&2
+        if [ "$status" -eq 1 ]; then
+          return 2
+        fi
+        return "$status"
       }
 
       r2_put_latest() {
@@ -621,15 +641,25 @@ write_files:
       mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
       rm -f "$restore_flag"
 
-      if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then
-        touch "$restore_flag"
-        exit 0
-      fi
+      check_r2_exists_or_skip_restore() {
+        local key="$1"
+        local label="$2"
+        local status
+        if /opt/matrix/bin/matrixctl r2 exists "$key"; then
+          return 0
+        else
+          status="$?"
+        fi
+        if [ "$status" -eq 1 ]; then
+          touch "$restore_flag"
+          exit 0
+        fi
+        echo "matrix-restore: failed to check ${label}" >&2
+        exit 1
+      }
 
-      if ! /opt/matrix/bin/matrixctl r2 exists "$latest_pointer_key"; then
-        touch "$restore_flag"
-        exit 0
-      fi
+      check_r2_exists_or_skip_restore system/vps-meta.json "VPS metadata"
+      check_r2_exists_or_skip_restore "$latest_pointer_key" "latest snapshot pointer"
 
       if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then
         echo "matrix-restore: failed to fetch latest pointer" >&2
