@@ -88,6 +88,18 @@ jobs:
           set -euo pipefail
           gcloud secrets describe edge-router-secret \
             --project "$GCP_PROJECT_ID" >/dev/null
+          accessor_member="$(
+            gcloud secrets get-iam-policy edge-router-secret \
+              --project "$GCP_PROJECT_ID" \
+              --flatten='bindings[].members' \
+              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)' \
+              | head -1
+          )"
+          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+            echo "edge-router-secret must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
+            exit 1
+          fi
 
       - name: Build platform image
         run: |
