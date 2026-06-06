@@ -173,7 +173,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     async deleteObject(key: string): Promise<void> {
       const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
       await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
     },
 
