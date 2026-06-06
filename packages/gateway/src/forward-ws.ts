@@ -5,6 +5,10 @@ export const FORWARD_WS_MAX_CONTROL_BYTES = 2048;
 export const FORWARD_WS_MAX_FRAME_BYTES = 64 * 1024;
 export const FORWARD_WS_IDLE_TIMEOUT_MS = 60_000;
 export const FORWARD_WS_MAX_CONNECTIONS = 100;
+const FORWARD_WS_MAX_PENDING_SOCKET_WRITE_BYTES = 256 * 1024;
+const FORWARD_WS_BUFFER_HIGH_WATER_BYTES = 256 * 1024;
+const FORWARD_WS_BUFFER_LOW_WATER_BYTES = 128 * 1024;
+const FORWARD_WS_BACKPRESSURE_POLL_MS = 10;
 
 const ForwardPortSchema = z.number().int().min(1).max(65_535);
 const LoopbackHostSchema = z.union([
@@ -33,6 +37,7 @@ export interface ForwardDialer {
 }
 
 interface ForwardWs {
+  bufferedAmount?: number;
   send(data: string | ArrayBuffer | Uint8Array<ArrayBuffer>): void;
   close(): void;
 }
@@ -44,7 +49,15 @@ interface ForwardWsMessageEvent {
 interface ForwardConnectionState {
   socket: Socket;
   ws: ForwardWs;
+  socketWriter: { write(chunk: Buffer): void; close(): void };
+  wsBackpressure: { afterSend(): void; close(): void };
   opened: boolean;
+  closed: boolean;
+  idleTimer: ReturnType<typeof setTimeout>;
+}
+
+interface PendingForwardConnectionState {
+  ws: ForwardWs;
   closed: boolean;
   idleTimer: ReturnType<typeof setTimeout>;
 }
@@ -136,6 +149,120 @@ function defaultDialer(target: ForwardTarget): Socket {
   return connect({ host: target.host, port: target.port });
 }
 
+function createBoundedSocketWriter(
+  socket: Socket,
+  maxPendingBytes: number,
+  onOverflow: () => void,
+): { write(chunk: Buffer): void; close(): void } {
+  const pending: Buffer[] = [];
+  let pendingBytes = 0;
+  let waitingDrain = false;
+  let closed = false;
+
+  const enqueue = (chunk: Buffer) => {
+    if (pendingBytes + chunk.byteLength > maxPendingBytes) {
+      onOverflow();
+      return;
+    }
+    pending.push(Buffer.from(chunk));
+    pendingBytes += chunk.byteLength;
+  };
+
+  const flush = () => {
+    if (closed) {
+      return;
+    }
+    waitingDrain = false;
+    while (pending.length > 0) {
+      const next = pending.shift()!;
+      pendingBytes -= next.byteLength;
+      if (!socket.write(next)) {
+        waitingDrain = true;
+        return;
+      }
+    }
+  };
+
+  socket.on("drain", flush);
+
+  return {
+    write(chunk: Buffer) {
+      if (closed || socket.destroyed) {
+        return;
+      }
+      if (waitingDrain || pending.length > 0) {
+        enqueue(chunk);
+        return;
+      }
+      if (!socket.write(chunk)) {
+        waitingDrain = true;
+      }
+    },
+    close() {
+      closed = true;
+      pending.splice(0);
+      pendingBytes = 0;
+      socket.off("drain", flush);
+    },
+  };
+}
+
+function createWsBackpressureMonitor(
+  source: Socket,
+  ws: ForwardWs,
+): { afterSend(): void; close(): void } {
+  let closed = false;
+  let paused = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const bufferedBytes = () => typeof ws.bufferedAmount === "number" ? ws.bufferedAmount : 0;
+
+  const clearPoll = () => {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const schedulePoll = () => {
+    if (closed || pollTimer) {
+      return;
+    }
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      if (closed) {
+        return;
+      }
+      if (bufferedBytes() <= FORWARD_WS_BUFFER_LOW_WATER_BYTES) {
+        if (paused && !source.destroyed) {
+          source.resume();
+        }
+        paused = false;
+        return;
+      }
+      schedulePoll();
+    }, FORWARD_WS_BACKPRESSURE_POLL_MS);
+    pollTimer.unref?.();
+  };
+
+  return {
+    afterSend() {
+      if (closed || bufferedBytes() <= FORWARD_WS_BUFFER_HIGH_WATER_BYTES) {
+        return;
+      }
+      if (!source.isPaused()) {
+        source.pause();
+        paused = true;
+      }
+      schedulePoll();
+    },
+    close() {
+      closed = true;
+      clearPoll();
+    },
+  };
+}
+
 export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): ForwardTunnelHub {
   const dial = options.dial ?? defaultDialer;
   const maxConnections = options.maxConnections ?? FORWARD_WS_MAX_CONNECTIONS;
@@ -143,9 +270,30 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
   const maxControlBytes = options.maxControlBytes ?? FORWARD_WS_MAX_CONTROL_BYTES;
   const idleTimeoutMs = options.idleTimeoutMs ?? FORWARD_WS_IDLE_TIMEOUT_MS;
   const active = new Set<ForwardConnectionState>();
+  const pending = new Set<PendingForwardConnectionState>();
 
   function createHandler() {
     let state: ForwardConnectionState | null = null;
+    let pendingState: PendingForwardConnectionState | null = null;
+
+    const cleanupPending = (close = true) => {
+      const current = pendingState;
+      if (!current) {
+        return;
+      }
+      if (current.closed) {
+        pending.delete(current);
+        pendingState = null;
+        return;
+      }
+      current.closed = true;
+      clearTimeout(current.idleTimer);
+      pending.delete(current);
+      pendingState = null;
+      if (close) {
+        closeWs(current.ws);
+      }
+    };
 
     const cleanup = () => {
       const current = state;
@@ -155,14 +303,31 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
       current.closed = true;
       clearTimeout(current.idleTimer);
       active.delete(current);
+      current.socketWriter.close();
+      current.wsBackpressure.close();
       current.socket.removeAllListeners();
       current.socket.destroy();
       closeWs(current.ws);
       state = null;
     };
 
+    const touchPending = () => {
+      if (!pendingState || pendingState.closed) {
+        return;
+      }
+      clearTimeout(pendingState.idleTimer);
+      pendingState.idleTimer = setTimeout(() => {
+        if (pendingState && !pendingState.closed) {
+          sendError(pendingState.ws, "idle_timeout");
+        }
+        cleanupPending();
+      }, idleTimeoutMs);
+      pendingState.idleTimer.unref?.();
+    };
+
     const touch = () => {
       if (!state) {
+        touchPending();
         return;
       }
       clearTimeout(state.idleTimer);
@@ -176,9 +341,15 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
     };
 
     const fail = (ws: ForwardWs, code: string) => {
+      const hadOpenState = state !== null;
+      const hadPendingState = pendingState !== null;
       sendError(ws, code);
       cleanup();
-      if (!state) {
+      if (hadPendingState) {
+        cleanupPending();
+        return;
+      }
+      if (!hadOpenState) {
         closeWs(ws);
       }
     };
@@ -188,9 +359,14 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
         fail(ws, "invalid_request");
         return;
       }
-      if (active.size >= maxConnections) {
+      const pendingReservation = pendingState ? 1 : 0;
+      if (active.size + pending.size - pendingReservation >= maxConnections) {
         sendError(ws, "connection_limit");
-        closeWs(ws);
+        if (pendingState) {
+          cleanupPending();
+        } else {
+          closeWs(ws);
+        }
         return;
       }
 
@@ -202,7 +378,11 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
           ? (err as { code: string }).code
           : "invalid_request";
         sendError(ws, code);
-        closeWs(ws);
+        if (pendingState) {
+          cleanupPending();
+        } else {
+          closeWs(ws);
+        }
         return;
       }
 
@@ -212,12 +392,25 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
       } catch (err: unknown) {
         console.warn("[forward/ws] loopback dial failed:", err instanceof Error ? err.message : String(err));
         sendError(ws, "dial_failed");
-        closeWs(ws);
+        if (pendingState) {
+          cleanupPending();
+        } else {
+          closeWs(ws);
+        }
         return;
       }
+      cleanupPending(false);
+      let cleanupConnection = () => {};
+      const socketWriter = createBoundedSocketWriter(socket, FORWARD_WS_MAX_PENDING_SOCKET_WRITE_BYTES, () => {
+        sendError(ws, "buffer_overflow");
+        cleanupConnection();
+      });
+      const wsBackpressure = createWsBackpressureMonitor(socket, ws);
       state = {
         socket,
         ws,
+        socketWriter,
+        wsBackpressure,
         opened: false,
         closed: false,
         idleTimer: setTimeout(() => {
@@ -244,6 +437,7 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
         for (let offset = 0; offset < chunk.byteLength; offset += maxFrameBytes) {
           try {
             ws.send(uint8ArrayFromBuffer(Buffer.from(chunk.subarray(offset, offset + maxFrameBytes))));
+            state.wsBackpressure.afterSend();
           } catch (err: unknown) {
             if (err instanceof Error) {
               console.warn("[forward/ws] send failed:", err.message);
@@ -253,6 +447,7 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
           }
         }
       });
+      cleanupConnection = cleanup;
       socket.on("end", () => {
         sendJson(ws, { type: "end" });
         cleanup();
@@ -267,10 +462,26 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
 
     return {
       onOpen(_evt: unknown, ws: ForwardWs) {
-        if (active.size >= maxConnections) {
+        if (state || pendingState) {
+          return;
+        }
+        if (active.size + pending.size >= maxConnections) {
           sendError(ws, "connection_limit");
           closeWs(ws);
+          return;
         }
+        pendingState = {
+          ws,
+          closed: false,
+          idleTimer: setTimeout(() => {
+            if (pendingState && !pendingState.closed) {
+              sendError(ws, "idle_timeout");
+            }
+            cleanupPending();
+          }, idleTimeoutMs),
+        };
+        pendingState.idleTimer.unref?.();
+        pending.add(pendingState);
       },
       onMessage(evt: ForwardWsMessageEvent, ws: ForwardWs) {
         if (isBinaryMessage(evt.data)) {
@@ -284,7 +495,7 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
             return;
           }
           touch();
-          state.socket.write(chunk);
+          state.socketWriter.write(chunk);
           return;
         }
 
@@ -327,19 +538,40 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
           return;
         }
         sendJson(ws, { type: result.data.type });
-        cleanup();
+        if (state) {
+          cleanup();
+        } else {
+          cleanupPending();
+        }
       },
-      onClose: cleanup,
-      onError: cleanup,
+      onClose() {
+        cleanup();
+        cleanupPending(false);
+      },
+      onError() {
+        cleanup();
+        cleanupPending(false);
+      },
     };
   }
 
   return {
     createHandler,
     async close() {
+      for (const connection of Array.from(pending)) {
+        sendJson(connection.ws, { type: "close" });
+        clearTimeout(connection.idleTimer);
+        connection.closed = true;
+        closeWs(connection.ws);
+        pending.delete(connection);
+      }
       for (const connection of Array.from(active)) {
         sendJson(connection.ws, { type: "close" });
         clearTimeout(connection.idleTimer);
+        connection.closed = true;
+        connection.socketWriter.close();
+        connection.wsBackpressure.close();
+        connection.socket.removeAllListeners();
         connection.socket.destroy();
         closeWs(connection.ws);
         active.delete(connection);

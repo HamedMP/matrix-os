@@ -113,6 +113,7 @@ describe("platform proxy routing", () => {
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
     delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
+    delete process.env.STRIPE_SECRET_KEY;
     delete process.env.HETZNER_SERVER_TYPE;
     delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
     delete process.env.AUTH_SHELL_HOST;
@@ -1944,6 +1945,48 @@ describe("platform proxy routing", () => {
       clerkUserId: "user_new",
       runtimeSlot: "primary",
     });
+  });
+
+  it("blocks signed-in runtime provisioning before Stripe checkout creates an entitlement", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff156",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: {
+        ...process.env,
+        CLERK_SECRET_KEY: "sk_test_matrix",
+        STRIPE_SECRET_KEY: "sk_test_billing",
+      },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(402);
+    await expect(provision.json()).resolves.toEqual({
+      error: "Billing upgrade required",
+      code: "billing_required",
+    });
+    expect(customerVpsService.provision).not.toHaveBeenCalled();
   });
 
   it("falls back instead of claiming another user's active Clerk handle", async () => {

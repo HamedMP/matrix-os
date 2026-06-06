@@ -26,6 +26,7 @@ export interface PortForwardHandle extends ForwardSpec {
 
 interface ForwardWebSocket {
   readyState: number;
+  bufferedAmount?: number;
   binaryType?: string;
   send(data: string | Buffer): void;
   close(): void;
@@ -48,6 +49,10 @@ const DEFAULT_MAX_CONNECTIONS = 32;
 const DEFAULT_MAX_FRAME_BYTES = 64 * 1024;
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const MAX_PENDING_TCP_BYTES = 256 * 1024;
+const MAX_PENDING_SOCKET_WRITE_BYTES = 256 * 1024;
+const WS_BUFFER_HIGH_WATER_BYTES = 256 * 1024;
+const WS_BUFFER_LOW_WATER_BYTES = 128 * 1024;
+const WS_BACKPRESSURE_POLL_MS = 10;
 
 function invalidForwardSpec(): Error & { code: string } {
   return Object.assign(new Error("Request failed"), { code: "invalid_forward_spec" });
@@ -126,6 +131,129 @@ function bufferFromWsMessage(data: unknown): Buffer {
   return Buffer.from(String(data));
 }
 
+function* splitBuffer(buffer: Buffer, maxBytes: number): Generator<Buffer> {
+  for (let offset = 0; offset < buffer.byteLength; offset += maxBytes) {
+    yield Buffer.from(buffer.subarray(offset, offset + maxBytes));
+  }
+}
+
+function createBoundedSocketWriter(
+  socket: Socket,
+  maxPendingBytes: number,
+  onOverflow: () => void,
+): { write(chunk: Buffer): void; close(): void } {
+  const pending: Buffer[] = [];
+  let pendingBytes = 0;
+  let waitingDrain = false;
+  let closed = false;
+
+  const enqueue = (chunk: Buffer) => {
+    if (pendingBytes + chunk.byteLength > maxPendingBytes) {
+      onOverflow();
+      return;
+    }
+    pending.push(Buffer.from(chunk));
+    pendingBytes += chunk.byteLength;
+  };
+
+  const flush = () => {
+    if (closed) {
+      return;
+    }
+    waitingDrain = false;
+    while (pending.length > 0) {
+      const next = pending.shift()!;
+      pendingBytes -= next.byteLength;
+      if (!socket.write(next)) {
+        waitingDrain = true;
+        return;
+      }
+    }
+  };
+
+  socket.on("drain", flush);
+
+  return {
+    write(chunk: Buffer) {
+      if (closed || socket.destroyed) {
+        return;
+      }
+      if (waitingDrain || pending.length > 0) {
+        enqueue(chunk);
+        return;
+      }
+      if (!socket.write(chunk)) {
+        waitingDrain = true;
+      }
+    },
+    close() {
+      closed = true;
+      pending.splice(0);
+      pendingBytes = 0;
+      socket.off("drain", flush);
+    },
+  };
+}
+
+function createWsBackpressureMonitor(
+  source: Socket,
+  ws: ForwardWebSocket,
+): { afterSend(): void; close(): void } {
+  let closed = false;
+  let paused = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const bufferedBytes = () => typeof ws.bufferedAmount === "number" ? ws.bufferedAmount : 0;
+
+  const clearPoll = () => {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const schedulePoll = () => {
+    if (closed || pollTimer) {
+      return;
+    }
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      if (closed) {
+        return;
+      }
+      if (bufferedBytes() <= WS_BUFFER_LOW_WATER_BYTES) {
+        if (paused && !source.destroyed) {
+          source.resume();
+        }
+        paused = false;
+        return;
+      }
+      schedulePoll();
+    }, WS_BACKPRESSURE_POLL_MS);
+    pollTimer.unref?.();
+  };
+
+  return {
+    afterSend() {
+      if (closed || bufferedBytes() <= WS_BUFFER_HIGH_WATER_BYTES) {
+        return;
+      }
+      if (!source.isPaused()) {
+        source.pause();
+        paused = true;
+      }
+      schedulePoll();
+    },
+    close() {
+      closed = true;
+      clearPoll();
+    },
+  };
+}
+
+type BoundedSocketWriter = ReturnType<typeof createBoundedSocketWriter>;
+type WsBackpressureMonitor = ReturnType<typeof createWsBackpressureMonitor>;
+
 export async function startPortForward(options: StartPortForwardOptions): Promise<PortForwardHandle> {
   const maxConnections = options.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
   const maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
@@ -134,9 +262,10 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
   if (!WebSocketImpl) {
     throw Object.assign(new Error("Request failed"), { code: "websocket_unavailable" });
   }
+  let resolvedLocalPort = options.localPort;
   const eventData = (connectionId?: number, code?: string): PortForwardEventData => ({
     localHost: options.localHost,
-    localPort: options.localPort,
+    localPort: resolvedLocalPort,
     remoteHost: options.remoteHost,
     remotePort: options.remotePort,
     connectionId,
@@ -147,7 +276,10 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
   const active = new Set<{
     tcp: Socket;
     ws: ForwardWebSocket;
+    socketWriter: BoundedSocketWriter;
+    wsBackpressure: WsBackpressureMonitor;
     idleTimer: ReturnType<typeof setTimeout>;
+    close(): void;
   }>();
   const server = createServer((tcp) => {
     if (active.size >= maxConnections) {
@@ -166,9 +298,18 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     let remoteReady = false;
     let pendingTcpBytes = 0;
     const pendingTcpChunks: Buffer[] = [];
+    let cleanupConnection = () => {};
+    const socketWriter = createBoundedSocketWriter(tcp, MAX_PENDING_SOCKET_WRITE_BYTES, () => {
+      options.onEvent?.("connection_error", eventData(connectionId, "buffer_overflow"));
+      cleanupConnection();
+    });
+    const wsBackpressure = createWsBackpressureMonitor(tcp, ws);
     const state = {
       tcp,
       ws,
+      socketWriter,
+      wsBackpressure,
+      close: () => cleanupConnection(),
       idleTimer: setTimeout(() => {
         options.onEvent?.("connection_idle_timeout", eventData(connectionId, "idle_timeout"));
         cleanup();
@@ -197,6 +338,8 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
       tcp.off("data", onTcpData);
       tcp.off("close", cleanup);
       tcp.off("error", onTcpError);
+      state.socketWriter.close();
+      state.wsBackpressure.close();
       ws.off?.("open", onWsOpen);
       ws.off?.("message", onWsMessage);
       ws.off?.("close", cleanup);
@@ -213,31 +356,38 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
       }
       options.onEvent?.("connection_close", eventData(connectionId));
     };
+    cleanupConnection = cleanup;
 
-    const onTcpData = (chunk: Buffer) => {
-      touch();
-      if (chunk.byteLength > maxFrameBytes) {
-        options.onEvent?.("connection_error", eventData(connectionId, "frame_too_large"));
-        cleanup();
-        return;
-      }
-      if (!remoteReady) {
-        pendingTcpBytes += chunk.byteLength;
-        if (pendingTcpBytes > MAX_PENDING_TCP_BYTES) {
-          options.onEvent?.("connection_error", eventData(connectionId, "buffer_overflow"));
-          cleanup();
-          return;
-        }
-        pendingTcpChunks.push(Buffer.from(chunk));
-        return;
-      }
+    const sendWsFrame = (chunk: Buffer): boolean => {
       try {
         ws.send(Buffer.from(chunk));
+        wsBackpressure.afterSend();
+        return true;
       } catch (err: unknown) {
         if (err instanceof Error) {
           options.onEvent?.("connection_error", eventData(connectionId, "send_failed"));
         }
         cleanup();
+        return false;
+      }
+    };
+
+    const onTcpData = (chunk: Buffer) => {
+      touch();
+      for (const frame of splitBuffer(chunk, maxFrameBytes)) {
+        if (!remoteReady) {
+          pendingTcpBytes += frame.byteLength;
+          if (pendingTcpBytes > MAX_PENDING_TCP_BYTES) {
+            options.onEvent?.("connection_error", eventData(connectionId, "buffer_overflow"));
+            cleanup();
+            return;
+          }
+          pendingTcpChunks.push(frame);
+          continue;
+        }
+        if (!sendWsFrame(frame)) {
+          return;
+        }
       }
     };
 
@@ -270,7 +420,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
           cleanup();
           return;
         }
-        tcp.write(chunk);
+        socketWriter.write(chunk);
         return;
       }
       let parsed: unknown;
@@ -287,16 +437,10 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
         const type = (parsed as { type?: unknown }).type;
         if (type === "ready") {
           remoteReady = true;
-          try {
-            for (const pendingChunk of pendingTcpChunks.splice(0)) {
-              ws.send(pendingChunk);
+          for (const pendingChunk of pendingTcpChunks.splice(0)) {
+            if (!sendWsFrame(pendingChunk)) {
+              return;
             }
-          } catch (err: unknown) {
-            if (err instanceof Error) {
-              options.onEvent?.("connection_error", eventData(connectionId, "send_failed"));
-            }
-            cleanup();
-            return;
           }
           pendingTcpBytes = 0;
           return;
@@ -331,7 +475,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     server.listen(options.localPort, options.localHost, () => {
       server.off("error", reject);
       const address = server.address() as AddressInfo;
-      options.localPort = address.port;
+      resolvedLocalPort = address.port;
       options.onEvent?.("ready", eventData());
       resolve();
     });
@@ -342,16 +486,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
 
   const closeServer = async () => {
     for (const state of Array.from(active)) {
-      clearTimeout(state.idleTimer);
-      state.tcp.destroy();
-      try {
-        state.ws.close();
-      } catch (err: unknown) {
-        if (err instanceof Error) {
-          options.onEvent?.("connection_error", eventData(undefined, "close_failed"));
-        }
-      }
-      active.delete(state);
+      state.close();
     }
     await new Promise<void>((resolve, reject) => {
       if (!server.listening) {
@@ -371,7 +506,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
   await ready;
   return {
     localHost: options.localHost,
-    localPort: options.localPort,
+    localPort: resolvedLocalPort,
     remoteHost: options.remoteHost,
     remotePort: options.remotePort,
     ready,
