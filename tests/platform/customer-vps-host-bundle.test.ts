@@ -460,6 +460,7 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"');
     expect(workflow).toContain('bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"');
     expect(workflow).toContain('CUSTOMER_VPS_TLS_VERIFY=false');
+    expect(workflow).toContain('MATRIX_BILLING_PROVIDER=stripe');
     expect(workflow).toContain('Dedicated host bundle bucket secret matches the sync bucket secret; refusing to promote.');
     expect(workflow).toContain('grep -Fq -- "$sync_bucket"');
     expect(workflow).toContain('Candidate host bundle signer returned the configured sync bucket; refusing to promote.');

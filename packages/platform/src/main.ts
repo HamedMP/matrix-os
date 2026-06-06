@@ -676,7 +676,11 @@ function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): En
 }
 
 function stripeBillingEntitlementsEnabled(env: NodeJS.ProcessEnv): boolean {
-  return env.MATRIX_STRIPE_BILLING_ENABLED === 'true' || env.MATRIX_BILLING_PROVIDER === 'stripe';
+  return (
+    env.MATRIX_STRIPE_BILLING_ENABLED === 'true' ||
+    env.MATRIX_BILLING_PROVIDER === 'stripe' ||
+    Boolean(env.STRIPE_SECRET_KEY?.trim())
+  );
 }
 
 async function resolveEffectiveBillingEntitlement(
@@ -3600,6 +3604,20 @@ export function createApp(deps: {
     }
 
     try {
+      if (stripeBillingEntitlementsEnabled(appEnv)) {
+        const now = new Date();
+        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
+        const access = getRuntimeAccessDecision(entitlement, now);
+        if (!entitlement || !access.runtimeProxyAllowed) {
+          applyNoStoreHeaders(c);
+          return jsonCustomerVpsError(
+            c,
+            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
+            '/api/auth/provision-runtime',
+          );
+        }
+      }
+
       const handle = await selectProvisionHandleForClerkUser(db, result.userId, appEnv);
       if (!handle) {
         applyNoStoreHeaders(c);
