@@ -221,20 +221,10 @@ private struct WebShellView: NSViewRepresentable {
         private static func shouldOpenExternally(_ url: URL) -> Bool {
             guard let host = url.host()?.lowercased() else { return false }
             let path = url.path.lowercased()
-            let firstSegment = url.pathComponents.dropFirst().first?.lowercased()
             if path == "/api/auth/app-session" { return false }
             if host.contains("clerk") || host.contains("accounts.") {
                 return true
             }
-<<<<<<< HEAD
-            return firstSegment == "sign-in"
-                || firstSegment == "sign-up"
-                || firstSegment == "login"
-                || firstSegment == "oauth"
-                || firstSegment == "sso"
-                || firstSegment == "auth"
-                || path == "/login"
-=======
             return isAuthPath(path)
         }
 
@@ -257,7 +247,6 @@ private struct WebShellView: NSViewRepresentable {
                 || path.hasPrefix("/auth/device/")
                 || path == "/auth/callback"
                 || path.hasPrefix("/auth/callback/")
->>>>>>> 5ffea89c (fix(086): harden native auth routing retries)
         }
     }
 }
