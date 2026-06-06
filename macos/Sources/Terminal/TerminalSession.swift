@@ -57,8 +57,12 @@ public final class TerminalSession: ObservableObject {
     /// Sink for decoded PTY output text. The view installs this to feed SwiftTerm.
     /// Called on the main actor.
     private var outputSink: (@MainActor (String) -> Void)?
-    private var pendingOutput = ""
     private var attachHandler: (@MainActor () -> Void)?
+    /// Coalesced output waiting to be fed into SwiftTerm. Feeding SwiftTerm once
+    /// per websocket frame can fall behind under zellij bursts, causing zellij to
+    /// disconnect the client. Drain at UI cadence instead.
+    private var pendingOutput = ""
+    private var outputFlushTask: Task<Void, Never>?
     private var consumeTask: Task<Void, Never>?
     private var started = false
     /// Latest requested terminal size, re-sent once after each successful attach.
@@ -71,6 +75,7 @@ public final class TerminalSession: ObservableObject {
 
     deinit {
         consumeTask?.cancel()
+        outputFlushTask?.cancel()
     }
 
     /// Installs the output sink (the SwiftTerm feed) before/while starting.
@@ -128,6 +133,9 @@ public final class TerminalSession: ObservableObject {
     public func shutdown() {
         consumeTask?.cancel()
         consumeTask = nil
+        flushPendingOutput()
+        outputFlushTask?.cancel()
+        outputFlushTask = nil
         let client = self.client
         Task { await client.shutdown() }
     }
@@ -173,11 +181,7 @@ public final class TerminalSession: ObservableObject {
             if case .connecting = connectionState { connectionState = .attached }
             if case .reconnecting = connectionState { connectionState = .attached }
             notifyAttached()
-            if outputSink == nil {
-                pendingOutput += data
-            } else {
-                outputSink?(data)
-            }
+            enqueueOutput(data)
             if !isPinnedToBottom {
                 unseenLines += 1
             }
@@ -186,6 +190,8 @@ public final class TerminalSession: ObservableObject {
         case let .error(code, _):
             // Never surface raw `message`; keep only the internal code.
             connectionState = .error(code: code)
+        case .reconnecting:
+            markReconnecting()
         case .replayEvicted:
             // Client cleared its buffer and re-attaches at live tail. Reset local seq
             // and show the connecting state until the next `attached`/`output`.
@@ -199,6 +205,20 @@ public final class TerminalSession: ObservableObject {
         guard let attachHandler else { return }
         self.attachHandler = nil
         attachHandler()
+    }
+
+    private func enqueueOutput(_ data: String) {
+        pendingOutput += data
+        guard outputFlushTask == nil else { return }
+        outputFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            self?.drainOutput()
+        }
+    }
+
+    private func drainOutput() {
+        outputFlushTask = nil
+        flushPendingOutput()
     }
 
     private func flushPendingOutput() {

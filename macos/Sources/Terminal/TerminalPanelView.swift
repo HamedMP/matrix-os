@@ -41,7 +41,7 @@ public struct TerminalPanelView: View {
         HStack(spacing: Spacing.x3) {
             Text(session.displayName)
                 .font(.plexMono(12, weight: .medium))
-                .foregroundStyle(Color.inkPrimary)
+                .foregroundStyle(Color.terminalInk)
                 .lineLimit(1)
 
             statusBadge
@@ -52,10 +52,10 @@ public struct TerminalPanelView: View {
         }
         .padding(.horizontal, Spacing.x4)
         .padding(.vertical, Spacing.x2)
-        .background(Color.surfaceRail)
+        .background(Color.surfaceTerminal)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.hairlineDark)
+                .fill(Color.white.opacity(0.08))
                 .frame(height: 1)
         }
     }
@@ -64,7 +64,7 @@ public struct TerminalPanelView: View {
     private var statusBadge: some View {
         switch session.connectionState {
         case .connecting:
-            badge(text: "connecting", color: .inkSecondary)
+            badge(text: "connecting", color: .terminalMutedInk)
         case .attached:
             badge(text: "attached", color: .signalLive)
         case .reconnecting:
@@ -127,6 +127,7 @@ public struct TerminalPanelView: View {
 
     private var terminalSurface: some View {
         SwiftTermView(session: session)
+            .id(session.id)
             .background(Color.surfaceTerminal)
     }
 }
@@ -194,15 +195,14 @@ private struct SwiftTermView: NSViewRepresentable {
         let view = TerminalView(frame: .zero)
         view.terminalDelegate = context.coordinator
         context.coordinator.terminalView = view
+        let clickRecognizer = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminal(_:)))
+        clickRecognizer.numberOfClicksRequired = 1
+        view.addGestureRecognizer(clickRecognizer)
 
         // OPERATOR look: deep terminal surface + phosphor ink, Plex Mono 12.5.
         view.nativeBackgroundColor = NSColor(Color.surfaceTerminal)
-        view.nativeForegroundColor = NSColor(Color.inkPrimary)
-        if let mono = NSFont(name: "IBMPlexMono", size: 12.5) {
-            view.font = mono
-        } else {
-            view.font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
-        }
+        view.nativeForegroundColor = NSColor(Color.terminalInk)
+        view.font = Self.terminalFont(size: 12.5)
 
         // Install the output sink so future server `output` events feed SwiftTerm.
         session.setOutputSink { [weak view] text in
@@ -213,12 +213,38 @@ private struct SwiftTermView: NSViewRepresentable {
         let dims = view.getTerminal().getDims()
         session.resize(cols: dims.cols, rows: dims.rows)
         session.start()
+        DispatchQueue.main.async { [weak view] in
+            guard let view else { return }
+            view.window?.makeFirstResponder(view)
+        }
         return view
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
         // Keep the coordinator's reference fresh; sizing is reported via the delegate.
         context.coordinator.terminalView = nsView
+    }
+
+    private static func terminalFont(size: CGFloat) -> NSFont {
+        let preferredFamilies = [
+            "MesloLGS NF",
+            "MesloLGS Nerd Font Mono",
+            "MesloLGS NF Regular",
+            "JetBrainsMono Nerd Font",
+            "JetBrainsMono Nerd Font Mono",
+            "Hack Nerd Font",
+            "Hack Nerd Font Mono",
+            "FiraCode Nerd Font",
+            "FiraCode Nerd Font Mono",
+            "Menlo",
+            "IBMPlexMono",
+        ]
+        for family in preferredFamilies {
+            if let font = NSFont(name: family, size: size) {
+                return font
+            }
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
     /// Bridges SwiftTerm's `TerminalViewDelegate` to the `TerminalSession`.
@@ -233,6 +259,11 @@ private struct SwiftTermView: NSViewRepresentable {
 
         init(session: TerminalSession) {
             self.session = session
+        }
+
+        @MainActor @objc func focusTerminal(_ recognizer: NSClickGestureRecognizer) {
+            guard let source = recognizer.view as? TerminalView else { return }
+            source.window?.makeFirstResponder(source)
         }
 
         // User keystrokes → PTY.

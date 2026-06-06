@@ -61,11 +61,17 @@ public struct DeviceAuthClient: DeviceAuthorizing {
         self.timeout = timeout
     }
 
-    private struct CodeBody: Encodable { let clientId: String }
+    private struct CodeBody: Encodable {
+        let clientId: String
+        let redirectUri: String
+    }
 
     public func startDeviceAuth() async throws -> DeviceAuthStart {
         // RFC 8628 device-code request. The platform requires a clientId.
-        let (data, http) = try await post(path: "/api/auth/device/code", body: CodeBody(clientId: clientId))
+        let (data, http) = try await post(
+            path: "/api/auth/device/code",
+            body: CodeBody(clientId: clientId, redirectUri: "matrixos://auth?status=approved")
+        )
         if let mapped = GatewayError.from(statusCode: http.statusCode) {
             throw mapped
         }

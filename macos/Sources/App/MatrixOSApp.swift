@@ -33,6 +33,9 @@ struct MatrixOSApp: App {
             RootView(model: model)
                 .frame(minWidth: 1024, minHeight: 640)
                 .task { await model.refresh() }
+                .onOpenURL { url in
+                    model.handleOpenURL(url)
+                }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -57,35 +60,37 @@ private struct RootView: View {
     var body: some View {
         RootShellView(model: model)
             .background(WindowVibrancy())
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(.light)
     }
 }
 
-/// Operator-grade keyboard model (design.md §7). US1 wires panel switching and
+/// Matrix keyboard model (design.md §7). US1 wires panel switching and
 /// dismiss; ⌘N is a placeholder until US2 mutations land.
 private struct OperatorCommands: Commands {
     let model: AppModel
 
     var body: some Commands {
-        CommandMenu("Operator") {
+        CommandMenu("Matrix") {
             Button("Command Palette…") { model.showCommandPalette.toggle() }
                 .keyboardShortcut("k", modifiers: .command)
             Divider()
-            Button("New Card") { model.newCardPlaceholder() }
+            Button("New Task") { model.newCardPlaceholder() }
                 .keyboardShortcut("n", modifiers: .command)
             Button("New Session") { model.createSession() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
-            Button("Board") { model.section = .board }
+            Button("Home") { model.section = .home }
                 .keyboardShortcut("1", modifiers: .control)
-            Button("Shell") { model.section = .shell }
+            Button("Board") { model.section = .board }
                 .keyboardShortcut("2", modifiers: .control)
+            Button("Shell") { model.section = .shell }
+                .keyboardShortcut("3", modifiers: .control)
             Divider()
             Button("Terminal Panel") { model.switchPanel(.terminal) }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("Shell Panel") { model.switchPanel(.shell) }
+            Button("Editor Panel") { model.switchPanel(.app(slug: "editor")) }
                 .keyboardShortcut("2", modifiers: .command)
-            Button("App Panel") { model.switchPanel(.app(slug: "")) }
+            Button("Git Panel") { model.switchPanel(.app(slug: "git")) }
                 .keyboardShortcut("3", modifiers: .command)
             Divider()
             Button("Close Card") { model.closeCard() }

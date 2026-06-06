@@ -17,8 +17,11 @@ final class DeviceAuthClientTests: XCTestCase {
         MockURLProtocol.setHandler { req in
             XCTAssertEqual(req.url?.path, "/api/auth/device/code")
             XCTAssertEqual(req.httpMethod, "POST")
+            let body = requestJSONBody(req)
+            XCTAssertEqual(body?["clientId"], "matrix-os-macos")
+            XCTAssertEqual(body?["redirectUri"], "matrixos://auth?status=approved")
             let json = """
-            {"deviceCode":"DC","userCode":"ABCD-EFGH","verificationUri":"https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH","expiresIn":900,"interval":5}
+            {"deviceCode":"DC","userCode":"ABCD-EFGH","verificationUri":"https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH&redirect_uri=matrixos%3A%2F%2Fauth%3Fstatus%3Dapproved&redirect_sig=sig","expiresIn":900,"interval":5}
             """
             return (httpResponse(req.url!, 200), Data(json.utf8))
         }
@@ -26,6 +29,7 @@ final class DeviceAuthClientTests: XCTestCase {
         let start = try await client.startDeviceAuth()
         XCTAssertEqual(start.deviceCode, "DC")
         XCTAssertEqual(start.userCode, "ABCD-EFGH")
+        XCTAssertTrue(start.verificationUri.contains("redirect_sig=sig"))
         XCTAssertEqual(start.interval, 5)
         XCTAssertEqual(start.expiresIn, 900)
     }
@@ -87,4 +91,25 @@ final class DeviceAuthClientTests: XCTestCase {
             XCTFail("expected GatewayError, got \(error)")
         }
     }
+}
+
+private func requestJSONBody(_ request: URLRequest) -> [String: String]? {
+    var data = request.httpBody ?? Data()
+    if data.isEmpty, let stream = request.httpBodyStream {
+        var streamData = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        stream.open()
+        defer { stream.close() }
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count > 0 {
+                streamData.append(buffer, count: count)
+            } else {
+                break
+            }
+        }
+        data = streamData
+    }
+    guard !data.isEmpty else { return nil }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
 }

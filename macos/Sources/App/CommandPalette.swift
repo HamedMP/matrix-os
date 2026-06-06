@@ -8,6 +8,7 @@
 // references DesignSystem tokens only.
 #if os(macOS)
 import SwiftUI
+import AppKit
 import DesignSystem
 import MatrixModel
 
@@ -37,6 +38,9 @@ struct CommandPalette: View {
             },
             PaletteAction(id: "new-session", title: "New session", symbol: "terminal") {
                 model.createSession()
+            },
+            PaletteAction(id: "go-home", title: "Switch to Home", symbol: "house") {
+                model.section = .home
             },
             PaletteAction(id: "go-board", title: "Switch to Board", symbol: "rectangle.split.3x1") {
                 model.section = .board
@@ -75,9 +79,14 @@ struct CommandPalette: View {
         }
         .onAppear { fieldFocused = true; selection = 0 }
         .onChange(of: query) { _, _ in selection = 0 }
-        .onKeyPress(.downArrow) { moveSelection(1); return .handled }
-        .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
-        .onKeyPress(.escape) { close(); return .handled }
+        .background(
+            PaletteKeyCatcher(
+                onUp: { moveSelection(-1) },
+                onDown: { moveSelection(1) },
+                onReturn: runSelected,
+                onEscape: close
+            )
+        )
     }
 
     private func moveSelection(_ delta: Int) {
@@ -179,6 +188,85 @@ struct CommandPalette: View {
     private func close() {
         query = ""
         model.showCommandPalette = false
+    }
+}
+
+private struct PaletteKeyCatcher: NSViewRepresentable {
+    let onUp: () -> Void
+    let onDown: () -> Void
+    let onReturn: () -> Void
+    let onEscape: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onUp: onUp, onDown: onDown, onReturn: onReturn, onEscape: onEscape)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.install()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onUp = onUp
+        context.coordinator.onDown = onDown
+        context.coordinator.onReturn = onReturn
+        context.coordinator.onEscape = onEscape
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    final class Coordinator {
+        var onUp: () -> Void
+        var onDown: () -> Void
+        var onReturn: () -> Void
+        var onEscape: () -> Void
+        private var monitor: Any?
+
+        init(onUp: @escaping () -> Void, onDown: @escaping () -> Void, onReturn: @escaping () -> Void, onEscape: @escaping () -> Void) {
+            self.onUp = onUp
+            self.onDown = onDown
+            self.onReturn = onReturn
+            self.onEscape = onEscape
+        }
+
+        func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                guard Self.paletteSearchFieldHasFocus() else { return event }
+                switch event.keyCode {
+                case 125:
+                    onDown()
+                    return nil
+                case 126:
+                    onUp()
+                    return nil
+                case 36, 76:
+                    onReturn()
+                    return nil
+                case 53:
+                    onEscape()
+                    return nil
+                default:
+                    return event
+                }
+            }
+        }
+
+        private static func paletteSearchFieldHasFocus() -> Bool {
+            guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+            return responder is NSTextView
+        }
+
+        func uninstall() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
+        }
     }
 }
 #endif
