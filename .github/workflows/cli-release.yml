@@ -169,6 +169,7 @@ jobs:
           }
 
           SHA256="$(curl -fsSL --max-time 60 "$TARBALL" | shasum -a 256 | awk '{print $1}')"
+          export TARBALL SHA256
 
           cd tap
           FORMULA="Formula/matrix.rb"
