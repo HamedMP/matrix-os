@@ -2,7 +2,23 @@
 
 Command-line client for [Matrix OS](https://matrix-os.com).
 
-## Install
+## Run without installing
+
+```bash
+# npm package runner
+npx --yes @finnaai/matrix login --profile cloud
+npx --yes @finnaai/matrix whoami
+
+# pnpm package runner
+pnpm dlx @finnaai/matrix login --profile cloud
+pnpm dlx @finnaai/matrix whoami
+```
+
+Package-runner commands use the same CLI entrypoint as an installed `matrix`
+binary. Auth and profile files are stored in `~/.matrixos/`, so a later global
+install, Homebrew install, or package-runner invocation reuses the same login.
+
+## Install permanently
 
 ```bash
 # Homebrew (macOS/Linux)
@@ -23,6 +39,7 @@ matrix sync ~/matrixos    # start the sync daemon against the logged-in instance
 matrix run -it -- claude  # attach local TTY to Claude on your Matrix VPS
 matrix run -it -- codex   # same shared zellij session primitive for Codex
 matrix run -it --session setup -- gh auth login
+matrix forward 5173       # forward a Matrix computer dev server to local loopback
 mos shell attach setup    # reattach the same session from local CLI or web terminal
 matrix peers              # list connected peers
 matrix logout             # clear local credentials

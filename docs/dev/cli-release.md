@@ -22,6 +22,7 @@ pnpm install --frozen-lockfile
 pnpm --filter @finnaai/matrix build
 pnpm --filter @finnaai/matrix test
 pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
+pnpm --filter @finnaai/matrix exec node ./scripts/validate-package-runners.mjs
 ```
 
 Also verify the version is new:
@@ -46,11 +47,23 @@ Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.4` 
 ```bash
 npm view @finnaai/matrix version
 npm view @finnaai/matrix dist.tarball
+npx --yes @finnaai/matrix --version
+pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
 MATRIX_VERSION=0.3.4 sh scripts/install.sh
 matrix --version
 matrix login --help
 matrix run --help
+matrix forward --help
+```
+
+For launch-critical cloud coding, test the command path against a live Matrix VPS:
+
+```bash
+matrix login --profile cloud
+matrix run -it -- claude
+matrix run -- ls
+matrix forward 5173
 ```
 
 For macOS, also verify the GitHub release contains `MatrixSync-0.3.4.pkg` when the macOS job was enabled.
