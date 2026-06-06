@@ -66,6 +66,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const multipartCompleteBodyLimit = bodyLimit({ maxSize: MULTIPART_COMPLETE_BODY_LIMIT });
   const store: ManifestStore = { r2: deps.r2, db: deps.db };
   const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const multipartCompleteLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const multipartAbortLimiter = createSyncRateLimiter({ maxRequests: 300, windowMs: 60_000 });
   const commitLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
   const shareLimiter = createSyncRateLimiter({ maxRequests: 60, windowMs: 60_000 });
   // Shared-folder data-plane access remains intentionally fail-closed in this
@@ -163,7 +165,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /multipart/complete
   app.post("/multipart/complete", multipartCompleteBodyLimit, async (c) => {
     const userId = getUserId(c);
-    if (!commitLimiter.check(userId)) {
+    if (!multipartCompleteLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
     const json = await parseJsonBody(c);
@@ -197,7 +199,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /multipart/abort
   app.post("/multipart/abort", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
-    if (!commitLimiter.check(userId)) {
+    if (!multipartAbortLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
     const json = await parseJsonBody(c);

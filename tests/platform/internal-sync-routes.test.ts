@@ -210,6 +210,29 @@ describe("platform/internal-sync-routes", () => {
     expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
   });
 
+  it("rejects multipart complete requests with duplicate part numbers", async () => {
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [
+          { partNumber: 1, etag: '"etag-1a"' },
+          { partNumber: 1, etag: '"etag-1b"' },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
   it("accepts multipart complete bodies over 64KB within the internal complete cap", async () => {
     r2.completeMultipartUpload.mockResolvedValue({ etag: '"complete-etag"' });
     const app = createTestApp();

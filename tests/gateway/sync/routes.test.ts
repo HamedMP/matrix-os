@@ -327,6 +327,28 @@ describe("POST /api/sync/multipart/complete", () => {
       parts,
     );
   });
+
+  it("does not consume the commit rate-limit bucket", async () => {
+    const app = createTestApp();
+
+    for (let index = 0; index < 100; index += 1) {
+      const res = await app.request(jsonRequest("/api/sync/multipart/complete", {
+        path: `videos/large-${index}.mov`,
+        uploadId: `upload-${index}`,
+        parts: [{ partNumber: 1, etag: `"etag-${index}"` }],
+      }));
+      expect(res.status).toBe(200);
+    }
+
+    const res = await app.request("/api/sync/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid JSON" });
+  });
 });
 
 describe("POST /api/sync/multipart/abort", () => {
@@ -337,6 +359,31 @@ describe("POST /api/sync/multipart/abort", () => {
 
   it("aborts a multipart upload inside the authenticated user prefix", async () => {
     const app = createTestApp();
+
+    const res = await app.request(jsonRequest("/api/sync/multipart/abort", {
+      path: "videos/large.mov",
+      uploadId: "upload-123",
+    }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(mockR2.abortMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/test-user/files/videos/large.mov",
+      "upload-123",
+    );
+  });
+
+  it("does not block cleanup after the commit bucket is exhausted", async () => {
+    const app = createTestApp();
+
+    for (let index = 0; index < 100; index += 1) {
+      const res = await app.request("/api/sync/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      });
+      expect(res.status).toBe(400);
+    }
 
     const res = await app.request(jsonRequest("/api/sync/multipart/abort", {
       path: "videos/large.mov",

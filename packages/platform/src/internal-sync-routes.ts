@@ -165,6 +165,7 @@ function parseMultipartCompleteInput(input: unknown): MultipartCompleteInput | n
     return null;
   }
   const parts: Array<{ partNumber: number; etag: string }> = [];
+  const partNumbers = new Set<number>();
   for (const part of record.parts) {
     const partRecord = asRecord(part);
     if (!partRecord) return null;
@@ -180,6 +181,10 @@ function parseMultipartCompleteInput(input: unknown): MultipartCompleteInput | n
     ) {
       return null;
     }
+    if (partNumbers.has(partNumber)) {
+      return null;
+    }
+    partNumbers.add(partNumber);
     parts.push({ partNumber, etag });
   }
   return { ...parsed, parts };
