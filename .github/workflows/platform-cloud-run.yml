@@ -43,7 +43,6 @@ jobs:
       CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || 'https://neo.matrix-os.com' }}
-      EDGE_ROUTER_SECRET_VALUE: ${{ secrets.EDGE_ROUTER_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -85,23 +84,20 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Ensure edge router secret access
+        env:
+          EDGE_ROUTER_SECRET_VALUE: ${{ secrets.EDGE_ROUTER_SECRET }}
         run: |
           set -euo pipefail
-          if [ -n "${EDGE_ROUTER_SECRET_VALUE:-}" ]; then
-            if gcloud secrets describe edge-router-secret \
-              --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
-              printf '%s' "$EDGE_ROUTER_SECRET_VALUE" | gcloud secrets versions add edge-router-secret \
-                --project "$GCP_PROJECT_ID" \
-                --data-file=-
-            else
-              printf '%s' "$EDGE_ROUTER_SECRET_VALUE" | gcloud secrets create edge-router-secret \
-                --project "$GCP_PROJECT_ID" \
-                --replication-policy=automatic \
-                --data-file=-
+          if ! gcloud secrets describe edge-router-secret \
+            --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            if [ -z "${EDGE_ROUTER_SECRET_VALUE:-}" ]; then
+              echo "edge-router-secret is missing and EDGE_ROUTER_SECRET is not configured in the GitHub environment." >&2
+              exit 1
             fi
-          else
-            gcloud secrets describe edge-router-secret \
-              --project "$GCP_PROJECT_ID" >/dev/null
+            printf '%s' "$EDGE_ROUTER_SECRET_VALUE" | gcloud secrets create edge-router-secret \
+              --project "$GCP_PROJECT_ID" \
+              --replication-policy=automatic \
+              --data-file=-
           fi
           gcloud secrets add-iam-policy-binding edge-router-secret \
             --project "$GCP_PROJECT_ID" \
