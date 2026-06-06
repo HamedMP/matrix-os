@@ -26,10 +26,19 @@ if (missing.length > 0) {
 
 const pkg = JSON.parse(readFileSync(resolve(pkgRoot, 'package.json'), 'utf8'));
 const binTargets = Object.entries(pkg.bin ?? {});
-const missingBins = ['matrix', 'matrixos', 'mos'].filter((name) => pkg.bin?.[name] !== 'bin/matrix.mjs');
+const requiredBins = ['matrix', 'matrixos', 'mos'];
+const missingBins = requiredBins.filter((name) => !(name in (pkg.bin ?? {})));
+const wrongBins = requiredBins.filter(
+  (name) => name in (pkg.bin ?? {}) && pkg.bin[name] !== 'bin/matrix.mjs',
+);
 if (missingBins.length > 0) {
   console.error('Pre-publish check failed. Missing package-runner bin aliases:');
   for (const name of missingBins) console.error(`  - ${name}`);
+  process.exit(1);
+}
+if (wrongBins.length > 0) {
+  console.error('Pre-publish check failed. Bin aliases point to wrong target (expected bin/matrix.mjs):');
+  for (const name of wrongBins) console.error(`  - ${name}: ${pkg.bin[name]}`);
   process.exit(1);
 }
 if (binTargets.length !== 3) {

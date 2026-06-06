@@ -23,8 +23,11 @@ function run(command, args, options = {}) {
     });
     let stdout = "";
     let stderr = "";
+    let killTimer;
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      killTimer.unref?.();
     }, options.timeoutMs ?? 120_000);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
@@ -34,10 +37,12 @@ function run(command, args, options = {}) {
     });
     child.on("error", (err) => {
       clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
       reject(err);
     });
     child.on("exit", (code, signal) => {
       clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
       if (code === 0) {
         resolveRun({ stdout, stderr });
         return;
@@ -71,15 +76,17 @@ try {
   const npmRun = await run("npm", ["exec", "--yes", "--package", tarball, "--", "matrix", "--version"], {
     home: join(tempRoot, "npm-exec-home"),
   });
-  if (!npmRun.stdout.includes(packInfo.version)) {
-    throw new Error(`npm exec did not print ${packInfo.version}: ${npmRun.stdout}`);
+  const npmOutput = npmRun.stdout + npmRun.stderr;
+  if (!npmOutput.includes(packInfo.version)) {
+    throw new Error(`npm exec did not print ${packInfo.version}: ${npmOutput}`);
   }
 
   const pnpmRun = await run("pnpm", ["dlx", `file:${tarball}`, "--version"], {
     home: join(tempRoot, "pnpm-dlx-home"),
   });
-  if (!pnpmRun.stdout.includes(packInfo.version)) {
-    throw new Error(`pnpm dlx did not print ${packInfo.version}: ${pnpmRun.stdout}`);
+  const pnpmOutput = pnpmRun.stdout + pnpmRun.stderr;
+  if (!pnpmOutput.includes(packInfo.version)) {
+    throw new Error(`pnpm dlx did not print ${packInfo.version}: ${pnpmOutput}`);
   }
 
   console.log(`Package-runner validation: ok (${packInfo.name}@${packInfo.version})`);
