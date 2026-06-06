@@ -20,10 +20,10 @@ private struct SessionDTO: Decodable {
     let status: String
     let updatedAt: String?
 
-    func toCard(order: Double) -> Card {
+    func toCard(id: String, order: Double) -> Card {
         let active = status == "active"
         return Card(
-            id: name,
+            id: id,
             projectSlug: "",
             title: name,
             status: active ? .running : .complete,
@@ -47,8 +47,13 @@ public struct SessionsBoardLoader: BoardLoading {
 
     public func fetchTasks(projectSlug: String) async throws -> [Card] {
         let envelope: SessionListEnvelope = try await client.get("/api/sessions")
+        var seenIDs: [String: Int] = [:]
         return envelope.sessions.enumerated().map { index, session in
-            session.toCard(order: Double(index))
+            let baseID = "session:\(session.name)"
+            let count = seenIDs[baseID, default: 0]
+            seenIDs[baseID] = count + 1
+            let cardID = count == 0 ? baseID : "\(baseID):\(count + 1)"
+            return session.toCard(id: cardID, order: Double(index))
         }
     }
 }

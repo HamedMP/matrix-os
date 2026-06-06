@@ -144,6 +144,8 @@ private struct AnimatedEllipsis: View {
             .font(.plexMono(10, weight: .medium))
             .foregroundStyle(color)
             .onAppear {
+                ticker?.cancel()
+                ticker = nil
                 guard !reduceMotion else { return }
                 ticker = Task { @MainActor in
                     // Calm ellipsis: never a harsh blink. Stops when the view goes away.
@@ -153,7 +155,10 @@ private struct AnimatedEllipsis: View {
                     }
                 }
             }
-            .onDisappear { ticker?.cancel() }
+            .onDisappear {
+                ticker?.cancel()
+                ticker = nil
+            }
     }
 
     private var dots: String {

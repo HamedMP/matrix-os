@@ -111,9 +111,9 @@ public final class AppModel: ObservableObject {
     /// Factory for a board loader given a gateway client. Injected for tests.
     private let makeLoader: @Sendable (GatewayHTTPClient) -> any BoardLoading
 
-    /// Factory for a terminal session given a resolved WS URL, token, and session id.
+    /// Factory for a terminal session given a resolved WS URL, principal provider, and session id.
     /// Injected so tests can supply a mock event source instead of a real socket.
-    private let makeTerminal: @MainActor (URL, String, String, String) -> TerminalSession
+    private let makeTerminal: @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession
 
     // MARK: - Init
 
@@ -131,10 +131,11 @@ public final class AppModel: ObservableObject {
             // a fresh VPS has sessions but no tasks). Task-backed boards land in US2.
             SessionsBoardLoader(client: client)
         },
-        makeTerminal: @escaping @MainActor (URL, String, String, String) -> TerminalSession = { url, token, session, name in
+        makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, provider, session, name in
+            let tokenProvider = provider as any TokenProviding
             let client = ShellWSClient(
                 url: url,
-                token: token,
+                tokenProvider: { await tokenProvider.token() ?? "" },
                 session: session,
                 transport: URLSessionShellTransport()
             )
@@ -359,7 +360,7 @@ public final class AppModel: ObservableObject {
             openError = err
             throw err
         }
-        guard let token = await principal.token() else {
+        guard await principal.token() != nil else {
             let err = OpenCardError.unauthorized
             openError = err
             throw err
@@ -380,9 +381,8 @@ public final class AppModel: ObservableObject {
 
         // Tear down any previously open session before swapping in the new one.
         terminal?.shutdown()
-        let session = makeTerminal(wsURL, token, sessionId, displayName(for: card))
+        let session = makeTerminal(wsURL, principal, sessionId, displayName(for: card))
         terminal = session
-        session.start()
         return session
     }
 
