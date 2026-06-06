@@ -460,7 +460,10 @@ public final class AppModel: ObservableObject {
                     "/api/projects", body: CreateProjectRequest(name: name, remote: remote)
                 )
                 await self?.loadProjects()
-                if let slug = response.project?.slug { self?.openProject(slug: slug) }
+                if let slug = response.project?.slug {
+                    self?.ensureProjectIsListed(ProjectSummary(slug: slug, name: name, remote: remote))
+                    self?.openProject(slug: slug)
+                }
             } catch {
                 appModelLogger.error("Create project request failed: \(String(describing: error), privacy: .private)")
                 await MainActor.run { self?.openError = .createProjectFailed }
@@ -468,8 +471,13 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Moves a card to a new column/order (drag-to-move). Optimistic + persisted
-    /// via PATCH; refreshes on completion to reconcile.
+    private func ensureProjectIsListed(_ project: ProjectSummary) {
+        guard !projects.contains(where: { $0.slug == project.slug }) else { return }
+        projects.insert(project, at: 0)
+    }
+
+    /// Moves a card to a new column/order (drag-to-move). Persists via PATCH and
+    /// refreshes on completion to reconcile.
     public func updateTaskStatus(cardId: String, to status: TaskStatus, order: Double?) {
         guard let client = gatewayClient() else { return }
         openError = nil

@@ -78,6 +78,7 @@ public final class TerminalSession: ObservableObject {
     }
 
     /// Connects the client and begins consuming its event stream. Idempotent.
+    @MainActor
     public func start() {
         guard !started else { return }
         started = true
