@@ -1,4 +1,9 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import {
+  getClerkDisplayName,
+  getPrimaryClerkEmail,
+  normalizeMatrixOsHandleCandidate,
+} from '@matrix-os/clerk-sync';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
@@ -25,6 +30,9 @@ import {
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  ensurePlatformUser,
+  getPlatformUserByClerkId,
+  isPlatformHandleAvailableForClerkUser,
   getHostBundleRelease,
   getHostBundleReleaseByChannel,
   HostBundleReleaseConflictError,
@@ -215,6 +223,8 @@ const AppSessionProvisionBodySchema = z.object({
 
 const ClerkUserProfileSchema = z.object({
   username: z.string().nullable().optional(),
+  first_name: z.string().nullable().optional(),
+  last_name: z.string().nullable().optional(),
   primary_email_address_id: z.string().nullable().optional(),
   email_addresses: z.array(z.object({
     id: z.string().optional(),
@@ -252,8 +262,16 @@ const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
+});
+
+const ClerkUserSyncBodySchema = z.object({
+  handle: z.string().regex(HANDLE_PATTERN),
+  clerkUserId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
 });
 
 const SocialSendBodySchema = z.object({
@@ -872,18 +890,6 @@ function jsonCustomerVpsError(c: import('hono').Context, err: unknown, context: 
   return c.json({ error: 'Provisioning failed', code: 'provisioning_failed' }, 503);
 }
 
-function normalizeProvisionHandleCandidate(value: string | undefined | null): string | null {
-  if (!value) return null;
-  const candidate = value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 31)
-    .replace(/-+$/g, '');
-  return HANDLE_PATTERN.test(candidate) ? candidate : null;
-}
-
 function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string): string {
   const suffix = createHmac('sha256', secretKey)
     .update(userId)
@@ -892,10 +898,39 @@ function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string):
   return `u${suffix}`;
 }
 
-async function resolveProvisionHandleCandidatesFromClerkProfile(
+async function ensureProvisionedPlatformUser(
+  db: PlatformDB,
+  input: {
+    clerkUserId: string;
+    handle: string;
+    displayName?: string;
+    email?: string;
+    runtimeId: string;
+  },
+): Promise<void> {
+  await ensurePlatformUser(db, {
+    clerkId: input.clerkUserId,
+    handle: input.handle,
+    displayName: input.displayName ?? input.handle,
+    email: input.email ?? `${input.handle}@matrix-os.local`,
+    containerId: input.runtimeId,
+    plan: 'free',
+    status: 'active',
+  });
+}
+
+type ClerkProvisionProfile = z.infer<typeof ClerkUserProfileSchema>;
+
+interface ProvisionIdentity {
+  handle: string;
+  displayName: string;
+  email?: string;
+}
+
+async function fetchClerkProvisionProfile(
   userId: string,
   env: NodeJS.ProcessEnv,
-): Promise<string[]> {
+): Promise<{ secretKey: string; profile: ClerkProvisionProfile }> {
   const secretKey = env.CLERK_SECRET_KEY;
   if (!secretKey) {
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
@@ -927,21 +962,27 @@ async function resolveProvisionHandleCandidatesFromClerkProfile(
   if (!profile.success) {
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
   }
+  return { secretKey, profile: profile.data };
+}
+
+function resolveProvisionHandleCandidatesFromClerkProfile(
+  userId: string,
+  profile: ClerkProvisionProfile,
+  secretKey: string,
+): string[] {
   const candidates: string[] = [];
   const addCandidate = (candidate: string | null) => {
     if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
   };
-  const usernameHandle = normalizeProvisionHandleCandidate(profile.data.username);
+  const usernameHandle = normalizeMatrixOsHandleCandidate(profile.username);
   addCandidate(usernameHandle);
 
-  const primaryEmail = profile.data.email_addresses?.find(
-    (email) => email.id && email.id === profile.data.primary_email_address_id,
-  )?.email_address;
-  const primaryEmailHandle = normalizeProvisionHandleCandidate(primaryEmail?.split('@')[0]);
+  const primaryEmail = getPrimaryClerkEmail(profile);
+  const primaryEmailHandle = normalizeMatrixOsHandleCandidate(primaryEmail?.split('@')[0]);
   addCandidate(primaryEmailHandle);
 
-  const firstEmailHandle = normalizeProvisionHandleCandidate(
-    profile.data.email_addresses?.[0]?.email_address?.split('@')[0],
+  const firstEmailHandle = normalizeMatrixOsHandleCandidate(
+    profile.email_addresses?.[0]?.email_address?.split('@')[0],
   );
   addCandidate(firstEmailHandle);
   addCandidate(fallbackProvisionHandleForClerkUser(userId, secretKey));
@@ -953,40 +994,33 @@ async function isProvisionHandleAvailableForClerkUser(
   handle: string,
   clerkUserId: string,
 ): Promise<boolean> {
-  const conflictingActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('clerk_user_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '!=', clerkUserId)
-    .executeTakeFirst();
-  if (conflictingActiveHandleMachine) {
-    return false;
-  }
-  // Same-user VPS machines supersede stale docker-era container rows for the same handle.
-  const ownedActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('machine_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '=', clerkUserId)
-    .executeTakeFirst();
-  if (ownedActiveHandleMachine) {
-    return true;
-  }
-  const legacyHandleContainer = await getContainer(db, handle);
-  return !legacyHandleContainer || legacyHandleContainer.clerkUserId === clerkUserId;
+  return isPlatformHandleAvailableForClerkUser(db, handle, clerkUserId);
 }
 
-async function selectProvisionHandleForClerkUser(
+async function selectProvisionIdentityForClerkUser(
   db: PlatformDB,
   userId: string,
   env: NodeJS.ProcessEnv,
-): Promise<string | null> {
-  const candidates = await resolveProvisionHandleCandidatesFromClerkProfile(userId, env);
+): Promise<ProvisionIdentity | null> {
+  const existing = await getPlatformUserByClerkId(db, userId);
+  if (existing && await isProvisionHandleAvailableForClerkUser(db, existing.handle, userId)) {
+    return {
+      handle: existing.handle,
+      displayName: existing.displayName,
+      email: existing.email,
+    };
+  }
+  const { secretKey, profile } = await fetchClerkProvisionProfile(userId, env);
+  const candidates = existing
+    ? [existing.handle, ...resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey)]
+    : resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey);
   for (const handle of candidates) {
     if (await isProvisionHandleAvailableForClerkUser(db, handle, userId)) {
-      return handle;
+      return {
+        handle,
+        displayName: getClerkDisplayName(profile, handle),
+        email: getPrimaryClerkEmail(profile),
+      };
     }
   }
   return null;
@@ -3622,22 +3656,29 @@ export function createApp(deps: {
         }
       }
 
-      const handle = await selectProvisionHandleForClerkUser(db, result.userId, appEnv);
-      if (!handle) {
+      const identity = await selectProvisionIdentityForClerkUser(db, result.userId, appEnv);
+      if (!identity) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
       }
       const provisioned = await deps.customerVpsService.provision({
-        handle,
+        handle: identity.handle,
         clerkUserId: result.userId,
         runtimeSlot: parsed.data.runtime,
       });
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId: result.userId,
+        handle: identity.handle,
+        displayName: identity.displayName,
+        email: identity.email,
+        runtimeId: `vps:${provisioned.machineId}`,
+      });
       if (matrixProvisioner) {
         try {
-          await matrixProvisioner.provisionUser(handle);
+          await matrixProvisioner.provisionUser(identity.handle);
         } catch (matrixErr: unknown) {
           console.error(
-            `[matrix] Failed to provision Matrix accounts for ${handle}:`,
+            `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
             matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
           );
         }
@@ -3645,7 +3686,7 @@ export function createApp(deps: {
       applyNoStoreHeaders(c);
       return c.json({
         runtime: 'customer_vps',
-        handle,
+        handle: identity.handle,
         clerkUserId: result.userId,
         ...provisioned,
         runtimeSlot: parsed.data.runtime,
@@ -4578,13 +4619,20 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName, runtimeSlot, serverType } = parsed.data;
+    const { handle, clerkUserId, displayName, email, runtimeSlot, serverType } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
         const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot, serverType });
+        await ensureProvisionedPlatformUser(db, {
+          clerkUserId,
+          handle,
+          displayName,
+          email,
+          runtimeId: `vps:${machine.machineId}`,
+        });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
         if (matrixProvisioner) {
@@ -4605,6 +4653,13 @@ export function createApp(deps: {
       }
 
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId,
+        handle,
+        displayName,
+        email,
+        runtimeId: `legacy:${handle}`,
+      });
 
       // Provision Matrix accounts (non-blocking: log error but don't fail container provision)
       if (matrixProvisioner) {
@@ -4628,6 +4683,45 @@ export function createApp(deps: {
       }
       logPlatformRouteError('/containers/provision', e);
       return c.json({ error: 'Provision failed' }, 500);
+    }
+  });
+
+  app.post('/users/sync', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/users/sync parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = ClerkUserSyncBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { handle, clerkUserId, displayName, email } = parsed.data;
+    try {
+      const user = await ensurePlatformUser(db, {
+        clerkId: clerkUserId,
+        handle,
+        displayName: displayName ?? handle,
+        email: email ?? `${handle}@matrix-os.local`,
+        containerId: `clerk:${clerkUserId}`,
+        plan: 'free',
+        status: 'active',
+      });
+      return c.json({
+        id: user.id,
+        clerkUserId: user.clerkId,
+        handle: user.handle,
+        status: user.status,
+      });
+    } catch (e: unknown) {
+      if (isPostgresUniqueViolation(e)) {
+        return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
+      }
+      logPlatformRouteError('/users/sync', e);
+      return c.json({ error: 'User sync failed' }, 500);
     }
   });
 
