@@ -15,7 +15,7 @@ import {
   type SyncConfig,
 } from "../../lib/config.js";
 import { loadProfiles, saveProfiles, type ProfilesFile } from "../../lib/profiles.js";
-import { formatCliError, formatCliSuccess } from "../output.js";
+import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 
 function localProfileFromArgs(args: Record<string, unknown>) {
   return {
@@ -49,7 +49,15 @@ function writeLoginError(err: unknown, json: boolean): void {
     err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : "login_failed";
-  console.error(json ? formatCliError(code) : `Error: Request failed (${code})`);
+  console.error(json ? formatCliError(code) : `Error: ${formatCliErrorMessage(code)}`);
+}
+
+function classifyPlatformFetchError(err: unknown): Error & { code: string } {
+  return Object.assign(new Error("Request failed"), {
+    code: err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")
+      ? "request_timeout"
+      : "platform_unreachable",
+  });
 }
 
 export const loginCommand = defineCommand({
@@ -142,12 +150,15 @@ export const loginCommand = defineCommand({
       existing?.platformUrl ||
       defaultPlatformUrl();
 
-    console.log(`Opening browser for authentication at ${platformUrl}...`);
+    if (!json) {
+      console.log(`Opening browser for authentication at ${platformUrl}...`);
+    }
 
     const auth = await login({
       platformUrl,
       clientId: "matrixos-cli",
       tokenStorePath: authFilePathForProfile(profileName),
+      quiet: json,
     });
 
     // Discover the user's gateway URL via /api/me. Contract: 404 means the
@@ -164,9 +175,10 @@ export const loginCommand = defineCommand({
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      console.error(
-        `Could not reach ${platformUrl}/api/me (${err instanceof Error ? err.message : "network error"}). Your auth token was saved — re-run \`matrix login\` once the platform is reachable.`,
-      );
+      const safeErr = classifyPlatformFetchError(err);
+      const hint = `Your auth token was saved. Re-run \`mos login --profile ${profileName}\` after the platform is reachable.`;
+      console.error(json ? formatCliError(safeErr.code) : `Error: ${formatCliErrorMessage(safeErr.code)} ${hint}`);
+      process.exitCode = 1;
       return;
     }
 
@@ -175,13 +187,22 @@ export const loginCommand = defineCommand({
       // auth.json (pollForToken persisted it inside `login()`) — otherwise
       // `matrix sync` would appear to work while every gateway call 404s.
       await clearProfileAuth(profileName);
+      if (json) {
+        console.error(formatCliError(
+          "instance_not_found",
+          "Matrix instance not found. Sign up at https://app.matrix-os.com, then rerun `mos login`.",
+        ));
+        process.exitCode = 1;
+        return;
+      }
       console.log(
         "You're signed in, but there's no Matrix instance for this account yet.",
       );
       console.log("");
       console.log(
-        "Sign up at https://app.matrix-os.com first, then re-run `matrix login`.",
+        "Sign up at https://app.matrix-os.com first, then re-run `mos login`.",
       );
+      process.exitCode = 1;
       return;
     }
 
@@ -189,9 +210,10 @@ export const loginCommand = defineCommand({
       // 5xx, 400, 502, etc. Keep the auth token (transient server issue) and
       // skip the config write — writing a config with a guessed gatewayUrl
       // is the exact half-provisioned state the 404 branch above prevents.
-      console.error(
-        `/api/me returned ${meRes.status}. Your auth token was saved — re-run \`matrix login\` once the platform recovers.`,
-      );
+      console.error(json
+        ? formatCliError("login_failed")
+        : `Error: Login failed. Your auth token was saved. Re-run \`mos login --profile ${profileName}\` once the platform recovers.`);
+      process.exitCode = 1;
       return;
     }
 

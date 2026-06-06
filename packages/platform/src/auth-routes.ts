@@ -573,7 +573,7 @@ function approvalPage(
         <br>
         <div><span class="prompt">matrix</span> whoami</div>
         <div class="muted">@handle on app.matrix-os.com</div>
-        <div><span class="prompt">matrix</span> shell connect -c main</div>
+        <div><span class="prompt">mos</span> shell attach -c main</div>
         <div><span class="prompt">matrix</span> run -it -- claude</div>
         <div><span class="prompt">matrix</span> doctor</div>
       </div>

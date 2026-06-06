@@ -19,15 +19,20 @@ export async function requestDeviceCode(
   config: OAuthConfig,
 ): Promise<DeviceCodeResponse> {
   const url = `${config.platformUrl}/api/auth/device/code`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientId: config.clientId }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: config.clientId }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err: unknown) {
+    throw classifyPlatformFetchError(err);
+  }
 
   if (!res.ok) {
-    throw new Error(`Device code request failed: ${res.status}`);
+    throw Object.assign(new Error("Request failed"), { code: "login_failed" });
   }
 
   return (await res.json()) as DeviceCodeResponse;
@@ -72,12 +77,17 @@ export async function pollForToken(
   while (Date.now() < deadline) {
     await sleep(interval * 1000);
 
-    const res = await fetch(pollUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceCode, clientId: config.clientId }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    let res: Response;
+    try {
+      res = await fetch(pollUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceCode, clientId: config.clientId }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err: unknown) {
+      throw classifyPlatformFetchError(err);
+    }
 
     if (res.ok) {
       const data = AuthDataSchema.parse(await res.json());
@@ -97,13 +107,13 @@ export async function pollForToken(
     }
 
     if (res.status === 410) {
-      throw new Error("Device code expired before authorization completed");
+      throw Object.assign(new Error("Device code expired before authorization completed"), { code: "login_failed" });
     }
 
-    throw new Error(`Token polling failed with status ${res.status}`);
+    throw Object.assign(new Error(`Token polling failed with status ${res.status}`), { code: "login_failed" });
   }
 
-  throw new Error("Device authorization timed out");
+  throw Object.assign(new Error("Device authorization timed out"), { code: "request_timeout" });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -112,13 +122,16 @@ function sleep(ms: number): Promise<void> {
 
 export interface LoginOptions extends OAuthConfig {
   tokenStorePath?: string;
+  quiet?: boolean;
 }
 
 export async function login(options: LoginOptions): Promise<AuthData> {
   const deviceCode = await requestDeviceCode(options);
 
-  console.log(`\nVisit: ${deviceCode.verificationUri}`);
-  console.log(`Enter code: ${deviceCode.userCode}\n`);
+  if (!options.quiet) {
+    console.log(`\nVisit: ${deviceCode.verificationUri}`);
+    console.log(`Enter code: ${deviceCode.userCode}\n`);
+  }
 
   openBrowser(deviceCode.verificationUri);
 
@@ -129,4 +142,11 @@ export async function login(options: LoginOptions): Promise<AuthData> {
     deviceCode.expiresIn,
     options.tokenStorePath,
   );
+}
+
+function classifyPlatformFetchError(err: unknown): Error & { code: string } {
+  if (err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")) {
+    return Object.assign(new Error("Request failed"), { code: "request_timeout" });
+  }
+  return Object.assign(new Error("Request failed"), { code: "platform_unreachable" });
 }

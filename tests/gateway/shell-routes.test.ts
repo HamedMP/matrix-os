@@ -7,10 +7,10 @@ describe("gateway shell routes", () => {
     list: () => Promise<unknown[]>;
     create: (input: unknown) => Promise<unknown>;
     delete: (name: string, options?: { force?: boolean }) => Promise<void>;
-  }) {
+  }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }) {
     const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({ registry }));
-    app.route("/api", createShellRoutes({ registry }));
+    app.route("/api/terminal", createShellRoutes({ registry, shellBackend }));
+    app.route("/api", createShellRoutes({ registry, shellBackend }));
     return app;
   }
 
@@ -203,5 +203,41 @@ describe("gateway shell routes", () => {
     await expect(res.json()).resolves.toEqual({
       error: { code: "session_not_found", message: "Session not found" },
     });
+  });
+
+  it("checks shell backend health without listing or mutating sessions", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main" }]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const shellBackend = {
+      health: vi.fn(async () => ({ ok: true, code: "ok" })),
+    };
+    const app = appWithRegistry(registry, shellBackend);
+
+    const res = await app.request("/api/terminal/health");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ shell: { ok: true, code: "ok" } });
+    expect(shellBackend.health).toHaveBeenCalledTimes(1);
+    expect(registry.list).not.toHaveBeenCalled();
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
+  it("returns coarse shell backend health failures only", async () => {
+    const app = appWithRegistry({
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+    }, {
+      health: vi.fn(async () => ({ ok: false, code: "zellij_failed" })),
+    });
+
+    const res = await app.request("/api/terminal/health");
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({ shell: { ok: false, code: "zellij_failed" } });
   });
 });

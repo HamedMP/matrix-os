@@ -116,7 +116,7 @@ Use these commands:
 
 ```bash
 # Use a named setup session so the human and web terminal can reattach.
-matrix shell connect -c setup
+mos shell attach -c setup
 matrix run -it --session setup -- gh auth login
 matrix run -it --session setup -- claude
 matrix run -it --session setup -- codex
@@ -124,7 +124,7 @@ matrix run -it --session setup -- codex
 
 Run either Claude or Codex according to the human's choice; do not start both unless the human explicitly asks.
 
-`matrix shell connect -c setup` creates the named session if it does not exist, then connects to it. If the human already has a working web terminal or CLI session, reuse that session instead of requiring a new one named `setup`.
+`mos shell attach -c setup` creates the named session if it does not exist, then attaches to it. If the human already has a working web terminal or CLI session, reuse that session instead of requiring a new one named `setup`.
 
 Detach from an interactive session with:
 
@@ -135,7 +135,7 @@ Ctrl-\ Ctrl-\
 Detaching leaves the remote zellij session alive. Reattach with:
 
 ```bash
-matrix shell connect setup
+mos shell attach setup
 ```
 
 ## Terminal Session Fallbacks
@@ -155,20 +155,20 @@ matrix shell ls
 Then connect to an existing session:
 
 ```bash
-matrix shell connect <session-name>
+mos shell attach <session-name>
 ```
 
 For setup, prefer an existing human-created session if one is available. If no setup session exists, create-or-connect with:
 
 ```bash
-matrix shell connect -c setup
+mos shell attach -c setup
 ```
 
 `connect -c <session-name>` creates the session if missing and then connects to it. If creation still fails with `zellij_failed`, ask the human to create or choose a session from the Matrix web terminal, then connect to that existing session:
 
 ```bash
 matrix shell ls
-matrix shell connect <existing-session>
+mos shell attach <existing-session>
 ```
 
 `connect` may succeed even when `attach` and `run -it` fail.
@@ -186,7 +186,7 @@ matrix sync
 matrix doctor
 ```
 
-If `matrix doctor` passes but terminal commands still return `zellij_failed`, switch to `matrix shell connect`.
+If `matrix doctor` passes but terminal commands still return `zellij_failed`, switch to `mos shell attach`.
 
 ## GitHub Setup For Coding
 
@@ -271,8 +271,8 @@ matrix instance logs
 matrix agent auth scan
 matrix shell ls
 matrix shell new setup --cmd bash
-matrix shell connect setup
-matrix shell connect -c setup
+mos shell attach setup
+mos shell attach -c setup
 matrix upload --secret ~/.codex/auth.json .codex/auth.json
 matrix upload --secret ~/.claude/.credentials.json .claude/.credentials.json
 matrix run -it --session setup -- claude
@@ -306,13 +306,13 @@ matrix shell ls
 If an interactive command looks stuck, detach with `Ctrl-\ Ctrl-\`, then reconnect:
 
 ```bash
-matrix shell connect setup
+mos shell attach setup
 ```
 
 If the named session is missing and should be created, use:
 
 ```bash
-matrix shell connect -c setup
+mos shell attach -c setup
 ```
 
 If the VPS is not ready yet, wait for provisioning in `https://app.matrix-os.com`, then retry `matrix login --profile cloud`.

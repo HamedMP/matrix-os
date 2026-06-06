@@ -67,6 +67,28 @@ describe("requestDeviceCode", () => {
     expect(result.deviceCode).toBe("abc");
     expect(result.userCode).toBe("BCDF-GHJK");
   });
+
+  it("maps device-code network errors to platform_unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("connect ECONNREFUSED 127.0.0.1:9000");
+    }));
+
+    await expect(requestDeviceCode(config)).rejects.toMatchObject({
+      code: "platform_unreachable",
+      message: "Request failed",
+    });
+  });
+
+  it("maps device-code aborts to request_timeout", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("timed out", "TimeoutError");
+    }));
+
+    await expect(requestDeviceCode(config)).rejects.toMatchObject({
+      code: "request_timeout",
+      message: "Request failed",
+    });
+  });
 });
 
 describe("openBrowser", () => {
@@ -219,6 +241,23 @@ describe("pollForToken", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await assertion;
     await expect(promise.catch((err: unknown) => String(err))).resolves.not.toMatch(/stack trace/i);
+  });
+
+  it("maps token polling network failures to platform_unreachable", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed with token details");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tokenStorePath = await createTokenStorePath("auth.json");
+    const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
+    const assertion = expect(promise).rejects.toMatchObject({
+      code: "platform_unreachable",
+      message: "Request failed",
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
   });
 
   it("rejects malformed auth payloads before writing them to disk", async () => {

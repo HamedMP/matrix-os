@@ -59,6 +59,23 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("checks backend health with bounded zellij --version", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "zellij 0.44.1\n", "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.health()).resolves.toEqual({ ok: true, code: "ok" });
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--version"],
+      expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+  });
+
   it("treats zellij's no-active-sessions response as an empty session list", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(Object.assign(new Error("zellij exited"), { code: 1 }), "", "NO ACTIVE ZELLIJ SESSIONS FOUND\n");
