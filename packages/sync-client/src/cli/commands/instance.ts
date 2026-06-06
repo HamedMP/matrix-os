@@ -5,7 +5,14 @@ import { requireCliAuthToken } from "../auth-state.js";
 
 const INSTANCE_USAGE = "Usage: matrix instance info|restart|logs";
 const INSTANCE_SUBCOMMANDS = new Set(["info", "restart", "logs"]);
-const INSTANCE_VALUE_OPTIONS = new Set(["--profile", "--platform", "--token"]);
+const INSTANCE_STRING_ARGS = {
+  profile: { type: "string", required: false },
+  platform: { type: "string", required: false },
+  token: { type: "string", required: false },
+} as const;
+const INSTANCE_VALUE_OPTIONS = new Set(
+  Object.keys(INSTANCE_STRING_ARGS).map((name) => `--${name}`),
+);
 
 interface InstanceRequestOptions {
   method?: "GET" | "POST";
@@ -76,10 +83,10 @@ async function runInstanceCommand(
 }
 
 const commonArgs = {
-  profile: { type: "string", required: false },
+  profile: INSTANCE_STRING_ARGS.profile,
   dev: { type: "boolean", required: false, default: false },
-  platform: { type: "string", required: false },
-  token: { type: "string", required: false },
+  platform: INSTANCE_STRING_ARGS.platform,
+  token: INSTANCE_STRING_ARGS.token,
   json: { type: "boolean", required: false, default: false },
 } as const;
 
