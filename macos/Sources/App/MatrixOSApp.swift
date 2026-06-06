@@ -12,12 +12,14 @@
 // VPS resolver already exist in MatrixNet and are composed here when a profile
 // is supplied. Set MATRIX_DEV_GATEWAY_HOST + MATRIX_DEV_HANDLE in the environment
 // to auto-select a dev profile for local source dev.
+import AppKit
 import SwiftUI
 import DesignSystem
 import MatrixNet
 
 @main
 struct MatrixOSApp: App {
+    @NSApplicationDelegateAdaptor(MatrixOSAppDelegate.self) private var appDelegate
     @StateObject private var model: AppModel
 
     init() {
@@ -50,6 +52,54 @@ struct MatrixOSApp: App {
         guard let handle = env["MATRIX_DEV_HANDLE"], !handle.isEmpty else { return nil }
         let slot = env["MATRIX_DEV_RUNTIME_SLOT"]
         return ConnectionProfile(handle: handle, gatewayHost: host, runtimeSlot: slot)
+    }
+}
+
+private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            MatrixOSAppDelegate.bringAppForward()
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            MatrixOSAppDelegate.bringAppForward()
+        }
+    }
+
+    nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Task { @MainActor in
+            MatrixOSAppDelegate.bringAppForward()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            MatrixOSAppDelegate.bringAppForward()
+        }
+        return true
+    }
+
+    @MainActor
+    private static func bringAppForward() {
+        NSApp.setActivationPolicy(.regular)
+
+        if let window = NSApp.windows.first {
+            recoverIfOffscreen(window)
+            window.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @MainActor
+    private static func recoverIfOffscreen(_ window: NSWindow) {
+        let frame = window.frame
+        let isFullyVisible = NSScreen.screens.contains { screen in
+            screen.visibleFrame.contains(frame)
+        }
+        guard !isFullyVisible else { return }
+
+        if let screen = NSScreen.main ?? NSScreen.screens.first {
+            let visibleFrame = screen.visibleFrame
+            let origin = NSPoint(
+                x: visibleFrame.midX - frame.width / 2,
+                y: visibleFrame.midY - frame.height / 2
+            )
+            window.setFrameOrigin(origin)
+        }
     }
 }
 

@@ -612,6 +612,33 @@ describe("device routes", () => {
       );
     });
 
+    it("renders native macOS approval copy with a signed app redirect", async () => {
+      const codeRes = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-macos",
+          redirectUri: "matrixos://auth?status=approved",
+        }),
+      });
+      const code = await codeRes.json();
+      const verificationUri = new URL(code.verificationUri);
+      const res = await app.request(`${verificationUri.pathname}${verificationUri.search}`);
+      const html = await res.text();
+
+      expect(html).toContain("Approve Matrix OS app");
+      expect(html).toContain("Authorize the desktop app");
+      expect(html).toContain("var nativeApp = true;");
+      expect(html).toContain("Checking Matrix OS");
+      expect(html).toContain("showRuntimeSetupState()");
+      expect(html).toContain("Create or activate your Matrix computer first");
+      expect(html).toContain('id="native-redirect-uri"');
+      expect(html).toContain('value="matrixos://auth?status=approved"');
+      expect(html).toContain('id="native-redirect-sig"');
+      expect(html).not.toContain("Approve Matrix CLI");
+      expect(html).not.toContain("Setting up Matrix CLI");
+    });
+
     it("submits approval with an explicit Clerk bearer token", async () => {
       const res = await app.request("/auth/device?user_code=BCDF-GHJK");
       const html = await res.text();

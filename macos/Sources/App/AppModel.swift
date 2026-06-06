@@ -232,7 +232,7 @@ public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
 
     /// The active top-level section (left rail selection).
-    @Published public var section: AppSection = .home
+    @Published public var section: AppSection = .board
     /// Live zellij sessions for the Terminals section.
     @Published public private(set) var sessions: [WorkspaceSession] = []
     /// Open task/session tabs in the workspace. Tabs are project-marked so work
@@ -524,7 +524,6 @@ public final class AppModel: ObservableObject {
             self.board = BoardStore(loader: UnconfiguredBoardLoader())
             self.phase = .needsProfile
         }
-        ensureHomeTab(select: activeTabID == nil)
     }
 
     // MARK: - Board lifecycle
@@ -545,7 +544,6 @@ public final class AppModel: ObservableObject {
             openError = nil
             return
         }
-        ensureHomeTab(select: activeTabID == nil)
         if phase == .ready {
             // Keep showing the board while refreshing; only drop to disconnected on failure.
         } else {
@@ -743,7 +741,7 @@ public final class AppModel: ObservableObject {
         hasSelectedProject = false
         selectedCard = nil
         terminal = nil
-        activeTabID = "home"
+        activeTabID = nil
         section = .home
         activePanel = .shell
     }

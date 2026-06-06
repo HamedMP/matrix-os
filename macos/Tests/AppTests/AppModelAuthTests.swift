@@ -47,6 +47,26 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.projectSlug, "main")
         XCTAssertEqual(model.section, .board)
     }
+
+    func testSelectingProfileKeepsNativeProjectSurface() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.selectProfile(ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"))
+
+        XCTAssertEqual(model.section, .board)
+        XCTAssertNil(model.activeTabID)
+        XCTAssertTrue(model.openTabs.isEmpty)
+    }
 }
 
 private final class MemoryTokenStore: TokenStoring, @unchecked Sendable {
