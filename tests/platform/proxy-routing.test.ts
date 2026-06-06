@@ -1377,6 +1377,54 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.35:443/");
   });
 
+  it("exchanges a native sync JWT for an app session cookie before continuing", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://alice.matrix-os.com",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue(null);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ redirectTo: "/" }),
+    });
+
+    expect(exchange.status).toBe(200);
+    await expect(exchange.json()).resolves.toEqual({ redirectTo: "/" });
+    const setCookie = exchange.headers.get("set-cookie");
+    expect(setCookie).toContain("matrix_app_session=");
+    expect(setCookie).toContain(encodeURIComponent(issued.token));
+    expect(verifyToken).not.toHaveBeenCalled();
+
+    const appSession = setCookie?.split(";", 1)[0] ?? "";
+    const shell = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: appSession,
+      },
+    });
+
+    expect(shell.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://matrixos-alice:3000/");
+  });
+
   it("reports no runtime when a signed-in Clerk user has no Matrix computer", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
