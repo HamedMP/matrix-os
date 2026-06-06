@@ -1,7 +1,7 @@
 ---
 name: matrix-os
 description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent, including CLI login, VPS setup, GitHub auth, Claude/Codex sessions, Hermes fallback, and shared zellij shell connect.
-version: 0.84.0
+version: 0.84.1
 author: Matrix OS
 license: AGPL-3.0-or-later
 metadata:
@@ -129,6 +129,24 @@ matrix shell connect -c setup
 ```
 
 Do not start both Claude and Codex unless the human explicitly asks. Pick the human's preferred coding agent.
+
+## Codex Sandbox Note
+
+When using Matrix hosted cloud from Codex, run Matrix network and terminal commands outside the default sandbox because the sandbox may block DNS, browser handoff, WebSocket terminal attach, and gateway calls.
+
+For these commands, request escalated execution with scoped prefix rules:
+
+- `matrix login --profile cloud`
+- `matrix status`
+- `matrix doctor`
+- `matrix instance`
+- `matrix shell`
+- `matrix shell connect`
+- `matrix run -it`
+
+Do not request broad approval for `matrix sync`, `matrix upload --secret`, or commands that transfer local files or secrets. Ask the human explicitly for those, including what path will be transferred.
+
+The pattern is: normal shell for local checks, escalated Matrix CLI for cloud gateway and WebSocket operations, explicit approval for sync or secret transfer. Do not try to make every shell command unsandboxed.
 
 ## Terminal Session Fallbacks
 

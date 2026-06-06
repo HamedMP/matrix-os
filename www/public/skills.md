@@ -1,6 +1,6 @@
 ---
 name: matrix-os
-version: 0.84.0
+version: 0.84.1
 description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent.
 homepage: https://matrix-os.com
 metadata: {"matrix":{"category":"cloud-computer","app_url":"https://app.matrix-os.com","skill_url":"https://matrix-os.com/skills.md","cli_package":"@finnaai/matrix"}}
@@ -141,6 +141,24 @@ Detaching leaves the remote zellij session alive. Reattach with:
 ```bash
 matrix shell connect setup
 ```
+
+## Codex Sandbox Note
+
+When using Matrix hosted cloud from Codex, run Matrix network and terminal commands outside the default sandbox because the sandbox may block DNS, browser handoff, WebSocket terminal attach, and gateway calls.
+
+For these commands, request escalated execution with scoped prefix rules:
+
+- `matrix login --profile cloud`
+- `matrix status`
+- `matrix doctor`
+- `matrix instance`
+- `matrix shell`
+- `matrix shell connect`
+- `matrix run -it`
+
+Do not request broad approval for `matrix sync`, `matrix upload --secret`, or commands that transfer local files or secrets. Ask the human explicitly for those, including what path will be transferred.
+
+The pattern is: normal shell for local checks, escalated Matrix CLI for cloud gateway and WebSocket operations, explicit approval for sync or secret transfer. Do not try to make every shell command unsandboxed.
 
 ## Terminal Session Fallbacks
 
