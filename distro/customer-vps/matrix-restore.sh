@@ -24,15 +24,23 @@ fi
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
 rm -f "$restore_flag"
 
-if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then
-  touch "$restore_flag"
-  exit 0
-fi
+check_r2_exists_or_skip_restore() {
+  local key="$1"
+  local label="$2"
+  if /opt/matrix/bin/matrixctl r2 exists "$key"; then
+    return 0
+  fi
+  local status="$?"
+  if [ "$status" -eq 1 ]; then
+    touch "$restore_flag"
+    exit 0
+  fi
+  echo "matrix-restore: failed to check ${label}" >&2
+  exit 1
+}
 
-if ! /opt/matrix/bin/matrixctl r2 exists "$latest_pointer_key"; then
-  touch "$restore_flag"
-  exit 0
-fi
+check_r2_exists_or_skip_restore system/vps-meta.json "VPS metadata"
+check_r2_exists_or_skip_restore "$latest_pointer_key" "latest snapshot pointer"
 
 if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then
   echo "matrix-restore: failed to fetch latest pointer" >&2

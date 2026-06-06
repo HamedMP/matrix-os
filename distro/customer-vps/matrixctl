@@ -99,12 +99,29 @@ r2_get() {
 }
 
 r2_exists() {
-  local key
+  local key output status
   key="$(full_key "$1")"
-  if aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null 2>&1; then
+  if output="$(aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" 2>&1 >/dev/null)"; then
     return 0
+  else
+    status="$?"
   fi
-  return 1
+  case "$status" in
+    124|143)
+      echo "matrixctl: r2 exists timed out" >&2
+      return "$status"
+      ;;
+  esac
+  case "$output" in
+    *"(404)"*|*"Not Found"*|*"NotFound"*|*"NoSuchKey"*)
+      return 1
+      ;;
+  esac
+  echo "matrixctl: r2 exists failed" >&2
+  if [ "$status" -eq 1 ]; then
+    return 2
+  fi
+  return "$status"
 }
 
 r2_put_latest() {
