@@ -255,6 +255,8 @@ R2 Token: share-xyz        -> scoped to matrixos-sync/hamed/files/projects/start
 
 ## 4. Sharing & Collaboration
 
+**Status caveat**: This section describes the target shared-folder data-plane behavior tracked by F19 in `follow-ups.md`. Current shipped behavior is share CRUD/list/accept/revoke only; `/manifest`, `/presign`, `/commit`, daemon shared mounts, and revoke handling are not end-to-end yet.
+
 ### Sharing Model
 
 Sharing is an access grant on an existing path within the owner's R2 prefix. No file duplication.
