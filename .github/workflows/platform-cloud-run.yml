@@ -167,6 +167,7 @@ jobs:
             traffic_flags+=(--no-traffic)
           fi
 
+          # TODO(#410): flip CUSTOMER_VPS_TLS_VERIFY back to true once customer VPS origins present trusted certs.
           if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
