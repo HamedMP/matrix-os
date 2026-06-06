@@ -148,12 +148,12 @@ function createBoundedSocketWriter(
   let closed = false;
 
   const enqueue = (chunk: Buffer) => {
-    pendingBytes += chunk.byteLength;
-    if (pendingBytes > maxPendingBytes) {
+    if (pendingBytes + chunk.byteLength > maxPendingBytes) {
       onOverflow();
       return;
     }
     pending.push(Buffer.from(chunk));
+    pendingBytes += chunk.byteLength;
   };
 
   const flush = () => {
@@ -279,6 +279,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     socketWriter: BoundedSocketWriter;
     wsBackpressure: WsBackpressureMonitor;
     idleTimer: ReturnType<typeof setTimeout>;
+    close(): void;
   }>();
   const server = createServer((tcp) => {
     if (active.size >= maxConnections) {
@@ -308,6 +309,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
       ws,
       socketWriter,
       wsBackpressure,
+      close: () => cleanupConnection(),
       idleTimer: setTimeout(() => {
         options.onEvent?.("connection_idle_timeout", eventData(connectionId, "idle_timeout"));
         cleanup();
@@ -484,18 +486,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
 
   const closeServer = async () => {
     for (const state of Array.from(active)) {
-      clearTimeout(state.idleTimer);
-      state.socketWriter.close();
-      state.wsBackpressure.close();
-      state.tcp.destroy();
-      try {
-        state.ws.close();
-      } catch (err: unknown) {
-        if (err instanceof Error) {
-          options.onEvent?.("connection_error", eventData(undefined, "close_failed"));
-        }
-      }
-      active.delete(state);
+      state.close();
     }
     await new Promise<void>((resolve, reject) => {
       if (!server.listening) {

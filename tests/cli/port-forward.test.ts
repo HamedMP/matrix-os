@@ -241,6 +241,7 @@ describe("matrix port forward", () => {
     await handle.close();
     expect(events).toContain("ready");
     expect(events).toContain("connection_open");
+    expect(events).toContain("connection_close");
   });
 
   it("splits pending local TCP bytes into bounded websocket frames without mutating options", async () => {

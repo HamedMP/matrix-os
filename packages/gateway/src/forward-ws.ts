@@ -160,12 +160,12 @@ function createBoundedSocketWriter(
   let closed = false;
 
   const enqueue = (chunk: Buffer) => {
-    pendingBytes += chunk.byteLength;
-    if (pendingBytes > maxPendingBytes) {
+    if (pendingBytes + chunk.byteLength > maxPendingBytes) {
       onOverflow();
       return;
     }
     pending.push(Buffer.from(chunk));
+    pendingBytes += chunk.byteLength;
   };
 
   const flush = () => {
