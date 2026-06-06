@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  checkHostBundleStorageEnv,
   checkHomeMirrorS3Env,
   checkUnsafeDefaultSecrets,
 } from "../../packages/platform/src/main.js";
@@ -99,6 +100,80 @@ describe("checkHomeMirrorS3Env (startup assertion for silent-failure #6)", () =>
     expect(() =>
       checkHomeMirrorS3Env({ MATRIX_HOME_MIRROR: "true" }, log),
     ).not.toThrow();
+  });
+});
+
+describe("checkHostBundleStorageEnv", () => {
+  it("returns [] and does not log when customer VPSes are disabled", () => {
+    const log = vi.fn();
+    const missing = checkHostBundleStorageEnv({}, log);
+    expect(missing).toEqual([]);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("returns [] and does not log when dedicated bundle storage is configured", () => {
+    const log = vi.fn();
+    const missing = checkHostBundleStorageEnv(
+      {
+        CUSTOMER_VPS_ENABLED: "true",
+        R2_BUNDLES_ACCOUNT_ID: "acc_123",
+        R2_BUNDLES_ACCESS_KEY_ID: "bundle-key",
+        R2_BUNDLES_SECRET_ACCESS_KEY: "bundle-secret",
+        R2_BUNDLES_BUCKET: "matrixos-bundles",
+      },
+      log,
+    );
+    expect(missing).toEqual([]);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("warns when customer VPSes are enabled without dedicated bundle storage", () => {
+    const log = vi.fn();
+    const missing = checkHostBundleStorageEnv(
+      {
+        CUSTOMER_VPS_ENABLED: "true",
+        R2_ACCOUNT_ID: "sync-account",
+        R2_ACCESS_KEY_ID: "sync-key",
+        R2_SECRET_ACCESS_KEY: "sync-secret",
+        R2_BUCKET: "matrixos-sync",
+      },
+      log,
+    );
+    expect(missing).toEqual([
+      "S3_BUNDLES_ENDPOINT/R2_BUNDLES_ENDPOINT or S3_BUNDLES_ACCOUNT_ID/R2_BUNDLES_ACCOUNT_ID",
+      "S3_BUNDLES_ACCESS_KEY_ID/R2_BUNDLES_ACCESS_KEY_ID",
+      "S3_BUNDLES_SECRET_ACCESS_KEY/R2_BUNDLES_SECRET_ACCESS_KEY",
+      "S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET",
+    ]);
+    expect(log).toHaveBeenCalledOnce();
+    const msg = log.mock.calls[0][0];
+    expect(msg).toContain("CUSTOMER_VPS_ENABLED=true");
+    expect(msg).toContain("dedicated host bundle storage is incomplete");
+    expect(msg).toContain("refusing to fall back to the sync bucket");
+    expect(msg).toContain("S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET");
+  });
+
+  it("warns when dedicated bundle storage points at the sync bucket", () => {
+    const log = vi.fn();
+    const missing = checkHostBundleStorageEnv(
+      {
+        CUSTOMER_VPS_ENABLED: "true",
+        R2_ACCOUNT_ID: "sync-account",
+        R2_BUCKET: "matrixos-sync",
+        R2_BUNDLES_ACCOUNT_ID: "bundle-account",
+        R2_BUNDLES_ACCESS_KEY_ID: "bundle-key",
+        R2_BUNDLES_SECRET_ACCESS_KEY: "bundle-secret",
+        R2_BUNDLES_BUCKET: "matrixos-sync",
+      },
+      log,
+    );
+    expect(missing).toEqual([
+      "S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET must not equal S3_BUCKET/R2_BUCKET",
+    ]);
+    expect(log).toHaveBeenCalledOnce();
+    const msg = log.mock.calls[0][0];
+    expect(msg).toContain("Problems:");
+    expect(msg).toContain("must not equal S3_BUCKET/R2_BUCKET");
   });
 });
 

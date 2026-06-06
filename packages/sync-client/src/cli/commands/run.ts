@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 import { randomUUID } from "node:crypto";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
-import { createShellClient, type ShellClient } from "../shell-client.js";
+import { createShellClient, type ShellAttachOptions, type ShellClient } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 
 const RUN_USAGE = "Usage: matrix run -it [--session <name>] [-C <dir>] -- <command>";
@@ -66,6 +66,7 @@ export async function createOrAttachRunSession(
     cwd?: string;
     sessionProvided: boolean;
     mouse?: boolean;
+    attachOptions?: ShellAttachOptions;
   },
 ): Promise<{ detached: boolean }> {
   try {
@@ -79,9 +80,11 @@ export async function createOrAttachRunSession(
       throw err;
     }
   }
-  return input.mouse === undefined
-    ? await client.attachSession(input.name)
-    : await client.attachSession(input.name, { mouse: input.mouse });
+  const attachOptions: ShellAttachOptions = { ...input.attachOptions };
+  if (input.mouse !== undefined) {
+    attachOptions.mouse = input.mouse;
+  }
+  return await client.attachSession(input.name, attachOptions);
 }
 
 function isInteractive(args: Record<string, unknown>, rawArgs: string[] | undefined): boolean {
@@ -179,6 +182,7 @@ export const runCommand = defineCommand({
         command,
         sessionProvided,
         mouse: args.noMouse === true ? false : undefined,
+        attachOptions: json ? { output: process.stderr } : undefined,
       });
       console.log(
         json

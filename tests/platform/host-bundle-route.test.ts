@@ -124,6 +124,29 @@ describe('platform host bundle route', () => {
     expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
   });
 
+  it('does not fall back to sync storage for customer VPS host bundle archives', async () => {
+    await seedRelease();
+    const syncGetPresignedGetUrl = vi.fn().mockResolvedValue('https://sync.example/wrong-bucket');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: syncGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+      env: {
+        CUSTOMER_VPS_ENABLED: 'true',
+      },
+    });
+
+    const res = await app.request('/system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz');
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({ error: 'Host bundle storage unavailable' });
+    expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
+  });
+
   it('returns JSON 502 when release metadata cannot mint a signed URL', async () => {
     await seedRelease();
     const getPresignedGetUrl = vi.fn().mockRejectedValue(new Error('r2 unavailable'));
@@ -224,6 +247,44 @@ describe('platform host bundle route', () => {
       version: 'v2026.05.12-1',
       channel: 'stable',
       url: 'https://bundles.example/stable-host-bundle',
+    });
+    expect(bundleGetPresignedGetUrl).toHaveBeenCalledWith(
+      'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
+      3600,
+    );
+    expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
+  });
+
+  it('uses dedicated host bundle object storage for dev channel manifests in customer VPS mode', async () => {
+    await seedRelease();
+    await promoteHostBundleChannel(db, 'dev', 'v2026.05.12-1');
+    const syncGetPresignedGetUrl = vi.fn().mockResolvedValue('https://sync.example/wrong-bucket');
+    const bundleGetPresignedGetUrl = vi.fn().mockResolvedValue('https://bundles.example/dev-host-bundle');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: syncGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+      hostBundleObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: bundleGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+      env: {
+        CUSTOMER_VPS_ENABLED: 'true',
+      },
+    });
+
+    const res = await app.request('/system-bundles/channels/dev.json');
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-1',
+      channel: 'dev',
+      url: 'https://bundles.example/dev-host-bundle',
     });
     expect(bundleGetPresignedGetUrl).toHaveBeenCalledWith(
       'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',

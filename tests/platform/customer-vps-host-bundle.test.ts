@@ -444,8 +444,26 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
 
-    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 exists system/vps-meta.json');
+    expect(restore).toContain('if /opt/matrix/bin/matrixctl r2 exists "$key"; then');
+    expect(restore).toContain('check_r2_exists_or_skip_restore system/vps-meta.json "VPS metadata"');
     expect(restore).toContain('latest_pointer_key="system/db/latest"');
     expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"');
+  });
+
+  it('platform Cloud Run workflow smokes signed host bundle URLs before promotion', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
+    expect(workflow).toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
+    expect(workflow).toContain("jq -r '.url // empty'");
+    expect(workflow).toContain('sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"');
+    expect(workflow).toContain('bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"');
+    expect(workflow).toContain('Dedicated host bundle bucket secret matches the sync bucket secret; refusing to promote.');
+    expect(workflow).toContain('grep -Fq -- "$sync_bucket"');
+    expect(workflow).toContain('Candidate host bundle signer returned the configured sync bucket; refusing to promote.');
+    expect(workflow).toContain("grep -Fq 'r2.cloudflarestorage.com'");
+    expect(workflow).toContain('Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote.');
+    expect(workflow).toContain('curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url"');
   });
 });

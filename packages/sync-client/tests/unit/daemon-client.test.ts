@@ -4,6 +4,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  DAEMON_UNAVAILABLE_CODE,
+  DAEMON_UNAVAILABLE_MESSAGE,
   IPC_MAX_RESPONSE_BYTES,
   probeDaemonSocket,
   sendCommand,
@@ -85,6 +87,33 @@ describe("sendCommand", () => {
     try {
       await expect(sendCommand("sync.status", {}, 1000)).resolves.toEqual({
         syncing: true,
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await closeServer(server);
+    }
+  });
+
+  it("rejects missing daemon sockets with a safe stable error", async () => {
+    await expect(sendCommand("pause", {}, 100)).rejects.toMatchObject({
+      code: DAEMON_UNAVAILABLE_CODE,
+      message: DAEMON_UNAVAILABLE_MESSAGE,
+    });
+  });
+
+  it("rejects timed out daemon commands with a safe stable error", async () => {
+    const sock = join(tempDir, ".matrixos", "daemon.sock");
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await listen(server, sock);
+
+    try {
+      await expect(sendCommand("status", {}, 50)).rejects.toMatchObject({
+        code: "daemon_timeout",
+        message: "Sync daemon timed out.",
       });
     } finally {
       for (const socket of sockets) socket.destroy();

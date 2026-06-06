@@ -255,6 +255,8 @@ R2 Token: share-xyz        -> scoped to matrixos-sync/hamed/files/projects/start
 
 ## 4. Sharing & Collaboration
 
+**Status caveat**: This section describes the target shared-folder data-plane behavior tracked by F19 in `follow-ups.md`. Current shipped behavior is share CRUD/list/accept/revoke only; `/manifest`, `/presign`, `/commit`, daemon shared mounts, and revoke handling are not end-to-end yet.
+
 ### Sharing Model
 
 Sharing is an access grant on an existing path within the owner's R2 prefix. No file duplication.
@@ -262,7 +264,7 @@ Sharing is an access grant on an existing path within the owner's R2 prefix. No 
 ### Sharing Flow
 
 1. Owner runs `matrixos share projects/startup/ @colleague:matrix-os.com --role editor`
-2. Gateway inserts row in sharing permissions table (Postgres), generates scoped R2 token
+2. Gateway inserts row in sharing permissions table (Postgres) *(scoped R2 token generation deferred to F19 slice 3)*
 3. Colleague gets a notification (WebSocket `sync:share-invite` + shell notification)
 4. Colleague accepts; their daemon adds the shared folder to their local tree at `~/matrixos/shared/hamed/projects/startup/`
 5. Both peers' daemons sync that subtree bidirectionally

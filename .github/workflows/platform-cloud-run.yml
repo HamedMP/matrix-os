@@ -72,29 +72,71 @@ jobs:
           fi
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v4
+        # google-github-actions v4 tags are not published yet; v3 is the latest
+        # major tag currently resolvable by GitHub Actions.
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v4
+        # Keep this aligned with auth@v3 until google-github-actions publishes v4.
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Build platform image
         run: |
           set -euo pipefail
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${GITHUB_SHA::12}"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
-          gcloud builds submit . \
+          build_id=$(gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --config cloudbuild.platform.yaml \
             --substitutions "_IMAGE=$image" \
-            --timeout=1200s
+            --async \
+            --format 'value(metadata.build.id)' \
+            --timeout=1200s)
+          if [ -z "$build_id" ]; then
+            build_id=$(gcloud builds list \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --filter "images:$image" \
+              --sort-by '~createTime' \
+              --limit 1 \
+              --format 'value(id)')
+          fi
+          if [ -z "$build_id" ]; then
+            echo "Could not resolve Cloud Build id for $image" >&2
+            exit 1
+          fi
+
+          for attempt in $(seq 1 240); do
+            status=$(gcloud builds describe "$build_id" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format 'value(status)')
+            case "$status" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build $build_id ended with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo "Timed out waiting for Cloud Build $build_id" >&2
+          exit 1
 
       - name: Deploy tagged revision
         run: |
           set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required to parse Cloud Run JSON output." >&2
+            exit 1
+          fi
           service_exists=0
           if gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
@@ -107,7 +149,7 @@ jobs:
             traffic_flags+=(--no-traffic)
           fi
 
-          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+          if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
@@ -124,34 +166,75 @@ jobs:
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
             --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=true,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest"
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
+            --format=json); then
+            exit 1
+          fi
+          candidate_url=$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)
+          candidate_revision=$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)
+          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
+            service_json=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format=json)
+            candidate_url=$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)
+            candidate_revision=$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)
+          fi
+          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
+            echo "Could not resolve deployed candidate URL/revision; refusing to continue." >&2
+            exit 1
+          fi
+          echo "Resolved candidate revision $candidate_revision at $candidate_url"
+          echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
+          echo "CANDIDATE_REVISION=$candidate_revision" >> "$GITHUB_ENV"
 
       - name: Smoke candidate revision
         run: |
           set -euo pipefail
-          candidate_url=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format 'value(status.traffic[?tag=="candidate"].url)')
-          if [ -z "$candidate_url" ]; then
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required to parse host bundle smoke JSON output." >&2
+            exit 1
+          fi
+          if [ -z "${CANDIDATE_URL:-}" ]; then
             echo "No tagged candidate Cloud Run URL found; refusing to smoke the live service URL." >&2
             exit 1
           fi
-          curl --fail --silent --show-error --max-time 10 "$candidate_url/health" >/dev/null
+          curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
+          manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/dev.json")"
+          bundle_url="$(printf '%s\n' "$manifest" | jq -r '.url // empty')"
+          if [ -z "$bundle_url" ]; then
+            echo "Candidate host bundle channel smoke did not return a signed bundle URL." >&2
+            exit 1
+          fi
+          sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"
+          bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"
+          if [ -z "$sync_bucket" ] || [ -z "$bundle_bucket" ]; then
+            echo "Candidate host bundle smoke could not read required bucket secret names." >&2
+            exit 1
+          fi
+          if [ "$bundle_bucket" = "$sync_bucket" ]; then
+            echo "Dedicated host bundle bucket secret matches the sync bucket secret; refusing to promote." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$bundle_url" | grep -Fq -- "$sync_bucket"; then
+            echo "Candidate host bundle signer returned the configured sync bucket; refusing to promote." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$bundle_url" | grep -Fq 'r2.cloudflarestorage.com' && ! printf '%s\n' "$bundle_url" | grep -Fq -- "$bundle_bucket"; then
+            echo "Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
 
       - name: Promote revision
         if: ${{ inputs.promote }}
         run: |
           set -euo pipefail
-          revision=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format 'value(status.traffic[?tag=="candidate"].revisionName)')
-          if [ -z "$revision" ]; then
+          if [ -z "${CANDIDATE_REVISION:-}" ]; then
             echo "No candidate revision found" >&2
             exit 1
           fi
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
-            --to-revisions "$revision=100"
+            --to-revisions "$CANDIDATE_REVISION=100"

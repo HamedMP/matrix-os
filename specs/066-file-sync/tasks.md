@@ -133,18 +133,26 @@
 
 ### Tests for US3
 
-- [x] T048 [P] [US3] Unit tests for sharing CRUD in `tests/gateway/sync/sharing.test.ts` (create share, accept share, revoke share, list shares, reject self-share, enforce UNIQUE constraint, check expiry, role enforcement for presign/commit)
-- [x] T049 [P] [US3] Contract tests for sharing endpoints in `tests/gateway/sync/routes.test.ts` (POST /share returns 201, POST /share/accept returns 200, DELETE /share revokes + sends WS event, GET /shares lists owned and received, 403 on insufficient role, 404 on unknown grantee, 409 on duplicate share)
+- [x] T048 [P] [US3] Unit tests for sharing CRUD in `tests/gateway/sync/sharing.test.ts` (create share, accept share, revoke share, list shares, reject self-share, enforce UNIQUE constraint, check expiry, and validate `checkSharePermission()` role decisions in isolation)
+- [x] T049 [P] [US3] Contract tests for sharing control-plane endpoints in `tests/gateway/sync/routes.test.ts` (POST /share returns 201, POST /share/accept returns 200, DELETE /share revokes, GET /shares lists owned and received, and authz/not-found/validation paths return safe errors)
 
 ### Implementation for US3
 
-- [x] T050 [US3] Implement sharing service in `packages/gateway/src/sync/sharing.ts` (createShare: insert into sync_shares + generate scoped R2 token + broadcast sync:share-invite WS event, acceptShare: update accepted=true, revokeShare: delete row + invalidate token + broadcast sync:access-revoked, listShares: query owned + received, checkSharePermission: validate grantee has required role for path)
-- [x] T051 [US3] Implement sharing REST routes in `packages/gateway/src/sync/routes.ts` (add POST /share, DELETE /share, POST /share/accept, GET /shares routes -- all per contracts/sync-api.md, integrate checkSharePermission into presign/commit routes for shared path access)
+- [x] T050 [US3] Implement sharing service in `packages/gateway/src/sync/sharing.ts` (createShare: insert into sync_shares + broadcast sync:share-invite WS event, acceptShare: update accepted=true, revokeShare: delete row + broadcast sync:access-revoked, listShares: query owned + received, checkSharePermission: validate grantee has required role for path). Scoped-per-share R2 token generation is deferred to F19 slice 3.
+- [x] T051 [US3] Implement sharing control-plane REST routes in `packages/gateway/src/sync/routes.ts` (add POST /share, DELETE /share, POST /share/accept, GET /shares routes). **Data-plane integration is not done**: `/manifest`, `/presign`, and `/commit` remain caller-namespace only; see F19 in `specs/066-file-sync/follow-ups.md`.
 - [ ] T052 [US3] Implement `matrixos share` command in `packages/sync-client/src/cli/commands/share.ts` (positional path + handle args, --role flag default editor, call POST /api/sync/share) -- **NOT STARTED**: file does not exist
 - [ ] T053 [US3] Implement `matrixos unshare` command in `packages/sync-client/src/cli/commands/share.ts` (positional path + handle args, call DELETE /api/sync/share) -- **NOT STARTED**
 - [ ] T054 [US3] Handle share events in daemon in `packages/sync-client/src/daemon/sync-engine.ts` (on sync:share-invite: prompt user or auto-accept per config, add shared folder to sync tree at ~/matrixos/shared/{owner}/{path}/, on sync:access-revoked: stop syncing shared folder, keep local copy) -- **NOT STARTED**: daemon doesn't handle share WS events yet
 
-**Checkpoint**: Sharing works end-to-end. Share a folder, colleague syncs it, edits propagate bidirectionally, revocation stops sync.
+**Shared data-plane follow-up slices** (unnumbered; see F19 in `specs/066-file-sync/follow-ups.md`):
+- [ ] Define owner-scoped shared sync data-plane contract (caller principal + target owner/share scope) with fail-closed route tests before granting access.
+- [ ] Wire shared manifest and presign GET access through accepted, unexpired shares and filtered owner manifests.
+- [ ] Wire shared PUT/delete commits through `checkSharePermission()`, owner-scoped manifest locks, owner R2 keys, and role-specific write/delete checks.
+- [ ] Broadcast owner shared-prefix changes to authorized grantee peers and stop fanout after revoke.
+- [ ] Parse `sync:share-invite` and `sync:access-revoked` in the daemon, mount accepted shares under `~/matrixos/shared/{owner}/...`, stop syncing on revoke, and keep local copies.
+- [ ] Add an end-to-end shared-folder regression covering owner share, grantee accept, download, edit propagation, and revoke.
+
+**Checkpoint**: Sharing works end-to-end only after T052-T054 and the F19 shared data-plane follow-up slices. Share a folder, colleague syncs it, edits propagate bidirectionally, revocation stops sync. Current status is control-plane only; the shared-folder data plane remains intentionally fail-closed.
 
 ---
 
@@ -493,8 +501,9 @@ With multiple agents:
 4. **T112 tail** -- home-mirror tests landed; still owe `packages/sync-client/tests/unit/initial-pull.test.ts` for the daemon's initial-pull path.
 5. **T052/T053 (share CLI)** -- gateway endpoints work; CLI commands missing.
 6. **T054 (share events in daemon)** -- daemon ignores `sync:share-invite` and `sync:access-revoked` WS events.
-7. **T064 (tombstone GC scheduler)** -- function exists but never called periodically.
-8. **T063 (Mac app notifications)** -- menu bar app shows status but doesn't post Notification Center alerts.
+7. **Shared-folder data plane (F19)** -- gateway manifest/presign/commit and WS fanout are still caller-namespace only; split according to F19 before enabling shared-folder sync.
+8. **T064 (tombstone GC scheduler)** -- function exists but never called periodically.
+9. **T063 (Mac app notifications)** -- menu bar app shows status but doesn't post Notification Center alerts.
 
 ## Notes
 

@@ -15,6 +15,7 @@ import { runCommand } from "./commands/run.js";
 import { uploadCommand } from "./commands/upload.js";
 import { downloadCommand } from "./commands/download.js";
 import { agentCommand } from "./commands/agent.js";
+import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../../package.json") as { version: string };
@@ -45,4 +46,4 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+await runMain(main, { rawArgs: normalizeLeadingGlobalFlags(process.argv.slice(2)) });

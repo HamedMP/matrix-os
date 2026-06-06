@@ -327,8 +327,10 @@ function runSyncCli(subArgs: string[]): Promise<void> {
       env: process.env,
     });
     child.on("exit", (code) => {
-      if (code === 0 || code === null) resolve();
-      else reject(new Error(`Sync CLI exited with code ${code}`));
+      if (code !== null && code !== 0) {
+        process.exitCode = code;
+      }
+      resolve();
     });
     child.on("error", reject);
   });

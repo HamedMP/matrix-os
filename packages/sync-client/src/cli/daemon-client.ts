@@ -4,6 +4,22 @@ import { getConfigDir } from "../lib/config.js";
 import { DAEMON_IPC_VERSION } from "../daemon/types.js";
 
 export const IPC_MAX_RESPONSE_BYTES = 256 * 1024;
+export const DAEMON_UNAVAILABLE_CODE = "daemon_unavailable";
+export const DAEMON_UNAVAILABLE_MESSAGE = "Sync daemon is not running.";
+
+export class DaemonClientError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DaemonClientError";
+  }
+}
+
+export function isDaemonClientError(err: unknown): err is DaemonClientError {
+  return err instanceof DaemonClientError;
+}
 
 function socketPath(): string {
   return join(getConfigDir(), "daemon.sock");
@@ -66,7 +82,7 @@ export async function sendCommand(
     };
 
     const timer = setTimeout(() => {
-      fail(new Error("IPC request timed out"));
+      fail(new DaemonClientError("daemon_timeout", "Sync daemon timed out."));
     }, timeout);
 
     socket.on("connect", () => {
@@ -108,11 +124,16 @@ export async function sendCommand(
     });
 
     socket.on("error", (err) => {
-      fail(
-        new Error(
-          `Cannot connect to daemon. Is it running? (${err.message})`,
-        ),
-      );
+      if (
+        "code" in err &&
+        ["ENOENT", "ECONNREFUSED", "EPERM", "EACCES"].includes(
+          String((err as NodeJS.ErrnoException).code),
+        )
+      ) {
+        fail(new DaemonClientError(DAEMON_UNAVAILABLE_CODE, DAEMON_UNAVAILABLE_MESSAGE));
+        return;
+      }
+      fail(new DaemonClientError("daemon_ipc_failed", "Sync daemon request failed."));
     });
   });
 }
