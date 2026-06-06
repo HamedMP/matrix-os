@@ -111,6 +111,31 @@ export const PresignRequestSchema = z.object({
 });
 export type PresignRequest = z.infer<typeof PresignRequestSchema>;
 
+export const MultipartUploadedPartSchema = z.object({
+  partNumber: z.int().positive().max(10_000),
+  etag: z.string().min(1).max(512),
+});
+export type MultipartUploadedPart = z.infer<typeof MultipartUploadedPartSchema>;
+
+export const CompleteMultipartRequestSchema = z.object({
+  path: z.string().min(1).max(1024),
+  uploadId: z.string().min(1).max(1024),
+  parts: z.array(MultipartUploadedPartSchema).min(1).max(10_000),
+}).refine((request) => {
+  const partNumbers = new Set(request.parts.map((part) => part.partNumber));
+  return partNumbers.size === request.parts.length;
+}, {
+  message: "Duplicate multipart part numbers",
+  path: ["parts"],
+});
+export type CompleteMultipartRequest = z.infer<typeof CompleteMultipartRequestSchema>;
+
+export const AbortMultipartRequestSchema = z.object({
+  path: z.string().min(1).max(1024),
+  uploadId: z.string().min(1).max(1024),
+});
+export type AbortMultipartRequest = z.infer<typeof AbortMultipartRequestSchema>;
+
 // ---------------------------------------------------------------------------
 // Commit request / response
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import {
 } from "./platform-token.js";
 
 const INTERNAL_SYNC_BODY_LIMIT = 64 * 1024;
+const INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT = 1024 * 1024;
 const INTERNAL_SYNC_OBJECT_BODY_LIMIT = 100 * 1024 * 1024;
 const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
@@ -20,6 +21,12 @@ interface R2Client {
     partNumber: number,
     expiresIn?: number,
   ): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ partNumber: number; etag: string }>,
+  ): Promise<{ etag?: string }>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
   getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
   putObject(
     key: string,
@@ -45,6 +52,15 @@ interface MultipartPartInput extends MultipartCreateInput {
   uploadId: string;
   partNumber: number;
   expiresIn?: number;
+}
+
+interface MultipartCompleteInput extends MultipartCreateInput {
+  uploadId: string;
+  parts: Array<{ partNumber: number; etag: string }>;
+}
+
+interface MultipartAbortInput extends MultipartCreateInput {
+  uploadId: string;
 }
 
 async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
@@ -132,6 +148,46 @@ function parseMultipartPartInput(input: unknown): MultipartPartInput | null {
   return expiresIn === undefined
     ? { ...parsed, uploadId, partNumber }
     : { ...parsed, uploadId, partNumber, expiresIn };
+}
+
+function parseMultipartUploadIdInput(input: unknown): MultipartAbortInput | null {
+  const parsed = parseMultipartCreateInput(input);
+  const record = asRecord(input);
+  if (!parsed || !record) return null;
+  const uploadId = parseNonEmptyString(record.uploadId);
+  return uploadId ? { ...parsed, uploadId } : null;
+}
+
+function parseMultipartCompleteInput(input: unknown): MultipartCompleteInput | null {
+  const parsed = parseMultipartUploadIdInput(input);
+  const record = asRecord(input);
+  if (!parsed || !record || !Array.isArray(record.parts) || record.parts.length === 0 || record.parts.length > 10_000) {
+    return null;
+  }
+  const parts: Array<{ partNumber: number; etag: string }> = [];
+  const partNumbers = new Set<number>();
+  for (const part of record.parts) {
+    const partRecord = asRecord(part);
+    if (!partRecord) return null;
+    const partNumber = partRecord.partNumber;
+    const etag = parseNonEmptyString(partRecord.etag);
+    if (
+      !etag ||
+      etag.length > 512 ||
+      !Number.isInteger(partNumber) ||
+      typeof partNumber !== "number" ||
+      partNumber <= 0 ||
+      partNumber > 10_000
+    ) {
+      return null;
+    }
+    if (partNumbers.has(partNumber)) {
+      return null;
+    }
+    partNumbers.add(partNumber);
+    parts.push({ partNumber, etag });
+  }
+  return { ...parsed, parts };
 }
 
 async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown | null> {
@@ -242,6 +298,52 @@ export function createInternalSyncRoutes(opts: {
       parsed.expiresIn,
     );
     return c.json({ url });
+  });
+
+  app.post(
+    "/multipart/complete",
+    bodyLimit({ maxSize: INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT }),
+    async (c) => {
+      const parsed = parseMultipartCompleteInput(await parseJsonBody(c));
+      if (!parsed) {
+        return c.json({ error: "Validation error" }, 400);
+      }
+      const allowed = requireAllowedKey(c, parsed.key);
+      if (allowed instanceof Response) return allowed;
+      try {
+        const result = await opts.r2.completeMultipartUpload(
+          parsed.key,
+          parsed.uploadId,
+          parsed.parts,
+        );
+        return c.json({ etag: result.etag ?? null });
+      } catch (err: unknown) {
+        console.error(
+          "[internal-sync] Multipart completion failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return c.json({ error: "Multipart completion failed" }, 500);
+      }
+    },
+  );
+
+  app.post("/multipart/abort", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = parseMultipartUploadIdInput(await parseJsonBody(c));
+    if (!parsed) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    const allowed = requireAllowedKey(c, parsed.key);
+    if (allowed instanceof Response) return allowed;
+    try {
+      await opts.r2.abortMultipartUpload(parsed.key, parsed.uploadId);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      console.error(
+        "[internal-sync] Multipart abort failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Multipart abort failed" }, 500);
+    }
   });
 
   app.get("/object", async (c) => {

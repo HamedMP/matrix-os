@@ -309,6 +309,12 @@ interface GatewayR2Client {
     partNumber: number,
     expiresIn?: number,
   ): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ partNumber: number; etag: string }>,
+  ): Promise<{ etag?: string }>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
   getObject(
     key: string,
     options?: { signal?: AbortSignal },

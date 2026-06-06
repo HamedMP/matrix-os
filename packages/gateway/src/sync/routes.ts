@@ -4,6 +4,8 @@ import { HTTPException } from "hono/http-exception";
 import {
   PresignRequestSchema,
   CommitRequestSchema,
+  CompleteMultipartRequestSchema,
+  AbortMultipartRequestSchema,
   ResolveConflictSchema,
   CreateShareSchema,
   AcceptShareSchema,
@@ -47,6 +49,7 @@ import { MissingSyncUserIdentityError } from "../auth.js";
 import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
 
 const SYNC_BODY_LIMIT = 65536;
+const MULTIPART_COMPLETE_BODY_LIMIT = 1024 * 1024;
 
 export interface SyncRouteDeps {
   r2: R2Client;
@@ -60,8 +63,11 @@ export interface SyncRouteDeps {
 export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const app = new Hono();
   const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
+  const multipartCompleteBodyLimit = bodyLimit({ maxSize: MULTIPART_COMPLETE_BODY_LIMIT });
   const store: ManifestStore = { r2: deps.r2, db: deps.db };
   const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const multipartCompleteLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const multipartAbortLimiter = createSyncRateLimiter({ maxRequests: 300, windowMs: 60_000 });
   const commitLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
   const shareLimiter = createSyncRateLimiter({ maxRequests: 60, windowMs: 60_000 });
   // Shared-folder data-plane access remains intentionally fail-closed in this
@@ -153,6 +159,70 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
         { error: isValidationErr ? "Invalid request" : "Presign generation failed" },
         isValidationErr ? 400 : 500,
       );
+    }
+  });
+
+  // POST /multipart/complete
+  app.post("/multipart/complete", multipartCompleteBodyLimit, async (c) => {
+    const userId = getUserId(c);
+    if (!multipartCompleteLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = CompleteMultipartRequestSchema.safeParse(json.body);
+    if (!parsed.success) {
+      return validationError(c);
+    }
+    const pathCheck = resolveWithinPrefix(userId, parsed.data.path);
+    if (!pathCheck.valid) {
+      return c.json({ error: "Invalid request" }, 400);
+    }
+    try {
+      const result = await deps.r2.completeMultipartUpload(
+        pathCheck.key,
+        parsed.data.uploadId,
+        parsed.data.parts,
+      );
+      return c.json({ etag: result.etag ?? null });
+    } catch (err: unknown) {
+      console.error(
+        "[sync/multipart] Complete failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Multipart completion failed" }, 500);
+    }
+  });
+
+  // POST /multipart/abort
+  app.post("/multipart/abort", mutatingBodyLimit, async (c) => {
+    const userId = getUserId(c);
+    if (!multipartAbortLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = AbortMultipartRequestSchema.safeParse(json.body);
+    if (!parsed.success) {
+      return validationError(c);
+    }
+    const pathCheck = resolveWithinPrefix(userId, parsed.data.path);
+    if (!pathCheck.valid) {
+      return c.json({ error: "Invalid request" }, 400);
+    }
+    try {
+      await deps.r2.abortMultipartUpload(pathCheck.key, parsed.data.uploadId);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      console.error(
+        "[sync/multipart] Abort failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Multipart abort failed" }, 500);
     }
   });
 
@@ -447,6 +517,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 const syncApp = new Hono();
 syncApp.get("/manifest", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.post("/presign", (c) => c.json({ error: "Not configured" }, 503));
+syncApp.post("/multipart/complete", (c) => c.json({ error: "Not configured" }, 503));
+syncApp.post("/multipart/abort", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.post("/commit", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.get("/status", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.post("/resolve-conflict", (c) => c.json({ error: "Not configured" }, 503));

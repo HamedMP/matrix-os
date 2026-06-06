@@ -1272,8 +1272,9 @@ export async function startDaemon(): Promise<void> {
           ]);
           if (urls[0]) {
             await uploadFile(
-              urls[0].url,
+              urls[0],
               join(config.syncPath, event.path),
+              gatewayClient,
             );
             const result = await commitFiles(gatewayClient, [
               { path: remotePath, hash: event.hash, size: event.size },
