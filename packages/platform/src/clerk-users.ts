@@ -1,27 +1,20 @@
 import {
+  getClerkDisplayName,
+  getPrimaryClerkEmail,
+  normalizeMatrixOsHandleCandidate,
+  type ClerkUserProfile,
+} from '@matrix-os/clerk-sync';
+import {
   ensurePlatformUser,
   getPlatformUserByHandle,
   type NewPlatformUser,
   type PlatformDB,
 } from './db.js';
 
-export const PLATFORM_HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const CLERK_USERS_PAGE_LIMIT = 100;
 const CLERK_USERS_FETCH_TIMEOUT_MS = 10_000;
 
-export interface ClerkEmailAddress {
-  id?: string;
-  email_address?: string;
-}
-
-export interface ClerkUserForSync {
-  id: string;
-  username?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
-  primary_email_address_id?: string | null;
-  email_addresses?: ClerkEmailAddress[];
-}
+export type ClerkUserForSync = ClerkUserProfile;
 
 export interface ClerkUsersBackfillOptions {
   clerkSecretKey: string;
@@ -36,36 +29,15 @@ export interface ClerkUsersBackfillResult {
   skipped: number;
 }
 
-export function normalizePlatformHandleCandidate(value: string | undefined | null): string | null {
-  if (!value) return null;
-  const candidate = value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 31)
-    .replace(/-+$/g, '');
-  return PLATFORM_HANDLE_PATTERN.test(candidate) ? candidate : null;
-}
-
 export function fallbackPlatformHandleForClerkUser(userId: string): string {
-  return normalizePlatformHandleCandidate(`u-${userId}`) ?? `u${userId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12).toLowerCase()}`;
-}
-
-export function getPrimaryClerkEmail(user: ClerkUserForSync): string | null {
-  const primary = user.email_addresses?.find(
-    (email) => email.id && email.id === user.primary_email_address_id,
-  )?.email_address;
-  return primary ?? user.email_addresses?.find((email) => email.email_address)?.email_address ?? null;
+  return normalizeMatrixOsHandleCandidate(`u-${userId}`) ?? `u${userId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12).toLowerCase()}`;
 }
 
 export function buildPlatformUserFromClerkUser(
   user: ClerkUserForSync,
   handle: string,
 ): NewPlatformUser {
-  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') ||
-    user.username ||
-    handle;
+  const displayName = getClerkDisplayName(user, handle);
   const email = getPrimaryClerkEmail(user) ?? `${handle}@matrix-os.local`;
   return {
     clerkId: user.id,
@@ -80,12 +52,22 @@ export function buildPlatformUserFromClerkUser(
 
 export function getClerkUserHandleCandidates(user: ClerkUserForSync): string[] {
   const candidates = [
-    normalizePlatformHandleCandidate(user.username),
-    normalizePlatformHandleCandidate(getPrimaryClerkEmail(user)?.split('@')[0]),
-    normalizePlatformHandleCandidate(user.email_addresses?.[0]?.email_address?.split('@')[0]),
+    normalizeMatrixOsHandleCandidate(user.username),
+    normalizeMatrixOsHandleCandidate(getPrimaryClerkEmail(user)?.split('@')[0]),
+    normalizeMatrixOsHandleCandidate(user.email_addresses?.[0]?.email_address?.split('@')[0]),
     fallbackPlatformHandleForClerkUser(user.id),
   ].filter((candidate): candidate is string => Boolean(candidate));
   return Array.from(new Set(candidates));
+}
+
+function isHandleUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as { code?: unknown; constraint?: unknown; message?: unknown };
+  return candidate.code === '23505' &&
+    (
+      candidate.constraint === 'users_handle_key' ||
+      String(candidate.message ?? '').includes('users_handle_key')
+    );
 }
 
 async function selectAvailableHandleForClerkUser(
@@ -147,7 +129,20 @@ export async function backfillClerkUsersToPlatformDb(
       }
       const record = buildPlatformUserFromClerkUser(user, handle);
       if (options.apply) {
-        await ensurePlatformUser(db, record);
+        try {
+          await ensurePlatformUser(db, record);
+        } catch (err: unknown) {
+          if (isHandleUniqueViolation(err)) {
+            const fallback = fallbackPlatformHandleForClerkUser(user.id);
+            if (fallback !== handle) {
+              await ensurePlatformUser(db, buildPlatformUserFromClerkUser(user, fallback));
+            } else {
+              throw err;
+            }
+          } else {
+            throw err;
+          }
+        }
       }
       result.synced += 1;
       logger.log(`${options.apply ? 'synced' : 'would sync'} ${user.id} as ${handle}`);

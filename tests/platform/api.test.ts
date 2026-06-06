@@ -3,6 +3,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 import { createHmac } from 'node:crypto';
 import {
   type PlatformDB,
+  getContainerByClerkId,
   getPlatformUserByClerkId,
   insertContainer,
   insertUserMachine,
@@ -122,6 +123,34 @@ describe('platform/api', () => {
       status: 'active',
     });
     expect(user?.containerId).toBe('legacy:alice');
+  });
+
+  it('POST /users/sync creates a platform user without provisioning a runtime', async () => {
+    const res = await app.request('/users/sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({
+        handle: 'trinity',
+        clerkUserId: 'clerk_trinity',
+        displayName: 'Trinity',
+        email: 'trinity@example.com',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      clerkUserId: 'clerk_trinity',
+      handle: 'trinity',
+      status: 'active',
+    });
+    await expect(getPlatformUserByClerkId(db, 'clerk_trinity')).resolves.toMatchObject({
+      clerkId: 'clerk_trinity',
+      handle: 'trinity',
+      displayName: 'Trinity',
+      email: 'trinity@example.com',
+      containerId: 'clerk:clerk_trinity',
+    });
+    await expect(getContainerByClerkId(db, 'clerk_trinity')).resolves.toBeUndefined();
   });
 
   it('POST /containers/provision delegates onboarding to one customer VPS when configured', async () => {

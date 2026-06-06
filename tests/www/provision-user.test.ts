@@ -47,20 +47,18 @@ describe("provisionUser", () => {
     const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
     const recordSignup = source.indexOf('step.run("record-signup"');
     const signupEvent = source.indexOf("MATRIX_TELEMETRY_EVENTS.USER_SIGNED_UP");
-    const provisionStep = source.indexOf('step.run("provision-container"');
+    const syncStep = source.indexOf('step.run("sync-platform-user"');
 
     expect(recordSignup).toBeGreaterThanOrEqual(0);
     expect(signupEvent).toBeGreaterThan(recordSignup);
-    expect(signupEvent).toBeLessThan(provisionStep);
+    expect(signupEvent).toBeLessThan(syncStep);
   });
 
   it("keeps PostHog operations scoped to deterministic Inngest steps", () => {
     const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
     const stepRanges = [
       "record-signup",
-      "record-provision-started",
-      "provision-container",
-      "verify-running",
+      "sync-platform-user",
     ].map((stepName) => findStepRunRange(source, stepName));
 
     const posthogOperations = [
@@ -73,5 +71,15 @@ describe("provisionUser", () => {
       const isInsideStep = stepRanges.some((range) => index > range.start && index < range.end);
       expect(isInsideStep, `${operation[0]} must be inside a step.run callback`).toBe(true);
     }
+  });
+
+  it("syncs signup users without provisioning a runtime", () => {
+    const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
+
+    expect(source).toContain('id: "sync-matrix-os-user"');
+    expect(source).toContain('`${PLATFORM_API_URL}/users/sync`');
+    expect(source).not.toContain("/containers/provision");
+    expect(source).not.toContain("verify-running");
+    expect(source).not.toContain("wait-for-boot");
   });
 });

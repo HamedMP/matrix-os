@@ -23,6 +23,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1001.0",
     "@clerk/backend": "2.33.0",
     "@hono/node-server": "^1.19.9",
+    "@matrix-os/clerk-sync": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "dockerode": "^4.0.7",
     "hono": "^4.11.9",

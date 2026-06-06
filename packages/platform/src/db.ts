@@ -1341,7 +1341,15 @@ export async function ensurePlatformUser(
       handle: record.handle,
       display_name: record.displayName,
       email: record.email,
-      container_id: record.containerId,
+      container_id: sql`
+        CASE
+          WHEN users.container_id LIKE 'clerk:%' AND EXCLUDED.container_id NOT LIKE 'clerk:%'
+            THEN EXCLUDED.container_id
+          WHEN EXCLUDED.container_id LIKE 'clerk:%' AND users.container_id NOT LIKE 'clerk:%'
+            THEN users.container_id
+          ELSE EXCLUDED.container_id
+        END
+      `,
       container_version: record.containerVersion ?? null,
       plan: record.plan ?? 'free',
       status: record.status ?? 'active',

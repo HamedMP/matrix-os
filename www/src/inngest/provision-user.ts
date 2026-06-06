@@ -1,11 +1,6 @@
 import { inngest } from "./client";
 import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability";
-import {
-  getProvisionVerificationTarget,
-  isCustomerVpsUsableStatus,
-  type ProvisionResult,
-} from "./provision-status";
 import { getPrimaryEmail, getProvisionHandle } from "./provision-user-handle";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
@@ -13,7 +8,7 @@ const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
 const HANDLE_PREFIX = process.env.HANDLE_PREFIX ?? "";
 
 export const provisionUser = inngest.createFunction(
-  { id: "provision-matrix-os" },
+  { id: "sync-matrix-os-user" },
   { event: "clerk/user.created" },
   async ({ event, step }) => {
     const user = event.data;
@@ -41,40 +36,24 @@ export const provisionUser = inngest.createFunction(
       });
     });
 
-    await step.run("record-provision-started", async () => {
-      const posthog = getPostHogClient();
-      posthog.capture({
-        distinctId: user.id,
-        event: "inngest_provision_started",
-        properties: {
-          handle,
-          source: "inngest",
-        },
-      });
-    });
-
-    const provisionResult = await step.run("provision-container", async (): Promise<ProvisionResult> => {
+    await step.run("sync-platform-user", async () => {
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (PLATFORM_SECRET) headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
 
       const displayName = [user.first_name, user.last_name].filter(Boolean).join(" ") || handle;
-      const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
+      const res = await fetch(`${PLATFORM_API_URL}/users/sync`, {
         method: "POST",
         headers,
         signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({ handle, clerkUserId: user.id, displayName, email }),
       });
 
-      if (res.status === 409) {
-        return { alreadyProvisioned: true };
-      }
-
       if (!res.ok) {
         const body = await res.text();
         const posthog = getPostHogClient();
         posthog.capture({
           distinctId: user.id,
-          event: "inngest_provision_failed",
+          event: "inngest_user_sync_failed",
           properties: {
             handle,
             error: body,
@@ -82,86 +61,15 @@ export const provisionUser = inngest.createFunction(
             source: "inngest",
           },
         });
-        throw new Error(`Provision failed: ${res.status} ${body}`);
+        throw new Error(`User sync failed: ${res.status} ${body}`);
       }
 
-      return await res.json();
-    });
-
-    await step.sleep("wait-for-boot", "10s");
-
-    await step.run("verify-running", async () => {
       const posthog = getPostHogClient();
-      const headers: Record<string, string> = {};
-      if (PLATFORM_SECRET) headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
-      const target = getProvisionVerificationTarget(PLATFORM_API_URL, handle, provisionResult);
-
-      if (target.runtime === "customer_vps") {
-        const res = await fetch(target.statusUrl, {
-          headers,
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) throw new Error("VPS status not found after provision");
-        const info = await res.json();
-
-        if (!isCustomerVpsUsableStatus(info.status)) {
-          throw new Error(`VPS not usable: ${info.status}`);
-        }
-
-        const eventName = info.status === "running"
-          ? "inngest_provision_completed"
-          : "inngest_provision_booting";
-
-        posthog.capture({
-          distinctId: user.id,
-          event: eventName,
-          properties: {
-            handle,
-            machine_status: info.status,
-            runtime: "customer_vps",
-            source: "inngest",
-          },
-        });
-
-        posthog.identify({
-          distinctId: user.id,
-          properties: {
-            has_instance: true,
-            instance_runtime: "customer_vps",
-            instance_status: info.status,
-          },
-        });
-
-        await shutdownPostHog();
-        return { status: info.status, runtime: "customer_vps" };
-      }
-
-      const res = await fetch(target.containerUrl, {
-        headers,
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) throw new Error("Container not found after provision");
-      const info = await res.json();
-
-      if (info.status !== "running") {
-        throw new Error(`Container not running: ${info.status}`);
-      }
-
-      const healthUrl = `http://localhost:${info.port}/health`;
-      try {
-        const healthRes = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
-        if (!healthRes.ok) throw new Error(`Gateway health check failed: ${healthRes.status}`);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "unknown error";
-        throw new Error(`Gateway not reachable at port ${info.port}: ${message}`);
-      }
-
       posthog.capture({
         distinctId: user.id,
-        event: "inngest_provision_completed",
+        event: "inngest_user_synced",
         properties: {
           handle,
-          container_status: info.status,
           source: "inngest",
         },
       });
@@ -169,13 +77,14 @@ export const provisionUser = inngest.createFunction(
       posthog.identify({
         distinctId: user.id,
         properties: {
-          has_instance: true,
-          instance_status: info.status,
+          handle,
+          email,
+          has_instance: false,
+          billing_required: true,
         },
       });
 
       await shutdownPostHog();
-      return { status: info.status };
     });
   },
 );

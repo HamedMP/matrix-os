@@ -107,4 +107,49 @@ describe('clerk user sync', () => {
       containerId: 'clerk:user_new',
     });
   });
+
+  it('does not downgrade a provisioned runtime id during backfill', async () => {
+    await ensurePlatformUser(db, {
+      clerkId: 'user_existing',
+      handle: 'neo',
+      displayName: 'Provisioned Neo',
+      email: 'neo@example.com',
+      containerId: 'vps:machine-1',
+    });
+
+    await ensurePlatformUser(db, buildPlatformUserFromClerkUser({
+      id: 'user_existing',
+      username: 'neo',
+      first_name: 'Neo',
+      email_addresses: [{ id: 'email_1', email_address: 'neo@example.com' }],
+    }, 'neo'));
+
+    await expect(getPlatformUserByClerkId(db, 'user_existing')).resolves.toMatchObject({
+      containerId: 'vps:machine-1',
+      displayName: 'Neo',
+    });
+  });
+
+  it('upgrades a backfilled placeholder runtime id after provisioning', async () => {
+    await ensurePlatformUser(db, {
+      clerkId: 'user_existing',
+      handle: 'neo',
+      displayName: 'Backfilled Neo',
+      email: 'neo@example.com',
+      containerId: 'clerk:user_existing',
+    });
+
+    await ensurePlatformUser(db, {
+      clerkId: 'user_existing',
+      handle: 'neo',
+      displayName: 'Provisioned Neo',
+      email: 'neo@example.com',
+      containerId: 'vps:machine-1',
+    });
+
+    await expect(getPlatformUserByClerkId(db, 'user_existing')).resolves.toMatchObject({
+      containerId: 'vps:machine-1',
+      displayName: 'Provisioned Neo',
+    });
+  });
 });

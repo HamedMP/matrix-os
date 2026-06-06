@@ -8,16 +8,17 @@ workflows, and operator queries.
 
 New signups enter through the website Inngest `clerk/user.created` function. That
 function derives a Matrix OS handle from Clerk username, primary email, or a stable
-Clerk-id fallback, then calls the platform `/containers/provision` endpoint with:
+Clerk-id fallback, then calls the platform `/users/sync` endpoint with:
 
 - `handle`
 - `clerkUserId`
 - `displayName`
 - `email`
 
-The platform endpoint provisions the runtime and idempotently upserts the user row
-after the runtime request succeeds. Browser-triggered `/api/auth/provision-runtime`
-uses the same platform-side upsert path.
+That endpoint only idempotently upserts the user projection. It must not provision
+a VPS. The app should show billing and machine selection after signup; only the
+browser-triggered `/api/auth/provision-runtime` path creates a VPS after the user
+has chosen a machine and passed billing/entitlement checks.
 
 ## Backfill existing Clerk users
 
@@ -38,8 +39,8 @@ pnpm exec tsx scripts/backfill-clerk-users.ts --apply --quiet
 ```
 
 The script pages through Clerk users, derives collision-safe handles, and writes
-through the same `ensurePlatformUser` upsert helper as provisioning. It does not
-print secrets.
+through the same `ensurePlatformUser` upsert helper as signup sync. It does not
+print secrets or provision runtimes.
 
 ## Verify
 
@@ -51,6 +52,7 @@ select clerk_id, handle, email, status from users order by created_at desc limit
 Then create a test signup and verify:
 
 1. Inngest receives the `clerk/user.created` event.
-2. `/containers/provision` returns `202` for VPS runtime or `201` for legacy local runtime.
+2. `/users/sync` succeeds.
 3. `users` contains the new `clerk_id`.
-4. `user_machines` contains the active VPS row for that `clerk_user_id`.
+4. `user_machines` does not gain a row until the user chooses a machine and
+   completes the billing-gated provisioning flow.

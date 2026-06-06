@@ -5,6 +5,7 @@ import {
   type PlatformDB,
   deleteContainer,
   getContainer,
+  getPlatformUserByClerkId,
   insertContainer,
   insertUserMachine,
   updateContainerStatus,
@@ -1717,6 +1718,8 @@ describe("platform proxy routing", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         username: "newuser",
+        first_name: "New",
+        last_name: "User",
         primary_email_address_id: "email_1",
         email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
       }),
@@ -1775,6 +1778,13 @@ describe("platform proxy routing", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+    await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
+      clerkId: "user_new",
+      handle: "newuser",
+      displayName: "New User",
+      email: "new@example.com",
+      containerId: "vps:9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+    });
   });
 
   it("trims generated handles again after length limiting", async () => {
