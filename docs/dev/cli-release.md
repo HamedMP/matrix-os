@@ -4,7 +4,7 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.4` is the prepared CLI patch release for the merged CLI fixes after `0.3.3`, including non-interactive `matrix run -- <command>` support backed by the gateway command-runner endpoint.
+`0.3.5` is the prepared CLI patch release for the merged CLI fixes after `0.3.4`, including package-runner launch docs, publish validation for `npx`/`pnpm dlx`, and the latest cloud shell CLI hardening.
 
 ## Versioning
 
@@ -34,7 +34,7 @@ git tag -l 'cli-v*'
 
 ## Release
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.4` and `update_homebrew=true`. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.5` and `update_homebrew=true`. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -50,7 +50,7 @@ npm view @finnaai/matrix dist.tarball
 npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.4 sh scripts/install.sh
+MATRIX_VERSION=0.3.5 sh scripts/install.sh
 matrix --version
 matrix login --help
 matrix run --help
@@ -66,12 +66,12 @@ matrix run -- ls
 matrix forward 5173
 ```
 
-For macOS, also verify the GitHub release contains `MatrixSync-0.3.4.pkg` when the macOS job was enabled.
+For macOS, also verify the GitHub release contains `MatrixSync-0.3.5.pkg` when the macOS job was enabled.
 
 ## Rollback
 
-npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.4` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
+npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.5` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.3 "Use @finnaai/matrix@0.3.4"
+npm deprecate @finnaai/matrix@0.3.4 "Use @finnaai/matrix@0.3.5"
 ```
