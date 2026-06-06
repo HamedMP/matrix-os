@@ -1,6 +1,6 @@
 ---
 name: matrix-os
-version: 0.83.0
+version: 0.84.0
 description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent.
 homepage: https://matrix-os.com
 metadata: {"matrix":{"category":"cloud-computer","app_url":"https://app.matrix-os.com","skill_url":"https://matrix-os.com/skills.md","cli_package":"@finnaai/matrix"}}
@@ -17,7 +17,7 @@ Use this file when a human asks you to set up their Matrix instance, connect Cla
 | File | URL |
 | --- | --- |
 | **skills.md** (this file) | `https://matrix-os.com/skills.md` |
-| **CLI docs** | `https://matrix-os.com/docs/guide/cli` |
+| **CLI docs** | `https://matrix-os.com/docs/users/cli` |
 | **GitHub repo** | `https://github.com/HamedMP/matrix-os` |
 
 Install locally if your agent runtime supports file skills:
@@ -54,7 +54,7 @@ Read https://matrix-os.com/skills.md and follow the instructions to set up Matri
 
 1. Install the Matrix CLI.
 2. Run matrix login --profile cloud and send me the browser/device claim link if prompted.
-3. Once the Matrix VPS is ready, I can attach to the same shell session and finish setup.
+3. I will verify the gateway with matrix doctor, scan for local AI-agent settings, copy only approved credential files, ask you to run gh auth login inside Matrix, and start your preferred coding agent with matrix run.
 ```
 
 Then run:
@@ -74,6 +74,8 @@ Authenticate:
 
 ```bash
 matrix login --profile cloud
+matrix doctor
+matrix whoami
 matrix status
 matrix instance info
 matrix agent auth scan
@@ -89,7 +91,7 @@ After the VPS is provisioned, run `matrix login --profile cloud` again.
 
 ## Agent Credential Setup
 
-After `matrix agent auth scan`, ask the human which found credentials they want copied to the Matrix VPS. Only run the matching command after they approve:
+After `matrix agent auth scan`, ask the human which found credentials or settings they want copied to the Matrix VPS. Only run the matching command after they approve:
 
 ```bash
 matrix upload --secret ~/.codex/auth.json .codex/auth.json
@@ -99,6 +101,8 @@ matrix upload --secret ~/.pi/agent/auth.json .pi/agent/auth.json
 ```
 
 These commands transfer files through Matrix CLI without exposing token contents to the agent transcript. If Claude Code is logged in only through macOS Keychain, do not try to extract it; launch Claude once on the Matrix VPS and let the human complete the remote login flow.
+
+Treat non-secret local settings as opt-in too. If the human asks to copy a config file, use `matrix upload` for ordinary settings and `matrix upload --secret` for anything that may contain tokens. Never print file contents.
 
 ## Interactive Setup
 
@@ -140,7 +144,7 @@ matrix shell connect setup
 
 ## Terminal Session Fallbacks
 
-If `matrix run -it -- ...`, `matrix shell new`, or `matrix shell attach` returns:
+If `matrix run -it -- ...`, `matrix shell new`, or `matrix shell connect` returns:
 
 ```text
 Error: Request failed (zellij_failed)
@@ -266,6 +270,7 @@ After building, ask Matrix to open or reload the app from the shell UI.
 ```bash
 matrix status
 matrix doctor
+matrix whoami
 matrix instance info
 matrix instance logs
 matrix agent auth scan

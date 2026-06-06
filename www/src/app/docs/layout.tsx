@@ -3,12 +3,14 @@ import { RootProvider } from 'fumadocs-ui/provider/next';
 import Image from 'next/image';
 import { source } from '@/lib/source';
 import { baseOptions } from '@/lib/layout.shared';
+import { DocsSidebarFooter } from '@/components/docs-sidebar-footer';
 import type { ReactNode } from 'react';
 
 function getSection(path: string | undefined) {
-  if (!path) return 'guide';
+  if (!path) return 'users';
   const [dir] = path.split('/', 1);
-  return dir === 'developer' ? 'developer' : 'guide';
+  if (dir === 'developer' || dir === 'deployment' || dir === 'users') return dir;
+  return 'users';
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -28,13 +30,24 @@ export default function Layout({ children }: { children: ReactNode }) {
                 alt='Matrix OS'
                 width={20}
                 height={20}
-                className='size-5 rounded'
+                className='size-5 rounded dark:hidden'
+              />
+              <Image
+                src='/rabbit-white.svg'
+                alt='Matrix OS'
+                width={20}
+                height={20}
+                className='hidden size-5 rounded dark:block'
               />
               <span className='font-medium max-md:hidden'>Matrix OS</span>
             </>
           ),
         }}
+        themeSwitch={{
+          enabled: false,
+        }}
         sidebar={{
+          footer: <DocsSidebarFooter />,
           tabs: {
             transform(option, node) {
               const meta = source.getNodeMeta(node);

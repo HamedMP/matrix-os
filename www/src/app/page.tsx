@@ -56,7 +56,8 @@ type NavLinkConfig = {
 
 const navLinks: NavLinkConfig[] = [
   { label: "features", href: "#features" },
-  { label: "developers", href: "#developers" },
+  { label: "agents", href: "#developers" },
+  { label: "docs", href: "/docs" },
   { label: "billing", href: "#pricing" },
 ];
 
@@ -86,7 +87,7 @@ const COPYABLE_AGENT_SETUP_PROMPT = `Set up Matrix OS so I can use my own cloud 
 First, read the official Matrix agent skill:
 https://matrix-os.com/skills.md
 
-Then install the Matrix CLI, help me sign in with matrix login --profile cloud, scan for local AI-agent credentials with matrix agent auth scan, copy only credentials I approve with matrix upload --secret, and start my preferred coding agent with matrix run.
+Then install the Matrix CLI, help me sign in with matrix login --profile cloud, scan for local AI-agent credentials and settings with matrix agent auth scan, copy only credentials or settings I approve with matrix upload or matrix upload --secret, ask me to run gh auth login inside Matrix, and start my preferred coding agent with matrix run.
 
 Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal agent if I ask for it.`;
 

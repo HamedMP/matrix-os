@@ -1,0 +1,40 @@
+---
+title: Settings And Billing
+description: Manage Matrix power, region, billing, integrations, and runtime settings.
+---
+
+Settings is where you manage the parts of Matrix that should be explicit: account identity, billing, runtime capacity, region, integrations, and connected developer tools.
+
+## Billing and plan
+
+Matrix hosted runtime uses Stripe Billing. The hosted Matrix computer requires an active plan before provisioning. Plans map to different default machine sizes for developer workloads.
+
+| Plan | Default machine | Best for |
+| --- | --- | --- |
+| Starter | 2 vCPU, 4 GB RAM | Light shell usage, small repos, basic agents. |
+| Builder | 4 vCPU, 8 GB RAM | Full-stack development, dev servers, and one or more agents. |
+| Max | 12 vCPU, 24 GB RAM | Heavier builds, parallel tests, larger repos, and multiple active sessions. |
+
+## Runtime settings
+
+- **Power**: choose the machine capacity for your workload.
+- **Region**: keep the runtime close to you or your team.
+- **Runtime status**: see whether your Matrix computer is provisioning, running, updating, or unavailable.
+- **Restart/logs**: use runtime controls when a service needs operator attention.
+
+## Integrations
+
+Connect services from the Integrations surface. Matrix keeps provider credentials platform-owned and asks for permission before acting through connected services.
+
+Common developer integrations:
+
+- GitHub
+- Discord
+- Slack
+- Gmail
+- Calendar
+- Drive
+
+## Account surfaces
+
+Use Settings for profile, identity, sign-out, billing portal access, and runtime/account-level preferences.

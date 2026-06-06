@@ -6,7 +6,6 @@ import {
   Copy,
   ExternalLinkIcon,
   Github,
-  Sparkles,
   TextIcon,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
@@ -73,13 +72,15 @@ export function LLMCopyButton({
       type="button"
       disabled={isLoading}
       className={cn(
-        'group inline-flex h-10 items-center gap-3 rounded-full border border-fd-border/80 bg-fd-card py-1 pe-4 ps-2.5 text-[13px] font-medium text-fd-foreground shadow-sm shadow-fd-primary/5 transition-all hover:-translate-y-0.5 hover:border-[var(--ember)]/40 hover:bg-white hover:shadow-md hover:shadow-[var(--ember)]/10 disabled:hover:translate-y-0 dark:bg-fd-card/80 dark:hover:bg-fd-accent',
+        'inline-flex h-8 items-center gap-1.5 rounded-md border border-fd-border bg-fd-muted/60 px-2.5 text-xs font-medium text-fd-foreground shadow-sm transition-colors hover:border-fd-primary/30 hover:bg-fd-card disabled:cursor-not-allowed disabled:opacity-60 dark:bg-fd-muted/50 dark:hover:bg-fd-accent',
       )}
       onClick={onClick}
     >
-      <span className="grid size-7 place-items-center rounded-full bg-[var(--ember)]/10 text-[var(--ember)] transition-colors group-hover:bg-[var(--ember)] group-hover:text-white [&_svg]:size-4">
-        {checked ? <Check /> : <Copy />}
-      </span>
+      {checked ? (
+        <Check className="size-3.5 text-fd-primary" />
+      ) : (
+        <Copy className="size-3.5 text-fd-muted-foreground" />
+      )}
       Copy Markdown
     </button>
   );
@@ -249,22 +250,20 @@ export function ViewOptions({
             variant: 'secondary',
             size: 'sm',
             className:
-              'h-10 gap-3 rounded-full border border-fd-border/80 bg-fd-card py-1 pe-4 ps-2.5 text-[13px] font-medium text-fd-foreground shadow-sm shadow-fd-primary/5 transition-all hover:-translate-y-0.5 hover:border-[var(--ember)]/40 hover:bg-white hover:shadow-md hover:shadow-[var(--ember)]/10 dark:bg-fd-card/80 dark:hover:bg-fd-accent',
+              'h-8 gap-1.5 rounded-md border border-fd-border bg-fd-muted/60 px-2.5 text-xs font-medium text-fd-foreground shadow-sm transition-colors hover:border-fd-primary/30 hover:bg-fd-card dark:bg-fd-muted/50 dark:hover:bg-fd-accent',
           }),
         )}
       >
-        <span className="grid size-7 place-items-center rounded-full bg-[var(--forest)] text-white [&_svg]:size-4">
-          <Sparkles />
-        </span>
+        <ExternalLinkIcon className="size-3.5 text-fd-muted-foreground" />
         Open with
         <ChevronDown className="size-3.5 text-fd-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-80 rounded-2xl border-fd-border/80 bg-fd-card/95 p-2 shadow-xl shadow-fd-primary/10 backdrop-blur"
+        className="z-50 w-80 rounded-lg border-fd-border bg-fd-card/95 p-1.5 shadow-lg shadow-fd-primary/10 backdrop-blur"
       >
-        <div className="px-3 pb-2 pt-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ember)]">
+        <div className="px-2.5 pb-2 pt-2">
+          <p className="text-xs font-semibold uppercase text-fd-muted-foreground">
             Page actions
           </p>
           <p className="mt-1 text-sm text-fd-muted-foreground">
@@ -277,9 +276,9 @@ export function ViewOptions({
             href={item.href}
             rel="noreferrer noopener"
             target="_blank"
-            className="group grid grid-cols-[2rem_1fr_auto] items-center gap-3 rounded-xl p-2.5 text-sm transition-colors hover:bg-fd-accent/80 hover:text-fd-accent-foreground"
+            className="group grid grid-cols-[1.25rem_1fr_auto] items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors hover:bg-fd-accent/80 hover:text-fd-accent-foreground"
           >
-            <span className="grid size-8 place-items-center rounded-lg border border-fd-border/70 bg-white text-fd-foreground shadow-sm transition-colors group-hover:border-[var(--ember)]/30 group-hover:text-[var(--ember)] dark:bg-fd-background [&_svg]:size-4">
+            <span className="grid size-5 place-items-center text-fd-muted-foreground transition-colors group-hover:text-fd-foreground [&_svg]:size-4">
               {item.icon}
             </span>
             <span>

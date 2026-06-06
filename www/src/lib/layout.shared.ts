@@ -7,20 +7,13 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
-        text: 'Discord',
-        url: 'https://discord.gg/cSBBQWtPwV',
-        external: true,
+        text: 'Docs Home',
+        url: '/docs',
       },
       {
         text: 'Whitepaper',
         url: '/whitepaper',
       },
-      {
-        text: 'DeepWiki',
-        url: 'https://deepwiki.com/HamedMP/matrix-os/',
-        external: true,
-      },
     ],
-    githubUrl: 'https://github.com/hamedmp/matrix-os',
   };
 }

@@ -1,7 +1,7 @@
 ---
 name: matrix-os
-description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent, including CLI login, VPS setup, GitHub auth, Claude/Codex sessions, Hermes fallback, and shared zellij shell attach.
-version: 0.82.0
+description: Set up and operate a developer-owned Matrix OS cloud computer from an AI coding agent, including CLI login, VPS setup, GitHub auth, Claude/Codex sessions, Hermes fallback, and shared zellij shell connect.
+version: 0.84.0
 author: Matrix OS
 license: AGPL-3.0-or-later
 metadata:
@@ -27,6 +27,7 @@ Matrix OS gives each developer their own cloud computer: browser desktop, files,
 - Do not paste Matrix tokens, Clerk tokens, GitHub tokens, Claude keys, Codex keys, or OAuth codes into third-party websites.
 - Prefer hosted `matrix login --profile cloud` and browser/device flows over copying secrets into chat.
 - For first-run hosted onboarding, use the `cloud` profile explicitly. Do not use `--dev`, `--profile local`, `matrix profile use local`, localhost URLs, `MATRIXOS_PLATFORM_URL`, or `MATRIXOS_GATEWAY_URL` unless the human explicitly asks for Matrix local-stack development.
+- If the human wants to reuse local AI-agent credentials or settings, use Matrix CLI transfer commands only. Do not read, print, summarize, or paste credential file contents into chat.
 - Treat the Matrix VPS as the user's computer. Ask before deleting files, resetting sessions, or installing global packages that may change their environment.
 - Use named shell sessions for setup so the human can reattach from the Matrix web terminal.
 
@@ -53,7 +54,7 @@ Read https://matrix-os.com/skills.md and follow the instructions to set up Matri
 
 1. Install the Matrix CLI.
 2. Run matrix login --profile cloud and send me the browser/device claim link if prompted.
-3. Once the Matrix VPS is ready, I can attach to the same shell session and finish setup.
+3. I will verify the gateway with matrix doctor, scan for local AI-agent settings, copy only approved credential files, ask you to run gh auth login inside Matrix, and start your preferred coding agent with matrix run.
 ```
 
 Then run:
@@ -70,11 +71,29 @@ Authenticate:
 
 ```bash
 matrix login --profile cloud
+matrix doctor
+matrix whoami
 matrix status
 matrix instance info
+matrix agent auth scan
 ```
 
 If `matrix login --profile cloud` says no Matrix instance exists yet, ask the human to sign up at `https://app.matrix-os.com`, wait for provisioning, then run `matrix login --profile cloud` again.
+
+## Agent Credential And Settings Transfer
+
+After `matrix agent auth scan`, ask which found credentials or settings the human wants copied to the Matrix VPS. Only run the matching command after explicit approval:
+
+```bash
+matrix upload --secret ~/.codex/auth.json .codex/auth.json
+matrix upload --secret ~/.claude/.credentials.json .claude/.credentials.json
+matrix upload --secret ~/.local/share/opencode/auth.json .local/share/opencode/auth.json
+matrix upload --secret ~/.pi/agent/auth.json .pi/agent/auth.json
+```
+
+These commands transfer files through the Matrix CLI without exposing token contents to the transcript. If a provider is reported as `manual`, do not improvise token extraction. For example, Claude Code credentials stored only in macOS Keychain require launching Claude in Matrix and letting the human complete the remote login flow.
+
+Treat non-secret local settings as opt-in too. If the human asks to copy a config file, use `matrix upload` for ordinary settings and `matrix upload --secret` for anything that may contain tokens. Never print file contents.
 
 ## Interactive Setup
 
@@ -94,13 +113,47 @@ Use named sessions:
 matrix run -it --session setup -- gh auth login
 matrix run -it --session setup -- claude
 matrix run -it --session setup -- codex
-matrix shell attach setup
+matrix shell connect setup
 ```
 
 Detach with `Ctrl-\ Ctrl-\`. Detaching leaves the remote zellij session alive. Reattach with:
 
 ```bash
-matrix shell attach setup
+matrix shell connect setup
+```
+
+If a setup session does not exist, create or connect with:
+
+```bash
+matrix shell connect -c setup
+```
+
+Do not start both Claude and Codex unless the human explicitly asks. Pick the human's preferred coding agent.
+
+## Terminal Session Fallbacks
+
+If `matrix run -it -- ...`, `matrix shell new`, or `matrix shell connect` fails with `zellij_failed`, do not keep retrying the same command. First list sessions:
+
+```bash
+matrix shell ls
+```
+
+Then connect to an existing session:
+
+```bash
+matrix shell connect <session-name>
+```
+
+For setup, prefer an existing human-created session if one is available. If no setup session exists, use:
+
+```bash
+matrix shell connect -c setup
+```
+
+After `matrix login --profile cloud`, run:
+
+```bash
+matrix doctor
 ```
 
 ## GitHub Setup For Coding
@@ -179,11 +232,16 @@ After building, ask Matrix to open or reload the app from the shell UI.
 ```bash
 matrix status
 matrix doctor
+matrix whoami
 matrix instance info
 matrix instance logs
+matrix agent auth scan
 matrix shell ls
 matrix shell new setup --cmd bash
-matrix shell attach setup
+matrix shell connect setup
+matrix shell connect -c setup
+matrix upload --secret ~/.codex/auth.json .codex/auth.json
+matrix upload --secret ~/.claude/.credentials.json .claude/.credentials.json
 matrix run -it --session setup -- claude
 matrix run -it --session setup -- codex
 matrix run -it --session setup -- gh auth login
@@ -204,5 +262,5 @@ matrix shell ls
 If an interactive command looks stuck, detach with `Ctrl-\ Ctrl-\`, then reattach:
 
 ```bash
-matrix shell attach setup
+matrix shell connect setup
 ```

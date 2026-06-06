@@ -1,0 +1,51 @@
+---
+title: Matrix Skills
+description: Matrix skills preloaded for Claude, Codex, Hermes, and the Matrix kernel.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Matrix ships a canonical skill pack under `skills/matrix/`. Runtime sync projects those skills into the discovery paths for Matrix, Claude Code, Codex, and Hermes so each agent knows how to build and debug Matrix work.
+
+## Skill pack
+
+| Skill | Purpose |
+| --- | --- |
+| `matrix-app-builder` | Build Matrix apps as Vite React TypeScript projects with `matrix.json` and verified `dist/` output. |
+| `matrix-app-ui-patterns` | Build stable app interiors for windowed, mobile, dashboard, data, and canvas contexts. |
+| `matrix-design-system` | Apply Matrix theme, shadcn-style component patterns, icon quality rules, and iframe-safe app layouts. |
+| `matrix-integrations` | Use platform-owned integrations without copying provider secrets into agents or customer VPSes. |
+| `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
+| `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
+| `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
+
+## Runtime paths
+
+| Consumer | Runtime path |
+| --- | --- |
+| Matrix kernel | `$MATRIX_HOME/.agents/skills/<skill>/SKILL.md` |
+| Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
+| Claude Code | `$HOME/.claude/skills/<skill>/SKILL.md` |
+| Hermes | `$HERMES_HOME/skills/<skill>/SKILL.md` |
+
+## Sync skills
+
+From a Matrix checkout:
+
+```bash
+MATRIX_SKILL_TARGETS=matrix,claude,codex,hermes ./scripts/sync-matrix-agent-skills.sh skills/matrix
+```
+
+<Callout type="info" title="Skills are instructions, not secrets">
+  Matrix skills do not contain Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets. Authenticated actions should go through Matrix gateway/platform APIs.
+</Callout>
+
+## Onboarding option
+
+Matrix also supports onboarding through a Matrix-aware agent. Ask the agent:
+
+```text
+Help me onboard this repo into Matrix OS.
+```
+
+The flow should guide GitHub auth, Matrix CLI login, repo clone, shell setup, preferred coding-agent login, and preview checks.

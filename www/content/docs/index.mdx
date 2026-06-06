@@ -1,136 +1,98 @@
 ---
 title: Matrix OS Documentation
-description: A practical guide to using Matrix OS as your personal AI operating system.
+description: Start using Matrix OS, then go deeper into the developer platform.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { DocsCloudComputer } from '@/components/docs-cloud-computer';
 
-<div className="not-prose mb-8 grid gap-3 rounded-2xl border border-fd-border bg-fd-card p-4 shadow-sm sm:grid-cols-3">
-  <div className="rounded-xl bg-[var(--forest)] p-4 text-white">
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">Start</p>
-    <p className="mt-3 text-lg font-semibold leading-tight">Ask for an outcome, not a workflow.</p>
+<div className="not-prose mb-8 grid gap-4 rounded-2xl border border-fd-border bg-fd-card p-4 shadow-sm md:grid-cols-[1.15fr_0.85fr]">
+  <div className="rounded-xl bg-[var(--forest)] p-5 text-white">
+    <p className="text-xs font-semibold uppercase text-white/70">Developer-first cloud computer</p>
+    <p className="mt-4 max-w-xl text-2xl font-semibold leading-tight">
+      Matrix gives every builder a persistent AI workstation they can reach from the web, CLI, and agents.
+    </p>
   </div>
-  <div className="rounded-xl border border-fd-border bg-fd-muted/70 p-4">
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ember)]">Connect</p>
-    <p className="mt-3 text-lg font-semibold leading-tight">Bring email, calendar, files, GitHub, and chat.</p>
-  </div>
-  <div className="rounded-xl border border-fd-border bg-white p-4">
-    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--moss)]">Build</p>
-    <p className="mt-3 text-lg font-semibold leading-tight">Generate useful apps inside your own workspace.</p>
+  <div className="grid gap-3">
+    <a className="rounded-xl border border-fd-border bg-fd-muted/70 p-4 transition hover:border-[var(--ember)]/40 hover:bg-white" href="/docs/users/quickstart">
+      <p className="text-xs font-semibold uppercase text-[var(--ember)]">For users</p>
+      <p className="mt-2 text-base font-semibold leading-tight">Sign up, provision a Matrix computer, install the CLI, and start cloud coding.</p>
+    </a>
+    <a className="rounded-xl border border-fd-border bg-white p-4 transition hover:border-[var(--forest)]/30 hover:bg-fd-muted/60" href="/docs/developer">
+      <p className="text-xs font-semibold uppercase text-[var(--moss)]">For contributors</p>
+      <p className="mt-2 text-base font-semibold leading-tight">Understand the platform, skills, runtime, releases, tests, and review pipeline.</p>
+    </a>
   </div>
 </div>
 
-Matrix OS is your AI operating system in the cloud. You sign in, connect the tools you already use, and ask Matrix to help you work, organize, communicate, build, remember, and automate.
+Matrix OS is a cloud operating system for AI-native work. You get a personal Matrix computer, connect your tools, open the web shell, and run coding agents in a persistent environment that keeps working after your laptop closes.
 
-It is not a dashboard you have to configure by hand. It is a computer with an AI kernel: it can create apps for you, use your integrations with permission, keep your files and data in your own workspace, and show up through the web, chat, and social surfaces.
+The first ICP for Matrix is developers. Matrix is built for full-stack work from anywhere: terminal sessions, GitHub auth, codebases, coding agents, previews, skills, files, and app data all live in your Matrix workspace.
 
-<Callout type="info" title="Start with what you want done">
-  You do not need to understand servers, databases, or deployment. Use plain language: "plan my week", "summarize these emails", "make me a budget tracker", "help me ship this project", or "turn this idea into an app".
+<Callout type="info" title="A computer with an AI kernel">
+  Matrix is not a dashboard. It is a personal cloud computer where the AI can use the shell, files, apps, integrations, and skills with your permission.
 </Callout>
 
+<DocsCloudComputer />
+
 <Cards>
-  <Card title="Command Center" href="/docs/guide/getting-started">
-    Open the workspace, ask across your tools, and turn loose intent into action.
+  <Card title="User Quickstart" href="/docs/users/quickstart">
+    Sign up, choose power and region, provision your Matrix computer, and land in the shell.
   </Card>
-  <Card title="Cloud Coding" href="/docs/guide/cloud-coding">
-    Run project sessions, terminals, review loops, and GitHub work from Matrix.
+  <Card title="CLI" href="/docs/users/cli">
+    Install the Matrix CLI, connect from your local terminal, and run remote shell sessions.
   </Card>
-  <Card title="Skills" href="/docs/developer/skills">
-    Teach Matrix repeatable workflows through markdown skill files.
+  <Card title="Shell And Agents" href="/docs/users/shell">
+    Use app.matrix-os.com, authenticate GitHub, clone a repo, and launch Claude, Codex, Pi, OpenCode, or Hermes.
   </Card>
-  <Card title="Deployment" href="/docs/deployment/vps-per-user">
-    Understand the per-user VPS runtime and host-bundle release path.
+  <Card title="Contributor Platform" href="/docs/developer">
+    Read the architecture, dev VPS, skills, testing, releases, and contribution references.
   </Card>
 </Cards>
 
-## Quick Start
+## Quick Start Path
 
 <Steps>
   <Step>
-    ### Create your account
+    ### Create your account and choose capacity
 
-    Sign up with your Matrix OS handle. Your handle becomes your personal Matrix identity and your workspace address.
+    Sign up at `app.matrix-os.com`, choose your Matrix power level and region, complete billing, and wait for your Matrix computer to provision.
   </Step>
   <Step>
-    ### Open your workspace
+    ### Open the web shell
 
-    Use the web shell to chat with Matrix, open apps, browse files, connect services, and keep work organized on Canvas.
+    Land in the Matrix shell. Open Terminal, authenticate GitHub with `gh auth login`, and clone the repo you want to work on.
   </Step>
   <Step>
-    ### Connect your tools
+    ### Install the CLI
 
-    Connect Gmail, Calendar, Drive, GitHub, Slack, Discord, and other services from Integrations. Matrix asks for permission before acting on connected accounts.
+    Use the `matrix` CLI to connect from your laptop, attach to persistent sessions, and run coding agents on your Matrix computer.
   </Step>
   <Step>
-    ### Ask for an outcome
+    ### Launch an agent
 
-    Try: "show me what needs attention today", "draft replies for important emails", "make a task board for my move", or "build a habit tracker app".
+    Start Claude, Codex, Pi, OpenCode, or Hermes in a named session. Keep the work running in Matrix while you move between devices.
   </Step>
 </Steps>
 
-## What You Can Use Matrix For
+## What Matrix Is Good For
 
 <Cards>
-  <Card title="Daily Command Center" href="/docs/guide/getting-started">
-    See what matters today, ask questions across your connected tools, and turn loose thoughts into tasks, notes, reminders, or apps.
+  <Card title="Cloud Coding" href="/docs/users/coding-agents">
+    Run full-stack projects, previews, tests, review loops, and agents on the Matrix computer instead of your laptop.
   </Card>
-  <Card title="Apps Made For You" href="/docs/guide/apps">
-    Ask Matrix to create a tracker, planner, CRM, game, dashboard, or personal tool. Apps appear in your workspace and store data in your own Matrix database.
+  <Card title="Work From Anywhere" href="/docs/users/shell">
+    Use the web UI, local CLI, and upcoming Mac/iOS apps against the same persistent sessions and files.
   </Card>
-  <Card title="Connected Services" href="/docs/guide/integrations">
-    Connect Gmail, Calendar, Drive, GitHub, Slack, Discord, and more so Matrix can search, summarize, draft, schedule, post, and organize with your approval.
+  <Card title="Skills For Agents" href="/docs/users/matrix-skills">
+    Matrix skills are preloaded for Claude, Codex, Hermes, and the Matrix kernel so each agent knows how to build in the platform.
   </Card>
-  <Card title="Personal Knowledge" href="/docs/guide/storage">
-    Keep files, app data, notes, memories, and workspace state in your own Matrix environment with backups and recovery.
-  </Card>
-  <Card title="Messaging And Channels" href="/docs/guide/channels">
-    Use Matrix from the web and, over time, from chat channels like Telegram, WhatsApp, Discord, Slack, and Matrix protocol.
-  </Card>
-  <Card title="Social And Sharing" href="/docs/guide/social">
-    Publish a profile, share apps, collaborate with other people, and let your AI communicate with other AIs when you allow it.
+  <Card title="Settings And Billing" href="/docs/users/settings-billing">
+    Manage power, region, billing, runtime settings, integrations, and connected developer tools.
   </Card>
 </Cards>
-
-## Common Use Cases
-
-### For Everyone
-
-- Organize your day from email, calendar, notes, and tasks.
-- Ask Matrix to remember preferences, recurring plans, and project context.
-- Create personal apps like budget trackers, meal planners, travel checklists, habit trackers, study tools, and family dashboards.
-- Turn screenshots, files, and rough ideas into structured notes or working tools.
-- Keep a searchable workspace instead of scattering work across tabs and documents.
-
-### For Creators
-
-- Plan content calendars and campaigns.
-- Draft posts, scripts, newsletters, and outlines.
-- Track sponsorships, expenses, publishing status, and ideas.
-- Build simple audience tools, landing pages, calculators, and galleries.
-- Reuse your voice and preferences across projects.
-
-### For Small Businesses
-
-- Track leads, customers, orders, invoices, tasks, and follow-ups.
-- Summarize customer conversations and turn them into next actions.
-- Build lightweight internal tools without waiting on custom software.
-- Connect shared services and automate repetitive admin work.
-- Keep company knowledge in one searchable workspace.
-
-### For Students And Families
-
-- Plan assignments, study schedules, chores, trips, and household tasks.
-- Summarize long documents and turn them into flashcards or action lists.
-- Build small apps for routines, goals, budgets, and events.
-- Keep important files and notes in one place.
-
-### For Developers And Technical Users
-
-- Use cloud coding workspaces, terminal sessions, project canvases, and GitHub integrations.
-- Ask Matrix to inspect code, create issues, draft PRs, run tests, and manage review loops.
-- Keep project context, sessions, files, and app state recoverable in your Matrix workspace.
 
 ## How Matrix Is Different
 
@@ -153,23 +115,23 @@ It is not a dashboard you have to configure by hand. It is a computer with an AI
 
 <Cards>
   <Card
-    title="Getting Started"
-    description="Create your account, open your workspace, and make your first useful request."
-    href="/docs/guide/getting-started"
+    title="For Users"
+    description="Developer-focused setup, CLI, shell, agents, Matrix skills, Hermes, and settings."
+    href="/docs/users"
   />
   <Card
-    title="Integrations"
-    description="Connect email, calendar, files, GitHub, Slack, Discord, and more."
-    href="/docs/guide/integrations"
+    title="For Contributors"
+    description="Architecture, dev VPS, internal skills, testing, release, and review references."
+    href="/docs/developer"
   />
   <Card
-    title="Apps"
-    description="Use built-in apps and ask Matrix to create new ones for your life or work."
-    href="/docs/guide/apps"
+    title="Whitepaper"
+    description="Read the Web 4 architecture and product vision."
+    href="/whitepaper"
   />
   <Card
-    title="App Store"
-    description="Discover, install, share, and publish Matrix apps."
-    href="/docs/guide/app-store"
+    title="Discord"
+    description="Join early Matrix OS builders and get setup help."
+    href="https://discord.gg/cSBBQWtPwV"
   />
 </Cards>
