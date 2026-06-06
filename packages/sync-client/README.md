@@ -17,6 +17,8 @@ curl -sL get.matrix-os.com | sh
 
 ## Usage
 
+Running `matrix` with no arguments opens the interactive TUI in an interactive terminal. Use `matrix tui` explicitly when you want the same cockpit from scripts or docs examples. Direct commands remain script-safe and continue to work exactly as command invocations.
+
 ```bash
 matrix login              # device-code flow against app.matrix-os.com
 matrix sync ~/matrixos    # start the sync daemon against the logged-in instance

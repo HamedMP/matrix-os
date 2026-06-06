@@ -350,6 +350,8 @@ Read these on demand, not every session:
 - Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
 - TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
 - Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+ + citty, Ink + React, ws, Zod 4, existing sync-client/gateway command clients (084-matrix-cli-tui)
+- Existing `~/.matrixos` profile/auth/config files plus owner-readable TUI preferences; no new database (084-matrix-cli-tui)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -374,5 +376,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/082-paid-beta-readiness/plan.md`.
+Current Spec Kit plan: `specs/084-matrix-cli-tui/plan.md`.
 <!-- SPECKIT END -->

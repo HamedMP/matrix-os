@@ -6,6 +6,16 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 `0.3.2` is the prepared CLI patch release for terminal attach input handling. It keeps the `0.3.1` shell/session features and adds stronger local terminal cleanup plus stale mouse/focus filtering so returning to an inactive attach tab does not forward mouse escape sequences into the remote shell.
 
+### Matrix CLI TUI release notes
+
+The Matrix CLI TUI work makes bare interactive `matrix` open a prompt-first terminal cockpit while preserving direct commands for scripts. The release includes:
+
+- `matrix tui` as the explicit TUI command and bare interactive launch routing for `matrix`, `matrixos`, and `mos`.
+- Prompt-first home, status aggregation, no-color/80x24-safe rendering, and command palette discovery.
+- Matrix session cockpit over the existing zellij-backed shell routes and workspace coding-session routes.
+- First-run account/profile/sync/instance surfaces and safe destructive confirmation overlays.
+- Compatibility guardrails for `--help`, `--version`, `--json`, non-TTY use, and all direct command families.
+
 ## Versioning
 
 - Use semver without a leading `v` in `packages/sync-client/package.json`.
