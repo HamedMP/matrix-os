@@ -70,6 +70,30 @@ npm install -g @finnaai/matrix
 curl -fsSL https://get.matrix-os.com | sh
 ```
 
+Upgrade an existing CLI before debugging Matrix terminal or sync issues:
+
+```bash
+# Homebrew
+brew update
+brew upgrade finnaai/tap/matrix
+
+# npm
+npm install -g @finnaai/matrix@latest
+
+# Install script
+curl -fsSL https://get.matrix-os.com | sh
+```
+
+Then verify the binary the shell will actually run:
+
+```bash
+matrix --version
+matrix doctor
+which matrix
+```
+
+If the version is still old, start a new terminal or run `hash -r` in bash/zsh. If Homebrew upgraded but `which matrix` points at npm or another path first, remove or update that older install before retrying.
+
 Authenticate:
 
 ```bash

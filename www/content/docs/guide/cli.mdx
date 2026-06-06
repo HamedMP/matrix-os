@@ -32,6 +32,32 @@ matrix --version
 matrix doctor
 ```
 
+## Upgrade
+
+Use the same channel you installed with, then verify the resolved binary:
+
+```bash
+# Homebrew
+brew update
+brew upgrade finnaai/tap/matrix
+
+# npm
+npm install -g @finnaai/matrix@latest
+
+# Install script
+curl -fsSL https://get.matrix-os.com | sh
+```
+
+Verify:
+
+```bash
+matrix --version
+matrix doctor
+which matrix
+```
+
+If `matrix --version` still prints an older version after upgrading, start a new terminal or refresh your shell command cache with `hash -r` in bash/zsh. If Homebrew says the formula is already current but you still see an old binary, run `brew reinstall finnaai/tap/matrix` and check `which matrix` for a stale npm-installed copy earlier in `PATH`.
+
 ## First run
 
 ```bash
