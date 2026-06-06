@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  getPrimaryEmail,
+  getProvisionHandle,
+} from "../../www/src/inngest/provision-user-handle";
 
 function findStepRunRange(source: string, stepName: string): { start: number; end: number } {
   const start = source.indexOf(`step.run("${stepName}"`);
@@ -22,6 +26,23 @@ function findStepRunRange(source: string, stepName: string): { start: number; en
 }
 
 describe("provisionUser", () => {
+  it("derives valid platform handles and primary emails from Clerk user payloads", () => {
+    const user = {
+      id: "user_2abcDEF",
+      username: null,
+      primary_email_address_id: "email_primary",
+      email_addresses: [
+        { id: "email_secondary", email_address: "other@example.com" },
+        { id: "email_primary", email_address: "Neo.User@example.com" },
+      ],
+    };
+
+    expect(getPrimaryEmail(user)).toBe("Neo.User@example.com");
+    expect(getProvisionHandle(user)).toBe("neo-user");
+    expect(getProvisionHandle({ id: "user_2abcDEF", username: null })).toBe("u-user-2abcdef");
+    expect(getProvisionHandle(user, "staging-")).toBe("staging-neo-user");
+  });
+
   it("records signup telemetry inside an Inngest step", () => {
     const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
     const recordSignup = source.indexOf('step.run("record-signup"');

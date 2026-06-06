@@ -6,6 +6,7 @@ import {
   isCustomerVpsUsableStatus,
   type ProvisionResult,
 } from "./provision-status";
+import { getPrimaryEmail, getProvisionHandle } from "./provision-user-handle";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
@@ -16,7 +17,8 @@ export const provisionUser = inngest.createFunction(
   { event: "clerk/user.created" },
   async ({ event, step }) => {
     const user = event.data;
-    const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
+    const handle = getProvisionHandle(user, HANDLE_PREFIX);
+    const email = getPrimaryEmail(user);
 
     await step.run("record-signup", async () => {
       const posthog = getPostHogClient();
@@ -33,7 +35,7 @@ export const provisionUser = inngest.createFunction(
         distinctId: user.id,
         properties: {
           handle,
-          email: user.email_addresses?.[0]?.email_address,
+          email,
           created_via: "clerk_signup",
         },
       });
@@ -60,7 +62,7 @@ export const provisionUser = inngest.createFunction(
         method: "POST",
         headers,
         signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ handle, clerkUserId: user.id, displayName }),
+        body: JSON.stringify({ handle, clerkUserId: user.id, displayName, email }),
       });
 
       if (res.status === 409) {

@@ -25,6 +25,7 @@ import {
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  ensurePlatformUser,
   getHostBundleRelease,
   getHostBundleReleaseByChannel,
   HostBundleReleaseConflictError,
@@ -252,6 +253,7 @@ const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
 });
@@ -886,6 +888,27 @@ function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string):
     .digest('hex')
     .slice(0, 12);
   return `u${suffix}`;
+}
+
+async function ensureProvisionedPlatformUser(
+  db: PlatformDB,
+  input: {
+    clerkUserId: string;
+    handle: string;
+    displayName?: string;
+    email?: string;
+    runtimeId: string;
+  },
+): Promise<void> {
+  await ensurePlatformUser(db, {
+    clerkId: input.clerkUserId,
+    handle: input.handle,
+    displayName: input.displayName ?? input.handle,
+    email: input.email ?? `${input.handle}@matrix-os.local`,
+    containerId: input.runtimeId,
+    plan: 'free',
+    status: 'active',
+  });
 }
 
 async function resolveProvisionHandleCandidatesFromClerkProfile(
@@ -3610,6 +3633,11 @@ export function createApp(deps: {
         clerkUserId: result.userId,
         runtimeSlot: parsed.data.runtime,
       });
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId: result.userId,
+        handle,
+        runtimeId: `vps:${provisioned.machineId}`,
+      });
       if (matrixProvisioner) {
         try {
           await matrixProvisioner.provisionUser(handle);
@@ -4544,13 +4572,20 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName, runtimeSlot, serverType } = parsed.data;
+    const { handle, clerkUserId, displayName, email, runtimeSlot, serverType } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
         const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot, serverType });
+        await ensureProvisionedPlatformUser(db, {
+          clerkUserId,
+          handle,
+          displayName,
+          email,
+          runtimeId: `vps:${machine.machineId}`,
+        });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
         if (matrixProvisioner) {
@@ -4571,6 +4606,13 @@ export function createApp(deps: {
       }
 
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId,
+        handle,
+        displayName,
+        email,
+        runtimeId: `legacy:${handle}`,
+      });
 
       // Provision Matrix accounts (non-blocking: log error but don't fail container provision)
       if (matrixProvisioner) {

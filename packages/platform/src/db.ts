@@ -1,4 +1,5 @@
-import { Kysely, PostgresDialect, sql, type Transaction } from 'kysely';
+import { randomUUID } from 'node:crypto';
+import { Kysely, PostgresDialect, sql, type InsertObject, type Transaction } from 'kysely';
 import pg from 'pg';
 import type {
   BillingEntitlementSource,
@@ -21,6 +22,21 @@ interface ContainersTable {
   status: string;
   created_at: string;
   last_active: string;
+}
+
+interface UsersTable {
+  id: string;
+  clerk_id: string;
+  handle: string;
+  display_name: string;
+  email: string;
+  container_id: string;
+  container_version: string | null;
+  plan: string;
+  status: string;
+  pipedream_external_id: string | null;
+  created_at: Date;
+  updated_at: Date;
 }
 
 interface UserMachinesTable {
@@ -227,6 +243,7 @@ interface SocialFollowsTable {
 }
 
 export interface PlatformDatabase {
+  users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
   host_bundle_releases: HostBundleReleasesTable;
@@ -277,6 +294,33 @@ export interface NewContainer {
   status: string;
   createdAt?: string;
   lastActive?: string;
+}
+
+export interface PlatformUserRecord {
+  id: string;
+  clerkId: string;
+  handle: string;
+  displayName: string;
+  email: string;
+  containerId: string;
+  containerVersion: string | null;
+  plan: string;
+  status: string;
+  pipedreamExternalId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewPlatformUser {
+  clerkId: string;
+  handle: string;
+  displayName: string;
+  email: string;
+  containerId: string;
+  containerVersion?: string | null;
+  plan?: string;
+  status?: string;
+  pipedreamExternalId?: string | null;
 }
 
 export interface UserMachineRecord {
@@ -480,6 +524,24 @@ function wrapDb(
 }
 
 async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      clerk_id             TEXT UNIQUE NOT NULL,
+      handle               TEXT UNIQUE NOT NULL,
+      display_name         TEXT NOT NULL,
+      email                TEXT NOT NULL,
+      container_id         TEXT UNIQUE NOT NULL,
+      container_version    TEXT,
+      plan                 TEXT NOT NULL DEFAULT 'free',
+      status               TEXT NOT NULL DEFAULT 'active',
+      pipedream_external_id TEXT,
+      created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_users_pipedream_ext_id ON users(pipedream_external_id)`.execute(db);
+
   await sql`
     CREATE TABLE IF NOT EXISTS containers (
       handle TEXT PRIMARY KEY,
@@ -825,7 +887,13 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
   const ready = migrate(kysely);
   return wrapDb(kysely, kysely, ready, async () => {
     await kysely.destroy();
-    await pool?.end();
+    try {
+      await pool?.end();
+    } catch (err: unknown) {
+      if (!(err instanceof Error && err.message === 'Called end on pool more than once')) {
+        throw err;
+      }
+    }
   });
 }
 
@@ -895,6 +963,40 @@ function toContainerRow(record: NewContainer): ContainersTable {
     status: record.status,
     created_at: record.createdAt ?? now,
     last_active: record.lastActive ?? now,
+  };
+}
+
+function mapPlatformUser(row: UsersTable): PlatformUserRecord {
+  return {
+    id: row.id,
+    clerkId: row.clerk_id,
+    handle: row.handle,
+    displayName: row.display_name,
+    email: row.email,
+    containerId: row.container_id,
+    containerVersion: row.container_version,
+    plan: row.plan,
+    status: row.status,
+    pipedreamExternalId: row.pipedream_external_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toPlatformUserRow(record: NewPlatformUser): InsertObject<PlatformDatabase, 'users'> {
+  return {
+    id: randomUUID(),
+    clerk_id: record.clerkId,
+    handle: record.handle,
+    display_name: record.displayName,
+    email: record.email,
+    container_id: record.containerId,
+    container_version: record.containerVersion ?? null,
+    plan: record.plan ?? 'free',
+    status: record.status ?? 'active',
+    pipedream_external_id: record.pipedreamExternalId ?? null,
+    created_at: sql`now()`,
+    updated_at: sql`now()`,
   };
 }
 
@@ -1225,6 +1327,56 @@ export async function listContainers(db: PlatformDB, status?: string): Promise<C
 export async function deleteContainer(db: PlatformDB, handle: string): Promise<void> {
   await db.ready;
   await db.executor.deleteFrom('containers').where('handle', '=', handle).execute();
+}
+
+export async function ensurePlatformUser(
+  db: PlatformDB,
+  record: NewPlatformUser,
+): Promise<PlatformUserRecord> {
+  await db.ready;
+  const row = await db.executor
+    .insertInto('users')
+    .values(toPlatformUserRow(record))
+    .onConflict((oc) => oc.column('clerk_id').doUpdateSet({
+      handle: record.handle,
+      display_name: record.displayName,
+      email: record.email,
+      container_id: record.containerId,
+      container_version: record.containerVersion ?? null,
+      plan: record.plan ?? 'free',
+      status: record.status ?? 'active',
+      pipedream_external_id: sql`COALESCE(users.pipedream_external_id, EXCLUDED.pipedream_external_id)`,
+      updated_at: sql`now()`,
+    }))
+    .returningAll()
+    .executeTakeFirstOrThrow();
+  return mapPlatformUser(row);
+}
+
+export async function getPlatformUserByClerkId(
+  db: PlatformDB,
+  clerkId: string,
+): Promise<PlatformUserRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('users')
+    .selectAll()
+    .where('clerk_id', '=', clerkId)
+    .executeTakeFirst();
+  return row ? mapPlatformUser(row) : undefined;
+}
+
+export async function getPlatformUserByHandle(
+  db: PlatformDB,
+  handle: string,
+): Promise<PlatformUserRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('users')
+    .selectAll()
+    .where('handle', '=', handle)
+    .executeTakeFirst();
+  return row ? mapPlatformUser(row) : undefined;
 }
 
 export async function upsertBillingCustomer(db: PlatformDB, record: NewBillingCustomer): Promise<void> {
