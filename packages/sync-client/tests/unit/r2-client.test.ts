@@ -9,6 +9,8 @@ import {
   requestPresignedUrls,
 } from "../../src/daemon/r2-client.js";
 
+const HASH_A = `sha256:${"a".repeat(64)}`;
+
 describe("daemon/r2-client", () => {
   let tempDir: string;
 
@@ -95,6 +97,100 @@ describe("daemon/r2-client", () => {
     expect(
       (await readdir(join(tempDir, "notes"))).filter((name) => name.endsWith(".tmp")),
     ).toEqual([]);
+  });
+
+  it("streams downloads without requiring arrayBuffer", async () => {
+    const finalPath = join(tempDir, "notes", "streamed.md");
+    const body = Buffer.from("hello streamed world");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body.subarray(0, 5));
+        controller.enqueue(body.subarray(5));
+        controller.close();
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": String(body.length) }),
+      body: stream,
+      arrayBuffer: vi.fn(async () => {
+        throw new Error("arrayBuffer should not be used");
+      }),
+    } as unknown as Response);
+
+    await downloadFile("https://example.test/get", finalPath, hash, {
+      expectedSize: body.length,
+      maxBytes: body.length,
+    });
+
+    expect(await readFile(finalPath, "utf8")).toBe("hello streamed world");
+  });
+
+  it("rejects oversized streamed downloads before final rename", async () => {
+    const finalPath = join(tempDir, "notes", "too-large.md");
+    const body = Buffer.from("too large");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, { status: 200 }),
+    );
+
+    await expect(
+      downloadFile("https://example.test/get", finalPath, hash, {
+        maxBytes: body.length - 1,
+      }),
+    ).rejects.toThrow(/exceeded/i);
+
+    await expect(stat(finalPath)).rejects.toThrow(/ENOENT/);
+    expect(await readdir(join(tempDir, "notes")).catch(() => [])).toEqual([]);
+  });
+
+  it("cancels the response body before rejecting oversized content-length", async () => {
+    const finalPath = join(tempDir, "notes", "declared-too-large.md");
+    const cancel = vi.fn(async () => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": "100" }),
+      body: { cancel } as unknown as ReadableStream<Uint8Array>,
+    } as unknown as Response);
+
+    await expect(
+      downloadFile("https://example.test/get", finalPath, HASH_A, {
+        maxBytes: 10,
+      }),
+    ).rejects.toThrow(/exceeded 10 bytes/);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await expect(stat(finalPath)).rejects.toThrow(/ENOENT/);
+  });
+
+  it("cancels an unfinished response stream when it exceeds maxBytes mid-read", async () => {
+    const finalPath = join(tempDir, "notes", "stream-too-large.md");
+    const body = Buffer.from("too large");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    const cancel = vi.fn(async () => {});
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body.subarray(0, 3));
+        controller.enqueue(body.subarray(3));
+      },
+      cancel,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(stream, { status: 200 }),
+    );
+
+    await expect(
+      downloadFile("https://example.test/get", finalPath, hash, {
+        maxBytes: body.length - 1,
+      }),
+    ).rejects.toThrow(/exceeded/i);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await expect(stat(finalPath)).rejects.toThrow(/ENOENT/);
+    expect(await readdir(join(tempDir, "notes")).catch(() => [])).toEqual([]);
   });
 
   it("does not clobber stale PID-based temp files from an earlier crash", async () => {
