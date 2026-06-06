@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   buildReleaseChangelog,
   humanizeCommitSubject,
@@ -35,9 +37,41 @@ describe("release changelog generation", () => {
   });
 
   it("caps the no-base fallback so it cannot emit the whole repository history", () => {
-    const source = readFileSync(join(process.cwd(), "scripts/release-changelog.mjs"), "utf8");
+    const repo = mkdtempSync(join(tmpdir(), "matrix-release-changelog-"));
+    const script = join(process.cwd(), "scripts/release-changelog.mjs");
 
-    expect(source).toContain("FALLBACK_MAX_COMMITS = 100");
-    expect(source).toContain("args.push(`--max-count=${FALLBACK_MAX_COMMITS}`)");
+    try {
+      runGit(repo, "init");
+      runGit(repo, "config", "user.email", "ci@example.com");
+      runGit(repo, "config", "user.name", "Matrix CI");
+
+      for (let index = 1; index <= 105; index += 1) {
+        writeFileSync(join(repo, "note.txt"), `${index}\n`);
+        runGit(repo, "add", "note.txt");
+        runGit(repo, "commit", "-m", `fix: fallback note ${String(index).padStart(3, "0")}`);
+      }
+
+      const result = spawnSync(process.execPath, [script, "--head", "HEAD"], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain("Fallback note 001.");
+      expect(result.stdout).not.toContain("Fallback note 005.");
+      expect(result.stdout).toContain("Fallback note 006.");
+      expect(result.stdout).toContain("Fallback note 105.");
+      expect(result.stdout.match(/^- /gm)).toHaveLength(100);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
+
+function runGit(cwd: string, ...args: string[]) {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+  });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+}
