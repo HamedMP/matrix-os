@@ -10,7 +10,8 @@ struct MatrixWebShellPanel: View {
     let title: String
 
     @State private var token: String?
-    @State private var tokenLoaded = false
+    @State private var didResolveToken = false
+    @State private var authRequired = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,12 +46,32 @@ struct MatrixWebShellPanel: View {
                 Rectangle().fill(Color.hairlineDark).frame(height: 1)
             }
 
-            if let url, tokenLoaded {
-                WebShellView(url: url, bearerToken: token)
-            } else if url != nil {
-                ProgressView("Opening \(title)...")
+            if url == nil {
+                ContentUnavailableView(
+                    "No Matrix shell",
+                    systemImage: "globe.badge.chevron.backward",
+                    description: Text("Connect a Matrix computer to open the online shell.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.surfaceCard)
+            } else if !didResolveToken {
+                ProgressView()
+                    .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.surfaceCard)
+                    .background(Color.canvasVoid)
+            } else if authRequired || token == nil {
+                NoProfileView(
+                    onCreate: { model.beginSignIn(mode: .signUp) },
+                    onSignIn: { model.beginSignIn(mode: .signIn) },
+                    onCancelSignIn: { model.cancelSignIn() },
+                    signIn: model.signIn
+                )
+            } else if let url {
+                WebShellView(
+                    url: url,
+                    bearerToken: token,
+                    onAuthRequired: { authRequired = true }
+                )
             } else {
                 ContentUnavailableView(
                     "No Matrix shell",
@@ -62,14 +83,29 @@ struct MatrixWebShellPanel: View {
             }
         }
         .task(id: url) {
-            guard url != nil else {
-                token = nil
-                tokenLoaded = false
-                return
-            }
-            tokenLoaded = false
-            token = await model.currentBearerToken()
-            tokenLoaded = true
+            await reloadBearerToken()
+        }
+        .onChange(of: model.signIn) { _, _ in
+            Task { await reloadBearerToken() }
+        }
+    }
+
+    @MainActor
+    private func reloadBearerToken() async {
+        guard url != nil else {
+            token = nil
+            didResolveToken = true
+            authRequired = false
+            return
+        }
+        didResolveToken = false
+        let current = await model.currentBearerToken()
+        token = current
+        didResolveToken = true
+        if current != nil {
+            authRequired = false
+        } else {
+            authRequired = true
         }
     }
 }
@@ -77,9 +113,10 @@ struct MatrixWebShellPanel: View {
 private struct WebShellView: NSViewRepresentable {
     let url: URL
     let bearerToken: String?
+    let onAuthRequired: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onAuthRequired: onAuthRequired)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -105,11 +142,12 @@ private struct WebShellView: NSViewRepresentable {
         coordinator.destinationURL = url
         guard let bearerToken, !bearerToken.isEmpty, let request = appSessionExchangeRequest(for: url, token: bearerToken) else {
             coordinator.exchangeInFlight = false
+            coordinator.exchangeNavigation = nil
             view.load(webShellDestinationRequest(for: url, token: bearerToken))
             return
         }
         coordinator.exchangeInFlight = true
-        view.load(request)
+        coordinator.exchangeNavigation = view.load(request)
     }
 
     private func appSessionExchangeRequest(for destination: URL, token: String) -> URLRequest? {
@@ -138,6 +176,7 @@ private struct WebShellView: NSViewRepresentable {
         var lastRequestedURL: URL?
         var destinationURL: URL?
         var exchangeInFlight = false
+        var exchangeNavigation: WKNavigation?
 
         @MainActor
         func webView(
@@ -149,9 +188,15 @@ private struct WebShellView: NSViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
+            if shouldHandleAsAuthRequired(url) {
+                onAuthRequired()
+                decisionHandler(.cancel)
+                return
+            }
             if Self.shouldOpenExternally(url) {
                 if exchangeInFlight {
                     exchangeInFlight = false
+                    exchangeNavigation = nil
                 }
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
@@ -159,6 +204,7 @@ private struct WebShellView: NSViewRepresentable {
             }
             if exchangeInFlight, !Self.isAppSessionExchangeURL(url) {
                 exchangeInFlight = false
+                exchangeNavigation = nil
             }
             decisionHandler(.allow)
         }
@@ -184,9 +230,11 @@ private struct WebShellView: NSViewRepresentable {
         @MainActor
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard exchangeInFlight,
+                  navigation === exchangeNavigation,
                   webView.url.map(Self.isAppSessionExchangeURL) == true,
                   let destinationURL else { return }
             exchangeInFlight = false
+            exchangeNavigation = nil
             webView.load(webShellDestinationRequest(for: destinationURL, token: lastBearerToken))
         }
 
@@ -194,6 +242,7 @@ private struct WebShellView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
             if exchangeInFlight {
                 exchangeInFlight = false
+                exchangeNavigation = nil
             }
         }
 
@@ -211,7 +260,23 @@ private struct WebShellView: NSViewRepresentable {
         private func loadDestinationAfterExchangeFailure(in webView: WKWebView) {
             guard exchangeInFlight, let destinationURL else { return }
             exchangeInFlight = false
+            exchangeNavigation = nil
             webView.load(webShellDestinationRequest(for: destinationURL, token: lastBearerToken))
+        }
+
+        private let onAuthRequired: @MainActor () -> Void
+
+        init(onAuthRequired: @escaping @MainActor () -> Void) {
+            self.onAuthRequired = onAuthRequired
+        }
+
+        private func shouldHandleAsAuthRequired(_ url: URL) -> Bool {
+            guard let destinationHost = destinationURL?.host()?.lowercased(),
+                  let host = url.host()?.lowercased(),
+                  host == destinationHost else { return false }
+            let path = url.path.lowercased()
+            guard !Self.isAppSessionExchangeURL(url) else { return false }
+            return Self.isAuthPath(path)
         }
 
         private static func shouldOpenExternally(_ url: URL) -> Bool {
