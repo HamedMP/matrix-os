@@ -111,6 +111,7 @@ describe("platform proxy routing", () => {
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
     delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
+    delete process.env.STRIPE_SECRET_KEY;
     delete process.env.HETZNER_SERVER_TYPE;
     delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
     delete process.env.AUTH_SHELL_HOST;

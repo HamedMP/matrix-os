@@ -3608,7 +3608,7 @@ export function createApp(deps: {
         const now = new Date();
         const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
         const access = getRuntimeAccessDecision(entitlement, now);
-        if (!entitlement || !access.runtimeProxyAllowed) {
+        if (!access.runtimeProxyAllowed) {
           applyNoStoreHeaders(c);
           return jsonCustomerVpsError(
             c,
