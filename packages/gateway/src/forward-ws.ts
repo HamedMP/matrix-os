@@ -278,7 +278,12 @@ export function createForwardTunnelHub(options: ForwardTunnelHubOptions = {}): F
 
     const cleanupPending = (close = true) => {
       const current = pendingState;
-      if (!current || current.closed) {
+      if (!current) {
+        return;
+      }
+      if (current.closed) {
+        pending.delete(current);
+        pendingState = null;
         return;
       }
       current.closed = true;

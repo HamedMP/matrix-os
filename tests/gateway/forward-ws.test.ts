@@ -153,6 +153,21 @@ describe("forward websocket protocol", () => {
     expect(ws.closeCount).toBe(1);
   });
 
+  it("clears pending handler state after hub shutdown", async () => {
+    const hub = createForwardTunnelHub();
+    const firstWs = new FakeGatewayWebSocket();
+    const secondWs = new FakeGatewayWebSocket();
+    const handler = hub.createHandler();
+
+    handler.onOpen?.({} as never, firstWs as never);
+    await hub.close();
+    handler.onClose?.();
+    handler.onOpen?.({} as never, secondWs as never);
+    handler.onMessage?.({ data: JSON.stringify({ type: "close" }) } as never, secondWs as never);
+
+    expect(secondWs.closeCount).toBe(1);
+  });
+
   it("bridges bytes in both directions after ready", () => {
     const socket = new FakeDuplexSocket();
     const dial: ForwardDialer = vi.fn(() => socket as never);

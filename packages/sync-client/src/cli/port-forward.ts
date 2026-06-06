@@ -251,6 +251,9 @@ function createWsBackpressureMonitor(
   };
 }
 
+type BoundedSocketWriter = ReturnType<typeof createBoundedSocketWriter>;
+type WsBackpressureMonitor = ReturnType<typeof createWsBackpressureMonitor>;
+
 export async function startPortForward(options: StartPortForwardOptions): Promise<PortForwardHandle> {
   const maxConnections = options.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
   const maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
@@ -273,6 +276,8 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
   const active = new Set<{
     tcp: Socket;
     ws: ForwardWebSocket;
+    socketWriter: BoundedSocketWriter;
+    wsBackpressure: WsBackpressureMonitor;
     idleTimer: ReturnType<typeof setTimeout>;
   }>();
   const server = createServer((tcp) => {
@@ -301,6 +306,8 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     const state = {
       tcp,
       ws,
+      socketWriter,
+      wsBackpressure,
       idleTimer: setTimeout(() => {
         options.onEvent?.("connection_idle_timeout", eventData(connectionId, "idle_timeout"));
         cleanup();
@@ -329,8 +336,8 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
       tcp.off("data", onTcpData);
       tcp.off("close", cleanup);
       tcp.off("error", onTcpError);
-      socketWriter.close();
-      wsBackpressure.close();
+      state.socketWriter.close();
+      state.wsBackpressure.close();
       ws.off?.("open", onWsOpen);
       ws.off?.("message", onWsMessage);
       ws.off?.("close", cleanup);
@@ -478,6 +485,8 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
   const closeServer = async () => {
     for (const state of Array.from(active)) {
       clearTimeout(state.idleTimer);
+      state.socketWriter.close();
+      state.wsBackpressure.close();
       state.tcp.destroy();
       try {
         state.ws.close();
