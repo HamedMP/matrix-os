@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +55,25 @@ async function expectDaemonConfigPreserved(configDir: string): Promise<void> {
   await expect(pathExists(join(configDir, "profiles", "cloud", "config.json"))).resolves.toBe(false);
 }
 
+function runMatrixCli(args: string[]) {
+  const bin = join(process.cwd(), "packages/sync-client/bin/matrix.mjs");
+  return spawnSync(process.execPath, [bin, ...args], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: process.env.HOME ?? "",
+      MATRIX_HOME: join(process.env.HOME ?? "", "matrix-home"),
+    },
+    encoding: "utf-8",
+    timeout: 10_000,
+  });
+}
+
+function expectJsonStdout(stdout: string): unknown {
+  expect(stdout).not.toContain("Usage: matrix profile ls|show|use|set");
+  return JSON.parse(stdout);
+}
+
 beforeEach(async () => {
   process.exitCode = undefined;
   await tempHome();
@@ -102,6 +122,48 @@ describe("profile CLI command", () => {
         ],
       },
     });
+  });
+
+  it("emits clean process-level JSON for profile subcommands", () => {
+    const commands = [
+      ["profile", "ls", "--json"],
+      ["profile", "show", "--json"],
+      [
+        "profile",
+        "set",
+        "staging",
+        "--platform",
+        "https://platform.example",
+        "--gateway",
+        "https://gateway.example",
+        "--json",
+      ],
+      ["profile", "show", "staging", "--json"],
+      ["profile", "use", "staging", "--json"],
+    ];
+
+    const outputs = commands.map((args) => {
+      const result = runMatrixCli(args);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      return expectJsonStdout(result.stdout);
+    });
+
+    expect(outputs).toEqual([
+      expect.objectContaining({ v: 1, ok: true }),
+      expect.objectContaining({ v: 1, ok: true }),
+      expect.objectContaining({
+        v: 1,
+        ok: true,
+        data: expect.objectContaining({ name: "staging" }),
+      }),
+      expect.objectContaining({
+        v: 1,
+        ok: true,
+        data: expect.objectContaining({ name: "staging" }),
+      }),
+      { v: 1, ok: true, data: { active: "staging" } },
+    ]);
   });
 
   it("sets and shows a named profile", async () => {

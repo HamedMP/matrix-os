@@ -1,4 +1,7 @@
+import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +23,81 @@ function captureLogs() {
     logs.push(String(line));
   });
   return logs;
+}
+
+async function runMatrixCli(args: string[]): Promise<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  const bin = join(process.cwd(), "packages/sync-client/bin/matrix.mjs");
+  const child = spawn(process.execPath, [bin, ...args], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: process.env.HOME ?? "",
+      MATRIX_HOME: join(process.env.HOME ?? "", "matrix-home"),
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf-8");
+  child.stderr.setEncoding("utf-8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const status = await new Promise<number | null>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("matrix_cli_timeout"));
+    }, 10_000);
+    child.once("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      resolve(code);
+    });
+  });
+  return { status, stdout, stderr };
+}
+
+function expectJsonStdout(stdout: string): unknown {
+  expect(stdout).not.toContain("Usage: matrix instance info|restart|logs");
+  return JSON.parse(stdout);
+}
+
+async function startInstanceServer(): Promise<{ server: Server; platformUrl: string }> {
+  const server = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/api/instance/restart") {
+      res.end(JSON.stringify({ restarted: true }));
+      return;
+    }
+    if (req.url === "/api/instance/logs") {
+      res.end(JSON.stringify({ lines: ["ready"] }));
+      return;
+    }
+    if (req.url === "/api/instance") {
+      res.end(JSON.stringify({ status: "running", handle: "cloud" }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  return { server, platformUrl: `http://127.0.0.1:${address.port}` };
 }
 
 beforeEach(async () => {
@@ -48,6 +126,38 @@ describe("instance CLI command", () => {
       "logs",
       "restart",
     ]);
+  });
+
+  it("emits clean process-level JSON for instance subcommands", async () => {
+    const { server, platformUrl } = await startInstanceServer();
+    try {
+      const commands = [
+        ["instance", "info", "--platform", platformUrl, "--token", "cloud-token", "--json"],
+        ["instance", "restart", "--platform", platformUrl, "--token", "cloud-token", "--json"],
+        ["instance", "logs", "--platform", platformUrl, "--token", "cloud-token", "--json"],
+      ];
+
+      const outputs = [];
+      for (const args of commands) {
+        const result = await runMatrixCli(args);
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe("");
+        outputs.push(expectJsonStdout(result.stdout));
+      }
+
+      expect(outputs).toEqual([
+        { v: 1, ok: true, data: { status: "running", handle: "cloud" } },
+        { v: 1, ok: true, data: { restarted: true } },
+        { v: 1, ok: true, data: { lines: ["ready"] } },
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
   });
 
   it("calls profile-scoped instance endpoints with bounded fetches", async () => {
