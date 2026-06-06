@@ -156,4 +156,28 @@ describe("doctor CLI command", () => {
       hint: "Run `mos login --profile local` to refresh.",
     });
   });
+
+  it("does not reflect unknown terminal health codes", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/terminal/health")) {
+        return new Response(JSON.stringify({ shell: { ok: false, code: "internal_path_leak" } }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await doctorCommand.run!({ args: { dev: true, token: "tok", json: true } } as never);
+
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "shell-backend")).toEqual({
+      name: "shell-backend",
+      ok: false,
+      code: "zellij_failed",
+      hint: "Run `mos doctor --profile local`; managed VPSes may need the latest host bundle deployed.",
+    });
+  });
 });
