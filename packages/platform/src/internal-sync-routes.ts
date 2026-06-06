@@ -7,6 +7,7 @@ import {
 } from "./platform-token.js";
 
 const INTERNAL_SYNC_BODY_LIMIT = 64 * 1024;
+const INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT = 1024 * 1024;
 const INTERNAL_SYNC_OBJECT_BODY_LIMIT = 100 * 1024 * 1024;
 const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
@@ -294,20 +295,32 @@ export function createInternalSyncRoutes(opts: {
     return c.json({ url });
   });
 
-  app.post("/multipart/complete", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
-    const parsed = parseMultipartCompleteInput(await parseJsonBody(c));
-    if (!parsed) {
-      return c.json({ error: "Validation error" }, 400);
-    }
-    const allowed = requireAllowedKey(c, parsed.key);
-    if (allowed instanceof Response) return allowed;
-    const result = await opts.r2.completeMultipartUpload(
-      parsed.key,
-      parsed.uploadId,
-      parsed.parts,
-    );
-    return c.json({ etag: result.etag ?? null });
-  });
+  app.post(
+    "/multipart/complete",
+    bodyLimit({ maxSize: INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT }),
+    async (c) => {
+      const parsed = parseMultipartCompleteInput(await parseJsonBody(c));
+      if (!parsed) {
+        return c.json({ error: "Validation error" }, 400);
+      }
+      const allowed = requireAllowedKey(c, parsed.key);
+      if (allowed instanceof Response) return allowed;
+      try {
+        const result = await opts.r2.completeMultipartUpload(
+          parsed.key,
+          parsed.uploadId,
+          parsed.parts,
+        );
+        return c.json({ etag: result.etag ?? null });
+      } catch (err: unknown) {
+        console.error(
+          "[internal-sync] Multipart completion failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return c.json({ error: "Multipart completion failed" }, 500);
+      }
+    },
+  );
 
   app.post("/multipart/abort", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = parseMultipartUploadIdInput(await parseJsonBody(c));
@@ -316,8 +329,16 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
-    await opts.r2.abortMultipartUpload(parsed.key, parsed.uploadId);
-    return c.json({ ok: true });
+    try {
+      await opts.r2.abortMultipartUpload(parsed.key, parsed.uploadId);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      console.error(
+        "[internal-sync] Multipart abort failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Multipart abort failed" }, 500);
+    }
   });
 
   app.get("/object", async (c) => {
