@@ -39,6 +39,8 @@ Fetch the current sync manifest for the authenticated user.
 
 **Response 401**: Invalid or missing JWT.
 
+**Status caveat**: Shared-folder manifest filtering is target behavior tracked by F19 in `../follow-ups.md`. Current `/api/sync/manifest` responses are caller-namespace only.
+
 **Headers**:
 - `ETag`: Current manifest ETag for client caching
 
@@ -92,9 +94,11 @@ const PresignRequestSchema = z.object({
 **Response 403**: Path outside user's prefix or insufficient share permissions.
 **Response 429**: Rate limit exceeded (100 req/min per user).
 
+**Status caveat**: Shared-folder permission checks in this contract are target behavior tracked by F19 in `../follow-ups.md`. Current `/api/sync/presign` and `/api/sync/commit` data-plane routes are caller-namespace only.
+
 **Security**:
 - Every `path` is validated with `resolveWithinPrefix(userId, path)`
-- For shared folders: checks `sync_shares` table for grantee permissions
+- For shared folders *(target behavior — not yet wired; see F19 status caveat above)*: checks `sync_shares` table for grantee permissions
 - `action: "put"` requires editor or admin role on shared paths
 - `action: "get"` requires viewer or higher role on shared paths
 
@@ -150,6 +154,8 @@ const CommitRequestSchema = z.object({
 **Response 400**: Validation error.
 **Response 401**: Invalid JWT.
 **Response 403**: Insufficient permissions.
+
+**Status caveat**: Shared-folder commit authorization is target behavior tracked by F19 in `../follow-ups.md`; the current commit route is caller-namespace only.
 
 **Server-side behavior**:
 1. Acquire Postgres advisory lock for user: `pg_advisory_xact_lock(hashtext(user_id))`
