@@ -94,7 +94,8 @@ private struct WebShellView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        guard view.url != url || context.coordinator.lastBearerToken != bearerToken else { return }
+        guard context.coordinator.lastRequestedURL != url
+            || context.coordinator.lastBearerToken != bearerToken else { return }
         load(url, in: view, coordinator: context.coordinator)
     }
 
@@ -105,11 +106,13 @@ private struct WebShellView: NSViewRepresentable {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
         coordinator.lastBearerToken = bearerToken
+        coordinator.lastRequestedURL = url
         view.load(request)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastBearerToken: String?
+        var lastRequestedURL: URL?
 
         @MainActor
         func webView(
