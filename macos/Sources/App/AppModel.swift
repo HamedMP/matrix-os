@@ -78,6 +78,12 @@ public enum SignInState: Equatable, Sendable {
     case failed(String)
 }
 
+/// Which Clerk screen the device approval page should mount first.
+public enum SignInMode: String, Sendable {
+    case signIn = "sign-in"
+    case signUp = "sign-up"
+}
+
 /// Top-level workspace sections (left rail). Home is the web shell package;
 /// Terminal is the live zellij session list opened in a full terminal surface.
 public enum AppSection: String, CaseIterable, Sendable {
@@ -312,6 +318,7 @@ public final class AppModel: ObservableObject {
     /// Factory for a terminal session given a resolved WS URL, token, and session id.
     /// Injected so tests can supply a mock event source instead of a real socket.
     private let makeTerminal: @MainActor (URL, String, String, String) -> TerminalSession
+    private var signInMode: SignInMode = .signUp
 
     // MARK: - Init
 
@@ -325,9 +332,9 @@ public final class AppModel: ObservableObject {
             GatewayHTTPClient(baseURL: url, tokenProvider: provider)
         },
         makeLoader: @escaping @Sendable (GatewayHTTPClient) -> any BoardLoading = { client in
-            // The board is project/task-first, but unlinked live zellij sessions are
-            // also surfaced so a fresh VPS never opens to an empty board.
-            CompositeBoardLoader(client: client)
+            // Project boards are task-first. Generic shells live in the Terminal
+            // section, not inside project kanban.
+            GatewayBoardLoader(client: client)
         },
         makeTerminal: @escaping @MainActor (URL, String, String, String) -> TerminalSession = { url, token, session, name in
             let client = ShellWSClient(
@@ -413,8 +420,9 @@ public final class AppModel: ObservableObject {
     /// Starts the device-authorization sign-in: requests a device code, opens the
     /// verification page in the browser, and polls until approved. On success it
     /// stores the principal token, builds a profile, and loads the board.
-    public func beginSignIn() {
+    public func beginSignIn(mode: SignInMode = .signIn) {
         signInTask?.cancel()
+        signInMode = mode
         signIn = .starting
         signInTask = Task { [weak self] in await self?.runSignIn() }
     }
@@ -450,8 +458,9 @@ public final class AppModel: ObservableObject {
         do {
             let start = try await deviceAuth.startDeviceAuth()
             if Task.isCancelled { return }
-            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: start.verificationUri)
-            if let url = URL(string: start.verificationUri) {
+            let verificationUri = verificationURI(start.verificationUri, mode: signInMode)
+            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: verificationUri)
+            if let url = URL(string: verificationUri) {
                 openExternalURL(url)
             }
 
@@ -487,6 +496,15 @@ public final class AppModel: ObservableObject {
             // Generic, user-safe — never surface raw gateway/provider text.
             signIn = .failed("Sign-in failed. Check your connection and try again.")
         }
+    }
+
+    private func verificationURI(_ rawValue: String, mode: SignInMode) -> String {
+        guard var components = URLComponents(string: rawValue) else { return rawValue }
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name == "mode" }
+        items.append(URLQueryItem(name: "mode", value: mode.rawValue))
+        components.queryItems = items
+        return components.url?.absoluteString ?? rawValue
     }
 
     // MARK: - Profile selection
@@ -708,7 +726,7 @@ public final class AppModel: ObservableObject {
 
     /// Switches the active project and reloads its board.
     public func openProject(slug: String) {
-        guard slug != projectSlug, let client = gatewayClient() else { return }
+        guard slug != projectSlug || !hasSelectedProject, let client = gatewayClient() else { return }
         openError = nil
         projectSlug = slug
         hasSelectedProject = true

@@ -10,6 +10,8 @@ struct MatrixWebShellPanel: View {
     let title: String
 
     @State private var token: String?
+    @State private var didResolveToken = false
+    @State private var authRequired = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,8 +46,24 @@ struct MatrixWebShellPanel: View {
                 Rectangle().fill(Color.hairlineDark).frame(height: 1)
             }
 
-            if let url {
-                WebShellView(url: url, bearerToken: token)
+            if !didResolveToken {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.canvasVoid)
+            } else if authRequired || token == nil {
+                NoProfileView(
+                    onCreate: { model.beginSignIn(mode: .signUp) },
+                    onSignIn: { model.beginSignIn(mode: .signIn) },
+                    onCancelSignIn: { model.cancelSignIn() },
+                    signIn: model.signIn
+                )
+            } else if let url {
+                WebShellView(
+                    url: url,
+                    bearerToken: token,
+                    onAuthRequired: { authRequired = true }
+                )
             } else {
                 ContentUnavailableView(
                     "No Matrix shell",
@@ -57,7 +75,22 @@ struct MatrixWebShellPanel: View {
             }
         }
         .task(id: url) {
-            token = await model.currentBearerToken()
+            await reloadBearerToken()
+        }
+        .onChange(of: model.signIn) { _, _ in
+            Task { await reloadBearerToken() }
+        }
+    }
+
+    @MainActor
+    private func reloadBearerToken() async {
+        let current = await model.currentBearerToken()
+        token = current
+        didResolveToken = true
+        if current != nil {
+            authRequired = false
+        } else {
+            authRequired = true
         }
     }
 }
@@ -65,9 +98,10 @@ struct MatrixWebShellPanel: View {
 private struct WebShellView: NSViewRepresentable {
     let url: URL
     let bearerToken: String?
+    let onAuthRequired: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onAuthRequired: onAuthRequired)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -142,6 +176,11 @@ private struct WebShellView: NSViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
+            if shouldHandleAsAuthRequired(url) {
+                onAuthRequired()
+                decisionHandler(.cancel)
+                return
+            }
             if Self.shouldOpenExternally(url) {
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
@@ -183,6 +222,24 @@ private struct WebShellView: NSViewRepresentable {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
             return request
+        }
+
+        private let onAuthRequired: @MainActor () -> Void
+
+        init(onAuthRequired: @escaping @MainActor () -> Void) {
+            self.onAuthRequired = onAuthRequired
+        }
+
+        private func shouldHandleAsAuthRequired(_ url: URL) -> Bool {
+            guard let destinationHost = destinationURL?.host()?.lowercased(),
+                  let host = url.host()?.lowercased(),
+                  host == destinationHost else { return false }
+            let path = url.path.lowercased()
+            guard path != "/api/auth/app-session" else { return false }
+            return path.contains("/sign-in")
+                || path.contains("/sign-up")
+                || path.contains("/login")
+                || path.contains("/auth")
         }
 
         private static func shouldOpenExternally(_ url: URL) -> Bool {

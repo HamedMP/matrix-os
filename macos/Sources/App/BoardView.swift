@@ -35,7 +35,7 @@ struct BoardView: View {
         case .needsProfile:
             NoProfileView(
                 onCreate: openCreateFlow,
-                onSignIn: { model.beginSignIn() },
+                onSignIn: { model.beginSignIn(mode: .signIn) },
                 onCancelSignIn: { model.cancelSignIn() },
                 signIn: model.signIn
             )
@@ -53,30 +53,25 @@ struct BoardView: View {
     // MARK: - Board + detail split
 
     private var boardWithDetail: some View {
-        // Native draggable divider: drag to choose how wide the board vs the
-        // detail/terminal are. Each side has a min width so neither collapses.
-        HSplitView {
-            VStack(spacing: 0) {
-                if model.phase == .disconnected {
-                    ReconnectingBar(handle: model.profile?.handle ?? "your computer")
-                }
-                if let error = model.openError {
-                    GenericErrorBanner(message: error.message, onRetry: {
-                        Task { await model.refresh() }
-                    })
-                }
+        VStack(spacing: 0) {
+            if model.phase == .disconnected {
+                ReconnectingBar(handle: model.profile?.handle ?? "your computer")
+            }
+            if let error = model.openError {
+                GenericErrorBanner(message: error.message, onRetry: {
+                    Task { await model.refresh() }
+                })
+            }
+            if hasTaskDetail {
+                detailPane
+            } else {
                 columns
                     .opacity(model.phase == .disconnected ? 0.7 : 1)
                     .saturation(model.phase == .disconnected ? 0.6 : 1)
                     .allowsHitTesting(model.phase != .disconnected)
             }
-            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if hasTaskDetail {
-                detailPane
-                    .frame(minWidth: 380, idealWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
-            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var hasTaskDetail: Bool {
@@ -251,10 +246,27 @@ struct BoardView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: Spacing.x2) {
-                Circle().fill(Color.signalLive).frame(width: 7, height: 7)
-                Text(model.hasSelectedProject ? "\(model.activeProjectName) Board" : "Matrix")
-                    .font(.plexSans(12, weight: .semibold))
-                    .foregroundStyle(Color.inkSecondary)
+                if model.hasSelectedProject {
+                    ProjectAvatarIcon(
+                        name: model.activeProjectName,
+                        slug: model.projectSlug,
+                        isActive: true,
+                        size: 24
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.activeProjectName)
+                            .font(.plexSans(12, weight: .semibold))
+                            .foregroundStyle(Color.inkPrimary)
+                        Text("Kanban")
+                            .font(.plexSans(10, weight: .medium))
+                            .foregroundStyle(Color.inkTertiary)
+                    }
+                } else {
+                    Circle().fill(Color.signalLive).frame(width: 7, height: 7)
+                    Text("Matrix OS")
+                        .font(.plexSans(12, weight: .semibold))
+                        .foregroundStyle(Color.inkSecondary)
+                }
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
@@ -300,10 +312,7 @@ struct BoardView: View {
     }
 
     private func openCreateFlow() {
-        // Hand off to the platform onboarding flow. In US1 this opens the web flow.
-        if let url = URL(string: "https://app.matrix-os.com/runtime") {
-            NSWorkspace.shared.open(url)
-        }
+        model.beginSignIn(mode: .signUp)
     }
 }
 
