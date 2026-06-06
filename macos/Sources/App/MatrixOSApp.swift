@@ -79,11 +79,11 @@ private struct OperatorCommands: Commands {
             Button("New Session") { model.createSession() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
-            Button("Home") { model.section = .home }
+            Button("Home") { model.openHome() }
                 .keyboardShortcut("1", modifiers: .control)
             Button("Board") { model.section = .board }
                 .keyboardShortcut("2", modifiers: .control)
-            Button("Shell") { model.section = .shell }
+            Button("Terminal") { model.openTerminalSection() }
                 .keyboardShortcut("3", modifiers: .control)
             Button("Browser") { model.section = .browser }
                 .keyboardShortcut("4", modifiers: .control)

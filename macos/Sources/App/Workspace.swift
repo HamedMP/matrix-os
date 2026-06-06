@@ -1,8 +1,7 @@
-// Matrix OS — workspace shell: left rail (Board / Terminals) + section content.
+// Matrix OS — workspace shell: left rail (Home / Board / Terminal / Browser) + section content.
 //
-// Board = task kanban (cards open a zellij session). Terminals = the live zellij
-// session list, opened in a side terminal (full terminal experience). This keeps
-// raw sessions OUT of the kanban (per product direction) while still one click away.
+// Board = task kanban (cards open a zellij session). Terminal = the live zellij
+// session list. Home is the hosted Matrix shell UI from the shell package.
 #if os(macOS)
 import SwiftUI
 import AppKit
@@ -40,13 +39,10 @@ struct RootShellView: View {
     private var sectionContent: some View {
         switch model.section {
         case .home:
-            MatrixComputerHomeView(
-                model: model,
-                onOpenShell: { model.section = .shell; model.createSession() }
-            )
+            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix Home")
         case .board:
             BoardView(model: model)
-        case .shell:
+        case .terminal:
             TerminalsView(model: model)
         case .browser:
             BrowserPageView()
@@ -242,6 +238,8 @@ private struct Sidebar: View {
     private func selectSection(_ section: AppSection) {
         if section == .home {
             model.openHome()
+        } else if section == .terminal {
+            model.openTerminalSection()
         } else {
             model.section = section
         }
@@ -264,7 +262,7 @@ private struct Sidebar: View {
     }
 
     private func performPrimaryAction() {
-        if model.section == .shell {
+        if model.section == .terminal {
             model.createSession()
         } else if model.section == .board {
             model.createTask(status: .todo)
@@ -274,13 +272,13 @@ private struct Sidebar: View {
     }
 
     private var primaryActionTitle: String {
-        if model.section == .shell { return "New session" }
+        if model.section == .terminal { return "New session" }
         if model.section == .board { return "New task" }
         return "Command palette"
     }
 
     private var primaryActionShortcut: String {
-        if model.section == .shell { return "⌘T" }
+        if model.section == .terminal { return "⌘T" }
         if model.section == .board { return "⌘N" }
         return "⌘K"
     }
@@ -360,7 +358,7 @@ private struct Sidebar: View {
 
     private func sessionRow(_ session: WorkspaceSession) -> some View {
         let selected = model.activeTerminalSessionName == session.name
-        return Button { model.section = .shell; model.openSession(named: session.name) } label: {
+        return Button { model.openSession(named: session.name) } label: {
             HStack(spacing: Spacing.x2) {
                 Image(systemName: session.isActive ? "terminal" : "doc.text")
                     .font(.system(size: 12, weight: .medium))
@@ -543,7 +541,7 @@ private struct TerminalsView: View {
     private var workbenchHeader: some View {
         VStack(spacing: Spacing.x3) {
             HStack(spacing: Spacing.x2) {
-                Label("Matrix Shell", systemImage: "terminal")
+                Label("Terminal", systemImage: "terminal")
                     .font(.plexSans(13, weight: .semibold))
                     .foregroundStyle(Color.inkPrimary)
                 Spacer()
@@ -560,7 +558,7 @@ private struct TerminalsView: View {
 
             HStack(alignment: .top, spacing: Spacing.x3) {
                 VStack(alignment: .leading, spacing: Spacing.x3) {
-                    Text(model.terminal?.displayName ?? "Shell")
+                    Text(model.terminal?.displayName ?? "Terminal")
                         .font(.plexSans(22, weight: .semibold))
                         .foregroundStyle(Color.inkPrimary)
                         .lineLimit(2)
@@ -571,7 +569,7 @@ private struct TerminalsView: View {
                 }
                 Spacer()
                 Button { model.createSession() } label: {
-                    Label("New shell", systemImage: "plus")
+                    Label("New terminal", systemImage: "plus")
                         .font(.plexSans(12, weight: .medium))
                         .foregroundStyle(Color.inkPrimary)
                 }

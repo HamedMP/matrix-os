@@ -133,7 +133,11 @@ public actor ShellWSClient {
             if stopped || Task.isCancelled { break }
             isAttached = false
             attempt = cleanly ? 0 : attempt + 1
-            eventContinuation.yield(.reconnecting)
+            if !cleanly && attempt >= 2 {
+                eventContinuation.yield(.error(code: "connection_failed", message: "Terminal connection failed"))
+            } else {
+                eventContinuation.yield(.reconnecting)
+            }
             await clock.sleep(seconds: backoff.delay(forAttempt: attempt))
         }
     }
