@@ -81,8 +81,13 @@ const PresignRequestSchema = z.object({
 {
   urls: Array<{
     path: string,
-    url: string,          // Presigned R2 URL (valid 15 min)
+    url: string,          // Presigned R2 URL (valid 15 min); empty for multipart PUT
     expiresIn: number,    // Seconds until expiry (900)
+    multipart?: {         // Present for PUT files >100MB
+      uploadId: string,
+      partUrls: string[],
+      partSize: number,
+    },
   }>
 }
 ```
@@ -97,6 +102,56 @@ const PresignRequestSchema = z.object({
 - For shared folders: checks `sync_shares` table for grantee permissions
 - `action: "put"` requires editor or admin role on shared paths
 - `action: "get"` requires viewer or higher role on shared paths
+
+---
+
+## POST /api/sync/multipart/complete
+
+Called after the client uploads every multipart part directly to R2. Finalizes the R2 object before the client calls `/api/sync/commit`.
+
+**Request Body**:
+```typescript
+{
+  path: string,
+  uploadId: string,
+  parts: Array<{
+    partNumber: number,
+    etag: string,
+  }>,
+}
+```
+
+**Response 200**:
+```typescript
+{ etag: string | null }
+```
+
+**Response 400**: Validation error or invalid path.
+**Response 401**: Invalid JWT.
+**Response 429**: Rate limit exceeded.
+
+---
+
+## POST /api/sync/multipart/abort
+
+Best-effort cleanup call used when multipart upload fails before completion.
+
+**Request Body**:
+```typescript
+{
+  path: string,
+  uploadId: string,
+}
+```
+
+**Response 200**:
+```typescript
+{ ok: true }
+```
+
+**Response 400**: Validation error or invalid path.
+**Response 401**: Invalid JWT.
+**Response 429**: Rate limit exceeded.
 
 ---
 

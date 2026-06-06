@@ -17,10 +17,14 @@ const mockR2 = {
   getObject: vi.fn(),
   putObject: vi.fn(),
   deleteObject: vi.fn(),
-  getPresignedGetUrl: vi.fn(),
-  getPresignedPutUrl: vi.fn(),
-  destroy: vi.fn(),
-};
+    getPresignedGetUrl: vi.fn(),
+    getPresignedPutUrl: vi.fn(),
+    createMultipartUpload: vi.fn(),
+    getPresignedPartUrl: vi.fn(),
+    completeMultipartUpload: vi.fn(),
+    abortMultipartUpload: vi.fn(),
+    destroy: vi.fn(),
+  };
 
 const mockDb = {
   getManifestMeta: vi.fn(),
@@ -231,6 +235,73 @@ describe("POST /api/sync/presign", () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({ error: "Invalid JSON" });
+  });
+});
+
+describe("POST /api/sync/multipart/complete", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockR2.completeMultipartUpload.mockResolvedValue({ etag: '"complete-etag"' });
+  });
+
+  it("completes a multipart upload inside the authenticated user prefix", async () => {
+    const app = createTestApp();
+
+    const res = await app.request(jsonRequest("/api/sync/multipart/complete", {
+      path: "videos/large.mov",
+      uploadId: "upload-123",
+      parts: [
+        { partNumber: 1, etag: '"etag-1"' },
+        { partNumber: 2, etag: '"etag-2"' },
+      ],
+    }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ etag: '"complete-etag"' });
+    expect(mockR2.completeMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/test-user/files/videos/large.mov",
+      "upload-123",
+      [
+        { partNumber: 1, etag: '"etag-1"' },
+        { partNumber: 2, etag: '"etag-2"' },
+      ],
+    );
+  });
+
+  it("rejects invalid complete payloads before calling storage", async () => {
+    const app = createTestApp();
+
+    const res = await app.request(jsonRequest("/api/sync/multipart/complete", {
+      path: "../large.mov",
+      uploadId: "upload-123",
+      parts: [{ partNumber: 1, etag: '"etag-1"' }],
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mockR2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/sync/multipart/abort", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockR2.abortMultipartUpload.mockResolvedValue(undefined);
+  });
+
+  it("aborts a multipart upload inside the authenticated user prefix", async () => {
+    const app = createTestApp();
+
+    const res = await app.request(jsonRequest("/api/sync/multipart/abort", {
+      path: "videos/large.mov",
+      uploadId: "upload-123",
+    }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(mockR2.abortMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/test-user/files/videos/large.mov",
+      "upload-123",
+    );
   });
 });
 

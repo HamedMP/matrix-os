@@ -81,6 +81,29 @@ export function createPlatformR2Client(config: {
       return (await expectJson<{ url: string }>(res)).url;
     },
 
+    async completeMultipartUpload(
+      key: string,
+      uploadId: string,
+      parts: Array<{ partNumber: number; etag: string }>,
+    ): Promise<{ etag?: string }> {
+      const res = await request("/multipart/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key, uploadId, parts }),
+      }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
+      const data = await expectJson<{ etag: string | null }>(res);
+      return { etag: data.etag ?? undefined };
+    },
+
+    async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+      const res = await request("/multipart/abort", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key, uploadId }),
+      }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
+      await expectJson<{ ok: true }>(res);
+    },
+
     async getObject(
       key: string,
       options?: { signal?: AbortSignal },

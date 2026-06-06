@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
-  AuthRejectedError,
-  downloadFile,
-  requestPresignedUrls,
-} from "../../src/daemon/r2-client.js";
+    AuthRejectedError,
+    downloadFile,
+    requestPresignedUrls,
+    uploadFile,
+  } from "../../src/daemon/r2-client.js";
 
 describe("daemon/r2-client", () => {
   let tempDir: string;
@@ -49,7 +50,7 @@ describe("daemon/r2-client", () => {
     });
   });
 
-  it("throws AuthRejectedError for 401/403 presign responses", async () => {
+    it("throws AuthRejectedError for 401/403 presign responses", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("nope", { status: 401 }),
     );
@@ -60,9 +61,119 @@ describe("daemon/r2-client", () => {
         [{ path: "notes/today.md", action: "get" }],
       ),
     ).rejects.toBeInstanceOf(AuthRejectedError);
-  });
+    });
 
-  it("verifies download hashes before replacing the destination file", async () => {
+    it("uploads multipart presigned files and completes them through the gateway", async () => {
+      const localPath = join(tempDir, "large.bin");
+      await writeFile(localPath, "hello world");
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        const href = String(url);
+        if (href === "https://r2.example.test/part-1") {
+          expect(init?.method).toBe("PUT");
+          expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("5");
+          return new Response(null, { status: 200, headers: { ETag: '"etag-1"' } });
+        }
+        if (href === "https://r2.example.test/part-2") {
+          expect(init?.method).toBe("PUT");
+          expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("5");
+          return new Response(null, { status: 200, headers: { ETag: '"etag-2"' } });
+        }
+        if (href === "https://r2.example.test/part-3") {
+          expect(init?.method).toBe("PUT");
+          expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("1");
+          return new Response(null, { status: 200, headers: { ETag: '"etag-3"' } });
+        }
+        if (href === "https://app.matrix-os.com/api/sync/multipart/complete") {
+          expect(init?.method).toBe("POST");
+          expect(JSON.parse(String(init?.body))).toEqual({
+            path: "large.bin",
+            uploadId: "upload-123",
+            parts: [
+              { partNumber: 1, etag: '"etag-1"' },
+              { partNumber: 2, etag: '"etag-2"' },
+              { partNumber: 3, etag: '"etag-3"' },
+            ],
+          });
+          return new Response(JSON.stringify({ etag: '"complete-etag"' }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch ${href}`);
+      });
+
+      await uploadFile(
+        {
+          path: "large.bin",
+          url: "",
+          expiresIn: 900,
+          multipart: {
+            uploadId: "upload-123",
+            partSize: 5,
+            partUrls: [
+              "https://r2.example.test/part-1",
+              "https://r2.example.test/part-2",
+              "https://r2.example.test/part-3",
+            ],
+          },
+        },
+        localPath,
+        { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+
+    it("aborts multipart uploads when a part upload fails", async () => {
+      const localPath = join(tempDir, "large.bin");
+      await writeFile(localPath, "helloworld");
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+        const href = String(url);
+        if (href === "https://r2.example.test/part-1") {
+          return new Response(null, { status: 200, headers: { ETag: '"etag-1"' } });
+        }
+        if (href === "https://r2.example.test/part-2") {
+          return new Response("failed", { status: 503 });
+        }
+        if (href === "https://app.matrix-os.com/api/sync/multipart/abort") {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch ${href}`);
+      });
+
+      await expect(
+        uploadFile(
+          {
+            path: "large.bin",
+            url: "",
+            expiresIn: 900,
+            multipart: {
+              uploadId: "upload-123",
+              partSize: 5,
+              partUrls: [
+                "https://r2.example.test/part-1",
+                "https://r2.example.test/part-2",
+              ],
+            },
+          },
+          localPath,
+          { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+        ),
+      ).rejects.toThrow(/upload failed/i);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://app.matrix-os.com/api/sync/multipart/abort",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ path: "large.bin", uploadId: "upload-123" }),
+        }),
+      );
+    });
+
+    it("verifies download hashes before replacing the destination file", async () => {
     const finalPath = join(tempDir, "notes", "today.md");
     const body = Buffer.from("tampered");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(

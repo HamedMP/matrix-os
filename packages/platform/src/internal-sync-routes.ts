@@ -20,6 +20,12 @@ interface R2Client {
     partNumber: number,
     expiresIn?: number,
   ): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ partNumber: number; etag: string }>,
+  ): Promise<{ etag?: string }>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
   getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
   putObject(
     key: string,
@@ -45,6 +51,15 @@ interface MultipartPartInput extends MultipartCreateInput {
   uploadId: string;
   partNumber: number;
   expiresIn?: number;
+}
+
+interface MultipartCompleteInput extends MultipartCreateInput {
+  uploadId: string;
+  parts: Array<{ partNumber: number; etag: string }>;
+}
+
+interface MultipartAbortInput extends MultipartCreateInput {
+  uploadId: string;
 }
 
 async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
@@ -132,6 +147,40 @@ function parseMultipartPartInput(input: unknown): MultipartPartInput | null {
   return expiresIn === undefined
     ? { ...parsed, uploadId, partNumber }
     : { ...parsed, uploadId, partNumber, expiresIn };
+}
+
+function parseMultipartUploadIdInput(input: unknown): MultipartAbortInput | null {
+  const parsed = parseMultipartCreateInput(input);
+  const record = asRecord(input);
+  if (!parsed || !record) return null;
+  const uploadId = parseNonEmptyString(record.uploadId);
+  return uploadId ? { ...parsed, uploadId } : null;
+}
+
+function parseMultipartCompleteInput(input: unknown): MultipartCompleteInput | null {
+  const parsed = parseMultipartUploadIdInput(input);
+  const record = asRecord(input);
+  if (!parsed || !record || !Array.isArray(record.parts) || record.parts.length === 0 || record.parts.length > 10_000) {
+    return null;
+  }
+  const parts: Array<{ partNumber: number; etag: string }> = [];
+  for (const part of record.parts) {
+    const partRecord = asRecord(part);
+    if (!partRecord) return null;
+    const partNumber = partRecord.partNumber;
+    const etag = parseNonEmptyString(partRecord.etag);
+    if (
+      !etag ||
+      !Number.isInteger(partNumber) ||
+      typeof partNumber !== "number" ||
+      partNumber <= 0 ||
+      partNumber > 10_000
+    ) {
+      return null;
+    }
+    parts.push({ partNumber, etag });
+  }
+  return { ...parsed, parts };
 }
 
 async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown | null> {
@@ -242,6 +291,32 @@ export function createInternalSyncRoutes(opts: {
       parsed.expiresIn,
     );
     return c.json({ url });
+  });
+
+  app.post("/multipart/complete", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = parseMultipartCompleteInput(await parseJsonBody(c));
+    if (!parsed) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    const allowed = requireAllowedKey(c, parsed.key);
+    if (allowed instanceof Response) return allowed;
+    const result = await opts.r2.completeMultipartUpload(
+      parsed.key,
+      parsed.uploadId,
+      parsed.parts,
+    );
+    return c.json({ etag: result.etag ?? null });
+  });
+
+  app.post("/multipart/abort", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = parseMultipartUploadIdInput(await parseJsonBody(c));
+    if (!parsed) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    const allowed = requireAllowedKey(c, parsed.key);
+    if (allowed instanceof Response) return allowed;
+    await opts.r2.abortMultipartUpload(parsed.key, parsed.uploadId);
+    return c.json({ ok: true });
   });
 
   app.get("/object", async (c) => {

@@ -34,16 +34,63 @@ vi.mock("@aws-sdk/client-s3", () => {
         this.ContentLength = params.ContentLength;
       }
     },
-    DeleteObjectCommand: class {
-      Bucket: string;
-      Key: string;
-      constructor(params: { Bucket: string; Key: string }) {
-        this.Bucket = params.Bucket;
-        this.Key = params.Key;
-      }
-    },
-  };
-});
+      DeleteObjectCommand: class {
+        Bucket: string;
+        Key: string;
+        constructor(params: { Bucket: string; Key: string }) {
+          this.Bucket = params.Bucket;
+          this.Key = params.Key;
+        }
+      },
+      CreateMultipartUploadCommand: class {
+        Bucket: string;
+        Key: string;
+        constructor(params: { Bucket: string; Key: string }) {
+          this.Bucket = params.Bucket;
+          this.Key = params.Key;
+        }
+      },
+      UploadPartCommand: class {
+        Bucket: string;
+        Key: string;
+        UploadId: string;
+        PartNumber: number;
+        constructor(params: { Bucket: string; Key: string; UploadId: string; PartNumber: number }) {
+          this.Bucket = params.Bucket;
+          this.Key = params.Key;
+          this.UploadId = params.UploadId;
+          this.PartNumber = params.PartNumber;
+        }
+      },
+      CompleteMultipartUploadCommand: class {
+        Bucket: string;
+        Key: string;
+        UploadId: string;
+        MultipartUpload?: { Parts?: Array<{ PartNumber: number; ETag: string }> };
+        constructor(params: {
+          Bucket: string;
+          Key: string;
+          UploadId: string;
+          MultipartUpload?: { Parts?: Array<{ PartNumber: number; ETag: string }> };
+        }) {
+          this.Bucket = params.Bucket;
+          this.Key = params.Key;
+          this.UploadId = params.UploadId;
+          this.MultipartUpload = params.MultipartUpload;
+        }
+      },
+      AbortMultipartUploadCommand: class {
+        Bucket: string;
+        Key: string;
+        UploadId: string;
+        constructor(params: { Bucket: string; Key: string; UploadId: string }) {
+          this.Bucket = params.Bucket;
+          this.Key = params.Key;
+          this.UploadId = params.UploadId;
+        }
+      },
+    };
+  });
 
 vi.mock("@aws-sdk/s3-request-presigner", () => {
   return {
@@ -194,7 +241,7 @@ describe("R2 client", () => {
     });
   });
 
-  describe("deleteObject", () => {
+    describe("deleteObject", () => {
     it("sends DeleteObjectCommand with AbortSignal timeout", async () => {
       mockSend.mockResolvedValue({});
 
@@ -204,6 +251,53 @@ describe("R2 client", () => {
       const [command, options] = mockSend.mock.calls[0]!;
       expect(command.Key).toBe("matrixos-sync/user1/files/old.txt");
       expect(options.abortSignal).toBeDefined();
+    });
+
+    describe("multipart completion", () => {
+      it("sends CompleteMultipartUploadCommand with ordered parts and timeout", async () => {
+        const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+        mockSend.mockResolvedValue({ ETag: '"complete-etag"' });
+
+        const result = await client.completeMultipartUpload(
+          "matrixos-sync/user1/files/large.bin",
+          "upload-123",
+          [
+            { partNumber: 2, etag: '"etag-2"' },
+            { partNumber: 1, etag: '"etag-1"' },
+          ],
+        );
+
+        expect(mockSend).toHaveBeenCalledOnce();
+        const [command, options] = mockSend.mock.calls[0]!;
+        expect(command.Key).toBe("matrixos-sync/user1/files/large.bin");
+        expect(command.UploadId).toBe("upload-123");
+        expect(command.MultipartUpload).toEqual({
+          Parts: [
+            { PartNumber: 1, ETag: '"etag-1"' },
+            { PartNumber: 2, ETag: '"etag-2"' },
+          ],
+        });
+        expect(options.abortSignal).toBeDefined();
+        expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
+        expect(result.etag).toBe('"complete-etag"');
+      });
+
+      it("sends AbortMultipartUploadCommand with timeout", async () => {
+        const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+        mockSend.mockResolvedValue({});
+
+        await client.abortMultipartUpload(
+          "matrixos-sync/user1/files/large.bin",
+          "upload-123",
+        );
+
+        expect(mockSend).toHaveBeenCalledOnce();
+        const [command, options] = mockSend.mock.calls[0]!;
+        expect(command.Key).toBe("matrixos-sync/user1/files/large.bin");
+        expect(command.UploadId).toBe("upload-123");
+        expect(options.abortSignal).toBeDefined();
+        expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
+      });
     });
   });
 });

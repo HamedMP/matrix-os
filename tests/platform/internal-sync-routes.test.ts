@@ -18,11 +18,13 @@ describe("platform/internal-sync-routes", () => {
     getPresignedPutUrl: vi.fn(),
     createMultipartUpload: vi.fn(),
     getPresignedPartUrl: vi.fn(),
-    getObject: vi.fn(),
-    putObject: vi.fn(),
-    deleteObject: vi.fn(),
-    destroy: vi.fn(),
-  };
+      getObject: vi.fn(),
+      putObject: vi.fn(),
+      deleteObject: vi.fn(),
+      completeMultipartUpload: vi.fn(),
+      abortMultipartUpload: vi.fn(),
+      destroy: vi.fn(),
+    };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -153,6 +155,62 @@ describe("platform/internal-sync-routes", () => {
 
     expect(res.status).toBe(403);
     expect(r2.getPresignedGetUrl).not.toHaveBeenCalled();
+  });
+
+  it("completes multipart uploads only for keys in the container user's prefix", async () => {
+    r2.completeMultipartUpload.mockResolvedValue({ etag: '"complete-etag"' });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [
+          { partNumber: 1, etag: '"etag-1"' },
+          { partNumber: 2, etag: '"etag-2"' },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ etag: '"complete-etag"' });
+    expect(r2.completeMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/files/videos/large.mov",
+      "upload-123",
+      [
+        { partNumber: 1, etag: '"etag-1"' },
+        { partNumber: 2, etag: '"etag-2"' },
+      ],
+    );
+  });
+
+  it("aborts multipart uploads only for keys in the container user's prefix", async () => {
+    r2.abortMultipartUpload.mockResolvedValue(undefined);
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/abort", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(r2.abortMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/files/videos/large.mov",
+      "upload-123",
+    );
   });
 
   it("maps NoSuchKey from storage reads to a 404", async () => {
