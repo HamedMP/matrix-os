@@ -191,7 +191,7 @@ private struct BrowserWebView: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
-        view.drawsBackground = false
+        view.setValue(false, forKey: "drawsBackground")
         load(url, in: view, coordinator: context.coordinator)
         return view
     }
