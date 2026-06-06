@@ -3,7 +3,7 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
-  transpilePackages: ["@matrix-os/observability"],
+  transpilePackages: ["@matrix-os/clerk-sync", "@matrix-os/observability"],
   async rewrites() {
     return [
       {
