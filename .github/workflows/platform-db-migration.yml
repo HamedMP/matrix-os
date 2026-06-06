@@ -81,6 +81,18 @@ jobs:
             printf 'Missing required value(s): %s\n' "${missing[*]}" >&2
             exit 1
           fi
+          safe_identifier_re='^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$'
+          safe_secret_re='^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$'
+          for name in SOURCE_CONTAINER SOURCE_DATABASE SOURCE_USER; do
+            if ! printf '%s\n' "${!name}" | grep -Eq "$safe_identifier_re"; then
+              printf 'Invalid %s: only letters, numbers, underscore, and hyphen are allowed.\n' "$name" >&2
+              exit 1
+            fi
+          done
+          if ! printf '%s\n' "$TARGET_SECRET" | grep -Eq "$safe_secret_re"; then
+            echo "Invalid TARGET_SECRET: only letters, numbers, underscore, and hyphen are allowed." >&2
+            exit 1
+          fi
           if [ "$MODE" = "migrate" ] && [ "$CONFIRMATION" != "MIGRATE PLATFORM DB TO MANAGED POSTGRES" ]; then
             echo "Refusing destructive migration without the exact confirmation phrase." >&2
             exit 1
@@ -137,6 +149,12 @@ jobs:
           ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
             "set -euo pipefail; install -d -m 0700 /home/deploy/backups/platform-migration; docker exec '$SOURCE_CONTAINER' pg_dump --format=custom --no-owner --no-acl -U '$SOURCE_USER' -d '$SOURCE_DATABASE' > '$remote_backup'; chmod 0600 '$remote_backup'; stat -c '%s bytes' '$remote_backup'"
 
+      - name: Prune old VPS migration snapshots
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
+            "set -euo pipefail; find /home/deploy/backups/platform-migration -maxdepth 1 -type f -name 'platform-*.dump' -mtime +7 -delete"
+
       - name: Download source snapshot to runner
         run: |
           set -euo pipefail
@@ -154,6 +172,7 @@ jobs:
           echo "Source counts:"
           printf '%s\n' "$source_counts"
           echo "Target counts before migration:"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "SELECT 1" > /dev/null
           psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from users union all select 'user_machines=' || count(*) from user_machines union all select 'host_bundle_releases=' || count(*) from host_bundle_releases;" || true
 
       - name: Restore into managed database

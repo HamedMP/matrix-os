@@ -11,6 +11,8 @@ describe('platform DB migration workflow', () => {
     expect(workflow).toContain('MIGRATE PLATFORM DB TO MANAGED POSTGRES');
     expect(workflow).toContain('Refusing destructive migration without the exact confirmation phrase.');
     expect(workflow).toContain("if: ${{ inputs.mode == 'migrate' }}");
+    expect(workflow).toContain("safe_identifier_re='^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$'");
+    expect(workflow).toContain('Invalid %s: only letters, numbers, underscore, and hyphen are allowed.');
   });
 
   it('moves data through a VPS-local snapshot without uploading database dumps as artifacts', () => {
@@ -21,6 +23,7 @@ describe('platform DB migration workflow', () => {
     expect(workflow).toContain('/home/deploy/backups/platform-migration/platform-${GITHUB_RUN_ID}.dump');
     expect(workflow).toContain('cat \'$REMOTE_BACKUP\'');
     expect(workflow).toContain('pg_restore --list platform-source.dump');
+    expect(workflow).toContain("find /home/deploy/backups/platform-migration -maxdepth 1 -type f -name 'platform-*.dump' -mtime +7 -delete");
     expect(workflow).not.toContain('actions/upload-artifact');
   });
 
@@ -33,6 +36,7 @@ describe('platform DB migration workflow', () => {
     expect(workflow).toContain('--secret "$TARGET_SECRET"');
     expect(workflow).toContain('echo "::add-mask::$target_url"');
     expect(workflow).toContain('TARGET_DATABASE_URL=$target_url');
+    expect(workflow).toContain('psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "SELECT 1" > /dev/null');
   });
 
   it('verifies key platform row counts after restore', () => {
