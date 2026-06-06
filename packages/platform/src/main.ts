@@ -105,6 +105,7 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
 const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
@@ -1247,6 +1248,23 @@ function buildCodeDomainProxyHeaders(
   headers.set('x-forwarded-proto', 'https');
   headers.set('connection', 'close');
   return headers;
+}
+
+function getTrustedSessionRouteHost(
+  host: string | undefined,
+  forwardedHost: string | undefined,
+  edgeSecretHeader: string | undefined,
+  edgeRouterSecret: string | undefined,
+): string {
+  const rawHost = host ?? '';
+  const normalizedForwardedHost = forwardedHost?.trim();
+  if (!normalizedForwardedHost) return rawHost;
+
+  const normalizedSecret = edgeRouterSecret?.trim();
+  if (!normalizedSecret) return rawHost;
+  if (!timingSafeTokenEquals(edgeSecretHeader, normalizedSecret)) return rawHost;
+
+  return getWebSocketUpgradeHost(rawHost, normalizedForwardedHost);
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -3686,7 +3704,12 @@ export function createApp(deps: {
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
   app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c, next) => {
-    const host = getWebSocketUpgradeHost(c.req.header('host'), c.req.header('x-forwarded-host'));
+    const host = getTrustedSessionRouteHost(
+      c.req.header('host'),
+      c.req.header('x-forwarded-host'),
+      c.req.header(EDGE_SECRET_HEADER),
+      appEnv.EDGE_ROUTER_SECRET,
+    );
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();

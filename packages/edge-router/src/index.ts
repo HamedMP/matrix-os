@@ -1,9 +1,11 @@
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
+const EDGE_SECRET_HEADER = "X-Matrix-Edge-Secret";
 
 export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
 
 export interface EdgeRouterEnv {
+  EDGE_ROUTER_SECRET?: string;
   PLATFORM_ORIGIN?: string;
 }
 
@@ -40,11 +42,19 @@ export async function handleEdgeRouterRequest(
       headers: noStoreTextHeaders(),
     });
   }
+  const edgeSecret = normalizeEdgeSecret(env.EDGE_ROUTER_SECRET);
+  if (!edgeSecret) {
+    console.error("[edge-router] missing_edge_secret");
+    return new Response("upstream unavailable", {
+      status: 503,
+      headers: noStoreTextHeaders(),
+    });
+  }
 
   const upstreamUrl = `${platformOrigin}${url.pathname}${url.search}`;
   const body = await readRequestBody(request);
   if (body instanceof Response) return body;
-  const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, body);
+  const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, edgeSecret, body);
 
   let response: Response;
   try {
@@ -67,6 +77,7 @@ function buildPlatformRequest(
   request: Request,
   upstreamUrl: string,
   externalHost: string,
+  edgeSecret: string,
   body: ArrayBuffer | null,
 ): Request {
   const headers = new Headers(request.headers);
@@ -76,6 +87,7 @@ function buildPlatformRequest(
   headers.delete("Host");
   headers.set("X-Forwarded-Host", externalHost);
   headers.set("X-Forwarded-Proto", "https");
+  headers.set(EDGE_SECRET_HEADER, edgeSecret);
 
   if (forwardedFor) {
     headers.set("X-Forwarded-For", forwardedFor);
@@ -151,6 +163,11 @@ function normalizePlatformOrigin(value: string): string | null {
     console.warn(`[edge-router] invalid platform origin: ${kind}`);
     return null;
   }
+}
+
+function normalizeEdgeSecret(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 function sanitizeForwardedFor(value: string | null): string | null {

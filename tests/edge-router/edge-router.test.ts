@@ -9,6 +9,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const EDGE_ENV = {
+  EDGE_ROUTER_SECRET: "edge-secret",
+  PLATFORM_ORIGIN: "https://matrix-platform.example.run.app",
+};
+
 describe("edge router worker", () => {
   it("classifies managed Matrix OS hosts", () => {
     expect(classifyEdgeRoute("api.matrix-os.com")).toBe("platform");
@@ -35,7 +40,7 @@ describe("edge router worker", () => {
         },
         body: "{}",
       }),
-      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
+      EDGE_ENV,
     );
 
     expect(response.status).toBe(200);
@@ -48,6 +53,7 @@ describe("edge router worker", () => {
     expect(upstream.headers.get("x-forwarded-host")).toBe("app.matrix-os.com");
     expect(upstream.headers.get("x-forwarded-proto")).toBe("https");
     expect(upstream.headers.get("x-forwarded-for")).toBe("203.0.113.7");
+    expect(upstream.headers.get("x-matrix-edge-secret")).toBe("edge-secret");
   });
 
   it("forwards code-domain requests with the code external host", async () => {
@@ -55,7 +61,7 @@ describe("edge router worker", () => {
 
     await handleEdgeRouterRequest(
       new Request("https://code.matrix-os.com/?folder=/home/matrix/home"),
-      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app/" },
+      { ...EDGE_ENV, PLATFORM_ORIGIN: "https://matrix-platform.example.run.app/" },
     );
 
     const [request] = fetchMock.mock.calls[0]!;
@@ -75,7 +81,7 @@ describe("edge router worker", () => {
 
     const response = await handleEdgeRouterRequest(
       new Request("https://api.matrix-os.com/health"),
-      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
+      EDGE_ENV,
     );
 
     expect(response.status).toBe(200);
@@ -94,7 +100,7 @@ describe("edge router worker", () => {
         },
         body: "too large",
       }),
-      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
+      EDGE_ENV,
     );
 
     expect(response.status).toBe(413);
@@ -124,7 +130,7 @@ describe("edge router worker", () => {
 
     const response = await handleEdgeRouterRequest(
       new Request("https://alice.matrix-os.com/"),
-      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
+      EDGE_ENV,
     );
 
     expect(response.status).toBe(404);
@@ -136,7 +142,7 @@ describe("edge router worker", () => {
 
     const response = await handleEdgeRouterRequest(
       new Request("https://api.matrix-os.com/health"),
-      { PLATFORM_ORIGIN: "http://127.0.0.1:9000" },
+      { ...EDGE_ENV, PLATFORM_ORIGIN: "http://127.0.0.1:9000" },
     );
 
     expect(response.status).toBe(503);
@@ -149,6 +155,18 @@ describe("edge router worker", () => {
     const response = await handleEdgeRouterRequest(
       new Request("https://api.matrix-os.com/health"),
       {},
+    );
+
+    expect(response.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the edge secret is missing", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope"));
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://api.matrix-os.com/health"),
+      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
     );
 
     expect(response.status).toBe(503);

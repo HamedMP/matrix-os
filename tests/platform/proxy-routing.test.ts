@@ -1431,6 +1431,7 @@ describe("platform proxy routing", () => {
     );
     const app = createApp({
       db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
       orchestrator: stubOrchestrator(),
       clerkAuth: createClerkAuth({
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
@@ -1442,6 +1443,7 @@ describe("platform proxy routing", () => {
       headers: {
         host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
         "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
         authorization: "Bearer clerk-session",
       },
     });
@@ -1471,6 +1473,7 @@ describe("platform proxy routing", () => {
     );
     const app = createApp({
       db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
       orchestrator: stubOrchestrator(),
       clerkAuth: createClerkAuth({
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
@@ -1482,6 +1485,7 @@ describe("platform proxy routing", () => {
       headers: {
         host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
         "x-forwarded-host": "code.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
         authorization: "Bearer clerk-session",
       },
     });
@@ -1493,6 +1497,32 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("host")).toBe("code.matrix-os.com");
     expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+  });
+
+  it("does not trust x-forwarded-host for app-domain routing without the edge secret", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.status).not.toBe(200);
   });
 
   it("reports no runtime when a signed-in Clerk user has no Matrix computer", async () => {
