@@ -99,6 +99,8 @@ public final class AppModel: ObservableObject {
     private let openExternalURL: @Sendable (URL) -> Void
     /// Gateway host for the profile created after a successful sign-in.
     private let signInGatewayHost: String
+    /// Monotonic token used to ignore stale `openCard` calls that resume after a newer tap.
+    private var openCardGeneration = 0
     /// In-flight sign-in task, so a re-tap cancels the previous attempt.
     private var signInTask: Task<Void, Never>?
     /// The project whose tasks the board renders.
@@ -349,6 +351,8 @@ public final class AppModel: ObservableObject {
         openError = nil
         selectedCard = card
         activePanel = .terminal
+        openCardGeneration += 1
+        let generation = openCardGeneration
 
         guard let profile else {
             let err = OpenCardError.misconfigured
@@ -364,6 +368,9 @@ public final class AppModel: ObservableObject {
             let err = OpenCardError.unauthorized
             openError = err
             throw err
+        }
+        guard generation == openCardGeneration, selectedCard?.id == card.id else {
+            throw OpenCardError.noSession
         }
 
         let wsURL: URL

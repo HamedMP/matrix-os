@@ -144,25 +144,36 @@ private struct AnimatedEllipsis: View {
             .font(.plexMono(10, weight: .medium))
             .foregroundStyle(color)
             .onAppear {
-                ticker?.cancel()
-                ticker = nil
-                guard !reduceMotion else { return }
-                ticker = Task { @MainActor in
-                    // Calm ellipsis: never a harsh blink. Stops when the view goes away.
-                    while !Task.isCancelled {
-                        try? await Task.sleep(nanoseconds: 450_000_000)
-                        phase = (phase + 1) % 4
-                    }
-                }
+                syncTickerForMotionPreference()
             }
+            .onChange(of: reduceMotion) { _, _ in syncTickerForMotionPreference() }
             .onDisappear {
-                ticker?.cancel()
-                ticker = nil
+                stopTicker()
             }
     }
 
     private var dots: String {
         String(repeating: ".", count: phase)
+    }
+
+    private func syncTickerForMotionPreference() {
+        stopTicker()
+        guard !reduceMotion else {
+            phase = 0
+            return
+        }
+        ticker = Task { @MainActor in
+            // Calm ellipsis: never a harsh blink. Stops when the view goes away.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                phase = (phase + 1) % 4
+            }
+        }
+    }
+
+    private func stopTicker() {
+        ticker?.cancel()
+        ticker = nil
     }
 }
 
