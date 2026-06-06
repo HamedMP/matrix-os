@@ -1,7 +1,10 @@
 import {
   execFile as nodeExecFile,
 } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { shellError, type ShellSafeError } from "./errors.js";
 
 type ExecFile = typeof nodeExecFile;
@@ -110,6 +113,7 @@ type RetainedCreatePty = {
   process: ShellAttachProcess;
   startedAtMs: number;
   exitDisposable: Disposable | null;
+  tempLayoutDir?: string;
 };
 
 function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -201,6 +205,14 @@ function isNoActiveSessionsFailure(err: unknown): boolean {
   return typeof stderr === "string" && /no active zellij sessions found/i.test(stderr);
 }
 
+async function cleanupTempLayoutDir(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (err: unknown) {
+    console.warn("[shell] failed to remove zellij temp layout:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter {
   const execFile = deps.execFile ?? nodeExecFile;
   const timeoutMs = deps.timeoutMs ?? 10_000;
@@ -220,6 +232,9 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     retainedCreatePtys.delete(name);
     retained.exitDisposable?.dispose();
     retained.exitDisposable = null;
+    if (retained.tempLayoutDir) {
+      void cleanupTempLayoutDir(retained.tempLayoutDir);
+    }
     if (options.kill) {
       retained.process.kill();
     }
@@ -303,13 +318,19 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       releaseRetainedCreatePty(options.name, { kill: true });
 
       const args = ["--session", options.name];
-      if (options.cmd) {
-        args.push("--layout-string", initialCommandLayout(options.cmd, options.cwd));
-      } else if (options.layout) {
-        args.push("--layout", options.layout);
-      }
-      let pty: ShellAttachProcess;
+      let tempLayoutDir: string | undefined;
+      let retainedRegistered = false;
       try {
+        if (options.cmd) {
+          tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
+          const layoutPath = join(tempLayoutDir, "layout.kdl");
+          await writeFile(layoutPath, initialCommandLayout(options.cmd, options.cwd), { mode: 0o600 });
+          args.push("--new-session-with-layout", layoutPath);
+        } else if (options.layout) {
+          args.push("--layout", options.layout);
+        }
+
+        let pty: ShellAttachProcess;
         pty = spawnPty("zellij", args, {
           name: "xterm-256color",
           cols: 120,
@@ -317,30 +338,40 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           cwd: options.cwd ?? cwd,
           env: attachEnv(deps.env),
         });
-      } catch (err: unknown) {
-        throw safeZellijError(err);
-      }
-      const startup = { exited: null as PtyExitEvent | null };
-      const retained: RetainedCreatePty = {
-        process: pty,
-        startedAtMs: nowMs(),
-        exitDisposable: null,
-      };
-      retainedCreatePtys.set(options.name, retained);
-      const exitDisposable = pty.onExit((event) => {
-        startup.exited = event;
-        releaseRetainedCreatePty(options.name);
-      });
-      retained.exitDisposable = exitDisposable;
 
-      await delay(startupDelayMs);
-      if (startup.exited) {
-        releaseRetainedCreatePty(options.name);
-        const err = Object.assign(new Error("zellij exited during startup"), {
-          code: startup.exited.exitCode,
-          signal: startup.exited.signal == null ? undefined : String(startup.exited.signal),
+        const startup = { exited: null as PtyExitEvent | null };
+        const retained: RetainedCreatePty = {
+          process: pty,
+          startedAtMs: nowMs(),
+          exitDisposable: null,
+          ...(tempLayoutDir ? { tempLayoutDir } : {}),
+        };
+        retainedCreatePtys.set(options.name, retained);
+        retainedRegistered = true;
+        const exitDisposable = pty.onExit((event) => {
+          startup.exited = event;
+          releaseRetainedCreatePty(options.name);
         });
+        retained.exitDisposable = exitDisposable;
+
+        await delay(startupDelayMs);
+        if (startup.exited) {
+          releaseRetainedCreatePty(options.name);
+          const err = Object.assign(new Error("zellij exited during startup"), {
+            code: startup.exited.exitCode,
+            signal: startup.exited.signal == null ? undefined : String(startup.exited.signal),
+          });
+          throw safeZellijError(err);
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && "code" in err && (err as { code?: unknown }).code === "zellij_failed") {
+          throw err;
+        }
         throw safeZellijError(err);
+      } finally {
+        if (tempLayoutDir && !retainedRegistered) {
+          await cleanupTempLayoutDir(tempLayoutDir);
+        }
       }
     },
     async deleteSession(name, options = {}) {
