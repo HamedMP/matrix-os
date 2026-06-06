@@ -3,9 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2026-06-06"
 
 routes = [
-  { pattern = "api.matrix-os.com", custom_domain = true },
-  { pattern = "app.matrix-os.com", custom_domain = true },
-  { pattern = "code.matrix-os.com", custom_domain = true }
+  { pattern = "api.matrix-os.com/*", zone_name = "matrix-os.com" },
+  { pattern = "app.matrix-os.com/*", zone_name = "matrix-os.com" },
+  { pattern = "code.matrix-os.com/*", zone_name = "matrix-os.com" }
 ]
 
 [vars]
