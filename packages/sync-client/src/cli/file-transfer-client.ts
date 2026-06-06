@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -127,11 +127,31 @@ export async function downloadRemoteFile(
   }
 
   const bytes = Buffer.from(await res.arrayBuffer());
-  await mkdir(dirname(resolvedLocal), { recursive: true, mode: options.secret ? 0o700 : 0o755 });
+  const parentDir = dirname(resolvedLocal);
+  const directoryMode = options.secret ? 0o700 : 0o755;
+  let createdParentDir = false;
+  try {
+    await lstat(parentDir);
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      createdParentDir = true;
+    } else {
+      throw err;
+    }
+  }
+  await mkdir(parentDir, { recursive: true, mode: directoryMode });
+  if (createdParentDir) {
+    await chmod(parentDir, directoryMode);
+  }
   const tmpPath = `${resolvedLocal}.matrix-download-${randomUUID()}.tmp`;
   const mode = options.secret ? 0o600 : 0o644;
   try {
     await writeFile(tmpPath, bytes, { flag: "wx", mode });
+    await chmod(tmpPath, mode);
     await rename(tmpPath, resolvedLocal);
   } catch (err) {
     try {

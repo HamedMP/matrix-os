@@ -4,7 +4,7 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.2` is the prepared CLI patch release for terminal attach input handling. It keeps the `0.3.1` shell/session features and adds stronger local terminal cleanup plus stale mouse/focus filtering so returning to an inactive attach tab does not forward mouse escape sequences into the remote shell.
+`0.3.3` is the prepared CLI patch release for the merged CLI fixes after `0.3.2`, including interactive JSON output isolation, leading global flag handling, profile-aware peer commands, agent credential transfer, and sync-client daemon upload/download fixes.
 
 ## Versioning
 
@@ -33,7 +33,7 @@ git tag -l 'cli-v*'
 
 ## Release
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.2`. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.3` and `update_homebrew=true`. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -57,8 +57,8 @@ For macOS, also verify the GitHub release contains `MatrixSync-0.3.0.pkg` when t
 
 ## Rollback
 
-npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.2` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
+npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.3` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.1 "Use @finnaai/matrix@0.3.2"
+npm deprecate @finnaai/matrix@0.3.2 "Use @finnaai/matrix@0.3.3"
 ```
