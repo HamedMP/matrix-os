@@ -17,6 +17,7 @@ import {
   classifyWebSocketPath,
   createApp,
   escapeInlineScriptJson,
+  getTrustedSessionRoutedWebSocketHost,
 } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
@@ -437,6 +438,50 @@ describe("platform proxy routing", () => {
     expect(classifySessionRoutedHost("app.matrix-os.com")).toBe("app");
     expect(classifySessionRoutedHost("code.matrix-os.com")).toBe("code");
     expect(classifySessionRoutedHost("alice.matrix-os.com")).toBe("other");
+  });
+
+  it("requires the edge secret before websocket routing trusts x-forwarded-host", () => {
+    const cloudRunHost = "matrix-platform-jqxkjdhtkq-ey.a.run.app";
+
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        cloudRunHost,
+        "code.matrix-os.com",
+        undefined,
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe(cloudRunHost);
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        cloudRunHost,
+        "code.matrix-os.com",
+        "wrong-secret",
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe(cloudRunHost);
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        cloudRunHost,
+        "code.matrix-os.com",
+        "edge-secret",
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe("code.matrix-os.com");
+  });
+
+  it("keeps token-authenticated websocket fallback for internal platform hosts", () => {
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        "platform:9000",
+        undefined,
+        undefined,
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe("app.matrix-os.com");
   });
 
   it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {

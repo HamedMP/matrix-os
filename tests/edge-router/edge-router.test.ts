@@ -3,6 +3,7 @@ import {
   buildEdgeResponseInit,
   classifyEdgeRoute,
   handleEdgeRouterRequest,
+  UPSTREAM_TIMEOUT_MS,
 } from "../../packages/edge-router/src/index.js";
 
 afterEach(() => {
@@ -20,6 +21,10 @@ describe("edge router worker", () => {
     expect(classifyEdgeRoute("app.matrix-os.com")).toBe("app");
     expect(classifyEdgeRoute("code.matrix-os.com")).toBe("code");
     expect(classifyEdgeRoute("alice.matrix-os.com")).toBe("unknown");
+  });
+
+  it("matches the platform proxy timeout budget", () => {
+    expect(UPSTREAM_TIMEOUT_MS).toBe(30_000);
   });
 
   it("forwards app-domain requests to Cloud Run with external host preserved", async () => {

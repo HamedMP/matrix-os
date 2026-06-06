@@ -1,4 +1,4 @@
-const UPSTREAM_TIMEOUT_MS = 10_000;
+export const UPSTREAM_TIMEOUT_MS = 30_000;
 const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
 const EDGE_SECRET_HEADER = "X-Matrix-Edge-Secret";
 

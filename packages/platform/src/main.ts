@@ -133,6 +133,7 @@ const HOST_BUNDLE_FILES = new Set([
 ]);
 const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev|beta)$/;
 const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev|beta)\.json$/;
+type HeaderValue = string | string[] | undefined;
 const TENANT_PUBLIC_TELEMETRY_ENV_KEYS = [
   'POSTHOG_TOKEN',
   'POSTHOG_PROJECT_TOKEN',
@@ -1250,21 +1251,39 @@ function buildCodeDomainProxyHeaders(
   return headers;
 }
 
-function getTrustedSessionRouteHost(
-  host: string | undefined,
-  forwardedHost: string | undefined,
-  edgeSecretHeader: string | undefined,
+function firstHeaderValue(value: HeaderValue): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+export function getTrustedSessionRouteHost(
+  host: HeaderValue,
+  forwardedHost: HeaderValue,
+  edgeSecretHeader: HeaderValue,
   edgeRouterSecret: string | undefined,
 ): string {
-  const rawHost = host ?? '';
-  const normalizedForwardedHost = forwardedHost?.trim();
+  const rawHost = getWebSocketUpgradeHost(host, undefined);
+  const normalizedForwardedHost = getWebSocketUpgradeHost(undefined, forwardedHost);
   if (!normalizedForwardedHost) return rawHost;
 
   const normalizedSecret = edgeRouterSecret?.trim();
   if (!normalizedSecret) return rawHost;
-  if (!timingSafeTokenEquals(edgeSecretHeader, normalizedSecret)) return rawHost;
+  if (!timingSafeTokenEquals(firstHeaderValue(edgeSecretHeader), normalizedSecret)) return rawHost;
 
-  return getWebSocketUpgradeHost(rawHost, normalizedForwardedHost);
+  return normalizedForwardedHost;
+}
+
+export function getTrustedSessionRoutedWebSocketHost(
+  host: HeaderValue,
+  forwardedHost: HeaderValue,
+  edgeSecretHeader: HeaderValue,
+  edgeRouterSecret: string | undefined,
+  path: string,
+): string {
+  const trustedHost = getTrustedSessionRouteHost(host, forwardedHost, edgeSecretHeader, edgeRouterSecret);
+  return getSessionRoutedWebSocketHost(trustedHost, undefined, path);
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -5329,7 +5348,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const path = req.url ?? '/';
     const pathClass = classifyWebSocketPath(path);
-    const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
+    const host = getTrustedSessionRoutedWebSocketHost(
+      req.headers.host,
+      req.headers['x-forwarded-host'],
+      req.headers[EDGE_SECRET_HEADER],
+      appEnv.EDGE_ROUTER_SECRET,
+      path,
+    );
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;
