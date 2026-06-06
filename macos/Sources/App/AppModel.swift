@@ -496,7 +496,7 @@ public final class AppModel: ObservableObject {
         Task {
             do {
                 try await openCard(card)
-            } catch let error as OpenCardError {
+            } catch let error as OperatorError {
                 await MainActor.run { self.openError = error }
             } catch {
                 await MainActor.run { self.openError = .misconfigured }
