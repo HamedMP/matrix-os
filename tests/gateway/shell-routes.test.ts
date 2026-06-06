@@ -71,6 +71,45 @@ describe("gateway shell routes", () => {
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
   });
 
+  it("runs non-interactive commands through a bounded JSON route", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const commandRunner = {
+      run: vi.fn(async () => ({
+        stdout: "file.txt\n",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        truncated: false,
+        durationMs: 12,
+      })),
+    };
+    const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({ registry, commandRunner }));
+
+    const res = await app.request("/api/terminal/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: ["ls"], cwd: "projects/app" }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      stdout: "file.txt\n",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      truncated: false,
+      durationMs: 12,
+    });
+    expect(commandRunner.run).toHaveBeenCalledWith({ command: ["ls"], cwd: "projects/app" });
+  });
+
   it("allows digit-leading session names consistently across create and route params", async () => {
     const registry = {
       list: vi.fn(async () => []),

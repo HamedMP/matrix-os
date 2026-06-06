@@ -9,6 +9,11 @@ export interface ShellClientOptions {
 
 export interface ShellClient {
   listSessions(): Promise<unknown[]>;
+  runCommand(input: {
+    command: string[];
+    cwd?: string;
+    timeoutMs?: number;
+  }): Promise<ShellRunResult>;
   createSession(input: {
     name: string;
     cwd?: string;
@@ -36,6 +41,16 @@ export interface ShellClientError extends Error {
   code: string;
 }
 
+export interface ShellRunResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  truncated: boolean;
+  durationMs: number;
+}
+
 interface AttachWebSocket {
   send(data: string): void;
   close(): void;
@@ -55,6 +70,8 @@ export interface ShellAttachOptions {
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
+const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
+const RUN_RESPONSE_GRACE_MS = 30_000;
 const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[?1000l",
   "\u001b[?1002l",
@@ -232,7 +249,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
     return url.toString();
   }
 
-  async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+  async function request(path: string, init: RequestInit = {}, requestTimeoutMs = timeoutMs): Promise<unknown> {
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, key) => {
       headers[key] = value;
@@ -249,7 +266,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       res = await fetchImpl(`${base}${path}`, {
         ...init,
         headers,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       });
     } catch (err: unknown) {
       throw Object.assign(new Error("Request failed"), {
@@ -298,6 +315,25 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         return (payload as { sessions: unknown[] }).sessions;
       }
       return [];
+    },
+    async runCommand(input) {
+      const payload = await request("/api/terminal/run", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }, (input.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS) + RUN_RESPONSE_GRACE_MS);
+      if (typeof payload !== "object" || payload === null) {
+        throw Object.assign(new Error("Request failed"), { code: "invalid_response" });
+      }
+      const result = payload as Partial<ShellRunResult>;
+      return {
+        stdout: typeof result.stdout === "string" ? result.stdout : "",
+        stderr: typeof result.stderr === "string" ? result.stderr : "",
+        exitCode: typeof result.exitCode === "number" ? result.exitCode : null,
+        signal: typeof result.signal === "string" ? result.signal : null,
+        timedOut: result.timedOut === true,
+        truncated: result.truncated === true,
+        durationMs: typeof result.durationMs === "number" ? result.durationMs : 0,
+      };
     },
     async createSession(input) {
       return (await request(terminalSessionsPath, {

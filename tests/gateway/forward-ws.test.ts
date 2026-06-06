@@ -10,12 +10,14 @@ import {
 class FakeGatewayWebSocket {
   sent: unknown[] = [];
   closed = false;
+  closeCount = 0;
 
   send(data: unknown) {
     this.sent.push(data);
   }
 
   close() {
+    this.closeCount += 1;
     this.closed = true;
   }
 }
@@ -23,6 +25,7 @@ class FakeGatewayWebSocket {
 class FakeDuplexSocket {
   private handlers = new Map<string, Array<(...args: unknown[]) => void>>();
   writes: Buffer[] = [];
+  writeResults: boolean[] = [];
   destroyed = false;
 
   on(event: string, handler: (...args: unknown[]) => void) {
@@ -58,7 +61,7 @@ class FakeDuplexSocket {
 
   write(chunk: Buffer) {
     this.writes.push(Buffer.from(chunk));
-    return true;
+    return this.writeResults.shift() ?? true;
   }
 
   destroy() {
@@ -111,6 +114,60 @@ describe("forward websocket protocol", () => {
     expect(ws.closed).toBe(true);
   });
 
+  it("counts pre-open websocket connections against the cap and times them out", async () => {
+    const hub = createForwardTunnelHub({ maxConnections: 1, idleTimeoutMs: 5 });
+    const firstWs = new FakeGatewayWebSocket();
+    const secondWs = new FakeGatewayWebSocket();
+    const first = hub.createHandler();
+    const second = hub.createHandler();
+
+    first.onOpen?.({} as never, firstWs as never);
+    second.onOpen?.({} as never, secondWs as never);
+
+    expect(JSON.parse(String(secondWs.sent[0]))).toEqual({
+      type: "error",
+      code: "connection_limit",
+      message: "Request failed",
+    });
+    expect(secondWs.closed).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(JSON.parse(String(firstWs.sent[0]))).toEqual({
+      type: "error",
+      code: "idle_timeout",
+      message: "Request failed",
+    });
+    expect(firstWs.closed).toBe(true);
+  });
+
+  it("closes pre-open websocket close frames", () => {
+    const hub = createForwardTunnelHub();
+    const ws = new FakeGatewayWebSocket();
+    const handler = hub.createHandler();
+
+    handler.onOpen?.({} as never, ws as never);
+    handler.onMessage?.({ data: JSON.stringify({ type: "close" }) } as never, ws as never);
+
+    expect(JSON.parse(String(ws.sent[0]))).toEqual({ type: "close" });
+    expect(ws.closeCount).toBe(1);
+  });
+
+  it("clears pending handler state after hub shutdown", async () => {
+    const hub = createForwardTunnelHub();
+    const firstWs = new FakeGatewayWebSocket();
+    const secondWs = new FakeGatewayWebSocket();
+    const handler = hub.createHandler();
+
+    handler.onOpen?.({} as never, firstWs as never);
+    await hub.close();
+    handler.onClose?.();
+    handler.onOpen?.({} as never, secondWs as never);
+    handler.onMessage?.({ data: JSON.stringify({ type: "close" }) } as never, secondWs as never);
+
+    expect(secondWs.closeCount).toBe(1);
+  });
+
   it("bridges bytes in both directions after ready", () => {
     const socket = new FakeDuplexSocket();
     const dial: ForwardDialer = vi.fn(() => socket as never);
@@ -148,6 +205,57 @@ describe("forward websocket protocol", () => {
     });
     expect(socket.destroyed).toBe(true);
     expect(ws.closed).toBe(true);
+  });
+
+  it("closes active websocket failures once", () => {
+    const socket = new FakeDuplexSocket();
+    const hub = createForwardTunnelHub({ dial: () => socket as never });
+    const ws = new FakeGatewayWebSocket();
+    const handler = hub.createHandler();
+
+    handler.onOpen?.({} as never, ws as never);
+    handler.onMessage?.({ data: JSON.stringify({ type: "open", host: "127.0.0.1", port: 3000 }) } as never, ws as never);
+    socket.emit("connect");
+    handler.onMessage?.({ data: JSON.stringify({ type: "open", host: "127.0.0.1", port: 3000 }) } as never, ws as never);
+
+    expect(ws.closeCount).toBe(1);
+  });
+
+  it("queues websocket binary writes until the loopback socket drains", () => {
+    const socket = new FakeDuplexSocket();
+    socket.writeResults = [false, true];
+    const hub = createForwardTunnelHub({ dial: () => socket as never });
+    const ws = new FakeGatewayWebSocket();
+    const handler = hub.createHandler();
+
+    handler.onOpen?.({} as never, ws as never);
+    handler.onMessage?.({ data: JSON.stringify({ type: "open", host: "127.0.0.1", port: 3000 }) } as never, ws as never);
+    socket.emit("connect");
+    handler.onMessage?.({ data: Buffer.from("first") } as never, ws as never);
+    handler.onMessage?.({ data: Buffer.from("second") } as never, ws as never);
+
+    expect(socket.writes).toEqual([Buffer.from("first")]);
+
+    socket.emit("drain");
+
+    expect(socket.writes).toEqual([Buffer.from("first"), Buffer.from("second")]);
+  });
+
+  it("closes active hub connections once on shutdown", async () => {
+    const socket = new FakeDuplexSocket();
+    const hub = createForwardTunnelHub({ dial: () => socket as never });
+    const ws = new FakeGatewayWebSocket();
+    const handler = hub.createHandler();
+
+    handler.onOpen?.({} as never, ws as never);
+    handler.onMessage?.({ data: JSON.stringify({ type: "open", host: "127.0.0.1", port: 3000 }) } as never, ws as never);
+    socket.emit("connect");
+
+    await hub.close();
+    socket.emit("close");
+
+    expect(ws.closeCount).toBe(1);
+    expect(hub.activeConnectionsForTest()).toEqual([]);
   });
 
   it("returns generic client errors while logging dial failures", () => {
