@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PUBLISHED_CLI_COMMANDS,
+  normalizeLeadingGlobalFlags,
   resolvePublishedCliRedirect,
 } from "../../packages/cli/src/index.js";
 import { completionCommand } from "../../packages/sync-client/src/cli/commands/completion.js";
@@ -18,6 +19,75 @@ describe("unified CLI command tree", () => {
       "cloud",
     ]);
     expect(resolvePublishedCliRedirect(["sh", "ls"])).toEqual(["sh", "ls"]);
+  });
+
+  it("normalizes documented leading global flags before command dispatch", () => {
+    expect(normalizeLeadingGlobalFlags(["--profile", "local", "status"])).toEqual([
+      "status",
+      "--profile",
+      "local",
+    ]);
+    expect(normalizeLeadingGlobalFlags(["--json", "profile", "ls"])).toEqual([
+      "profile",
+      "ls",
+      "--json",
+    ]);
+    expect(normalizeLeadingGlobalFlags(["--profile=local", "shell", "ls"])).toEqual([
+      "shell",
+      "ls",
+      "--profile=local",
+    ]);
+    expect(normalizeLeadingGlobalFlags([
+      "--gateway",
+      "http://localhost:4000",
+      "--platform=https://app.matrix-os.com",
+      "--token",
+      "token-1",
+      "--quiet",
+      "-v",
+      "status",
+    ])).toEqual([
+      "status",
+      "--gateway",
+      "http://localhost:4000",
+      "--platform=https://app.matrix-os.com",
+      "--token",
+      "token-1",
+      "--quiet",
+      "-v",
+    ]);
+    expect(normalizeLeadingGlobalFlags(["--profile", "--json", "status"])).toEqual([
+      "status",
+      "--profile",
+      "--json",
+    ]);
+  });
+
+  it("redirects published commands when documented global flags lead", () => {
+    expect(resolvePublishedCliRedirect(["--profile", "local", "status"])).toEqual([
+      "status",
+      "--profile",
+      "local",
+    ]);
+    expect(resolvePublishedCliRedirect(["--json", "profile", "ls"])).toEqual([
+      "profile",
+      "ls",
+      "--json",
+    ]);
+    expect(resolvePublishedCliRedirect(["--profile=local", "shell", "ls"])).toEqual([
+      "shell",
+      "ls",
+      "--profile=local",
+    ]);
+  });
+
+  it("does not normalize arbitrary leading flags or development commands", () => {
+    expect(normalizeLeadingGlobalFlags(["--unknown", "profile", "ls"])).toEqual([
+      "--unknown",
+      "profile",
+      "ls",
+    ]);
+    expect(resolvePublishedCliRedirect(["--json", "start", "--shell"])).toBeNull();
   });
 
   it("keeps development-only commands out of the published redirect set", () => {
