@@ -215,7 +215,6 @@ import {
   ClientErrorReportSchema,
   writeClientErrorReport,
 } from "./client-error-log.js";
-import { createForwardTunnelHub } from "./forward-ws.js";
 
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 
@@ -515,7 +514,6 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
-  const forwardTunnelHub = createForwardTunnelHub();
   const captureTerminalEvent = (
     event: string,
     properties: Record<string, string | number | boolean | undefined> = {},
@@ -2271,11 +2269,6 @@ export async function createGateway(config: GatewayConfig) {
         },
       };
     }),
-  );
-
-  app.get(
-    "/ws/forward",
-    upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
   app.get(
@@ -4391,7 +4384,6 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
-      await forwardTunnelHub.close();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

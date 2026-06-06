@@ -15,7 +15,6 @@ import { runCommand } from "./commands/run.js";
 import { uploadCommand } from "./commands/upload.js";
 import { downloadCommand } from "./commands/download.js";
 import { agentCommand } from "./commands/agent.js";
-import { forwardAliasCommand, portCommand } from "./commands/port.js";
 import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 
 const require = createRequire(import.meta.url);
@@ -41,8 +40,6 @@ const main = defineCommand({
     upload: uploadCommand,
     download: downloadCommand,
     agent: agentCommand,
-    port: portCommand,
-    forward: forwardAliasCommand,
     doctor: doctorCommand,
     instance: instanceCommand,
     completion: completionCommand,

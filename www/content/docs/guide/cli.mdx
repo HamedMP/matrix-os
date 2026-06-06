@@ -122,37 +122,6 @@ matrix shell layout show --name dev        # print the KDL
 matrix shell layout rm --name dev
 ```
 
-## Port forwarding
-
-Forwarding opens a listener on your local machine and connects it to a service listening on your Matrix computer. V1 supports local-to-Matrix-computer forwarding only. Reverse tunnels and public/shareable HTTPS URLs are not part of this command yet.
-
-```bash
-# Local 127.0.0.1:3000 -> Matrix computer 127.0.0.1:3000
-matrix port forward 3000
-
-# Local 127.0.0.1:8080 -> Matrix computer 127.0.0.1:3000
-matrix port forward 8080:127.0.0.1:3000
-
-# Top-level alias
-matrix forward 3000
-matrix forward 8080:127.0.0.1:3000
-```
-
-The local listener always binds to `127.0.0.1`. The remote target must be loopback on the Matrix computer: `127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>`. To forward a dev server, start that server on the Matrix computer first, then run the CLI command from your local terminal.
-
-```bash
-matrix port forward 5173
-open http://127.0.0.1:5173
-```
-
-With `--json`, port forwarding emits NDJSON. The first event is `ready`, then connection lifecycle events follow until the command exits.
-
-```bash
-matrix port forward 3000 --json
-{"v":1,"type":"ready","data":{"localHost":"127.0.0.1","localPort":3000,"remoteHost":"127.0.0.1","remotePort":3000,"profile":"cloud","gatewayUrl":"https://app.matrix-os.com"}}
-{"v":1,"type":"connection_open","data":{"localHost":"127.0.0.1","localPort":3000,"remoteHost":"127.0.0.1","remotePort":3000,"connectionId":1}}
-```
-
 ## File sync
 
 The sync daemon mirrors a local folder against your instance's home directory. It runs as a background service installed by `matrix sync start`.
@@ -223,7 +192,6 @@ Every command supports `--json` for scripting and integration with the upcoming 
 ```bash
 matrix shell ls --json
 matrix sync status --json
-matrix port forward 3000 --json
 matrix shell tab ls main --json | jq '.[] | .name'
 ```
 
@@ -284,14 +252,6 @@ Usually means the zellij session exited on your instance. Check `matrix shell ls
 **`session "foo" not found` when connecting**
 
 The session does not exist on your instance. `matrix shell connect` is intentionally strict unless you pass `-c`. Use `matrix shell new foo` or `matrix shell connect -c foo` to create it.
-
-**`matrix port forward` returns `invalid_forward_spec`**
-
-Check the spec shape and port ranges. Valid examples are `3000`, `8080:127.0.0.1:3000`, `8080:localhost:3000`, and `8080:[::1]:3000`. Ports must be integers from 1 through 65535.
-
-**`matrix port forward` connects but the browser shows connection refused**
-
-The target service must be running on the Matrix computer loopback interface, not on your laptop. Attach with `matrix shell connect <session>` and verify the service is listening on `127.0.0.1:<port>` inside the Matrix computer.
 
 **Local stack returns connection refused**
 

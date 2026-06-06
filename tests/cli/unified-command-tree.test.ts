@@ -19,15 +19,6 @@ describe("unified CLI command tree", () => {
       "cloud",
     ]);
     expect(resolvePublishedCliRedirect(["sh", "ls"])).toEqual(["sh", "ls"]);
-    expect(resolvePublishedCliRedirect(["port", "forward", "3000"])).toEqual([
-      "port",
-      "forward",
-      "3000",
-    ]);
-    expect(resolvePublishedCliRedirect(["forward", "3000"])).toEqual([
-      "forward",
-      "3000",
-    ]);
   });
 
   it("normalizes documented leading global flags before command dispatch", () => {
@@ -102,8 +93,6 @@ describe("unified CLI command tree", () => {
   it("keeps development-only commands out of the published redirect set", () => {
     expect(PUBLISHED_CLI_COMMANDS.has("start")).toBe(false);
     expect(PUBLISHED_CLI_COMMANDS.has("send")).toBe(false);
-    expect(PUBLISHED_CLI_COMMANDS.has("port")).toBe(true);
-    expect(PUBLISHED_CLI_COMMANDS.has("forward")).toBe(true);
     expect(resolvePublishedCliRedirect(["start", "--shell"])).toBeNull();
     expect(resolvePublishedCliRedirect(["send", "hello"])).toBeNull();
   });
