@@ -40,11 +40,25 @@ export interface R2Client {
   destroy(): void;
 }
 
+function normalizeConfigValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export async function createR2Client(config: R2ClientConfig): Promise<R2Client> {
-  const { accountId, accessKeyId, secretAccessKey, bucket } = config;
-  const endpoint = config.endpoint ?? (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : null);
+  const accountId = normalizeConfigValue(config.accountId);
+  const accessKeyId = normalizeConfigValue(config.accessKeyId);
+  const secretAccessKey = normalizeConfigValue(config.secretAccessKey);
+  const bucket = normalizeConfigValue(config.bucket);
+  const endpoint =
+    normalizeConfigValue(config.endpoint) ??
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : null);
+  const publicEndpoint = normalizeConfigValue(config.publicEndpoint);
   if (!endpoint) {
     throw new Error("R2 client requires either accountId or endpoint");
+  }
+  if (!accessKeyId || !secretAccessKey || !bucket) {
+    throw new Error("R2 client requires access key, secret key, and bucket");
   }
 
   const {
@@ -64,9 +78,9 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
   });
 
   function rewritePublicEndpoint(url: string): string {
-    if (!config.publicEndpoint) return url;
+    if (!publicEndpoint) return url;
     const signed = new URL(url);
-    const publicUrl = new URL(config.publicEndpoint);
+    const publicUrl = new URL(publicEndpoint);
     signed.protocol = publicUrl.protocol;
     signed.host = publicUrl.host;
     return signed.toString();
