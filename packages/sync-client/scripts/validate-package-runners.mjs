@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const pkgRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const tempRoot = await mkdtemp(join(tmpdir(), "matrix-cli-runners-"));
+
+function run(command, args, options = {}) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd ?? pkgRoot,
+      env: {
+        ...process.env,
+        HOME: options.home ?? join(tempRoot, "home"),
+        npm_config_yes: "true",
+        npm_config_update_notifier: "false",
+        ...options.env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+    }, options.timeoutMs ?? 120_000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolveRun({ stdout, stderr });
+        return;
+      }
+      reject(new Error(`${command} ${args.join(" ")} failed (${signal ?? code})\n${stdout}${stderr}`));
+    });
+  });
+}
+
+try {
+  const packDestination = join(tempRoot, "pack");
+  await mkdir(packDestination, { recursive: true });
+  const packed = await run("npm", ["pack", "--pack-destination", packDestination, "--json"], {
+    home: join(tempRoot, "npm-pack-home"),
+  });
+  const [packInfo] = JSON.parse(packed.stdout);
+  const tarball = join(packDestination, packInfo.filename);
+  const files = new Set(packInfo.files.map((file) => file.path));
+  for (const required of [
+    "package.json",
+    "bin/matrix.mjs",
+    "src/cli/index.ts",
+    "src/lib/find-tsx-loader.mjs",
+    "src/lib/runtime-prereqs.mjs",
+  ]) {
+    if (!files.has(required)) {
+      throw new Error(`Packed package is missing ${required}`);
+    }
+  }
+
+  const npmRun = await run("npm", ["exec", "--yes", "--package", tarball, "--", "matrix", "--version"], {
+    home: join(tempRoot, "npm-exec-home"),
+  });
+  if (!npmRun.stdout.includes(packInfo.version)) {
+    throw new Error(`npm exec did not print ${packInfo.version}: ${npmRun.stdout}`);
+  }
+
+  const pnpmRun = await run("pnpm", ["dlx", tarball, "--version"], {
+    home: join(tempRoot, "pnpm-dlx-home"),
+  });
+  if (!pnpmRun.stdout.includes(packInfo.version)) {
+    throw new Error(`pnpm dlx did not print ${packInfo.version}: ${pnpmRun.stdout}`);
+  }
+
+  console.log(`Package-runner validation: ok (${packInfo.name}@${packInfo.version})`);
+} finally {
+  await rm(tempRoot, { recursive: true, force: true });
+}
