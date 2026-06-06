@@ -243,6 +243,64 @@ describe("matrix port forward", () => {
     expect(events).toContain("connection_open");
   });
 
+  it("splits pending local TCP bytes into bounded websocket frames without mutating options", async () => {
+    class DelayedReadyWebSocket extends EventEmitter {
+      static instances: DelayedReadyWebSocket[] = [];
+      sent: unknown[] = [];
+      readyState = 1;
+
+      constructor() {
+        super();
+        DelayedReadyWebSocket.instances.push(this);
+        queueMicrotask(() => this.emit("open"));
+      }
+
+      send(data: unknown) {
+        this.sent.push(typeof data === "string" ? JSON.parse(data) : Buffer.from(data as Buffer));
+      }
+
+      close() {
+        this.emit("close");
+      }
+    }
+
+    const options = {
+      gatewayUrl: "http://gateway",
+      token: "tok",
+      localHost: "127.0.0.1" as const,
+      localPort: 0,
+      remoteHost: "127.0.0.1" as const,
+      remotePort: 3000,
+      maxFrameBytes: 4,
+      WebSocketImpl: DelayedReadyWebSocket as never,
+    };
+    const handle = await startPortForward(options);
+    await handle.ready;
+
+    expect(options.localPort).toBe(0);
+    expect(handle.localPort).toBeGreaterThan(0);
+
+    const client = await new Promise<Socket>((resolve) => {
+      const socket = createConnection(handle.localPort, "127.0.0.1", () => resolve(socket));
+    });
+    const payload = Buffer.from("abcdefghijk");
+    client.write(payload);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const ws = DelayedReadyWebSocket.instances[0]!;
+    expect(ws.sent).toEqual([{ type: "open", host: "127.0.0.1", port: 3000 }]);
+
+    ws.emit("message", JSON.stringify({ type: "ready" }), false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const binaryFrames = ws.sent.slice(1) as Buffer[];
+    expect(binaryFrames.map((frame) => frame.byteLength)).toEqual([4, 4, 3]);
+    expect(Buffer.concat(binaryFrames)).toEqual(payload);
+
+    client.destroy();
+    await handle.close();
+  });
+
   it("enforces concurrent connection caps", async () => {
     class HangingWebSocket extends EventEmitter {
       static instances: HangingWebSocket[] = [];
