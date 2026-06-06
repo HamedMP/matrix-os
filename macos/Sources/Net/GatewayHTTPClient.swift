@@ -152,7 +152,9 @@ public struct GatewayHTTPClient: Sendable {
            let relative = URLComponents(string: path),
            let queryItems = relative.queryItems,
            !queryItems.isEmpty {
-            comps.queryItems = (comps.queryItems ?? []) + queryItems
+            let overriddenNames = Set(queryItems.map(\.name))
+            let baseItems = (comps.queryItems ?? []).filter { !overriddenNames.contains($0.name) }
+            comps.queryItems = baseItems + queryItems
         }
         return comps.url
     }

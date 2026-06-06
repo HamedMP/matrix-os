@@ -72,6 +72,23 @@ final class GatewayHTTPClientTests: XCTestCase {
         XCTAssertEqual(items.filter { $0.name == "tag" }.map(\.value), ["one", "two"])
     }
 
+    func testRelativeQueryOverridesMatchingBaseQueryKeys() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("{\"id\":\"abc\",\"count\":3}".utf8))
+        }
+        let client = GatewayHTTPClient(
+            baseURL: URL(string: "https://app.matrix-os.com/vm/alice?runtime=staging&flag=1")!,
+            tokenProvider: StaticTokenProvider(token: "principal-token"),
+            sessionConfiguration: .mocked()
+        )
+        let _: Sample = try await client.get("/api/search?runtime=production&runtime=canary", as: Sample.self)
+
+        let req = try XCTUnwrap(MockURLProtocol.lastRequest)
+        let items = URLComponents(url: try XCTUnwrap(req.url), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items.filter { $0.name == "flag" }.map(\.value), ["1"])
+        XCTAssertEqual(items.filter { $0.name == "runtime" }.map(\.value), ["production", "canary"])
+    }
+
     func testTimeoutIsConfiguredOnRequest() async throws {
         MockURLProtocol.setHandler { req in
             (httpResponse(req.url!, 200), Data("{\"id\":\"x\",\"count\":1}".utf8))

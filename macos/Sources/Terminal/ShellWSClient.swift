@@ -13,7 +13,7 @@ import Foundation
 ///   scrollback ring buffer with eviction (R1).
 public actor ShellWSClient {
     private let baseURL: URL
-    private let token: String
+    private let tokenProvider: @Sendable () async -> String
     private let session: String
     private let transport: ShellTransport
     private let backoff: BackoffPolicy
@@ -39,8 +39,28 @@ public actor ShellWSClient {
         clock: ShellClock = SystemClock(),
         scrollbackCapacity: Int = 5_000
     ) {
+        self.init(
+            url: url,
+            tokenProvider: { token },
+            session: session,
+            transport: transport,
+            backoff: backoff,
+            clock: clock,
+            scrollbackCapacity: scrollbackCapacity
+        )
+    }
+
+    public init(
+        url: URL,
+        tokenProvider: @escaping @Sendable () async -> String,
+        session: String,
+        transport: ShellTransport,
+        backoff: BackoffPolicy = .default,
+        clock: ShellClock = SystemClock(),
+        scrollbackCapacity: Int = 5_000
+    ) {
         self.baseURL = url
-        self.token = token
+        self.tokenProvider = tokenProvider
         self.session = session
         self.transport = transport
         self.backoff = backoff
@@ -98,7 +118,7 @@ public actor ShellWSClient {
         while !stopped && !Task.isCancelled {
             // Fresh connect → live tail; reconnect → resume at lastSeq + 1.
             let fromSeq = lastSeqValue > 0 ? lastSeqValue + 1 : SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
-            let request = makeRequest(fromSeq: fromSeq)
+            let request = await makeRequest(fromSeq: fromSeq)
             let frames = await transport.open(request)
             let cleanly = await consume(frames)
             if stopped || Task.isCancelled { break }
@@ -161,7 +181,7 @@ public actor ShellWSClient {
 
     // MARK: - Request building
 
-    private func makeRequest(fromSeq: Int) -> URLRequest {
+    private func makeRequest(fromSeq: Int) async -> URLRequest {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         var items = components?.queryItems ?? []
         items.removeAll { $0.name == "session" || $0.name == "fromSeq" || $0.name == "token" }
@@ -171,6 +191,7 @@ public actor ShellWSClient {
         let url = components?.url ?? baseURL
         var request = URLRequest(url: url)
         // FR-015a / S1: principal token in the Authorization header, never the query string.
+        let token = await tokenProvider()
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }

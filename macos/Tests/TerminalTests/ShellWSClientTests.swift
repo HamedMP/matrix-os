@@ -189,6 +189,35 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testReconnectUsesFreshTokenFromProvider() async throws {
+        let transport = MockShellTransport()
+        let clock = MockClock()
+        let tokenSource = SequenceTokenSource(["initial-token", "refreshed-token"])
+        let client = ShellWSClient(
+            url: URL(string: "wss://vps.example/ws/terminal/session")!,
+            tokenProvider: {
+                await tokenSource.next()
+            },
+            session: "main",
+            transport: transport,
+            backoff: .test,
+            clock: clock
+        )
+        await client.connect()
+        await transport.waitForConnect(count: 1)
+        let first = await transport.lastConnectRequest
+        XCTAssertEqual(first?.value(forHTTPHeaderField: "Authorization"), "Bearer initial-token")
+
+        await transport.failCurrent()
+        await clock.waitForSleeper()
+        await clock.advanceAll()
+        await transport.waitForConnect(count: 2)
+
+        let reconnect = await transport.lastConnectRequest
+        XCTAssertEqual(reconnect?.value(forHTTPHeaderField: "Authorization"), "Bearer refreshed-token")
+        await client.shutdown()
+    }
+
     func testReplayEvictedResetsToLiveTail() async throws {
         let transport = MockShellTransport()
         let clock = MockClock()
@@ -282,5 +311,17 @@ final class ShellWSClientStateMachineTests: XCTestCase {
             if seen.count == count { break }
         }
         return seen
+    }
+}
+
+private actor SequenceTokenSource {
+    private var tokens: [String]
+
+    init(_ tokens: [String]) {
+        self.tokens = tokens
+    }
+
+    func next() -> String {
+        tokens.isEmpty ? "fallback-token" : tokens.removeFirst()
     }
 }
