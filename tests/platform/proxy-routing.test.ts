@@ -17,6 +17,7 @@ import {
   classifyWebSocketPath,
   createApp,
   escapeInlineScriptJson,
+  getTrustedSessionRoutedWebSocketHost,
 } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
@@ -437,6 +438,50 @@ describe("platform proxy routing", () => {
     expect(classifySessionRoutedHost("app.matrix-os.com")).toBe("app");
     expect(classifySessionRoutedHost("code.matrix-os.com")).toBe("code");
     expect(classifySessionRoutedHost("alice.matrix-os.com")).toBe("other");
+  });
+
+  it("requires the edge secret before websocket routing trusts x-forwarded-host", () => {
+    const cloudRunHost = "matrix-platform-jqxkjdhtkq-ey.a.run.app";
+
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        cloudRunHost,
+        "code.matrix-os.com",
+        undefined,
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe(cloudRunHost);
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        cloudRunHost,
+        "code.matrix-os.com",
+        "wrong-secret",
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe(cloudRunHost);
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        cloudRunHost,
+        "code.matrix-os.com",
+        "edge-secret",
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe("code.matrix-os.com");
+  });
+
+  it("keeps token-authenticated websocket fallback for internal platform hosts", () => {
+    expect(
+      getTrustedSessionRoutedWebSocketHost(
+        "platform:9000",
+        undefined,
+        undefined,
+        "edge-secret",
+        "/ws?token=secret",
+      ),
+    ).toBe("app.matrix-os.com");
   });
 
   it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
@@ -1423,6 +1468,108 @@ describe("platform proxy routing", () => {
 
     expect(shell.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://matrixos-alice:3000/");
+  });
+
+  it("uses x-forwarded-host for app-domain routing behind Cloud Run", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("shell");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://matrixos-alice:3000/");
+    const headers = init?.headers as Headers;
+    expect(headers.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(headers.get("x-matrix-edge-secret")).toBeNull();
+  });
+
+  it("uses x-forwarded-host for code-domain routing behind Cloud Run", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff151",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123491,
+      publicIPv4: "203.0.113.91",
+      imageVersion: "matrix-os-host-2026.06.06-1",
+      provisionedAt: "2026-06-06T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?folder=/home/matrix/home", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "code.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("editor");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.91:443/?folder=/home/matrix/home");
+    const headers = init?.headers as Headers;
+    expect(headers.get("host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-matrix-edge-secret")).toBeNull();
+  });
+
+  it("does not trust x-forwarded-host for app-domain routing without the edge secret", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.status).not.toBe(200);
   });
 
   it("reports no runtime when a signed-in Clerk user has no Matrix computer", async () => {
@@ -3109,12 +3256,15 @@ describe("platform proxy routing", () => {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
+        "x-matrix-edge-secret": "edge-secret",
       },
     });
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("explicit shell");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.28:443/");
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("x-matrix-edge-secret")).toBeNull();
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
   });
 

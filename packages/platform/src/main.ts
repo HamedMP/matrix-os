@@ -44,6 +44,7 @@ import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
   getSessionRoutedWebSocketHost,
+  getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
   isCodeDomainHost,
@@ -104,6 +105,7 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
 const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
@@ -131,6 +133,7 @@ const HOST_BUNDLE_FILES = new Set([
 ]);
 const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev|beta)$/;
 const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev|beta)\.json$/;
+type HeaderValue = string | string[] | undefined;
 const TENANT_PUBLIC_TELEMETRY_ENV_KEYS = [
   'POSTHOG_TOKEN',
   'POSTHOG_PROJECT_TOKEN',
@@ -160,7 +163,12 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
-const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
+const SENSITIVE_PROXY_HEADERS = new Set([
+  'authorization',
+  'cookie',
+  EDGE_SECRET_HEADER,
+  'x-matrix-code-proxy-token',
+]);
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -1234,7 +1242,7 @@ function buildCodeDomainProxyHeaders(
 ): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(requestHeaders)) {
-    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && key !== 'x-matrix-code-proxy-token' && value) {
+    if (shouldForwardProxyHeader(key, value)) {
       headers.set(key, value);
     }
   }
@@ -1246,6 +1254,46 @@ function buildCodeDomainProxyHeaders(
   headers.set('x-forwarded-proto', 'https');
   headers.set('connection', 'close');
   return headers;
+}
+
+function shouldForwardProxyHeader(key: string, value: string | undefined): value is string {
+  const lowerKey = key.toLowerCase();
+  return lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && Boolean(value);
+}
+
+function firstHeaderValue(value: HeaderValue): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+export function getTrustedSessionRouteHost(
+  host: HeaderValue,
+  forwardedHost: HeaderValue,
+  edgeSecretHeader: HeaderValue,
+  edgeRouterSecret: string | undefined,
+): string {
+  const rawHost = getWebSocketUpgradeHost(host, undefined);
+  const normalizedForwardedHost = getWebSocketUpgradeHost(undefined, forwardedHost);
+  if (!normalizedForwardedHost) return rawHost;
+
+  const normalizedSecret = edgeRouterSecret?.trim();
+  if (!normalizedSecret) return rawHost;
+  if (!timingSafeTokenEquals(firstHeaderValue(edgeSecretHeader), normalizedSecret)) return rawHost;
+
+  return normalizedForwardedHost;
+}
+
+export function getTrustedSessionRoutedWebSocketHost(
+  host: HeaderValue,
+  forwardedHost: HeaderValue,
+  edgeSecretHeader: HeaderValue,
+  edgeRouterSecret: string | undefined,
+  path: string,
+): string {
+  const trustedHost = getTrustedSessionRouteHost(host, forwardedHost, edgeSecretHeader, edgeRouterSecret);
+  return getSessionRoutedWebSocketHost(trustedHost, undefined, path);
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -3685,7 +3733,12 @@ export function createApp(deps: {
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
   app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c, next) => {
-    const host = c.req.header('host') ?? '';
+    const host = getTrustedSessionRouteHost(
+      c.req.header('host'),
+      c.req.header('x-forwarded-host'),
+      c.req.header(EDGE_SECRET_HEADER),
+      appEnv.EDGE_ROUTER_SECRET,
+    );
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();
@@ -3741,8 +3794,7 @@ export function createApp(deps: {
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -3932,7 +3984,7 @@ export function createApp(deps: {
       }
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -4081,7 +4133,7 @@ export function createApp(deps: {
         : new Headers();
       if (!isCodeDomain) {
         for (const [key, value] of Object.entries(c.req.header())) {
-          if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          if (shouldForwardProxyHeader(key, value)) {
             headers.set(key, value);
           }
         }
@@ -4241,7 +4293,7 @@ export function createApp(deps: {
       : new Headers();
     if (!isCodeDomain) {
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -4837,8 +4889,7 @@ export function createApp(deps: {
         const headers = new Headers();
         const originalHost = c.req.header('host') ?? `${handle}.matrix-os.com`;
         for (const [key, value] of Object.entries(c.req.header())) {
-          const lowerKey = key.toLowerCase();
-          if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+          if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
         }
         headers.set('host', `${handle}.matrix-os.com`);
         headers.set('x-forwarded-host', originalHost);
@@ -4888,8 +4939,7 @@ export function createApp(deps: {
       const headers = new Headers();
       const originalHost = c.req.header('host') ?? '';
       for (const [key, value] of Object.entries(c.req.header())) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+        if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');
@@ -5305,7 +5355,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const path = req.url ?? '/';
     const pathClass = classifyWebSocketPath(path);
-    const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
+    const host = getTrustedSessionRoutedWebSocketHost(
+      req.headers.host,
+      req.headers['x-forwarded-host'],
+      req.headers[EDGE_SECRET_HEADER],
+      appEnv.EDGE_ROUTER_SECRET,
+      path,
+    );
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;

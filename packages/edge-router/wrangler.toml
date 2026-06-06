@@ -1,0 +1,15 @@
+name = "matrix-edge-router"
+main = "src/index.ts"
+compatibility_date = "2026-06-06"
+
+routes = [
+  { pattern = "api.matrix-os.com", custom_domain = true },
+  { pattern = "app.matrix-os.com", custom_domain = true },
+  { pattern = "code.matrix-os.com", custom_domain = true }
+]
+
+[vars]
+PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"
+# EDGE_ROUTER_SECRET must be provisioned as a Wrangler secret before deployment:
+#   wrangler secret put EDGE_ROUTER_SECRET
+# The Worker returns 503 for all requests until this secret is set.
