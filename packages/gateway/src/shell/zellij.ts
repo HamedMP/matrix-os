@@ -112,6 +112,7 @@ type RetainedCreatePty = {
   process: ShellAttachProcess;
   startedAtMs: number;
   exitDisposable: Disposable | null;
+  tempLayoutDir?: string;
 };
 
 function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -230,6 +231,9 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     retainedCreatePtys.delete(name);
     retained.exitDisposable?.dispose();
     retained.exitDisposable = null;
+    if (retained.tempLayoutDir) {
+      void cleanupTempLayoutDir(retained.tempLayoutDir);
+    }
     if (options.kill) {
       retained.process.kill();
     }
@@ -302,6 +306,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
 
       const args = ["--session", options.name];
       let tempLayoutDir: string | undefined;
+      let retainedRegistered = false;
       try {
         if (options.cmd) {
           tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
@@ -326,8 +331,10 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           process: pty,
           startedAtMs: nowMs(),
           exitDisposable: null,
+          ...(tempLayoutDir ? { tempLayoutDir } : {}),
         };
         retainedCreatePtys.set(options.name, retained);
+        retainedRegistered = true;
         const exitDisposable = pty.onExit((event) => {
           startup.exited = event;
           releaseRetainedCreatePty(options.name);
@@ -349,7 +356,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         }
         throw safeZellijError(err);
       } finally {
-        if (tempLayoutDir) {
+        if (tempLayoutDir && !retainedRegistered) {
           await cleanupTempLayoutDir(tempLayoutDir);
         }
       }

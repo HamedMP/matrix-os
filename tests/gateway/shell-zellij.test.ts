@@ -288,7 +288,13 @@ describe("zellij adapter", () => {
     expect(layoutText).toContain('command="node"');
     expect(layoutText).toContain('args "-e"');
     expect(layoutText).toContain("MATRIX_BENCH_READY");
-    expect(layoutPath && existsSync(layoutPath)).toBe(false);
+    expect(layoutPath).toEqual(expect.any(String));
+    expect(existsSync(layoutPath!)).toBe(true);
+
+    pty.emitExit(0);
+    await vi.waitFor(() => {
+      expect(existsSync(layoutPath!)).toBe(false);
+    });
   });
 
   it("rejects session creation when the retained PTY exits during startup", async () => {
