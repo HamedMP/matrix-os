@@ -5,7 +5,7 @@ import { createShellClient } from "../shell-client.js";
 import type { ShellAttachOptions } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 
-const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|tab|pane|layout";
+const SHELL_USAGE = "Usage: mos shell list|new|attach|rm|tab|pane|layout";
 const SHELL_SUBCOMMANDS = new Set([
   "ls", "list",
   "new",
@@ -82,9 +82,9 @@ function writeError(err: unknown, json: boolean): void {
       : undefined;
   const output = json
     ? formatCliError(code, safeMessage)
-    : code === "auth_expired"
+    : code === "auth_expired" || code === "gateway_unreachable" || code === "request_timeout" || code === "zellij_failed" || code === "attach_failed"
       ? formatCliErrorMessage(code, safeMessage)
-      : safeMessage ?? `Error: Request failed (${code})`;
+      : safeMessage ?? formatCliErrorMessage(code);
   console.error(output);
 }
 
@@ -223,7 +223,9 @@ function attachCommand(name: string, description: string) {
         console.log(
           json
             ? formatCliSuccess({ detached: result.detached })
-            : `Detached. Reattach: matrix shell connect ${args.name}`,
+            : result.detached
+              ? `Detached. Reattach: mos shell attach ${args.name}`
+              : `Shell attach ended. Reattach: mos shell attach ${args.name}`,
         );
       } catch (err) {
         writeError(err, json);
@@ -275,7 +277,9 @@ export const shellCommand = defineCommand({
           console.log(
             json
               ? formatCliSuccess({ created: data, detached: result.detached })
-              : `Detached. Reattach: matrix shell connect ${args.name}`,
+              : result.detached
+                ? `Detached. Reattach: mos shell attach ${args.name}`
+                : `Shell attach ended. Reattach: mos shell attach ${args.name}`,
           );
         } catch (err) {
           writeError(err, json);

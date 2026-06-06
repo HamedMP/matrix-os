@@ -563,19 +563,19 @@ function approvalPage(
 <body>
   <main>
     <section class="terminal" aria-label="Matrix CLI login preview">
-      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>matrix login</span></div>
+      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>mos login</span></div>
       <div class="screen">
-        <div><span class="prompt">matrix</span> login</div>
+        <div><span class="prompt">mos</span> login</div>
         <div class="muted">open app.matrix-os.com/auth/device</div>
         <div>verification code</div>
         <div class="code">${escapedCode}</div>
         <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
         <br>
-        <div><span class="prompt">matrix</span> whoami</div>
+        <div><span class="prompt">mos</span> whoami</div>
         <div class="muted">@handle on app.matrix-os.com</div>
-        <div><span class="prompt">matrix</span> shell connect -c main</div>
-        <div><span class="prompt">matrix</span> run -it -- claude</div>
-        <div><span class="prompt">matrix</span> doctor</div>
+        <div><span class="prompt">mos</span> shell attach -c main</div>
+        <div><span class="prompt">mos</span> run -it -- claude</div>
+        <div><span class="prompt">mos</span> doctor</div>
       </div>
     </section>
     <section class="panel">

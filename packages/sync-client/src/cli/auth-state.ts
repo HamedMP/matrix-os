@@ -7,11 +7,11 @@ export type CliAuthStatus =
   | { status: "missing"; auth: null };
 
 export function notAuthenticatedMessage(profileName: string): string {
-  return `Not logged in for profile "${profileName}". Run \`matrix login\` first.`;
+  return `Not logged in for profile "${profileName}". Run \`mos login\` first.`;
 }
 
 export function authExpiredMessage(profileName: string, expiresAt: number): string {
-  return `Auth for profile "${profileName}" expired on ${new Date(expiresAt).toISOString()}. Run \`matrix login --profile ${profileName}\` to refresh.`;
+  return `Auth for profile "${profileName}" expired on ${new Date(expiresAt).toISOString()}. Run \`mos login --profile ${profileName}\` to refresh.`;
 }
 
 export function createNotAuthenticatedError(profileName: string): Error {
