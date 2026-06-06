@@ -10,6 +10,7 @@ struct MatrixWebShellPanel: View {
     let title: String
 
     @State private var token: String?
+    @State private var tokenLoaded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,8 +45,12 @@ struct MatrixWebShellPanel: View {
                 Rectangle().fill(Color.hairlineDark).frame(height: 1)
             }
 
-            if let url {
+            if let url, tokenLoaded {
                 WebShellView(url: url, bearerToken: token)
+            } else if url != nil {
+                ProgressView("Opening \(title)...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.surfaceCard)
             } else {
                 ContentUnavailableView(
                     "No Matrix shell",
@@ -57,7 +62,14 @@ struct MatrixWebShellPanel: View {
             }
         }
         .task(id: url) {
+            guard url != nil else {
+                token = nil
+                tokenLoaded = false
+                return
+            }
+            tokenLoaded = false
             token = await model.currentBearerToken()
+            tokenLoaded = true
         }
     }
 }
@@ -76,7 +88,7 @@ private struct WebShellView: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
-        view.setValue(false, forKey: "drawsBackground")
+        view.underPageBackgroundColor = .clear
         load(url, in: view, coordinator: context.coordinator)
         return view
     }
@@ -120,15 +132,17 @@ private struct WebShellView: NSViewRepresentable {
         private static func shouldOpenExternally(_ url: URL) -> Bool {
             guard let host = url.host()?.lowercased() else { return false }
             let path = url.path.lowercased()
+            let firstSegment = url.pathComponents.dropFirst().first?.lowercased()
             if host.contains("clerk") || host.contains("accounts.") {
                 return true
             }
-            return path.contains("/sign-in")
-                || path.contains("/sign-up")
-                || path.contains("/login")
-                || path.contains("/oauth")
-                || path.contains("/sso")
-                || path.contains("/auth")
+            return firstSegment == "sign-in"
+                || firstSegment == "sign-up"
+                || firstSegment == "login"
+                || firstSegment == "oauth"
+                || firstSegment == "sso"
+                || firstSegment == "auth"
+                || path == "/login"
         }
     }
 }
