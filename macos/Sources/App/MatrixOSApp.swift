@@ -81,7 +81,7 @@ private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
             recoverIfOffscreen(window)
             window.makeKeyAndOrderFront(nil)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 
     @MainActor
