@@ -9,21 +9,35 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY packages/clerk-sync/package.json packages/clerk-sync/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/platform/package.json packages/platform/package.json
+COPY shell/package.json shell/package.json
 COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
 
 FROM base AS deps
 
-RUN pnpm install --frozen-lockfile --ignore-scripts --filter '@matrix-os/platform...'
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter '@matrix-os/platform...' --filter './shell...'
 
 FROM deps AS builder
 
 COPY . .
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_POSTHOG_KEY
+ARG NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+ARG NEXT_PUBLIC_POSTHOG_HOST
+ARG NEXT_PUBLIC_POSTHOG_API_HOST
+ARG NEXT_PUBLIC_MATRIX_APP_URL
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
+ENV NEXT_PUBLIC_POSTHOG_API_HOST=$NEXT_PUBLIC_POSTHOG_API_HOST
+ENV NEXT_PUBLIC_MATRIX_APP_URL=$NEXT_PUBLIC_MATRIX_APP_URL
 RUN pnpm --filter '@matrix-os/observability' build
 RUN pnpm --filter '@matrix-os/platform' build
+RUN pnpm --dir shell exec next build --webpack
 
 FROM base AS prod-deps
 
-RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter '@matrix-os/platform...'
+RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter '@matrix-os/platform...' --filter './shell...'
 
 FROM node:24-alpine AS runtime
 
@@ -38,17 +52,27 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/node_modules 
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/package.json ./packages/clerk-sync/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/platform/package.json ./packages/platform/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/observability/dist ./packages/observability/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/platform/dist ./packages/platform/dist
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/shell ./shell
 COPY --chown=matrix-platform:matrix-platform distro/customer-vps ./distro/customer-vps
+COPY --chown=matrix-platform:matrix-platform scripts/start-platform-cloud-run.sh ./scripts/start-platform-cloud-run.sh
+
+RUN chmod 0755 ./scripts/start-platform-cloud-run.sh && \
+    mkdir -p ./shell/.next/cache ./shell/.next/server && \
+    chown -R matrix-platform:matrix-platform ./shell/.next/cache ./shell/.next/server
 
 ENV NODE_ENV=production
 ENV PLATFORM_PORT=8080
 ENV CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml
+ENV AUTH_SHELL_HOST=127.0.0.1
+ENV AUTH_SHELL_PORT=3200
 
 EXPOSE 8080
+EXPOSE 3200
 
 USER matrix-platform
 
-CMD ["node", "packages/platform/dist/main.js"]
+CMD ["./scripts/start-platform-cloud-run.sh"]
