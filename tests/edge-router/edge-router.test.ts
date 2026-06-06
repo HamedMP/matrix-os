@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildEdgeResponseInit,
   classifyEdgeRoute,
   handleEdgeRouterRequest,
 } from "../../packages/edge-router/src/index.js";
@@ -99,6 +100,23 @@ describe("edge router worker", () => {
     expect(response.status).toBe(413);
     expect(await response.text()).toBe("payload too large");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves Cloudflare WebSocket tunnel handles on upgrade responses", () => {
+    const webSocket = {} as WebSocket;
+    const response = {
+      status: 101,
+      statusText: "Switching Protocols",
+      headers: new Headers({
+        upgrade: "websocket",
+      }),
+      webSocket,
+    } as Response & { webSocket: WebSocket };
+
+    const init = buildEdgeResponseInit(response, new Headers(response.headers));
+
+    expect(init.status).toBe(101);
+    expect(init.webSocket).toBe(webSocket);
   });
 
   it("returns 404 for unmanaged hosts", async () => {

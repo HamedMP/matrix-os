@@ -7,6 +7,10 @@ export interface EdgeRouterEnv {
   PLATFORM_ORIGIN?: string;
 }
 
+export type EdgeResponseInit = ResponseInit & {
+  webSocket?: WebSocket | null;
+};
+
 export function classifyEdgeRoute(host: string): EdgeRouteClass {
   const normalized = normalizeHost(host);
   if (normalized === "api.matrix-os.com") return "platform";
@@ -106,12 +110,21 @@ function withEdgeHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("cache-control", "no-store");
   headers.set("cdn-cache-control", "no-store");
+  const isWebSocketUpgrade = response.status === 101;
 
-  return new Response(response.body, {
+  return new Response(isWebSocketUpgrade ? null : response.body, buildEdgeResponseInit(response, headers));
+}
+
+export function buildEdgeResponseInit(response: Response, headers: Headers): EdgeResponseInit {
+  const init: EdgeResponseInit = {
     status: response.status,
     statusText: response.statusText,
     headers,
-  });
+  };
+  if (response.status === 101) {
+    init.webSocket = (response as Response & { webSocket?: WebSocket | null }).webSocket ?? null;
+  }
+  return init;
 }
 
 function payloadTooLargeResponse(): Response {
