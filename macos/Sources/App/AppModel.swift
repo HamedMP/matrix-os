@@ -496,7 +496,7 @@ public final class AppModel: ObservableObject {
         Task {
             do {
                 try await openCard(card)
-            } catch let error as OperatorError {
+            } catch let error as OpenCardError {
                 await MainActor.run { self.openError = error }
             } catch {
                 await MainActor.run { self.openError = .misconfigured }
@@ -511,9 +511,9 @@ public final class AppModel: ObservableObject {
         isCreatingWorkItem = true
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
-            guard let self, let client = await self.gatewayClient() else { return }
+            guard let self, let client = self.gatewayClient() else { return }
             guard await self.resolveProjectIfNeeded() else { return }
-            let slug = await self.projectSlug
+            let slug = self.projectSlug
             struct CreateTaskRequest: Encodable { let title: String; let status: String }
             struct CreateTaskResponse: Decodable {}
             do {
