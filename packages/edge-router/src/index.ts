@@ -1,5 +1,5 @@
-const DEFAULT_PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app";
 const UPSTREAM_TIMEOUT_MS = 10_000;
+const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
 
 export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
 
@@ -28,7 +28,7 @@ export async function handleEdgeRouterRequest(
     });
   }
 
-  const platformOrigin = normalizePlatformOrigin(env.PLATFORM_ORIGIN ?? DEFAULT_PLATFORM_ORIGIN);
+  const platformOrigin = env.PLATFORM_ORIGIN ? normalizePlatformOrigin(env.PLATFORM_ORIGIN) : null;
   if (!platformOrigin) {
     console.error("[edge-router] invalid_platform_origin");
     return new Response("upstream unavailable", {
@@ -38,7 +38,9 @@ export async function handleEdgeRouterRequest(
   }
 
   const upstreamUrl = `${platformOrigin}${url.pathname}${url.search}`;
-  const upstreamRequest = await buildPlatformRequest(request, upstreamUrl, url.host);
+  const body = await readRequestBody(request);
+  if (body instanceof Response) return body;
+  const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, body);
 
   let response: Response;
   try {
@@ -54,14 +56,15 @@ export async function handleEdgeRouterRequest(
     });
   }
 
-  return withEdgeHeaders(response, routeClass);
+  return withEdgeHeaders(response);
 }
 
-async function buildPlatformRequest(
+function buildPlatformRequest(
   request: Request,
   upstreamUrl: string,
   externalHost: string,
-): Promise<Request> {
+  body: ArrayBuffer | null,
+): Request {
   const headers = new Headers(request.headers);
   const forwardedFor = sanitizeForwardedFor(headers.get("CF-Connecting-IP"));
 
@@ -79,22 +82,42 @@ async function buildPlatformRequest(
   return new Request(upstreamUrl, {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? null : await request.arrayBuffer(),
+    body,
     redirect: "manual",
   });
 }
 
-function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass): Response {
-  const headers = new Headers(response.headers);
-  if (routeClass === "app" || routeClass === "code") {
-    headers.set("cache-control", "no-store");
-    headers.set("cdn-cache-control", "no-store");
+async function readRequestBody(request: Request): Promise<ArrayBuffer | null | Response> {
+  if (request.method === "GET" || request.method === "HEAD") return null;
+
+  const contentLength = Number(request.headers.get("content-length") ?? NaN);
+  if (!Number.isNaN(contentLength) && contentLength > WORKER_BODY_LIMIT) {
+    return payloadTooLargeResponse();
   }
+
+  const body = await request.arrayBuffer();
+  if (body.byteLength > WORKER_BODY_LIMIT) {
+    return payloadTooLargeResponse();
+  }
+  return body;
+}
+
+function withEdgeHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  headers.set("cdn-cache-control", "no-store");
 
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
+  });
+}
+
+function payloadTooLargeResponse(): Response {
+  return new Response("payload too large", {
+    status: 413,
+    headers: noStoreTextHeaders(),
   });
 }
 

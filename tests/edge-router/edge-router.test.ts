@@ -63,6 +63,44 @@ describe("edge router worker", () => {
     expect(upstream.headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
   });
 
+  it("marks platform API responses as no-store", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", {
+        headers: {
+          "cache-control": "public, max-age=3600",
+        },
+      }),
+    );
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://api.matrix-os.com/health"),
+      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+  });
+
+  it("rejects oversized bodies before forwarding", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope"));
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://app.matrix-os.com/api/upload", {
+        method: "POST",
+        headers: {
+          "content-length": String(10 * 1024 * 1024 + 1),
+        },
+        body: "too large",
+      }),
+      { PLATFORM_ORIGIN: "https://matrix-platform.example.run.app" },
+    );
+
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe("payload too large");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("returns 404 for unmanaged hosts", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope"));
 
@@ -81,6 +119,18 @@ describe("edge router worker", () => {
     const response = await handleEdgeRouterRequest(
       new Request("https://api.matrix-os.com/health"),
       { PLATFORM_ORIGIN: "http://127.0.0.1:9000" },
+    );
+
+    expect(response.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the platform origin is missing", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope"));
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://api.matrix-os.com/health"),
+      {},
     );
 
     expect(response.status).toBe(503);
