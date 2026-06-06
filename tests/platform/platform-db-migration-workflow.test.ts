@@ -23,6 +23,11 @@ describe('platform DB migration workflow', () => {
     expect(workflow).toContain('/home/deploy/backups/platform-migration/platform-${GITHUB_RUN_ID}.dump');
     expect(workflow).toContain('cat \'$REMOTE_BACKUP\'');
     expect(workflow).toContain('pg_restore --list platform-source.dump');
+    expect(workflow).toContain("pg_restore --list platform-source.dump | grep -q 'TABLE public users '");
+    expect(workflow).toContain("pg_restore --list platform-source.dump | grep -q 'TABLE public user_machines '");
+    expect(workflow).toContain("pg_restore --list platform-source.dump | grep -q 'TABLE public host_bundle_releases '");
+    expect(workflow).toContain("pg_restore --list platform-source.dump | grep -q 'TABLE DATA public user_machines '");
+    expect(workflow).toContain("pg_restore --list platform-source.dump | grep -q 'TABLE DATA public host_bundle_releases '");
     expect(workflow).toContain("find /home/deploy/backups/platform-migration -maxdepth 1 -type f -name 'platform-*.dump' -mtime +7 -delete");
     expect(workflow).not.toContain('actions/upload-artifact');
   });
@@ -43,9 +48,20 @@ describe('platform DB migration workflow', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-db-migration.yml'), 'utf8');
 
-    expect(workflow).toContain("select 'users=' || count(*) from users");
-    expect(workflow).toContain("select 'user_machines=' || count(*) from user_machines");
-    expect(workflow).toContain("select 'host_bundle_releases=' || count(*) from host_bundle_releases");
+    expect(workflow).toContain("select 'users=' || count(*) from public.users");
+    expect(workflow).toContain("select 'user_machines=' || count(*) from public.user_machines");
+    expect(workflow).toContain("select 'host_bundle_releases=' || count(*) from public.host_bundle_releases");
+    expect(workflow).toContain("to_regclass('public.users')");
     expect(workflow).toContain('expected machine and release rows after restore');
+  });
+
+  it('fails loudly if pg_restore hits target-side SQL errors', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-db-migration.yml'), 'utf8');
+
+    expect(workflow).toContain('pg_restore \\');
+    expect(workflow).toContain('--exit-on-error \\');
+    expect(workflow).toContain('--verbose \\');
+    expect(workflow).toContain('Managed database tables after restore:');
   });
 });

@@ -161,25 +161,32 @@ jobs:
           ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
             "cat '$REMOTE_BACKUP'" > platform-source.dump
           test -s platform-source.dump
-          pg_restore --list platform-source.dump | grep -q 'TABLE DATA public user_machines'
-          pg_restore --list platform-source.dump | grep -q 'TABLE DATA public host_bundle_releases'
+          pg_restore --list platform-source.dump | grep -q 'TABLE public users '
+          pg_restore --list platform-source.dump | grep -q 'TABLE public user_machines '
+          pg_restore --list platform-source.dump | grep -q 'TABLE public host_bundle_releases '
+          pg_restore --list platform-source.dump | grep -q 'TABLE DATA public user_machines '
+          pg_restore --list platform-source.dump | grep -q 'TABLE DATA public host_bundle_releases '
 
       - name: Compare source and target counts
         run: |
           set -euo pipefail
           source_counts="$(ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
-            "docker exec '$SOURCE_CONTAINER' psql -U '$SOURCE_USER' -d '$SOURCE_DATABASE' -At -c \"select 'users=' || count(*) from users union all select 'user_machines=' || count(*) from user_machines union all select 'host_bundle_releases=' || count(*) from host_bundle_releases;\"")"
+            "docker exec '$SOURCE_CONTAINER' psql -U '$SOURCE_USER' -d '$SOURCE_DATABASE' -At -c \"select 'users=' || count(*) from public.users union all select 'user_machines=' || count(*) from public.user_machines union all select 'host_bundle_releases=' || count(*) from public.host_bundle_releases;\"")"
           echo "Source counts:"
           printf '%s\n' "$source_counts"
+          echo "Managed database visible platform tables:"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select table_schema || '.' || table_name from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema') and table_name in ('users', 'user_machines', 'host_bundle_releases') order by table_schema, table_name;" || true
           echo "Target counts before migration:"
           psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "SELECT 1" > /dev/null
-          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from users union all select 'user_machines=' || count(*) from user_machines union all select 'host_bundle_releases=' || count(*) from host_bundle_releases;" || true
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from public.users union all select 'user_machines=' || count(*) from public.user_machines union all select 'host_bundle_releases=' || count(*) from public.host_bundle_releases;" || true
 
       - name: Restore into managed database
         if: ${{ inputs.mode == 'migrate' }}
         run: |
           set -euo pipefail
           pg_restore \
+            --exit-on-error \
+            --verbose \
             --clean \
             --if-exists \
             --no-owner \
@@ -195,9 +202,12 @@ jobs:
             echo "Verify mode completed without restoring into the managed database."
             exit 0
           fi
-          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from users union all select 'user_machines=' || count(*) from user_machines union all select 'host_bundle_releases=' || count(*) from host_bundle_releases;"
-          machine_count="$(psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select count(*) from user_machines;")"
-          release_count="$(psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select count(*) from host_bundle_releases;")"
+          echo "Managed database tables after restore:"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select table_schema || '.' || table_name from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema') and table_name in ('users', 'user_machines', 'host_bundle_releases') order by table_schema, table_name;"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select to_regclass('public.users'), to_regclass('public.user_machines'), to_regclass('public.host_bundle_releases');"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from public.users union all select 'user_machines=' || count(*) from public.user_machines union all select 'host_bundle_releases=' || count(*) from public.host_bundle_releases;"
+          machine_count="$(psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select count(*) from public.user_machines;")"
+          release_count="$(psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select count(*) from public.host_bundle_releases;")"
           if [ "$machine_count" -lt 1 ] || [ "$release_count" -lt 1 ]; then
             echo "Managed database validation failed: expected machine and release rows after restore." >&2
             exit 1
